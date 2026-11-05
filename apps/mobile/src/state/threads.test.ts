@@ -54,9 +54,7 @@ const creation: QueuedThreadMessage = {
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
   creation: {
     projectId: ProjectId.make("project-1"),
-    workspaceMode: "local",
     branch: "main",
-    worktreePath: null,
   },
   createdAt: "2026-08-24T12:00:00.000Z",
 };

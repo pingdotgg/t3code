@@ -1,4 +1,3 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Dialog from "../components/ui/Dialog";
 import {
   type EnvironmentProject,
@@ -21,7 +20,6 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -30,7 +28,6 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
-import { randomHex } from "../lib/uuid";
 import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
@@ -452,13 +449,8 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.creation
         ? {
             workspaceSelection: {
-              mode: queuedMessage.creation.workspaceMode,
               branch: queuedMessage.creation.branch,
-              worktreePath: queuedMessage.creation.worktreePath,
               pullRequestReference: queuedMessage.creation.pullRequestReference,
-              ...(queuedMessage.creation.startFromOrigin !== undefined
-                ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
-                : {}),
             },
           }
         : {}),
@@ -1043,11 +1035,11 @@ export function createThreadOutboxDelivery(): {
       currentConfig.providers,
     );
     if (!hasAccess()) return true;
-    let workspace = creation;
+    let branch = creation.branch;
     if (creation.pullRequestReference) {
       const checkout = await runDeliveryCommand(gitEnvironment.preparePullRequestThread, {
         environmentId: queuedMessage.environmentId,
-        input: { cwd: projectCwd, reference: creation.pullRequestReference, mode: "worktree" },
+        input: { cwd: projectCwd, reference: creation.pullRequestReference },
       });
       if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision) || !hasAccess())
         return true;
@@ -1056,29 +1048,12 @@ export function createThreadOutboxDelivery(): {
       if (failure?.action === "restore")
         return restoreQueuedMessage(persistedMessage, failure.message);
       if (!AsyncResult.isSuccess(checkout)) return false;
-      if (!checkout.value.worktreePath || !checkout.value.isOnPullRequestHead) {
-        const { shortLabel } = (
-          sourceControlClients.findByChangeRequestUrl(creation.pullRequestReference) ??
-          sourceControlClients.get(undefined)
-        ).changeRequest;
-        return restoreQueuedMessage(
-          persistedMessage,
-          `The ${shortLabel} worktree has local changes and could not update to the ${shortLabel} head. Resolve them before trying again.`,
-        );
-      }
-      workspace = {
-        ...creation,
-        workspaceMode: "local",
-        branch: checkout.value.branch,
-        worktreePath: checkout.value.worktreePath,
-        startFromOrigin: false,
-      };
+      branch = checkout.value.branch;
     }
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
       environmentId: queuedMessage.environmentId,
       input: buildProjectThreadStartTurnInput({
         projectId: creation.projectId,
-        projectCwd,
         threadId: queuedMessage.threadId,
         commandId: queuedMessage.commandId,
         messageId: queuedMessage.messageId,
@@ -1096,11 +1071,7 @@ export function createThreadOutboxDelivery(): {
         modelSelection: sendSettings.modelSelection,
         runtimeMode: sendSettings.runtimeMode,
         interactionMode: sendSettings.interactionMode,
-        workspaceMode: workspace.workspaceMode,
-        branch: workspace.branch,
-        worktreePath: workspace.worktreePath,
-        startFromOrigin: workspace.startFromOrigin ?? false,
-        worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        branch,
       }),
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;

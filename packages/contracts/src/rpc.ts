@@ -117,20 +117,12 @@ import {
   OrchestrationGetTurnDiffError,
 } from "./checkpointDiff.ts";
 import {
-  WorktreeSetupCancelInput,
-  WorktreeSetupCancelResult,
-  WorktreeSetupStreamEvent,
-  WorktreeSetupSubscribeInput,
-} from "./worktreeSetup.ts";
-import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
   GitCommandError,
   VcsCreateRefInput,
   VcsCreateRefResult,
-  VcsCreateWorktreeInput,
-  VcsCreateWorktreeResult,
   VcsInitInput,
   VcsListRefsInput,
   VcsListRefsResult,
@@ -140,7 +132,6 @@ import {
   VcsPullInput,
   GitPullRequestRefInput,
   VcsPullResult,
-  VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   VcsStatusInput,
@@ -452,8 +443,6 @@ export const WS_METHODS = {
   vcsPull: "vcs.pull",
   vcsRefreshStatus: "vcs.refreshStatus",
   vcsListRefs: "vcs.listRefs",
-  vcsCreateWorktree: "vcs.createWorktree",
-  vcsRemoveWorktree: "vcs.removeWorktree",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
@@ -602,8 +591,6 @@ export const WS_METHODS = {
   subscribeProjectClones: "subscribeProjectClones",
 
   subscribeVcsStatus: "subscribeVcsStatus",
-  subscribeWorktreeSetup: "subscribeWorktreeSetup",
-  worktreeSetupCancel: "worktreeSetup.cancel",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
@@ -1464,19 +1451,6 @@ const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
-const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, {
-  payload: WorktreeSetupSubscribeInput,
-  success: WorktreeSetupStreamEvent,
-  error: EnvironmentAuthorizationError,
-  stream: true,
-});
-
-const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
-  payload: WorktreeSetupCancelInput,
-  success: WorktreeSetupCancelResult,
-  error: EnvironmentAuthorizationError,
-});
-
 const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
   payload: GitRunStackedActionInput,
   success: GitActionProgressEvent,
@@ -1499,18 +1473,6 @@ const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullReque
 const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   payload: VcsListRefsInput,
   success: VcsListRefsResult,
-  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
-});
-
-const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
-  // Worktrees use the managed folder; required null path preserves compatibility with older servers.
-  payload: Schema.Struct({ ...VcsCreateWorktreeInput.fields, path: Schema.Null }),
-  success: VcsCreateWorktreeResult,
-  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
-});
-
-const WsVcsRemoveWorktreeRpc = Rpc.make(WS_METHODS.vcsRemoveWorktree, {
-  payload: VcsRemoveWorktreeInput,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
@@ -1782,15 +1744,6 @@ const WsOrchestrationV2GetThreadTitlesRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   success: OrchestrationV2RpcSchemas.getThreadTitles.output,
   error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
 });
-
-const WsOrchestrationV2GetWorktreeThreadIdsRpc = Rpc.make(
-  ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds,
-  {
-    payload: OrchestrationV2RpcSchemas.getWorktreeThreadIds.input,
-    success: OrchestrationV2RpcSchemas.getWorktreeThreadIds.output,
-    error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
-  },
-);
 
 const WsOrchestrationV2GetOlderSettledThreadsRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads,
@@ -2134,16 +2087,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpAppsUpdateModelContextRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
-  WsSubscribeWorktreeSetupRpc,
-  WsWorktreeSetupCancelRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
   WsVcsListRefsRpc,
-  WsVcsCreateWorktreeRpc,
-  WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
@@ -2198,7 +2147,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadFamilyRpc,
   WsOrchestrationV2GetThreadTitlesRpc,
-  WsOrchestrationV2GetWorktreeThreadIdsRpc,
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,

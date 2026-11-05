@@ -1,11 +1,9 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
-  type WorktreeSubmodules,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -22,7 +20,6 @@ import {
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
@@ -46,11 +43,6 @@ import {
   useScopedSettingSource,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-
-const WORKTREE_SUBMODULES_OPTIONS = ["recursive", "top-level", "none"] as const;
-function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules {
-  return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
-}
 
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
@@ -104,16 +96,12 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   );
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
-  const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-  const effective = target
-    ? resolveProjectSettings(target.settings, null, null, null).settings
-    : null;
 
   const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
   const effortDisabledReason = selection
@@ -202,54 +190,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
     />
   );
-  const workspaceRow = (
-    <SettingsRow
-      serverScoped
-      settingKeys={["defaultThreadEnvMode"]}
-      mixed={mixedWorkspace}
-      id={searchableSetting("new-threads").id}
-      title="Workspace"
-      description={
-        isProjectScope
-          ? "Where new threads in this project start."
-          : "Where new threads start. Projects and their t3.json can override it."
-      }
-      resetAction={
-        !isProjectScope && settings.defaultThreadEnvMode !== null ? (
-          <SettingResetButton
-            label="default workspace"
-            onClick={() => updateSettings({ defaultThreadEnvMode: null })}
-          />
-        ) : null
-      }
-      control={
-        <Select
-          value={mixedWorkspace ? null : (effective?.defaultThreadEnvMode ?? null)}
-          onValueChange={(value) => {
-            if (value === "local" || value === "worktree")
-              updateSettings({ defaultThreadEnvMode: value });
-          }}
-        >
-          <SelectTrigger size="sm" aria-label="Default workspace">
-            <SelectValue>
-              {(value: string | null) =>
-                value === "local" || value === "worktree"
-                  ? resolveEnvModeLabel(value)
-                  : unavailable
-                    ? "Unavailable"
-                    : "Mixed"
-              }
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-            <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
-          </SelectPopup>
-        </Select>
-      }
-    />
-  );
-
   const fallbackRow = !isProjectScope ? (
     <SettingsRow
       serverScoped
@@ -333,7 +273,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         <>
           {modelRow}
           {fallbackRow}
-          {workspaceRow}
         </>
       ) : category === "general" ? (
         <>
@@ -411,7 +350,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               </Select>
             }
           />
-          {workspaceRow}
         </>
       ) : (
         <>
@@ -521,66 +459,5 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       )}
     </SettingsSection>
-  );
-}
-
-export function WorktreeSubmodulesRow() {
-  const { scope, target, connectedEnvironments } = useSettingsScope();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
-  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
-  const unavailable = connectedEnvironments.length === 0;
-  const effective = target
-    ? resolveProjectSettings(target.settings, null, null, null).settings
-    : null;
-
-  return (
-    <SettingsRow
-      serverScoped
-      settingKeys={["worktreeSubmodules"]}
-      mixed={mixedSubmodules}
-      {...searchableSetting("worktree-submodules")}
-      description={
-        isProjectScope
-          ? "How new worktrees in this project populate git submodules."
-          : "How new worktrees populate git submodules. Projects and their t3.json can override it."
-      }
-      resetAction={
-        !isProjectScope && settings.worktreeSubmodules !== null ? (
-          <SettingResetButton
-            label="worktree submodules"
-            onClick={() => updateSettings({ worktreeSubmodules: null })}
-          />
-        ) : null
-      }
-      control={
-        <Select
-          value={mixedSubmodules ? null : (effective?.worktreeSubmodules ?? null)}
-          onValueChange={(value) => {
-            if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
-          }}
-        >
-          <SelectTrigger size="sm" aria-label="Worktree submodules">
-            <SelectValue>
-              {(value: string | null) =>
-                isWorktreeSubmodules(value)
-                  ? WORKTREE_SUBMODULES_LABELS[value]
-                  : unavailable
-                    ? "Unavailable"
-                    : "Mixed"
-              }
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {WORKTREE_SUBMODULES_OPTIONS.map((option) => (
-              <SelectItem key={option} value={option}>
-                {WORKTREE_SUBMODULES_LABELS[option]}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      }
-    />
   );
 }

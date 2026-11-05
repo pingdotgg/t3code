@@ -66,7 +66,6 @@ import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/qu
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import {
@@ -74,7 +73,6 @@ import {
   clampManagedRuntimeMode,
   managedCapabilityDenial,
 } from "@t3tools/contracts";
-import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
@@ -94,7 +92,6 @@ import {
   taskToDraft,
   type DraftState,
   type ScheduleMode,
-  type WorkspaceMode,
 } from "./scheduledTasksSettings.logic";
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
@@ -130,12 +127,6 @@ const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
-const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
-  worktree: "Create a new worktree",
-  root: "Use the project checkout",
-  existing_worktree: "Use a specific checkout",
-};
-
 const EMPTY_DRAFT: DraftState = {
   editingId: null,
   title: "",
@@ -149,10 +140,6 @@ const EMPTY_DRAFT: DraftState = {
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
-  workspaceMode: "worktree",
-  baseRef: "main",
-  startFromOrigin: true,
-  existingWorktreePath: "",
   modelKey: "",
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -1328,26 +1315,13 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
-    if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
-      reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
-      return;
-    }
     const modelSelection =
       draft.baseModelSelection !== null &&
       draft.baseModelSelection.instanceId === selection.instanceId &&
       draft.baseModelSelection.model === selection.model
         ? draft.baseModelSelection
         : selection;
-    const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
-      draft.workspaceMode === "root"
-        ? { type: "root" }
-        : draft.workspaceMode === "existing_worktree"
-          ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
-          : {
-              type: "worktree",
-              baseRef: draft.baseRef.trim() || "main",
-              startFromOrigin: draft.startFromOrigin,
-            };
+    const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy = { type: "root" };
     const input: ScheduledTaskUpsertInput = {
       ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -1409,9 +1383,6 @@ function ScheduledTaskEditorForm({
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
                   modelKey: "",
                   baseModelSelection: null,
-                  baseRef: "main",
-                  startFromOrigin: true,
-                  existingWorktreePath: "",
                 }));
               }}
             >
@@ -1514,61 +1485,7 @@ function ScheduledTaskEditorForm({
                 </SelectPopup>
               </Select>
             </Field>
-
-            <Field label="Workspace" htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">Create a new worktree</SelectItem>
-                  <SelectItem value="root">Use the project checkout</SelectItem>
-                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
           </div>
-
-          {draft.workspaceMode === "worktree" ? (
-            <Field label="Base branch" htmlFor="scheduled-task-base-ref">
-              <WorktreeBaseBranchPicker
-                key={`${environmentId}:${selectedProjectId}`}
-                id="scheduled-task-base-ref"
-                environmentId={environmentId}
-                cwd={selectedProject?.workspaceRoot ?? null}
-                value={draft.baseRef}
-                onValueChange={(baseRef) => setDraft((current) => ({ ...current, baseRef }))}
-                startFromOrigin={draft.startFromOrigin}
-                onStartFromOriginChange={(startFromOrigin) =>
-                  setDraft((current) => ({ ...current, startFromOrigin }))
-                }
-                disabled={saving || !connected}
-              />
-            </Field>
-          ) : null}
-          {draft.workspaceMode === "existing_worktree" ? (
-            <Field label="Checkout path" htmlFor="scheduled-task-checkout">
-              <Input
-                id="scheduled-task-checkout"
-                value={draft.existingWorktreePath}
-                placeholder="/path/to/checkout"
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    existingWorktreePath: resolvePastedPath(
-                      current.existingWorktreePath,
-                      event.target.value,
-                    ),
-                  }))
-                }
-              />
-            </Field>
-          ) : null}
 
           <Field label="Prompt" htmlFor="scheduled-task-prompt">
             <Textarea

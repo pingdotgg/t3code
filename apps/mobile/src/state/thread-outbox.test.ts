@@ -1202,10 +1202,7 @@ describe("thread outbox", () => {
       },
       creation: {
         projectId: ProjectId.make("project-1"),
-        workspaceMode: "worktree",
         branch: "fork/feature",
-        worktreePath: null,
-        startFromOrigin: false,
         pullRequestReference: "https://github.com/acme/repo/pull/123",
       },
     } satisfies QueuedThreadMessage;
@@ -1214,18 +1211,6 @@ describe("thread outbox", () => {
       creationMessage,
     );
     expect(isQueuedThreadCreationSendable(creationMessage)).toBe(true);
-    expect(
-      isQueuedThreadCreationSendable({
-        ...creationMessage,
-        creation: { ...creationMessage.creation, branch: null },
-      }),
-    ).toBe(false);
-    expect(
-      isQueuedThreadCreationSendable({
-        ...creationMessage,
-        creation: { ...creationMessage.creation, branch: "" },
-      }),
-    ).toBe(false);
     expect(isQueuedThreadCreationSendable({ ...creationMessage, modelSelection: undefined })).toBe(
       false,
     );

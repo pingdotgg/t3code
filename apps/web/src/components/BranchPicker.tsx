@@ -1,13 +1,11 @@
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
-import { RefreshIcon } from "./ui/refresh-icon";
-import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import {
   Combobox,
@@ -18,7 +16,6 @@ import {
   ComboboxPopup,
   ComboboxStatus,
 } from "./ui/combobox";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export function BranchPicker({
   items,
@@ -33,7 +30,6 @@ export function BranchPicker({
   isFetchingNextPage,
   onLoadNext,
   statusText,
-  originControl,
   popupProps,
   renderItem,
   getItemType,
@@ -51,14 +47,12 @@ export function BranchPicker({
   isFetchingNextPage: boolean;
   onLoadNext: () => void;
   statusText: string | null;
-  originControl?: { checked: boolean; onCheckedChange: (checked: boolean) => void } | undefined;
   popupProps: Omit<ComponentProps<typeof ComboboxPopup>, "children">;
   renderItem: (value: string, index: number) => ReactNode;
   getItemType?: ((value: string) => string) | undefined;
   children: ReactNode;
 }) {
   const highlightedValueRef = useRef<string | null>(null);
-  const startFromOriginSwitchId = useId();
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
   const previousBranchListScrollTopRef = useRef<number | null>(null);
   const handleOpenChange = (nextOpen: boolean) => {
@@ -203,35 +197,6 @@ export function BranchPicker({
               />
             </ComboboxListVirtualized>
           </div>
-          {originControl ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <label
-                    htmlFor={startFromOriginSwitchId}
-                    className="flex cursor-pointer items-center justify-between gap-3 border-t border-border/60 px-3 py-2 text-xs"
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
-                      <RefreshIcon aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">Start from remote</span>
-                    </span>
-                    <Switch
-                      id={startFromOriginSwitchId}
-                      checked={originControl.checked}
-                      size="sm"
-                      aria-label="Start worktree from remote"
-                      onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
-                    />
-                  </label>
-                }
-              />
-              <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Uses the latest commit of the base branch’s tracked remote branch, even if its name
-                differs. Otherwise uses the same-named branch on origin. Uses your local branch if
-                that remote branch is missing.
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
           {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
         </div>
       </ComboboxPopup>
@@ -241,7 +206,6 @@ export function BranchPicker({
 
 export function BranchPickerRefItem({
   branch: refName,
-  projectCwd: activeProjectCwd,
   index,
   value,
   disabled,
@@ -249,7 +213,6 @@ export function BranchPickerRefItem({
   onContextMenu,
 }: {
   branch: VcsRef;
-  projectCwd: string | null;
   index: number;
   value?: string;
   disabled?: boolean;
@@ -257,17 +220,13 @@ export function BranchPickerRefItem({
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
 }) {
   const itemValue = refName.name;
-  const hasSecondaryWorktree =
-    refName.worktreePath && activeProjectCwd && refName.worktreePath !== activeProjectCwd;
   const badge = refName.current
     ? "current"
-    : hasSecondaryWorktree
-      ? "worktree"
-      : refName.isRemote
-        ? "remote"
-        : refName.isDefault
-          ? "default"
-          : null;
+    : refName.isRemote
+      ? "remote"
+      : refName.isDefault
+        ? "default"
+        : null;
   return (
     <ComboboxItem
       disabled={disabled}

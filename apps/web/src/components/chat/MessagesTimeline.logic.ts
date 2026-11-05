@@ -1,4 +1,3 @@
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
@@ -53,7 +52,6 @@ import {
   isCompactionCommandMessage,
   type MessageId,
   type OrchestrationV2IdleCompaction,
-  type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
   type RunAttemptId,
   type RuntimeRequestId,
@@ -498,13 +496,6 @@ export type MessagesTimelineRow = MessagesTimelineRowContent & {
 };
 
 type MessagesTimelineRowContent =
-  | {
-      kind: "worktree-setup";
-      id: string;
-      createdAt: string | null;
-      snapshot: WorktreeSetupSnapshot;
-      embedded: boolean;
-    }
   | {
       kind: "work";
       id: string;
@@ -1406,7 +1397,6 @@ export function deriveMessagesTimelineRows(input: {
   supportsConversationRollback: boolean;
   threadStartCheckpointReady?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
-  worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
   const isPendingApproval = (entry: WorkLogEntry) => {
@@ -2054,49 +2044,6 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  const setupHandedOff =
-    input.worktreeSetup !== null &&
-    input.worktreeSetup !== undefined &&
-    worktreeSetupAgentStarted(input.worktreeSetup) &&
-    input.latestRun?.startedAt != null;
-  const setupOwnsWorkingSlot =
-    !setupHandedOff &&
-    (input.worktreeSetup?.phase === "running" || input.worktreeSetup?.phase === "done");
-  if (input.worktreeSetup && (!setupHandedOff || input.worktreeSetup.phase !== "running")) {
-    const setupRow = {
-      kind: "worktree-setup",
-      id: WORKTREE_SETUP_ROW_ID,
-      createdAt: input.worktreeSetup.startedAt,
-      snapshot: input.worktreeSetup,
-      embedded: setupHandedOff,
-    } as const;
-    const firstUserRowIndex = nextRows.findIndex(
-      (row) => row.kind === "message" && row.message.role === "user",
-    );
-    const workingRowIndex = setupOwnsWorkingSlot
-      ? nextRows.findIndex((row) => row.kind === "working")
-      : -1;
-    if (workingRowIndex >= 0) {
-      nextRows.splice(workingRowIndex + 1, 0, setupRow);
-    } else {
-      const insertAt = firstUserRowIndex >= 0 ? firstUserRowIndex + 1 : nextRows.length;
-      nextRows.splice(
-        insertAt,
-        0,
-        ...(setupOwnsWorkingSlot
-          ? [
-              {
-                kind: "working",
-                id: "working-indicator-row",
-                createdAt: input.worktreeSetup.startedAt,
-              } as const,
-              setupRow,
-            ]
-          : [setupRow]),
-      );
-    }
-  }
-
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
@@ -2104,7 +2051,6 @@ export function deriveMessagesTimelineRows(input: {
   if (
     input.isWorking &&
     input.latestRun?.turnEnded !== true &&
-    !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&
     (latestToolFailed || (!hasActivityRow && !input.pendingApprovalRequestIds?.size))
@@ -2229,8 +2175,6 @@ function attachCreatedThreadSummaries(
     return [row];
   });
 }
-
-const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 
 export type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
 
@@ -2396,9 +2340,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bt = b as typeof a;
       return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
     }
-    case "worktree-setup":
-      return a.snapshot === (b as typeof a).snapshot;
-
     case "assistant-meta": {
       const bm = b as typeof a;
       return (

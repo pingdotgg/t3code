@@ -121,9 +121,7 @@ it("keeps compiled branch results stable and resets pagination for a new target 
     const [, cwd, cursor] = JSON.parse(key) as [string, string, number | null];
     return Atom.make(
       AsyncResult.success({
-        refs: [
-          { name: `${cwd}-${cursor ?? 0}`, current: false, isDefault: false, worktreePath: null },
-        ],
+        refs: [{ name: `${cwd}-${cursor ?? 0}`, current: false, isDefault: false }],
         isRepo: true,
         hasPrimaryRemote: true,
         nextCursor: cursor === null ? 100 : null,
@@ -176,7 +174,7 @@ it("keeps compiled branch results stable and resets pagination for a new target 
       pages(JSON.stringify([target.environmentId, "/repo", null])),
       AsyncResult.success({
         ...first.data!,
-        refs: [{ name: "/repo-0", current: true, isDefault: false, worktreePath: null }],
+        refs: [{ name: "/repo-0", current: true, isDefault: false }],
       }),
     ),
   );

@@ -119,7 +119,6 @@ function project(environment: string, id: string): EnvironmentProject {
     workspaceRoot: `/${id}`,
     repositoryIdentity: null,
     defaultModelSelection: null,
-    defaultThreadEnvMode: "worktree",
     scripts: [],
     createdAt: "2026-10-26T00:00:00Z",
     updatedAt: "2026-10-26T00:00:00Z",
@@ -168,9 +167,9 @@ function setup() {
   mocks.status.mockImplementation(status);
   const refs = Atom.family((key: string) =>
     Atom.make(() => {
-      const [, cwd] = JSON.parse(key) as [string, string];
+      const [, _cwd] = JSON.parse(key) as [string, string];
       const result: VcsListRefsResult = {
-        refs: [{ name: "main", current: true, isDefault: true, worktreePath: cwd }],
+        refs: [{ name: "main", current: true, isDefault: true }],
         isRepo: true,
         hasPrimaryRemote: true,
         nextCursor: null,
@@ -295,23 +294,15 @@ it("owns a status stream only while the draft is active, retaining draft choices
   await screen.emit("/a", "stale-branch");
   expect(screen.current.currentCheckoutBranchName).toBe("main");
   expect(screen.snapshot(draftKey).workspaceSelection).toBeUndefined();
-  act(() => screen.current.setWorkspaceMode("worktree"));
   act(() =>
     screen.current.selectBranch({
       name: "feature",
       current: false,
       isDefault: false,
-      worktreePath: null,
     }),
   );
-  act(() => screen.current.setStartFromOrigin(true));
   const chosenWorkspace = screen.snapshot(draftKey).workspaceSelection;
-  expect(chosenWorkspace).toEqual({
-    mode: "worktree",
-    branch: "feature",
-    worktreePath: null,
-    startFromOrigin: true,
-  });
+  expect(chosenWorkspace).toEqual({ branch: "feature" });
 
   await screen.render(false);
   const settingsWrites = mocks.writeSettings.mock.calls.length;
@@ -354,14 +345,13 @@ it("uses cached repository capability and branch defaults while offline", async 
   screen.offline();
   await screen.render(true);
   expect(screen.current.currentCheckoutBranchName).toBeNull();
-  expect(screen.current.isGitRepoKnown).toBe(true);
-  expect(screen.current.workspaceMode).toBe("worktree");
-  expect(screen.current.selectedBranchName).toBe("main");
+  expect(screen.current.isGitRepo).toBe(true);
+  expect(screen.current.selectedBranchName).toBeNull();
   const draftKey = screen.current.draftKey!;
   expect(screen.snapshot(draftKey).workspaceSelection).toBeUndefined();
   await screen.render(false);
   await screen.expireIdle();
   await screen.render(true);
   expect(screen.current.draftKey).toBe(draftKey);
-  expect(screen.current.selectedBranchName).toBe("main");
+  expect(screen.current.selectedBranchName).toBeNull();
 });

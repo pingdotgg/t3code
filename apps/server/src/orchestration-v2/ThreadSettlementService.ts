@@ -96,7 +96,7 @@ function settlementPullRequestLinks(
 }
 
 /** Absolute age bounds clock skew in both directions and expires stale pre-adoption data. */
-export function threadHasQueuedTurnStart(
+function threadHasQueuedTurnStart(
   thread: Pick<
     OrchestrationV2ThreadShell,
     | "latestUserMessageAt"
@@ -604,7 +604,6 @@ export const make = Effect.gen(function* () {
         threadId,
         projectId: thread.projectId,
         worktreePath,
-        trigger: "settle",
         observeCompletion: {},
       });
       settleActionRunAt.set(threadId, settledAtMs);

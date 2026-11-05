@@ -53,7 +53,6 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 }
 
 export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
-export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
   readonly editingId: string | null;
@@ -70,10 +69,6 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
-  readonly workspaceMode: WorkspaceMode;
-  readonly baseRef: string;
-  readonly startFromOrigin: boolean;
-  readonly existingWorktreePath: string;
   readonly modelKey: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -254,16 +249,6 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
-    workspaceMode: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
-    startFromOrigin:
-      task.workspaceStrategy.type === "worktree"
-        ? (task.workspaceStrategy.startFromOrigin ?? false)
-        : true,
-    existingWorktreePath:
-      task.workspaceStrategy.type === "existing_worktree"
-        ? task.workspaceStrategy.worktreePath
-        : "",
     modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,

@@ -19,7 +19,6 @@ const VCS_REF_QUERY_MAX_LENGTH = 256;
 export async function checkoutNewTaskBranch<E>(input: {
   readonly branch: VcsRef;
   readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot"> | null;
-  readonly workspaceMode: "local" | "worktree";
   readonly readRefs: (request: {
     readonly environmentId: EnvironmentProject["environmentId"];
     readonly input: VcsListRefsInput;
@@ -34,13 +33,11 @@ export async function checkoutNewTaskBranch<E>(input: {
       Cause.fail(new Error("The selected project is unavailable. Reconnect and try again.")),
     );
   }
-  if (input.workspaceMode === "worktree" || input.branch.current) {
-    return AsyncResult.success(
-      input.branch.current ? { ...input.branch, worktreePath: null } : input.branch,
-    );
+  if (input.branch.current) {
+    return AsyncResult.success(input.branch);
   }
 
-  // Remote refs omit local worktrees, and historical thread metadata can be stale.
+  // Remote refs omit local branches, and historical thread metadata can be stale.
   const localName = localBranchName(input.branch);
   let cursor: number | undefined;
   for (;;) {
@@ -59,27 +56,8 @@ export async function checkoutNewTaskBranch<E>(input: {
     if (
       local &&
       (!input.branch.isRemote || local.upstreamRef === `refs/remotes/${input.branch.name}`) &&
-      (local.current || local.worktreePath)
+      local.current
     ) {
-      if (local.current) return AsyncResult.success({ ...local, worktreePath: null });
-      if (refs.value.isAtRepositoryRoot === undefined) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new Error(
-              "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
-            ),
-          ),
-        );
-      }
-      if (!refs.value.isAtRepositoryRoot) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new Error(
-              "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
-            ),
-          ),
-        );
-      }
       return AsyncResult.success(local);
     }
     if (local || refs.value.nextCursor === null) break;
@@ -95,7 +73,6 @@ export async function checkoutNewTaskBranch<E>(input: {
     current: true,
     isRemote: false,
     name: value.refName ?? input.branch.name,
-    worktreePath: null,
   }));
 }
 

@@ -41,9 +41,6 @@ export type T3McpToolSummaryAction =
   | "question-read"
   | "question-respond"
   | "secret-request"
-  | "worktree-handoff"
-  | "worktree-list"
-  | "worktree-status"
   | "project-list"
   | "project-read"
   | "project-create"
@@ -180,11 +177,6 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Interrupt", "Interrupting", "Requested an interrupt of", "a T3 thread"],
     "thread-interrupt",
   ),
-  t3_worktree_handoff: tool(
-    ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
-    "worktree-handoff",
-  ),
-  t3_worktree_status: tool(["Get", "Getting", "Got", "thread worktree status"], "worktree-status"),
   preview_status: tool(["Get", "Getting", "Got", "preview browser status"], "browser", "browser"),
   preview_open: tool(
     ["Open", "Opening", "Opened", "a page in the preview browser"],
@@ -331,7 +323,6 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
   t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),
-  t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
   t3_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),
   t3_environment_read: tool(

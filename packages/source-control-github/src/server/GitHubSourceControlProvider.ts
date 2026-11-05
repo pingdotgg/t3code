@@ -906,7 +906,7 @@ export const make = Effect.gen(function* () {
         return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === target;
       },
     ),
-    // `gh pr create` run in the checkout, as an agent in a T3 worktree often does, takes its base
+    // `gh pr create` run in the checkout, as an agent often does, takes its base
     // from this key.
     recordBranchBase: Effect.fn("GitHubSourceControlProvider.recordBranchBase")(function ({
       cwd,

@@ -381,7 +381,6 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
-    worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     secretProviders: secretProvidersPatch,
@@ -487,28 +486,6 @@ export function applyServerSettingsPatch(
     ...next,
     favorites,
     providerModelPreferences: nextModelPreferences,
-    ...(worktreeCleanupPatch === undefined
-      ? {}
-      : {
-          worktreeCleanup:
-            worktreeCleanupPatch?.mode === "custom"
-              ? {
-                  mode: "custom" as const,
-                  rules: {
-                    worktreeKeepWhen: next.storageCleanup.worktreeKeepWhen,
-                    worktreeAfterDays: next.storageCleanup.worktreeAfterDays,
-                    worktreeSettledAfterDays: next.storageCleanup.worktreeSettledAfterDays,
-                    worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
-                    worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
-                    worktreeUnchanged: next.storageCleanup.worktreeUnchanged,
-                    ...(current.worktreeCleanup?.mode === "custom"
-                      ? current.worktreeCleanup.rules
-                      : {}),
-                    ...worktreeCleanupPatch.rules,
-                  },
-                }
-              : worktreeCleanupPatch,
-        }),
     ...(backgroundActivity !== undefined
       ? {
           backgroundActivity: {
@@ -524,20 +501,6 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
-      : {}),
-    ...(patch.worktreesDirectory !== undefined &&
-    patch.worktreesDirectory !== current.worktreesDirectory
-      ? {
-          previousWorktreesDirectories: [
-            ...current.previousWorktreesDirectories.filter(
-              (directory) => directory !== patch.worktreesDirectory,
-            ),
-            ...(current.worktreesDirectory !== "" &&
-            !current.previousWorktreesDirectories.includes(current.worktreesDirectory)
-              ? [current.worktreesDirectory]
-              : []),
-          ],
-        }
       : {}),
     // Per host, a patched field replaces the saved one: deepMerge would keep a cleared account pin.
     ...(sourceControlHostsPatch !== undefined

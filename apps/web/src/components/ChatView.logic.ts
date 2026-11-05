@@ -45,9 +45,7 @@ import {
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
-  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as DateTime from "effect/DateTime";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
@@ -93,7 +91,6 @@ import {
   terminalContextReference,
 } from "../lib/composerContextRecords";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
-import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
 import { derivePhase, type TimelineEntry } from "../session-logic";
@@ -294,38 +291,13 @@ export function shouldReleaseTimelineAnchorForToolActivity(input: {
   });
 }
 
-export { resolveVisibleWorktreeSetup } from "@t3tools/client-runtime/worktree-setup";
-
-export function resolveWorktreeSetupProgress(input: {
-  threadId: ThreadId;
-  localPreparing: boolean;
-  runStatus: NonNullable<Thread["latestRun"]>["status"] | undefined;
-  latest: WorktreeSetupSnapshot | null | undefined;
-  held: WorktreeSetupSnapshot | null;
-}) {
-  const latest = input.latest?.threadId === input.threadId ? input.latest : null;
-  const held = input.held?.threadId === input.threadId ? input.held : null;
-  const snapshot = latest && (!held || latest.sequence >= held.sequence) ? latest : held;
-  return {
-    snapshot,
-    isPreparingWorktree:
-      input.localPreparing ||
-      input.runStatus === "preparing" ||
-      (snapshot?.phase === "running" && !worktreeSetupAgentStarted(snapshot)),
-  };
-}
-
 export function resolveDraftHeroState(input: {
   isLocalDraftThread: boolean;
   hasTimelineEntries: boolean;
   isWorking: boolean;
   draftHeroDockRequested: boolean;
   backgroundSubmissionPending: boolean;
-  hasWorktreeSetupCard?: boolean;
 }): boolean {
-  if (input.hasWorktreeSetupCard) {
-    return false;
-  }
   if (input.backgroundSubmissionPending) {
     return true;
   }
@@ -711,26 +683,6 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
 
 export { readFileAsDataUrl } from "../lib/imageCompression";
 
-export { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
-
-export function resolveBackgroundDraftWorkspaceOptions(input: {
-  envMode: DraftThreadEnvMode;
-  branch: string | null;
-  startFromOrigin: boolean;
-}): {
-  envMode: DraftThreadEnvMode;
-  branch: string | null;
-  worktreePath: null;
-  startFromOrigin: boolean;
-} {
-  return {
-    envMode: input.envMode,
-    branch: input.branch,
-    worktreePath: null,
-    startFromOrigin: input.envMode === "worktree" && input.startFromOrigin,
-  };
-}
-
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {
@@ -1035,7 +987,6 @@ export async function waitForRevertedMessage(
 
 export interface LocalDispatchSnapshot {
   startedAt: string;
-  preparingWorktree: boolean;
   submissionIntent: ComposerSubmissionIntent;
   latestUserMessageId: ChatMessage["id"] | null;
   latestRunId: RunId | null;
@@ -1049,7 +1000,6 @@ export interface LocalDispatchSnapshot {
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
   options?: {
-    preparingWorktree?: boolean;
     latestUserMessageId?: ChatMessage["id"] | null;
     submissionIntent?: ComposerSubmissionIntent;
   },
@@ -1058,7 +1008,6 @@ export function createLocalDispatchSnapshot(
   const runtime = activeThread?.runtime ?? null;
   return {
     startedAt: new Date().toISOString(),
-    preparingWorktree: Boolean(options?.preparingWorktree),
     submissionIntent: options?.submissionIntent ?? "foreground",
     latestUserMessageId: options?.latestUserMessageId ?? null,
     latestRunId: latestRun?.runId ?? null,
@@ -1398,24 +1347,15 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
 
 export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
 
-/** How a composer send dispatches: where it runs and whether it waits behind other work. */
+/** How a composer send dispatches: whether it waits behind a compaction or the active run. */
 export function planComposerTurn(input: {
   readonly messageText: string;
-  readonly sendQueuesBehindSetup: boolean;
-  readonly isServerThread: boolean;
-  readonly activeMessageCount: number;
-  readonly sendEnvMode: DraftThreadEnvMode;
-  readonly worktreePath: string | null;
-  readonly activeThreadBranch: string | null;
+  readonly sendQueuesBehindStart: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly keepFullHistory: boolean;
   readonly phase: SessionPhase;
   readonly dispatchMode: ComposerDispatchMode;
 }) {
-  const isFirstMessage =
-    !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
-  const shouldCreateWorktree =
-    isFirstMessage && input.sendEnvMode === "worktree" && !input.worktreePath;
   // A stale Claude session compacts before this message so the turn does not re-read the
   // old history. The message queues behind the /compact run, since steering into it is
   // rejected.
@@ -1424,16 +1364,12 @@ export function planComposerTurn(input: {
     !input.keepFullHistory &&
     !COMPACT_COMMAND_PATTERN.test(input.messageText);
   return {
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
-    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
     compactBeforeSend,
     turnDispatchMode:
-      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,
+      compactBeforeSend || input.sendQueuesBehindStart ? ("queue" as const) : input.dispatchMode,
     shouldQueueBehindActiveRun:
       compactBeforeSend ||
-      input.sendQueuesBehindSetup ||
+      input.sendQueuesBehindStart ||
       (input.phase === "running" && input.dispatchMode === "queue"),
   };
 }

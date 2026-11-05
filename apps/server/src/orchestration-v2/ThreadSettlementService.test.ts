@@ -1498,7 +1498,6 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           const run = yield* Queue.take(fixture.scriptRuns);
           assert.strictEqual(run.threadId, worktree.id);
           assert.strictEqual(run.worktreePath, "/worktrees/thread");
-          assert.strictEqual(run.trigger, "settle");
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

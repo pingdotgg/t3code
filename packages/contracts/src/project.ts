@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
+import { RepositoryIdentity } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   CommandId,
@@ -36,7 +36,6 @@ export const ProjectScript = Schema.Struct({
   name: TrimmedNonEmptyString,
   command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
-  runOnWorktreeCreate: Schema.Boolean,
   runOnSettle: Schema.optional(Schema.Boolean),
   async: Schema.optional(Schema.Boolean),
   previewUrl: Schema.optional(TrimmedNonEmptyString),
@@ -157,7 +156,6 @@ export const Project = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   projectIcon: Schema.optional(Schema.NullOr(ReceivedProjectIcon)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
-  defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Opt-in because background sync performs network I/O and may move the checkout.
   autoPull: Schema.optional(Schema.Boolean),
   scripts: Schema.Array(ProjectScript),
@@ -191,7 +189,6 @@ export const ProjectUpdatePayload = Schema.Struct({
   autoPull: Schema.optional(Schema.Boolean),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   pinned: Schema.optional(Schema.Boolean),
   archived: Schema.optional(

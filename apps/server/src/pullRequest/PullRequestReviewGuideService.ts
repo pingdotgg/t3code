@@ -320,7 +320,12 @@ const make = Effect.gen(function* () {
     });
     yield* Effect.addFinalizer(() =>
       git
-        .removeWorktree({ cwd: workspaceRoot, path, force: true })
+        .execute({
+          operation: "PullRequestReviewGuideService.removeWorktree",
+          cwd: workspaceRoot,
+          args: ["worktree", "remove", "--force", path],
+          timeoutMs: 5 * 60_000,
+        })
         .pipe(Effect.ignore({ log: true })),
     );
     const mergeBase = yield* git.execute({

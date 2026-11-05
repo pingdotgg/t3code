@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import {
-  GitCommandError,
-  GitPreparePullRequestThreadResult,
-  GitRunStackedActionInput,
-} from "./git.ts";
+import { GitCommandError, GitRunStackedActionInput } from "./git.ts";
 
 const decodeGitCommandError = Schema.decodeUnknownSync(Schema.toCodecJson(GitCommandError));
-const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
-  GitPreparePullRequestThreadResult,
-);
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
 describe("GitCommandError", () => {
@@ -28,25 +21,6 @@ describe("GitCommandError", () => {
     expect(error.message).toBe(
       "Git command failed in GitVcsDriver.createWorktree (/repo): git worktree add failed",
     );
-  });
-});
-
-describe("GitPreparePullRequestThreadResult", () => {
-  it("defaults legacy responses to the pull request head", () => {
-    const parsed = decodePreparePullRequestThreadResult({
-      pullRequest: {
-        number: 42,
-        title: "PR threads",
-        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
-        baseBranch: "main",
-        headBranch: "feature/pr-threads",
-        state: "open",
-      },
-      branch: "feature/pr-threads",
-      worktreePath: "/tmp/pr-threads",
-    });
-
-    expect(parsed.isOnPullRequestHead).toBe(true);
   });
 });
 

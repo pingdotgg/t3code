@@ -9,12 +9,10 @@ const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   primaryScopes: new Set<string>(),
   branch: "main",
-  worktrees: [] as string[],
   thread: {
     id: "thread",
     environmentId: "environment",
     branch: "main",
-    worktreePath: null as string | null,
   },
   commits: 0,
   pushes: 0,
@@ -43,10 +41,9 @@ vi.mock("./use-thread-selection", () => ({
     selectedThreadProject: { workspaceRoot: "/repo" },
   }),
 }));
-vi.mock("./use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({
+vi.mock("./use-selected-thread-cwd", () => ({
+  useSelectedThreadCwd: () => ({
     selectedThreadCwd: "/repo",
-    selectedThreadWorktreePath: null,
   }),
 }));
 vi.mock("./queries", () => ({
@@ -70,7 +67,7 @@ vi.mock("./threads", () => ({
       input,
     }: {
       environmentId: string;
-      input: { branch: string; worktreePath: string | null };
+      input: { branch: string };
     }) => {
       state.metadataRequests.push({ environmentId, branch: input.branch });
       if (!state.scopes.has(AuthOrchestrationOperateScope)) {
@@ -98,13 +95,6 @@ vi.mock("./vcs", () => ({
       state.afterGitAction?.();
       return AsyncResult.success({ refName: state.branch });
     },
-    createWorktree: async ({ input }: { input: { newRefName: string } }) => {
-      state.worktrees.push("/repo-worktree");
-      state.afterGitAction?.();
-      return AsyncResult.success({
-        worktree: { path: "/repo-worktree", refName: input.newRefName },
-      });
-    },
     pull: async () => AsyncResult.success({ status: "pulled", refName: state.branch }),
   },
   vcsActionManager: {
@@ -131,9 +121,7 @@ describe("thread Git mutation permissions", () => {
     state.scopes = new Set([AuthSourceControlWriteScope]);
     state.primaryScopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
     state.branch = "main";
-    state.worktrees = [];
     state.thread.branch = "main";
-    state.thread.worktreePath = null;
     state.commits = 0;
     state.pushes = 0;
     state.metadataRequests = [];
@@ -141,24 +129,6 @@ describe("thread Git mutation permissions", () => {
     state.afterGitAction = undefined;
     state.statusRefreshes = 0;
   });
-
-  it.each([false, true])(
-    "requires task permission before creating and attaching a worktree: %s",
-    async (canOperate) => {
-      if (canOperate) state.scopes.add(AuthOrchestrationOperateScope);
-      const actions = useSelectedThreadGitActions();
-      const result = await actions.onCreateSelectedThreadWorktree({
-        baseBranch: "main",
-        newBranch: "feature/task",
-      });
-      expect(result).toEqual(
-        canOperate ? { worktree: { path: "/repo-worktree", refName: "feature/task" } } : null,
-      );
-      expect(state.worktrees).toEqual(canOperate ? ["/repo-worktree"] : []);
-      expect(state.thread.worktreePath).toBe(canOperate ? "/repo-worktree" : null);
-      expect(state.thread.branch).toBe(canOperate ? "feature/task" : "main");
-    },
-  );
 
   it("keeps ordinary commits and pushes available without task permission", async () => {
     const actions = useSelectedThreadGitActions();
@@ -170,7 +140,7 @@ describe("thread Git mutation permissions", () => {
     expect(state.metadataRequests).toEqual([]);
   });
 
-  it.each(["create", "checkout", "worktree", "commit"] as const)(
+  it.each(["create", "checkout", "commit"] as const)(
     "does not send thread metadata after task permission is revoked during %s",
     async (operation) => {
       state.scopes.add(AuthOrchestrationOperateScope);
@@ -180,27 +150,18 @@ describe("thread Git mutation permissions", () => {
         expect(await actions.onCreateSelectedThreadBranch("feature")).toBeNull();
       if (operation === "checkout")
         expect(await actions.onCheckoutSelectedThreadBranch("feature")).toBeNull();
-      if (operation === "worktree")
-        expect(
-          await actions.onCreateSelectedThreadWorktree({
-            baseBranch: "main",
-            newBranch: "feature",
-          }),
-        ).toBeNull();
       if (operation === "commit")
         expect(
           await actions.onRunSelectedThreadGitAction({ action: "commit", featureBranch: true }),
         ).toBeNull();
-      if (operation === "worktree") expect(state.worktrees).toEqual(["/repo-worktree"]);
-      else expect(state.branch).toBe("feature");
+      expect(state.branch).toBe("feature");
       expect(state.thread.branch).toBe("main");
-      expect(state.thread.worktreePath).toBeNull();
       expect(state.metadataRequests).toEqual([]);
       expect(state.results.map((result) => result.type)).toEqual(["error"]);
     },
   );
 
-  it("refreshes the worktree status when the metadata update is denied after checkout", async () => {
+  it("refreshes the status when the metadata update is denied after checkout", async () => {
     state.scopes.add(AuthOrchestrationOperateScope);
     state.afterGitAction = () => state.scopes.delete(AuthOrchestrationOperateScope);
     expect(
@@ -210,7 +171,7 @@ describe("thread Git mutation permissions", () => {
     expect(state.statusRefreshes).toBe(1);
   });
 
-  it.each(["create", "checkout", "worktree"] as const)(
+  it.each(["create", "checkout"] as const)(
     "returns the accepted %s result when only source-control permission is revoked after Git",
     async (operation) => {
       state.scopes.add(AuthOrchestrationOperateScope);
@@ -219,17 +180,8 @@ describe("thread Git mutation permissions", () => {
       const result =
         operation === "create"
           ? await actions.onCreateSelectedThreadBranch("feature/task")
-          : operation === "checkout"
-            ? await actions.onCheckoutSelectedThreadBranch("feature/task")
-            : await actions.onCreateSelectedThreadWorktree({
-                baseBranch: "main",
-                newBranch: "feature/task",
-              });
-      expect(result).toEqual(
-        operation === "worktree"
-          ? { worktree: { path: "/repo-worktree", refName: "feature/task" } }
-          : { refName: "feature/task" },
-      );
+          : await actions.onCheckoutSelectedThreadBranch("feature/task");
+      expect(result).toEqual({ refName: "feature/task" });
       expect(state.thread.branch).toBe("feature/task");
       expect(state.metadataRequests).toHaveLength(1);
       expect(state.results).toEqual([]);
@@ -255,7 +207,6 @@ describe("automatic feature branch refs", () => {
             isRemote: false,
             current: false,
             isDefault: false,
-            worktreePath: null,
           },
         ]
       : [];
@@ -274,7 +225,6 @@ describe("automatic feature branch refs", () => {
       isRemote: false,
       current: false,
       isDefault: false,
-      worktreePath: null,
     };
     request.resolve({
       ...empty,

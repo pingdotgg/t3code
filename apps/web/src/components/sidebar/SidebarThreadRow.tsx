@@ -91,7 +91,6 @@ import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
-  ThreadWorktreeIndicator,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
   terminalStatusFromRunningIds,
@@ -785,7 +784,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
-    effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
     activeThreadBranch: thread.branch,
     currentGitBranch: visibleGitStatus?.refName ?? null,
@@ -1146,12 +1144,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
       {thread.branch ? (
-        <>
-          <ThreadWorktreeIndicator thread={thread} />
-          <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={thread.branch} showTitle={false} />
-          </span>
-        </>
+        <span className="flex min-w-0 flex-1">
+          <MiddleTruncate value={thread.branch} showTitle={false} />
+        </span>
       ) : showsScratchMachine ? (
         <>
           <EnvironmentMachineIcon
@@ -1654,7 +1649,6 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     gitStatus.data,
   );
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
-    effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
     activeThreadBranch: thread.branch,
     currentGitBranch: visibleGitStatus?.refName ?? null,

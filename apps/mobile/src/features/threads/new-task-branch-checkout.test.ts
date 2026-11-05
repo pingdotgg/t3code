@@ -17,7 +17,6 @@ function request(flowKey: string, branch: string): BranchCheckoutRequest {
     environmentId: null,
     workspaceRoot: "/repo",
     branch,
-    worktreePath: null,
   };
 }
 
@@ -40,7 +39,7 @@ function setup() {
 }
 
 const success = (name: string): BranchCheckoutResult =>
-  AsyncResult.success({ name, current: true, isDefault: false, worktreePath: null });
+  AsyncResult.success({ name, current: true, isDefault: false });
 const failure: BranchCheckoutResult = AsyncResult.failure(Cause.fail(new Error("dirty tree")));
 
 describe("new task branch checkouts", () => {

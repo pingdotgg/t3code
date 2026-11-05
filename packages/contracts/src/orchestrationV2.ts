@@ -651,23 +651,10 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
-export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("existing_worktree"),
-    worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-    startFromOrigin: Schema.optional(Schema.Boolean),
-  }),
-]);
+export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Struct({
+  type: Schema.Literal("root"),
+  branch: Schema.optional(TrimmedNonEmptyString),
+});
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
@@ -712,24 +699,6 @@ export function orchestrationV2RunWorkStartedAt(
   run: Pick<OrchestrationV2Run, "workStartedAt" | "startedAt" | "requestedAt">,
 ): OrchestrationV2Run["requestedAt"] {
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
-}
-
-/**
- * Work started now would run in the project checkout, not the worktree the thread asked for. A
- * failed or interrupted setup leaves the request standing until a worktree exists.
- */
-export function orchestrationV2WorktreePending(
-  worktreePath: string | null,
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "workspacePreparation">>,
-): boolean {
-  return (
-    worktreePath === null &&
-    runs.some(
-      (run) =>
-        (run.status === "preparing" || run.status === "failed" || run.status === "interrupted") &&
-        run.workspacePreparation?.type === "worktree",
-    )
-  );
 }
 
 export const OrchestrationV2RunAttempt = Schema.Struct({
@@ -3201,7 +3170,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
-    phase: Schema.Literals(["worktree", "setup"]),
+    phase: Schema.Literal("setup"),
   }),
   Schema.Struct({
     type: Schema.Literal("prepared-run.fail"),
@@ -3581,7 +3550,6 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
-  getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
@@ -3712,12 +3680,6 @@ export const OrchestrationV2GetThreadTitlesInput = Schema.Struct({
 /** Titles of the requested threads that exist, archived ones included. Deleted and unknown ids are absent. */
 export const OrchestrationV2ThreadTitles = Schema.Record(ThreadId, Schema.String);
 
-export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
-  worktreePath: TrimmedNonEmptyString,
-});
-export type OrchestrationV2GetWorktreeThreadIdsInput =
-  typeof OrchestrationV2GetWorktreeThreadIdsInput.Type;
-
 /**
  * The client's thread search. With `olderSettledBefore`, the result also carries the rows of the
  * best matching threads settled before it, which shells that omit older settled threads leave out:
@@ -3771,12 +3733,6 @@ export const OrchestrationV2OlderSettledThreadsPage = Schema.Struct({
 });
 export type OrchestrationV2OlderSettledThreadsPage =
   typeof OrchestrationV2OlderSettledThreadsPage.Type;
-
-/** Active threads on a worktree path, including subagent children a shell may leave out. */
-export const OrchestrationV2WorktreeThreadIds = Schema.Struct({
-  threadIds: Schema.Array(ThreadId),
-});
-export type OrchestrationV2WorktreeThreadIds = typeof OrchestrationV2WorktreeThreadIds.Type;
 
 export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -4237,10 +4193,6 @@ export const OrchestrationV2RpcSchemas = {
   getThreadTitles: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: OrchestrationV2ThreadTitles,
-  },
-  getWorktreeThreadIds: {
-    input: OrchestrationV2GetWorktreeThreadIdsInput,
-    output: OrchestrationV2WorktreeThreadIds,
   },
   getOlderSettledThreads: {
     input: OrchestrationV2GetOlderSettledThreadsInput,

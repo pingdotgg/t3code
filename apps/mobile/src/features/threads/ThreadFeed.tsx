@@ -25,11 +25,6 @@ import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestSha
 import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import {
-  WorktreeWorkingHeader,
-  WorktreeSetupCard,
-  type WorktreeSetupCardProps,
-} from "./worktree-setup-card";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
@@ -341,8 +336,6 @@ export interface ThreadFeedHandle {
 }
 
 export interface ThreadFeedProps {
-  readonly worktreeSetup?: WorktreeSetupCardProps | null;
-  readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
@@ -3217,8 +3210,6 @@ export const ThreadFeed = memo(function ThreadFeed({
   const listAppearanceData = {
     disclosureLayout,
     reduceMotion,
-    worktreeSetup: props.worktreeSetup,
-    setupWorkingStartedAt: props.setupWorkingStartedAt,
     dispatchingMessageId: props.dispatchingMessageId,
     unsettledTurnId,
     copiedRowId,
@@ -3328,14 +3319,9 @@ export const ThreadFeed = memo(function ThreadFeed({
       expandedTurnIds: new Set(current.expandedTurnIds).add(jumpRunId),
     }));
   }
-  const setupAnchorIndex = presentedFeed.findIndex(
-    (entry) => entry.type === "message" && entry.message.role === "user",
-  );
   const [groupFeed] = useState(createThreadFeedGrouping);
   const groupedFeed = groupFeed(presentedFeed, {
     workflowOpeningMessageId: workflowOpening?.messageId,
-    setupAnchorIndex:
-      props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
   // The empty↔filled key below remounts the list and resets its imperative
   // content-inset override. Seed each fresh instance as it attaches with the
@@ -3783,11 +3769,6 @@ export const ThreadFeed = memo(function ThreadFeed({
             workspaceRoot: props.workspaceRoot,
             workflowOpening,
           })}
-          {props.worktreeSetup && info.index === setupAnchorIndex ? (
-            <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-          ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
-            <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
-          ) : null}
         </ThreadMediaVisibility>
       </MessageImageGalleryScope>
     </DisclosureRow>
@@ -3925,9 +3906,6 @@ export const ThreadFeed = memo(function ThreadFeed({
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
-                {setupAnchorIndex < 0 && props.worktreeSetup ? (
-                  <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-                ) : null}
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />
                 ) : null}
@@ -3954,7 +3932,6 @@ export const ThreadFeed = memo(function ThreadFeed({
           />
         </View>
         {presentedFeed.length === 0 &&
-        !props.worktreeSetup &&
         props.activeWorkStartedAt === null &&
         props.contentPresentation.kind === "ready" ? (
           <View

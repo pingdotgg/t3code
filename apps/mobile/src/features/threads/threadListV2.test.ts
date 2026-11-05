@@ -745,9 +745,7 @@ describe("buildThreadListV2Items settled sort reuse", () => {
 function makePendingTask(id: string): PendingNewTask {
   const creation = {
     projectId: ProjectId.make("project-1"),
-    workspaceMode: "worktree" as const,
     branch: null,
-    worktreePath: null,
   };
   return {
     kind: "pending",

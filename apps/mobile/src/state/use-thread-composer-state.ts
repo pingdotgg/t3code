@@ -244,7 +244,7 @@ export function useThreadComposerState() {
   );
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
-  // detail is usually present but empty during a worktree checkout, so this
+  // detail is usually present but empty before the turn lands, so this
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
   const [feedCache] = useState(createThreadFeedCache);

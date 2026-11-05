@@ -34,19 +34,14 @@ export function useLocalDispatchState(input: {
     threadError: input.threadError,
   });
   const activeLocalDispatch = serverAcknowledgedLocalDispatch ? null : localDispatch;
-  const beginLocalDispatch = (options?: {
-    preparingWorktree?: boolean;
-    submissionIntent?: ComposerSubmissionIntent;
-  }) => {
-    const preparingWorktree = Boolean(options?.preparingWorktree);
+  const beginLocalDispatch = (options?: { submissionIntent?: ComposerSubmissionIntent }) => {
     setLocalDispatch((current) => {
       const active = serverAcknowledgedLocalDispatch ? null : current;
       if (active) {
         const submissionIntent = options?.submissionIntent ?? active.submissionIntent;
-        return active.preparingWorktree === preparingWorktree &&
-          active.submissionIntent === submissionIntent
+        return active.submissionIntent === submissionIntent
           ? active
-          : { ...active, preparingWorktree, submissionIntent };
+          : { ...active, submissionIntent };
       }
       return createLocalDispatchSnapshot(input.activeThread, {
         ...options,
@@ -59,7 +54,6 @@ export function useLocalDispatchState(input: {
     beginLocalDispatch,
     resetLocalDispatch,
     localDispatchStartedAt: activeLocalDispatch?.startedAt ?? null,
-    isPreparingWorktree: activeLocalDispatch?.preparingWorktree ?? false,
     isSendBusy: activeLocalDispatch !== null,
     backgroundSubmissionPending: activeLocalDispatch?.submissionIntent === "background",
   };

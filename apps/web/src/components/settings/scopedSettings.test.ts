@@ -7,9 +7,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
-import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
@@ -142,55 +140,6 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
-  it("edits the effective machine policy without changing other machines' rules", () => {
-    const custom = environment("Laptop", {
-      settings: {
-        worktreeCleanup: {
-          mode: "custom",
-          rules: {
-            worktreeAfterDays: 12,
-            worktreeSettledAfterDays: null,
-            worktreeOnDelete: true,
-            worktreeOnMerge: true,
-            worktreeUnchanged: false,
-            worktreeKeepWhen: "uncommitted-changes",
-          },
-        },
-      },
-    });
-    const disabled = environment("Server", {
-      settings: { worktreeCleanup: { mode: "off" } },
-    });
-    const targets = [custom, disabled];
-    const plan = planScopedSettingsPatch(all, targets, {
-      storageCleanup: { worktreeOnDelete: false },
-    });
-    const policies = plan.serverWrites.map((write, index) =>
-      resolveWorktreeCleanup(
-        applyServerSettingsPatch(targets[index]!.serverConfig!.settings, write.patch),
-        null,
-      ),
-    );
-    expect(policies).toEqual([
-      {
-        worktreeAfterDays: 12,
-        worktreeSettledAfterDays: null,
-        worktreeOnDelete: false,
-        worktreeOnMerge: true,
-        worktreeUnchanged: false,
-        worktreeKeepWhen: "uncommitted-changes",
-      },
-      {
-        worktreeAfterDays: null,
-        worktreeSettledAfterDays: null,
-        worktreeOnDelete: false,
-        worktreeOnMerge: false,
-        worktreeUnchanged: false,
-        worktreeKeepWhen: "uncommitted-changes",
-      },
-    ]);
-  });
-
   it("compares idle compaction by mode, and offers Never only where every server stores it", () => {
     const fixed = {
       settings: {
@@ -361,89 +310,6 @@ describe("scoped settings writes", () => {
     });
   });
 
-  it("keeps each project's other cleanup rules when changing one rule across machines", () => {
-    const machine = environment("Laptop", {
-      settings: {
-        storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, worktreeAfterDays: 30 },
-      },
-    });
-    const customized = environment("Server", {
-      settings: {
-        projectSettingsOverrides: {
-          [projectId]: {
-            defaultAutoPull: true,
-            worktreeCleanup: {
-              mode: "custom",
-              rules: {
-                worktreeAfterDays: 8,
-                worktreeSettledAfterDays: null,
-                worktreeOnDelete: false,
-                worktreeOnMerge: true,
-                worktreeUnchanged: false,
-                worktreeKeepWhen: "uncommitted-changes",
-              },
-            },
-          },
-        },
-      },
-    });
-    const plan = planScopedSettingsPatch(project, [machine, customized], {
-      worktreeCleanup: { mode: "custom", rules: { worktreeOnDelete: true } },
-    });
-    const settledPlan = planScopedSettingsPatch(project, [machine, customized], {
-      worktreeCleanup: { mode: "custom", rules: { worktreeSettledAfterDays: 0 } },
-    });
-    expect(
-      settledPlan.serverWrites.map((write) => write.patch.projectSettingsOverrides),
-    ).toMatchObject([
-      { [projectId]: { worktreeCleanup: { rules: { worktreeSettledAfterDays: 0 } } } },
-      { [laptopProjectId]: { worktreeCleanup: { rules: { worktreeSettledAfterDays: 0 } } } },
-    ]);
-    expect(plan.serverWrites.map((write) => write.patch.projectSettingsOverrides)).toEqual([
-      {
-        [projectId]: {
-          defaultAutoPull: true,
-          worktreeCleanup: {
-            mode: "custom",
-            rules: {
-              worktreeAfterDays: 8,
-              worktreeSettledAfterDays: null,
-              worktreeOnDelete: true,
-              worktreeOnMerge: true,
-              worktreeUnchanged: false,
-              worktreeKeepWhen: "uncommitted-changes",
-            },
-          },
-        },
-      },
-      {
-        [laptopProjectId]: {
-          worktreeCleanup: {
-            mode: "custom",
-            rules: {
-              worktreeAfterDays: 30,
-              worktreeSettledAfterDays: null,
-              worktreeOnDelete: true,
-              worktreeOnMerge: false,
-              worktreeUnchanged: false,
-              worktreeKeepWhen: "uncommitted-changes",
-            },
-          },
-        },
-      },
-    ]);
-    expect(
-      planScopedSettingsClear(checkout, [customized], ["worktreeCleanup"]).serverWrites[0]?.patch,
-    ).toEqual({
-      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
-    });
-    expect(
-      planScopedSettingsPatch(project, [machine, customized], {
-        storageCleanup: { browserArtifactsAfterDays: 8 },
-      }).serverWrites,
-    ).toEqual([]);
-  });
-
   // regression: #11541 device settings were written to the wrong scope
   it("scopes agent device access to projects while keeping hub and hosts environment-wide", () => {
     const plan = planScopedSettingsPatch(project, [laptop, server], {
@@ -577,7 +443,7 @@ describe("project overrides at environment scope", () => {
     const plan = planProjectOverridesClear(
       [
         environment(laptop, {
-          [fleet]: { defaultAutoPull: true, defaultThreadEnvMode: "local" },
+          [fleet]: { defaultAutoPull: true, defaultRuntimeMode: "approval-required" },
           [t3]: { defaultAutoPull: true },
         }),
       ],
@@ -593,7 +459,10 @@ describe("project overrides at environment scope", () => {
         label: laptop,
         previous: expect.anything(),
         patch: {
-          projectSettingsOverrides: { [fleet]: { defaultThreadEnvMode: "local" }, [t3]: null },
+          projectSettingsOverrides: {
+            [fleet]: { defaultRuntimeMode: "approval-required" },
+            [t3]: null,
+          },
         },
       },
     ]);
@@ -621,7 +490,10 @@ describe("null patches at project scope", () => {
           settings: {
             ...DEFAULT_SERVER_SETTINGS,
             projectSettingsOverrides: {
-              [projectId]: { defaultThreadEnvMode: "worktree" as const, defaultAutoPull: true },
+              [projectId]: {
+                defaultRuntimeMode: "approval-required" as const,
+                defaultAutoPull: true,
+              },
             },
           },
           environment: { capabilities: { projectSettingsOverrides: true } },
@@ -629,8 +501,8 @@ describe("null patches at project scope", () => {
       },
     ];
     expect(
-      planScopedSettingsPatch(scope, environments, { defaultThreadEnvMode: null }).serverWrites[0]
-        ?.patch,
+      planScopedSettingsPatch(scope, environments, { defaultRuntimeMode: null as never })
+        .serverWrites[0]?.patch,
     ).toEqual({ projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } });
     expect(
       planScopedSettingsPatch(scope, environments, { defaultModelSelection: null }).serverWrites[0]
@@ -638,7 +510,7 @@ describe("null patches at project scope", () => {
     ).toEqual({
       projectSettingsOverrides: {
         [projectId]: {
-          defaultThreadEnvMode: "worktree",
+          defaultRuntimeMode: "approval-required",
           defaultAutoPull: true,
           defaultModelSelection: null,
         },

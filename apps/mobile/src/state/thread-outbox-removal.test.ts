@@ -69,9 +69,7 @@ function queuedMessage(input: {
       ? {
           creation: {
             projectId: ProjectId.make(`project-${input.messageId}`),
-            workspaceMode: "local" as const,
             branch: null,
-            worktreePath: null,
           },
         }
       : {}),

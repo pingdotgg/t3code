@@ -116,7 +116,6 @@ function Harness(props: {
       isSendBusy={result.isSaving}
       sendDisabledReason={null}
       isEnvironmentUnavailable={false}
-      isPreparingWorktree={false}
       hasSendableContent={sendState.hasSendableContent}
       isEditingQueuedMessage
       onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}

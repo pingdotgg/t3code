@@ -1,14 +1,5 @@
-import type {
-  EnvironmentId,
-  EnvironmentMachineKind,
-  VcsRef,
-  ProjectId,
-  WorktreeSubmodules,
-} from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import type { EnvironmentId, EnvironmentMachineKind, ProjectId } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { workspaceRelativeFilePath } from "@t3tools/shared/path";
-import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
 export interface EnvironmentOption {
@@ -22,9 +13,6 @@ export interface EnvironmentOption {
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */
 export const ADD_TO_MACHINE_LABEL_CLASS =
   "flex min-w-0 items-center gap-1.5 opacity-55 in-data-highlighted:opacity-100 in-data-popup-open:opacity-100";
-
-export const EnvMode = Schema.Literals(["local", "worktree"]);
-export type EnvMode = typeof EnvMode.Type;
 
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
@@ -89,140 +77,6 @@ export function resolveContextStripLabelsCompact(input: {
     : input.neededWidth > input.availableWidth;
 }
 
-export function resolveEnvModeLabel(mode: EnvMode): string {
-  return mode === "worktree" ? "New worktree" : "Current checkout";
-}
-
-export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
-  recursive: "Recursive",
-  "top-level": "Top level only",
-  none: "Skip",
-};
-
-export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
-}
-
-export function resolveLockedWorkspaceLabel(
-  activeWorktreePath: string | null,
-  effectiveEnvMode: EnvMode,
-): string {
-  if (activeWorktreePath) return "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
-}
-
-export interface PreviousWorktreeSeed {
-  branch: string | null;
-  worktreePath: string;
-}
-
-export function resolvePreviousWorktreeSeed(input: {
-  threads: ReadonlyArray<{
-    branch: string | null;
-    worktreePath: string | null;
-    updatedAt: string;
-    archivedAt?: string | null;
-  }>;
-  currentWorktreePath: string | null;
-}): PreviousWorktreeSeed | null {
-  let latest: { branch: string | null; worktreePath: string; updatedAt: number } | null = null;
-  for (const thread of input.threads) {
-    if (
-      !thread.worktreePath ||
-      thread.worktreePath === input.currentWorktreePath ||
-      (thread.archivedAt ?? null) !== null
-    ) {
-      continue;
-    }
-    const updatedAt = toSortableTimestamp(thread.updatedAt);
-    if (updatedAt === null) {
-      continue;
-    }
-    if (latest === null || updatedAt > latest.updatedAt) {
-      latest = {
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        updatedAt,
-      };
-    }
-  }
-  return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
-}
-
-export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
-  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
-}
-
-export function resolveEffectiveEnvMode(input: {
-  activeWorktreePath: string | null;
-  hasServerThread: boolean;
-  draftThreadEnvMode: EnvMode | undefined;
-  preparingWorktree?: boolean;
-}): EnvMode {
-  const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;
-  if (!hasServerThread) {
-    if (activeWorktreePath) {
-      return "local";
-    }
-    return draftThreadEnvMode === "worktree" ? "worktree" : "local";
-  }
-  return activeWorktreePath || preparingWorktree ? "worktree" : "local";
-}
-
-export function resolveDraftEnvModeAfterBranchChange(input: {
-  nextWorktreePath: string | null;
-  currentWorktreePath: string | null;
-  effectiveEnvMode: EnvMode;
-}): EnvMode {
-  const { nextWorktreePath, currentWorktreePath, effectiveEnvMode } = input;
-  if (nextWorktreePath) {
-    return "worktree";
-  }
-  if (effectiveEnvMode === "worktree" && !currentWorktreePath) {
-    return "worktree";
-  }
-  return "local";
-}
-
-export function resolveBranchToolbarValue(input: {
-  envMode: EnvMode;
-  activeWorktreePath: string | null;
-  activeThreadBranch: string | null;
-  currentGitBranch: string | null;
-}): string | null {
-  const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (envMode === "worktree" && !activeWorktreePath) {
-    return activeThreadBranch ?? currentGitBranch;
-  }
-  return currentGitBranch ?? activeThreadBranch;
-}
-
-export function resolveBranchTriggerLabel(input: {
-  activeWorktreePath: string | null;
-  effectiveEnvMode: EnvMode;
-  resolvedActiveBranch: string | null;
-  resolvedActiveBranchIsRemote: boolean | null;
-  startFromOrigin: boolean;
-}): string {
-  const {
-    activeWorktreePath,
-    effectiveEnvMode,
-    resolvedActiveBranch,
-    resolvedActiveBranchIsRemote,
-    startFromOrigin,
-  } = input;
-  if (!resolvedActiveBranch) {
-    return "Select ref";
-  }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    // Only the server can determine a local branch's configured remote.
-    return startFromOrigin && resolvedActiveBranchIsRemote === false
-      ? `From ${resolvedActiveBranch} (remote)`
-      : `From ${resolvedActiveBranch}`;
-  }
-  return resolvedActiveBranch;
-}
-
 export function resolveBranchToolbarPrBranch(input: {
   activeThreadBranch: string | null;
   resolvedActiveBranch: string | null;
@@ -231,54 +85,18 @@ export function resolveBranchToolbarPrBranch(input: {
 }
 
 export function resolveLocalCheckoutBranchMismatch(input: {
-  effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
 }): { threadBranch: string; currentBranch: string } | null {
-  const { effectiveEnvMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (effectiveEnvMode !== "local" || activeWorktreePath !== null) {
+  const { activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
+  if (activeWorktreePath !== null) {
     return null;
   }
   if (!activeThreadBranch || !currentGitBranch || activeThreadBranch === currentGitBranch) {
     return null;
   }
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
-}
-
-export function resolveBranchSelectionTarget(input: {
-  activeProjectCwd: string;
-  activeProjectCheckoutRoot?: string | undefined;
-  activeWorktreePath: string | null;
-  refName: Pick<VcsRef, "isDefault" | "worktreePath">;
-}): {
-  checkoutCwd: string;
-  nextWorktreePath: string | null;
-  reuseExistingWorktree: boolean;
-} {
-  const { activeProjectCwd, activeWorktreePath, refName } = input;
-
-  if (refName.worktreePath) {
-    // Until the project's checkout root loads, a checkout containing the project counts as its own.
-    const isProjectCheckout =
-      input.activeProjectCheckoutRoot === undefined
-        ? workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null
-        : workspaceRelativeFilePath(input.activeProjectCheckoutRoot, refName.worktreePath) === ".";
-    return {
-      checkoutCwd: refName.worktreePath,
-      nextWorktreePath: isProjectCheckout ? null : refName.worktreePath,
-      reuseExistingWorktree: true,
-    };
-  }
-
-  const nextWorktreePath =
-    activeWorktreePath !== null && refName.isDefault ? null : activeWorktreePath;
-
-  return {
-    checkoutCwd: nextWorktreePath ?? activeProjectCwd,
-    nextWorktreePath,
-    reuseExistingWorktree: false,
-  };
 }
 
 export function shouldIncludeBranchPickerItem(input: {

@@ -695,9 +695,7 @@ describe("thread outbox recovery rollback", () => {
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
       creation: {
         projectId: ProjectId.make("project-1"),
-        workspaceMode: "local",
         branch: null,
-        worktreePath: null,
       },
     };
     await harness.manager.enqueue(message);

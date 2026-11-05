@@ -140,8 +140,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     interactionMode: Schema.optional(ProviderInteractionMode),
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
-        description:
-          "'worktree': new checkout from `baseRef`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Stack: parent branch as `baseRef`, `startFromOrigin: false`. Uncommitted edits are not copied.",
+        description: "'root': project checkout, the default. Uncommitted edits are not copied.",
       }),
     ),
     message: Schema.optional(

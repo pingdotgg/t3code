@@ -144,7 +144,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     });
 
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: false });
+    beginLocalDispatch();
     setThreadError(threadIdForSend, null);
 
     anchorNewTurn(
@@ -300,7 +300,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
     const nextThreadModelSelection: ModelSelection = sendCtx.selectedModelSelection;
 
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: false });
+    beginLocalDispatch();
 
     const createResult = await createThread({
       environmentId,

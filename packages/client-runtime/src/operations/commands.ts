@@ -24,7 +24,6 @@ import {
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadId,
-  type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
 } from "@t3tools/contracts";
@@ -58,7 +57,6 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly autoPull?: boolean;
   readonly projectIcon?: ProjectIconOverride | null;
   readonly faviconPath?: string | null;
-  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
@@ -153,17 +151,8 @@ interface StartThreadBootstrap {
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
     readonly branch: string | null;
-    readonly worktreePath: string | null;
     readonly createdAt: string;
   };
-  readonly prepareWorktree?: {
-    readonly requireWorktree?: boolean;
-    readonly projectCwd: string;
-    readonly baseBranch: string;
-    readonly branch?: string;
-    readonly startFromOrigin?: boolean;
-  };
-  readonly runSetupScript?: boolean;
 }
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
@@ -373,9 +362,6 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
     ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
     ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
     ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
-    ...(input.defaultThreadEnvMode === undefined
-      ? {}
-      : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
     ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
     ...(input.archived === undefined ? {} : { archived: input.archived }),
@@ -682,45 +668,21 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     attachments,
   );
   const bootstrap = input.bootstrap?.createThread;
-  const prepareWorktree = input.bootstrap?.prepareWorktree;
-  if (bootstrap !== undefined || prepareWorktree !== undefined) {
-    const existingProjection =
-      bootstrap === undefined ? yield* getProjection(input.threadId) : null;
-    const thread = bootstrap ?? existingProjection!.thread;
-    const workspaceStrategy =
-      prepareWorktree !== undefined
-        ? {
-            type: "worktree" as const,
-            baseRef: prepareWorktree.baseBranch,
-            ...(prepareWorktree.branch === undefined ? {} : { branch: prepareWorktree.branch }),
-            ...(prepareWorktree.startFromOrigin === undefined
-              ? {}
-              : { startFromOrigin: prepareWorktree.startFromOrigin }),
-          }
-        : bootstrap?.worktreePath
-          ? {
-              type: "existing_worktree" as const,
-              worktreePath: bootstrap.worktreePath,
-              ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
-            }
-          : {
-              type: "root" as const,
-              ...(bootstrap?.branch === null || bootstrap?.branch === undefined
-                ? {}
-                : { branch: bootstrap.branch }),
-            };
+  if (bootstrap !== undefined) {
     return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
-      ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
-      projectId: thread.projectId,
-      title: input.titleSeed ?? thread.title,
+      projectId: bootstrap.projectId,
+      title: input.titleSeed ?? bootstrap.title,
       generateTitle: input.titleSeed !== undefined,
-      modelSelection: input.modelSelection ?? thread.modelSelection,
+      modelSelection: input.modelSelection ?? bootstrap.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
-      workspaceStrategy,
+      workspaceStrategy: {
+        type: "root" as const,
+        ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
+      },
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,

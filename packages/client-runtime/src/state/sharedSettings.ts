@@ -11,7 +11,6 @@ const SHARED_SERVER_SETTING_KEYS = [
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
   "snoozePresets",
-  "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;

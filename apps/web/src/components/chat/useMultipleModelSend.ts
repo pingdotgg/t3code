@@ -50,13 +50,12 @@ interface MultipleModelSendInput {
   readonly composerRef: ComposerHandleRef;
   readonly promptRef: { current: string };
   readonly runtimeMode: RuntimeMode;
-  readonly startFromOrigin: boolean;
   readonly resetLocalDispatch: ReturnType<typeof useLocalDispatchState>["resetLocalDispatch"];
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
 }
 
 /**
- * Starts one background thread per selected model, each in its own worktree. Failed models
+ * Starts one background thread per selected model in the project checkout. Failed models
  * stay selected and the prompt comes back, either straight into this composer or, when the
  * user has moved on, through a "Restore prompt" toast.
  */
@@ -70,7 +69,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     composerRef,
     promptRef,
     runtimeMode,
-    startFromOrigin,
     resetLocalDispatch,
     setThreadError,
   } = input;
@@ -183,16 +181,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       runtimeMode,
                       interactionMode: target.interactionMode,
                       branch,
-                      worktreePath: null,
                       createdAt: createdAt,
                     },
-                    prepareWorktree: {
-                      projectCwd: project.workspaceRoot,
-                      baseBranch: branch,
-                      requireWorktree: true,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
-                    },
-                    runSetupScript: true,
                   },
                   createdAt: createdAt,
                 },

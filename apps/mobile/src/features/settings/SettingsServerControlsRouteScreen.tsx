@@ -8,8 +8,6 @@ import {
   type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
-  type ThreadEnvMode,
-  type WorktreeSubmodules,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
@@ -47,75 +45,31 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
-type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
+type SettingsPage = "threads" | "source-control" | "maintenance";
 
 const PAGE_TITLES: Record<SettingsPage, string> = {
   threads: "Threads",
   "source-control": "Source control",
-  worktrees: "Worktrees",
   maintenance: "Maintenance",
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
   threads: [
-    "defaultThreadEnvMode",
     "defaultRuntimeMode",
     "responseStreamingMode",
     "enableAgentBrowserAccess",
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
   ],
-  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
-  worktrees: [
-    "newWorktreesStartFromOrigin",
-    "worktreeSubmodules",
+  "source-control": [
+    "defaultAutoPull",
+    "removeAgentCreditsOnMerge",
     "branchNamingMode",
     "branchNamePrefix",
     "branchNameInstructions",
   ],
   maintenance: ["continueThreadsAfterServerUpdate"],
 };
-
-const SUBMODULE_CHOICES: ReadonlyArray<{
-  readonly mode: WorktreeSubmodules | null;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or initialize recursively.",
-  },
-  { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
-  {
-    mode: "top-level",
-    label: "Top level only",
-    description: "Skip submodules declared inside other submodules.",
-  },
-  { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
-];
-
-const WORKSPACE_CHOICES: ReadonlyArray<{
-  readonly mode: ThreadEnvMode | null;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or the current checkout.",
-  },
-  {
-    mode: "local",
-    label: "Current checkout",
-    description: "Start new threads in the existing workspace.",
-  },
-  {
-    mode: "worktree",
-    label: "New worktree",
-    description: "Give each new thread a separate checkout.",
-  },
-];
 
 const STREAMING_CHOICES: ReadonlyArray<{
   readonly mode: ResponseStreamingMode;
@@ -168,10 +122,6 @@ export function SettingsEnvironmentSourceControlRouteScreen() {
   return <ServerSettingsDetail page="source-control" />;
 }
 
-export function SettingsWorktreesRouteScreen() {
-  return <ServerSettingsDetail page="worktrees" />;
-}
-
 export function SettingsEnvironmentMaintenanceRouteScreen() {
   return <ServerSettingsDetail page="maintenance" />;
 }
@@ -206,10 +156,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const reference = displayTargets[0] ?? null;
   const uniform = <K extends keyof ServerSettings>(key: K) =>
     uniformMobileSetting(displayTargets, key);
-  // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
-  const isMixed = (key: keyof ServerSettings) =>
-    reference === null ||
-    displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
   const writeSettings = useSettingsWriter();
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
@@ -317,32 +263,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "threads" ? (
                 <>
                   <SettingsSection
-                    title="Default workspace"
-                    footer={managed("defaultThreadEnvMode")}
-                    trailing={
-                      pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
-                        <MixedValuesLabel projectSelected={projectSelected} />
-                      ) : null
-                    }
-                  >
-                    {WORKSPACE_CHOICES.filter(
-                      (choice) => choice.mode !== null || !projectSelected,
-                    ).map((choice, index) => (
-                      <SettingsChoiceRow
-                        key={choice.mode ?? "inherit"}
-                        label={choice.label}
-                        description={choice.description}
-                        selected={
-                          !isMixed("defaultThreadEnvMode") &&
-                          uniform("defaultThreadEnvMode") === choice.mode
-                        }
-                        separated={index > 0}
-                        disabled={disabledFor("defaultThreadEnvMode")}
-                        onPress={() => write({ defaultThreadEnvMode: choice.mode })}
-                      />
-                    ))}
-                  </SettingsSection>
-                  <SettingsSection
                     title="Default permissions"
                     footer={managed("defaultRuntimeMode")}
                     trailing={
@@ -437,60 +357,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ defaultAutoPull: value })}
                     />
                   </SettingsSection>
-                  <SettingsSection title="Clones">
-                    <SettingsSwitchRow
-                      icon="folder"
-                      label="Clone into host folders"
-                      subtitle="Clones go to github.com/owner/repo under the Add project folder, like ghq."
-                      value={uniform("ghqCloneLayout")}
-                      disabled={disabledFor("ghqCloneLayout")}
-                      onValueChange={(value) => write({ ghqCloneLayout: value })}
-                    />
-                  </SettingsSection>
-                </>
-              ) : null}
-
-              {props.page === "worktrees" ? (
-                <>
-                  <SettingsSection title="New worktrees">
-                    <SettingsSwitchRow
-                      icon="arrow.triangle.branch"
-                      label="Start from remote"
-                      subtitle={managedSubtitle(
-                        "newWorktreesStartFromOrigin",
-                        "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
-                      )}
-                      value={uniform("newWorktreesStartFromOrigin")}
-                      disabled={disabledFor("newWorktreesStartFromOrigin")}
-                      onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
-                    />
-                  </SettingsSection>
-                  <SettingsSection
-                    title="Worktree submodules"
-                    footer={managed("worktreeSubmodules")}
-                    trailing={
-                      pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
-                        <MixedValuesLabel projectSelected={projectSelected} />
-                      ) : null
-                    }
-                  >
-                    {SUBMODULE_CHOICES.filter(
-                      (choice) => choice.mode !== null || !projectSelected,
-                    ).map((choice, index) => (
-                      <SettingsChoiceRow
-                        key={choice.mode ?? "inherit"}
-                        label={choice.label}
-                        description={choice.description}
-                        selected={
-                          !isMixed("worktreeSubmodules") &&
-                          uniform("worktreeSubmodules") === choice.mode
-                        }
-                        separated={index > 0}
-                        disabled={disabledFor("worktreeSubmodules")}
-                        onPress={() => write({ worktreeSubmodules: choice.mode })}
-                      />
-                    ))}
-                  </SettingsSection>
                   <BranchNamingSettings
                     key={targetsKey}
                     mode={uniform("branchNamingMode")}
@@ -503,6 +369,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     }}
                     onChange={write}
                   />
+                  <SettingsSection title="Clones">
+                    <SettingsSwitchRow
+                      icon="folder"
+                      label="Clone into host folders"
+                      subtitle="Clones go to github.com/owner/repo under the Add project folder, like ghq."
+                      value={uniform("ghqCloneLayout")}
+                      disabled={disabledFor("ghqCloneLayout")}
+                      onValueChange={(value) => write({ ghqCloneLayout: value })}
+                    />
+                  </SettingsSection>
                 </>
               ) : null}
 

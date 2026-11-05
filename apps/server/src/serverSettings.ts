@@ -597,7 +597,6 @@ const decodeModelSelectionJson = Schema.decodeUnknownOption(
 interface LegacyProjectSettingsRow {
   readonly projectId: string;
   readonly defaultModelSelection: string | null;
-  readonly defaultThreadEnvMode: string | null;
   readonly autoPull: number;
   readonly scripts: string;
 }
@@ -645,9 +644,6 @@ function foldLegacyProjectSettings(
     const model = decodeModelSelectionJson(row.defaultModelSelection ?? "null");
     if (Option.isSome(model) && model.value !== null) {
       set(row.projectId, "defaultModelSelection", model.value);
-    }
-    if (row.defaultThreadEnvMode === "local" || row.defaultThreadEnvMode === "worktree") {
-      set(row.projectId, "defaultThreadEnvMode", row.defaultThreadEnvMode);
     }
     if (row.autoPull === 1) set(row.projectId, "defaultAutoPull", true);
     const scripts = decodeProjectScriptsJson(row.scripts);
@@ -859,7 +855,6 @@ const make = Effect.gen(function* () {
           SELECT
             project_id AS "projectId",
             default_model_selection_json AS "defaultModelSelection",
-            default_thread_env_mode AS "defaultThreadEnvMode",
             auto_pull AS "autoPull",
             scripts_json AS "scripts"
           FROM projection_projects

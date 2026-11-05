@@ -48,11 +48,7 @@ import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import {
-  pendingDraftBranchNeedsRefs,
-  resolvePendingDraftBranch,
-} from "../../state/pending-new-tasks-model";
-import { useBranches } from "../../state/queries";
+import { resolvePendingDraftBranch } from "../../state/pending-new-tasks-model";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import {
   resolveThreadPrBadgeAction,
@@ -398,26 +394,13 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     [deleteLabel, handleDelete, pendingTask.title],
   );
   const projectTitle = props.projectTitle ?? props.project?.title ?? pendingTask.projectTitle ?? "";
-  const projectCwd = props.project?.workspaceRoot || null;
   // Drafts only; the reads are shared per-project atoms, and queued rows skip them.
   const projectDefaults = useNewTaskProjectDefaults(isDraft ? props.project : null);
-  const draftDefaults = {
-    canChooseWorkspace: !projectDefaults.isScratch,
-    defaultMode: projectDefaults.defaultWorkspaceMode,
-    defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
-  };
-  const draftBranchRefs = useBranches({
-    environmentId: pendingTask.environmentId,
-    cwd:
-      isDraft && pendingDraftBranchNeedsRefs(pendingTask.draft, draftDefaults) ? projectCwd : null,
-  });
   const branch = isDraft
     ? resolvePendingDraftBranch({
         draft: pendingTask.draft,
-        defaults: draftDefaults,
-        isGitRepo: draftBranchRefs.data?.isRepo ?? true,
-        branches: draftBranchRefs.data?.refs ?? [],
-        projectCwd,
+        canChooseWorkspace: !projectDefaults.isScratch,
+        isGitRepo: true,
       })
     : pendingTask.branch;
 

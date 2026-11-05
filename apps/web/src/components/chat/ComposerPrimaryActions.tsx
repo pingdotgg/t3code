@@ -39,7 +39,6 @@ interface ComposerPrimaryActionsProps {
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isEnvironmentUnavailable: boolean;
-  isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   canResume?: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
@@ -93,7 +92,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isSendBusy,
   sendDisabledReason,
   isEnvironmentUnavailable,
-  isPreparingWorktree,
   hasSendableContent,
   canResume = false,
   preserveComposerFocusOnPointerDown = false,
@@ -285,13 +283,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
-      (isPreparingWorktree
-        ? "Preparing worktree"
-        : isSendBusy
-          ? isEditingQueuedMessage
-            ? "Updating queued message"
-            : "Submitting message"
-          : null));
+      (isSendBusy
+        ? isEditingQueuedMessage
+          ? "Updating queued message"
+          : "Submitting message"
+        : null));
   const submitTooltip =
     submitStatus ??
     (compactsBeforeSend

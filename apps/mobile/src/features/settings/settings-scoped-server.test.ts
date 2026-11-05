@@ -107,30 +107,24 @@ describe("mobile project settings scope", () => {
     expect(secondSettings.responseStreamingMode).toBe("turn");
   });
 
-  it("removes a project override when a picker sends null for a key that cannot store it", () => {
+  it("keeps a project's other overrides when a picker writes a null default", () => {
     const settings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
-        [firstProject]: { defaultThreadEnvMode: "worktree", defaultAutoPull: true },
+        [firstProject]: { defaultAutoPull: true, defaultRuntimeMode: "full-access" },
       },
     };
     const targets = resolveMobileSettingsTargets(
       [environment(firstId, settings)],
       [{ environmentId: firstId, id: firstProject }],
     );
-    expect(planMobileScopedSettingsPatch(targets, true, { defaultThreadEnvMode: null })).toEqual([
-      {
-        environmentId: firstId,
-        patch: { projectSettingsOverrides: { [firstProject]: { defaultAutoPull: true } } },
-      },
-    ]);
     expect(planMobileScopedSettingsPatch(targets, true, { defaultModelSelection: null })).toEqual([
       {
         environmentId: firstId,
         patch: {
           projectSettingsOverrides: {
             [firstProject]: {
-              defaultThreadEnvMode: "worktree",
+              defaultRuntimeMode: "full-access",
               defaultAutoPull: true,
               defaultModelSelection: null,
             },

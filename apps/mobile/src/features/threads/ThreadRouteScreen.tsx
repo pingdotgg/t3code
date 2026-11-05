@@ -1,10 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
-import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
-import { useWorktreeSetup } from "./use-worktree-setup";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
@@ -80,7 +76,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useSelectedThreadCwd } from "../../state/use-selected-thread-cwd";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
@@ -367,7 +363,7 @@ function ThreadRouteContent(
   );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd } = useSelectedThreadCwd();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -840,87 +836,11 @@ function ThreadRouteContent(
       }),
     );
   };
-  const setupTurnStartedAt = composer.selectedThreadActivityRun?.startedAt ?? null;
-  const { snapshot: worktreeSetupSnapshot, visible: worktreeSetup } = useWorktreeSetup({
-    environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
-    preparing:
-      composer.selectedThreadActivityRun?.status === "preparing" ||
-      selectedThread?.runtime?.status === "preparing" ||
-      selectedThread?.worktreePath != null ||
-      (selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
-        selectedThreadCreation.outcome == null),
-    turnStarted: setupTurnStartedAt !== null,
-    followUpSent:
-      composer.selectedThreadFeed.filter(
-        (entry) => entry.type === "message" && entry.message.role === "user",
-      ).length +
-        composer.selectedThreadQueueCount >
-      1,
-  });
   const awaitingBootstrapTurn =
-    worktreeSetup !== null
-      ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
-  const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup);
-  const handleCancelWorktreeSetup = () => {
-    if (!selectedThread) return;
-    void cancelWorktreeSetup({
-      environmentId: selectedThread.environmentId,
-      input: { threadId: selectedThread.id },
-    });
-  };
-  const startLocalThread = useAtomCommand(threadEnvironment.startTurn, "work locally");
-  const localResendBusy = useRef(false);
-  const setupMessage = selectedThreadDetail?.messages.find((message) => message.role === "user");
-  const handleWorkLocally = async () => {
-    if (!selectedThread || !selectedThreadProject || !setupMessage || localResendBusy.current)
-      return;
-    localResendBusy.current = true;
-    const result = await cancelWorktreeSetup({
-      environmentId: selectedThread.environmentId,
-      input: { threadId: selectedThread.id },
-    });
-    if (result._tag !== "Success" || !result.value.cancelled) {
-      localResendBusy.current = false;
-      return;
-    }
-    // V2 accepts launch before setup; cancellation cannot reject that delivery, so reuse server-owned prompt and uploads.
-    const metadata = makeTurnCommandMetadata();
-    const launched = await startLocalThread({
-      environmentId: selectedThread.environmentId,
-      input: buildProjectThreadStartTurnInput({
-        ...metadata,
-        projectId: selectedThread.projectId,
-        projectCwd: selectedThreadProject.workspaceRoot,
-        text: setupMessage.text,
-        titleText: selectedThread.title,
-        ...(setupMessage.context ? { context: setupMessage.context } : {}),
-        uploadedAttachments: setupMessage.attachments,
-        modelSelection: selectedThread.modelSelection,
-        runtimeMode: selectedThread.runtimeMode,
-        interactionMode: selectedThread.interactionMode,
-        workspaceMode: "local",
-        branch: null,
-        worktreePath: null,
-        startFromOrigin: false,
-        worktreeBranchName: "",
-      }),
-    });
-    localResendBusy.current = false;
-    if (launched._tag !== "Success") return;
-    navigation.dispatch(
-      StackActions.replace("Thread", {
-        environmentId: String(selectedThread.environmentId),
-        threadId: metadata.threadId,
-      }),
-    );
-  };
+    selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false;
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
-      return awaitingBootstrapTurn
-        ? { kind: "preparing", preparingWorktree: true, serverOwned: true }
-        : null;
+      return awaitingBootstrapTurn ? { kind: "preparing", serverOwned: true } : null;
     }
     if (selectedThreadCreation.outcome?.kind === "failed") {
       return {
@@ -931,7 +851,6 @@ function ThreadRouteContent(
     }
     return {
       kind: "preparing",
-      preparingWorktree: selectedThreadCreation.message.creation?.workspaceMode === "worktree",
       serverOwned: false,
     };
   })();
@@ -996,36 +915,12 @@ function ThreadRouteContent(
           pendingHandoff={composer.pendingHandoff}
           activityRun={composer.selectedThreadActivityRun}
           activeWorkStartedAt={
-            creationState?.kind === "preparing" ||
-            (worktreeSetup !== null && setupTurnStartedAt === null)
-              ? null
-              : composer.activeWorkStartedAt
+            creationState?.kind === "preparing" ? null : composer.activeWorkStartedAt
           }
           isCompacting={composer.isCompacting}
           runlessWorkActive={composer.runlessWorkActive}
           providerSubagentStatus={composer.providerSubagentStatus}
           creationState={creationState}
-          setupWorkingStartedAt={
-            composer.activeWorkStartedAt !== null &&
-            worktreeSetupSnapshot !== null &&
-            composer.selectedThreadFeed.filter(
-              (entry) => entry.type === "message" && entry.message.role === "user",
-            ).length <= 1
-              ? composer.activeWorkStartedAt
-              : null
-          }
-          worktreeSetup={
-            worktreeSetup
-              ? {
-                  snapshot: worktreeSetup,
-                  turnStartedAt: setupTurnStartedAt,
-                  working: composer.activeWorkStartedAt !== null,
-                  turnStarted: setupTurnStartedAt !== null,
-                  onCancel: handleCancelWorktreeSetup,
-                  onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
-                }
-              : null
-          }
           activePendingApproval={requests.activePendingApproval}
           activePendingApprovals={requests.activePendingApprovals}
           respondingApprovalId={requests.respondingApprovalId}
@@ -1065,7 +960,7 @@ function ThreadRouteContent(
           onNativePasteText={composer.onNativePasteText}
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
-          onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          onStopThread={handleStopThread}
           onResumeQueue={
             composer.queueHeld || composer.resumableRunId !== null ? handleResumeQueue : null
           }

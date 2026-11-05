@@ -17,8 +17,8 @@ vi.mock("./use-thread-selection", () => ({
     selectedThreadProject: { workspaceRoot: harness.root },
   }),
 }));
-vi.mock("./use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({ selectedThreadCwd: harness.cwd }),
+vi.mock("./use-selected-thread-cwd", () => ({
+  useSelectedThreadCwd: () => ({ selectedThreadCwd: harness.cwd }),
 }));
 vi.mock("./use-vcs-action-state", () => ({
   useVcsActionState: () => ({ currentLabel: null }),

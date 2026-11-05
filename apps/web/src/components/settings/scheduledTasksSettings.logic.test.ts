@@ -147,7 +147,7 @@ const legacyTask: ScheduledTask = {
   schedule: { type: "interval", everyMs: 60_000 },
   projectId: ProjectId.make("project"),
   threadId: null,
-  workspaceStrategy: { type: "worktree", baseRef: "release" },
+  workspaceStrategy: { type: "root" },
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -161,14 +161,6 @@ const legacyTask: ScheduledTask = {
   lastRunError: null,
   runCount: 0,
 };
-
-describe("editing scheduled task branch settings", () => {
-  it("keeps an omitted origin flag on the local base branch", () => {
-    const draft = taskToDraft(legacyTask);
-    expect(draft.baseRef).toBe("release");
-    expect(draft.startFromOrigin).toBe(false);
-  });
-});
 
 describe("one-time scheduled tasks", () => {
   afterEach(() => vi.unstubAllEnvs());

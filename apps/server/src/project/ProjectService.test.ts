@@ -249,7 +249,6 @@ it.layer(layerTest)("ProjectService", (it) => {
             name: "Setup",
             command: "vp install",
             icon: "configure",
-            runOnWorktreeCreate: true,
           },
         ],
       });
@@ -272,14 +271,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         autoPull: true,
         projectIcon: { kind: "emoji", emoji: "🦊" },
         faviconPath: "/work/project/custom.svg",
-        defaultThreadEnvMode: "worktree",
       });
       assert.equal(updated.title, "Renamed");
       assert.equal(updated.createdAt, created.createdAt);
       assert.isTrue(updated.autoPull);
       assert.deepEqual(updated.projectIcon, { kind: "emoji", emoji: "🦊" });
       assert.equal(updated.faviconPath, "/work/project/custom.svg");
-      assert.equal(updated.defaultThreadEnvMode, "worktree");
 
       const byId = yield* service.getById(projectId);
       const byWorkspace = yield* service.getByWorkspaceRoot("/work/project/");
@@ -289,19 +286,16 @@ it.layer(layerTest)("ProjectService", (it) => {
       assert.isTrue(Option.getOrThrow(byId).autoPull);
       assert.deepEqual(Option.getOrThrow(byId).projectIcon, updated.projectIcon);
       assert.equal(Option.getOrThrow(byId).faviconPath, updated.faviconPath);
-      assert.equal(Option.getOrThrow(byId).defaultThreadEnvMode, "worktree");
       const reset = yield* service.update({
         commandId: CommandId.make("command:project:reset-appearance"),
         projectId,
         autoPull: false,
         projectIcon: null,
         faviconPath: null,
-        defaultThreadEnvMode: null,
       });
       assert.isFalse(reset.autoPull);
       assert.isNull(reset.projectIcon);
       assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
-      assert.isNull(reset.defaultThreadEnvMode);
       assert.deepEqual(
         (yield* service.snapshot).projects.map((project) => project.id),
         [projectId],
@@ -447,7 +441,6 @@ it.layer(layerTest)("ProjectService", (it) => {
             name: "Invalid",
             command: "true",
             icon: "play" as const,
-            runOnWorktreeCreate: false,
           },
         ],
       };

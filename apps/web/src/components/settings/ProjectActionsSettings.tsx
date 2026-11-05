@@ -88,8 +88,6 @@ export function ProjectActionsSettings() {
       name: fileScript.name,
       command: fileScript.command,
       icon: fileScript.icon ?? "play",
-      runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
-      waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       runOnSettle: fileScript.runOnSettle ?? false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
@@ -113,7 +111,7 @@ export function ProjectActionsSettings() {
         settingKeys={["defaultProjectScripts"]}
         mixed={mixed}
         title="Actions"
-        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
+        description="Commands that run in this project's checkout, with optional shortcuts."
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">

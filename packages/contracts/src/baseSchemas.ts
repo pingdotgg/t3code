@@ -74,26 +74,6 @@ export const ForwardCompatibleNullable = <Value extends Schema.Top>(value: Value
   );
 };
 
-/** Missing or unknown values decode to null; null encodes as absent for older clients requiring a literal. */
-export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
-  const decodeValue = Schema.decodeUnknownOption(value as never);
-  return Schema.optionalKey(Schema.Unknown).pipe(
-    Schema.decodeTo(
-      Schema.NullOr(value),
-      SchemaTransformation.transformOptional<Value["Encoded"] | null, unknown>({
-        decode: (raw) =>
-          Option.some(
-            Option.isSome(raw) && Option.isSome(decodeValue(raw.value))
-              ? (raw.value as Value["Encoded"])
-              : null,
-          ),
-        encode: (raw) =>
-          Option.isSome(raw) && raw.value !== null ? Option.some(raw.value) : Option.none(),
-      }),
-    ),
-  );
-};
-
 /** Prefer {@link ForwardCompatibleUnion} for tagged unions so malformed known members still fail. */
 export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) =>
   Schema.Array(

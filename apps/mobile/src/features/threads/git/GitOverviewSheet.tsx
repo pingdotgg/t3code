@@ -26,13 +26,12 @@ import { ListSection } from "../../../components/ui/ListSection";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { InspectorSheetContext } from "../../layout/workspace-inspector-sheet";
-import { AppText as Text } from "../../../components/ui/AppText";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
-import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import { useSelectedThreadCwd } from "../../../state/use-selected-thread-cwd";
 import { vcsEnvironment } from "../../../state/vcs";
 import { menuItemIconName, statusSummary } from "./gitSheetComponents";
 import {
@@ -78,7 +77,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     replace: presentation === "sheet",
     context: selectedThread ?? undefined,
   });
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const { selectedThreadCwd } = useSelectedThreadCwd();
   const linkedPrLines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
   const linkedPrActions = useLinkedPullRequestActions({
     thread: selectedThread,
@@ -100,7 +99,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
-  const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus.data?.isRepo ?? true;
@@ -291,12 +289,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         />
         <ListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          label="Branches & worktrees"
-          description={
-            canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
-          }
+          label="Branches"
+          description={canChangeThreadBranch ? "Switch branch or create branch" : "View branches"}
           disabled={busy || !isRepo}
           onPress={() =>
             presentRoute(() =>
@@ -329,14 +323,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               actions={linkedPrActions}
             />
           ))}
-        </ListSection>
-      ) : null}
-
-      {currentWorktreePath ? (
-        <ListSection title="Worktree">
-          <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
-            {currentWorktreePath}
-          </Text>
         </ListSection>
       ) : null}
     </NativeScrollView>

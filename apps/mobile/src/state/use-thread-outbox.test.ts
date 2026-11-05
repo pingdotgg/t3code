@@ -61,9 +61,7 @@ it("retains queue membership while chat lists are hidden and follows queued mess
         threadId: ThreadId.make("new-thread"),
         creation: {
           projectId: ProjectId.make("project-1"),
-          workspaceMode: "local",
           branch: null,
-          worktreePath: null,
         },
       },
     ],

@@ -417,7 +417,7 @@ function PullRequestLinkCheckout({
   return (
     <LinkPage
       title={`Check out ${owner}/${name}#${number}?`}
-      description="This puts the pull request's code in a new worktree and runs your project's setup script on it."
+      description="This checks out the pull request's branch in this project."
     >
       <Button
         size="sm"

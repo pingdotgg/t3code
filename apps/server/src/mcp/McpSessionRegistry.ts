@@ -113,7 +113,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([
           "orchestration",
-          "worktree",
           "pull-requests",
           ...(request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : [])),
         ]),

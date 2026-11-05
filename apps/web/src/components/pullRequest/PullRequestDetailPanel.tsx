@@ -53,7 +53,6 @@ import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
-import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -736,8 +735,8 @@ export function PullRequestDetailPanel({
   };
 
   const attachTarget = composerDraftTarget ?? null;
-  const canPrepareWorktree = prepareThread.isAllowed && canOperateThread;
-  const canFixFindings = attachTarget !== null || canPrepareWorktree;
+  const canPrepareCheckout = prepareThread.isAllowed && canOperateThread;
+  const canFixFindings = attachTarget !== null || canPrepareCheckout;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
   const guideWriter = useReviewGuideWriter({
     environmentId,
@@ -862,7 +861,6 @@ export function PullRequestDetailPanel({
   const startHandoff = async (
     kind: string,
     task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
-    mode: "worktree" | "local" = "worktree",
   ) => {
     if (!handoffSummary || handoff !== null) return;
     if (attachTarget !== null && task !== null) {
@@ -878,12 +876,6 @@ export function PullRequestDetailPanel({
     if (
       !prepareThread.isAllowed ||
       !readEnvironmentScope(actingEnvironmentId, AuthSourceControlWriteScope)
-    ) {
-      return;
-    }
-    if (
-      mode === "worktree" &&
-      !readEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope)
     ) {
       return;
     }
@@ -912,7 +904,6 @@ export function PullRequestDetailPanel({
     }
     const prepared = await prepareThread.run({
       reference: handoffSummary.url,
-      mode,
       threadId: opened.threadId,
     });
     if (prepared._tag === "Failure") {
@@ -928,8 +919,6 @@ export function PullRequestDetailPanel({
     }
     const pointed = await newThread(projectRef, {
       branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
     }).then(
       (session) => session !== null,
       () => false,
@@ -946,32 +935,19 @@ export function PullRequestDetailPanel({
     }
     setHandoff(null);
     if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
-            }
-          : offHeadPullRequestCheckoutToast(terminology),
-      );
+      toastManager.update(toastId, {
+        type: "success",
+        title: "Checked out here",
+        description: `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`,
+      });
       return;
     }
     await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
-          }
-        : offHeadPullRequestCheckoutToast(terminology),
-    );
+    toastManager.update(toastId, {
+      type: "success",
+      title: "Checkout ready",
+      description: "The task is in the composer. Read it over, then send.",
+    });
   };
 
   const askAboutPullRequest = () => {
@@ -1051,9 +1027,9 @@ export function PullRequestDetailPanel({
     );
   };
 
-  const startCheckout = (mode: "worktree" | "local") => {
+  const startCheckout = () => {
     if (!handoffSummary) return;
-    void startHandoff(`checkout:${mode}`, null, mode);
+    void startHandoff("checkout", null);
   };
 
   const startFixFinding = (finding: PullRequestFinding) => {
@@ -1223,7 +1199,6 @@ export function PullRequestDetailPanel({
         term={terminology.singular}
         handoff={handoff}
         checkoutRoot={checkoutRoot}
-        canPrepareWorktree={canPrepareWorktree}
         canCheckoutHere={prepareThread.isAllowed}
         onCheckout={startCheckout}
         pickableEnvironments={pickableEnvironments}
@@ -1235,7 +1210,7 @@ export function PullRequestDetailPanel({
   const resolveConflictsControl = (
     <PullRequestResolveConflictsButton
       handoff={handoff}
-      unavailable={attachTarget === null && (checkoutRoot === null || !canPrepareWorktree)}
+      unavailable={attachTarget === null && (checkoutRoot === null || !canPrepareCheckout)}
       onResolve={startResolveConflicts}
     />
   );

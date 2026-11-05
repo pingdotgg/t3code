@@ -356,7 +356,6 @@ export interface ChatComposerProps {
   routeThreadRef: ScopedThreadRef;
   draftId: DraftId | null;
   multipleModelSelections: ReadonlyArray<ModelSelection> | null;
-  supportsMultipleModels: boolean;
   onMultipleModelSelectionsChange: React.Dispatch<
     React.SetStateAction<ReadonlyArray<ModelSelection> | null>
   >;
@@ -374,7 +373,6 @@ export interface ChatComposerProps {
   canResume: boolean;
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
-  isPreparingWorktree: boolean;
   isCompacting: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
@@ -515,7 +513,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     routeThreadRef,
     draftId,
     multipleModelSelections,
-    supportsMultipleModels,
     onMultipleModelSelectionsChange: setMultipleModelSelections,
     activeThreadId,
     activeThread,
@@ -528,7 +525,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     canResume,
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
-    isPreparingWorktree,
     isCompacting,
     environmentUnavailable,
     activePendingApproval: incomingPendingApproval,
@@ -2344,7 +2340,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onOpenProviderSetup={onOpenProviderSetup}
       providerCatalogPending={providerCatalogPending}
       isSendBusy={isSendBusy}
-      multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
+      multipleModelsEnabled={routeKind === "draft"}
       multipleModelSelections={multipleModelSelections}
       onMultipleModelSelectionsChange={setMultipleModelSelections}
       selectedModelSelection={selectedModelSelection}
@@ -3455,7 +3451,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         noProviderAvailable ||
                         projectSelectionRequired
                       }
-                      isPreparingWorktree={false}
                       hasSendableContent={false}
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
@@ -3536,7 +3531,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       noProviderAvailable ||
                       projectSelectionRequired
                     }
-                    isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     canResume={showResumeAction}
                     preserveComposerFocusOnPointerDown={isMobileViewport}

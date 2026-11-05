@@ -93,25 +93,6 @@ describe("serverSettings helpers", () => {
     expect([on.idleCompaction, on.compactIdleThreads]).toEqual(["beforeCacheExpires", true]);
   });
 
-  it("changes a cleanup rule without replacing the machine's other rules", () => {
-    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },
-    });
-    expect(
-      applyServerSettingsPatch(enabled, {
-        storageCleanup: { worktreeAfterDays: null },
-      }).storageCleanup,
-    ).toEqual({
-      worktreeAfterDays: null,
-      worktreeSettledAfterDays: null,
-      worktreeOnMerge: true,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
-      worktreeKeepWhen: "uncommitted-changes",
-      browserArtifactsAfterDays: null,
-      logsAfterDays: 30,
-    });
-  });
   it("replaces a source control host's patched field so a cleared account pin does not survive", () => {
     const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       sourceControlHosts: {
@@ -152,7 +133,6 @@ describe("serverSettings helpers", () => {
       name: "Check",
       command: "npm test",
       icon: "play" as const,
-      runOnWorktreeCreate: false,
     };
     const existing = { ...project, scripts: [{ ...action, command: "npm run lint" }] };
     const unfolded = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
@@ -192,7 +172,6 @@ describe("serverSettings helpers", () => {
       name: "Check",
       command: "npm test",
       icon: "play" as const,
-      runOnWorktreeCreate: false,
     };
     const firstAction = { ...defaultAction, command: "npm run lint" };
     const secondAction = { ...defaultAction, command: "npm run build" };
@@ -519,7 +498,7 @@ describe("serverSettings helpers", () => {
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
         [projectId]: {
-          newWorktreesStartFromOrigin: true,
+          defaultAutoPull: true,
           providerInstances: { [instanceId]: { enabled: false } },
         },
       },
@@ -527,12 +506,12 @@ describe("serverSettings helpers", () => {
 
     const patched = applyServerSettingsPatch(current, {
       projectSettingsOverrides: {
-        [projectId]: { newWorktreesStartFromOrigin: false },
+        [projectId]: { defaultAutoPull: false },
       },
     });
 
     expect(patched.projectSettingsOverrides[projectId]).toEqual({
-      newWorktreesStartFromOrigin: false,
+      defaultAutoPull: false,
       providerInstances: { [instanceId]: { enabled: false } },
     });
   });
@@ -575,7 +554,7 @@ describe("serverSettings helpers", () => {
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
         [projectId]: {
-          newWorktreesStartFromOrigin: true,
+          defaultAutoPull: true,
           providerInstances: { [instanceId]: { enabled: false } },
         },
       },
@@ -583,12 +562,12 @@ describe("serverSettings helpers", () => {
 
     const patched = applyServerSettingsPatch(current, {
       projectSettingsOverrides: {
-        [projectId]: { newWorktreesStartFromOrigin: true, providerInstances: {} },
+        [projectId]: { defaultAutoPull: true, providerInstances: {} },
       },
     });
 
     expect(patched.projectSettingsOverrides[projectId]).toEqual({
-      newWorktreesStartFromOrigin: true,
+      defaultAutoPull: true,
       providerInstances: {},
     });
   });
@@ -839,19 +818,6 @@ describe("serverSettings helpers", () => {
         providerHealthRefreshInterval: Duration.minutes(4),
       },
     });
-  });
-});
-
-describe("worktreesDirectory", () => {
-  it("remembers previous custom locations so their worktrees stay managed", () => {
-    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { worktreesDirectory: "/a" });
-    expect(first.previousWorktreesDirectories).toEqual([]);
-    const second = applyServerSettingsPatch(first, { worktreesDirectory: "/b" });
-    expect(second.previousWorktreesDirectories).toEqual(["/a"]);
-    const reset = applyServerSettingsPatch(second, { worktreesDirectory: "" });
-    expect(reset.previousWorktreesDirectories).toEqual(["/a", "/b"]);
-    const back = applyServerSettingsPatch(reset, { worktreesDirectory: "/a" });
-    expect(back.previousWorktreesDirectories).toEqual(["/b"]);
   });
 });
 

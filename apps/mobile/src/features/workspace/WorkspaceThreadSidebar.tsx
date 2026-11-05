@@ -81,7 +81,6 @@ export function WorkspaceThreadSidebar() {
             environmentId: String(thread.environmentId),
             projectId: String(thread.projectId),
             branch: thread.branch,
-            worktreePath: thread.worktreePath,
           },
         })
       }

@@ -32,7 +32,7 @@ import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useSelectedThreadCwd } from "../../state/use-selected-thread-cwd";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
@@ -364,7 +364,7 @@ function useThreadFilesWorkspace(params: {
   const routeCwd = firstRouteParam(params.cwd);
   const routeProjectName = firstRouteParam(params.projectName);
   const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd } = useSelectedThreadCwd();
   const environmentId =
     routeEnvironmentId !== null
       ? EnvironmentId.make(routeEnvironmentId)

@@ -64,9 +64,6 @@ vi.mock("./NewTaskDraftScreen", () => ({
     return <p>draft on {props.initialProjectRef.branch}</p>;
   },
 }));
-vi.mock("./new-task-context-presentation", () => ({
-  resolveNewTaskBranchWorktreePath: () => null,
-}));
 vi.mock("./new-task-flow-provider", () => ({
   useNewTaskFlow: () => harness,
 }));
@@ -117,7 +114,7 @@ it.each([
     const firstCheckout = Promise.withResolvers<unknown>();
     harness.checkout.mockReturnValueOnce(firstCheckout.promise);
     harness.checkout.mockResolvedValue(
-      AsyncResult.success({ name: "feature", current: true, isDefault: false, worktreePath: null }),
+      AsyncResult.success({ name: "feature", current: true, isDefault: false }),
     );
     harness.set({ projects: [project], catalog: connected });
     const draft = { environmentId: "env-1", projectId: "project-1", branch: "feature" };
@@ -144,7 +141,6 @@ it.each([
           name: "feature",
           current: true,
           isDefault: false,
-          worktreePath: null,
         }),
       );
     });
@@ -164,7 +160,7 @@ it("hands the draft screen the same project ref across re-renders", async () => 
   harness.checkout.mockReset();
   harness.draftProjectRefs.length = 0;
   harness.checkout.mockResolvedValue(
-    AsyncResult.success({ name: "other", current: true, isDefault: false, worktreePath: null }),
+    AsyncResult.success({ name: "other", current: true, isDefault: false }),
   );
   harness.set({ projects: [project], catalog: connected });
   const draft = { environmentId: "env-1", projectId: "project-1", branch: "other" };

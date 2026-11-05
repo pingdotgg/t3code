@@ -627,20 +627,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             enabled: true,
           },
         };
-        const saved = yield* serverSettings.updateSettings({
+        yield* serverSettings.updateSettings({
           usageModelAliases,
           usageLimitSources,
         });
-        const updated = yield* serverSettings.updateSettings({
-          storageCleanup: { worktreeSettledAfterDays: 0, worktreeKeepWhen: "any-local-files" },
-        });
-        assert.deepStrictEqual(updated.usageLimitSources, saved.usageLimitSources);
         const persisted = yield* readPersisted;
         assert.deepStrictEqual(persisted.usagePriceOverrides, { "example-model": prices });
         assert.deepStrictEqual(persisted.usageModelAliases, usageModelAliases);
         assert.deepStrictEqual(persisted.usageLimitSources, usageLimitSources);
-        assert.equal(persisted.storageCleanup.worktreeSettledAfterDays, 0);
-        assert.equal(persisted.storageCleanup.worktreeKeepWhen, "any-local-files");
 
         yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": null } });
         const restored = yield* readPersisted;
@@ -2018,7 +2012,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         name: "Check",
         command: "npm test",
         icon: "play",
-        runOnWorktreeCreate: false,
       };
       const model = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
       const encodeModelSelection = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
@@ -2029,18 +2022,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       );
 
       const scriptsJson = yield* encodeProjectScripts([script]);
-      for (const [projectId, modelColumn, envMode, autoPull, scripts] of [
-        [legacyProject, modelJson, "worktree", 1, scriptsJson],
-        [scriptedProject, null, null, 0, scriptsJson],
+      for (const [projectId, modelColumn, autoPull, scripts] of [
+        [legacyProject, modelJson, 1, scriptsJson],
+        [scriptedProject, null, 0, scriptsJson],
       ] as const) {
         yield* sql`
           INSERT INTO projection_projects (
             project_id, title, workspace_root, default_model_selection_json,
-            default_thread_env_mode, auto_pull, scripts_json, created_at, updated_at
+            auto_pull, scripts_json, created_at, updated_at
           )
           VALUES (
             ${projectId}, ${"Project"}, ${`/tmp/${projectId}`}, ${modelColumn},
-            ${envMode}, ${autoPull}, ${scripts},
+            ${autoPull}, ${scripts},
             ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
           )
         `;
@@ -2058,7 +2051,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           [legacyProject]: {
             enableAgentBrowserAccess: false,
             defaultModelSelection: model,
-            defaultThreadEnvMode: "worktree",
             defaultAutoPull: true,
           },
           [scriptedProject]: { defaultAutoPull: true, defaultProjectScripts: [script] },

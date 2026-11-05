@@ -1,4 +1,3 @@
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   ForwardCompatibleOptional,
@@ -52,7 +51,6 @@ const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_
 const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
-const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
 export const GitRunStackedActionToastRunAction = Schema.Struct({
   kind: GitStackedAction,
 });
@@ -88,14 +86,9 @@ export const VcsRef = Schema.Struct({
   upstreamRef: Schema.optional(TrimmedNonEmptyStringSchema),
   current: Schema.Boolean,
   isDefault: Schema.Boolean,
-  worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type VcsRef = typeof VcsRef.Type;
 
-const VcsWorktree = Schema.Struct({
-  path: TrimmedNonEmptyStringSchema,
-  refName: TrimmedNonEmptyStringSchema,
-});
 const GitResolvedPullRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
@@ -148,15 +141,6 @@ export const VcsListRefsInput = Schema.Struct({
 });
 export type VcsListRefsInput = typeof VcsListRefsInput.Type;
 
-export const VcsCreateWorktreeInput = Schema.Struct({
-  cwd: TrimmedNonEmptyStringSchema,
-  refName: TrimmedNonEmptyStringSchema,
-  newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
-  baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
-  path: Schema.NullOr(TrimmedNonEmptyStringSchema),
-});
-export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
-
 export const GitPullRequestRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
@@ -166,17 +150,9 @@ export type GitPullRequestRefInput = typeof GitPullRequestRefInput.Type;
 export const GitPreparePullRequestThreadInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
-  mode: GitPreparePullRequestThreadMode,
   threadId: Schema.optional(ThreadId),
 });
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
-
-export const VcsRemoveWorktreeInput = Schema.Struct({
-  cwd: TrimmedNonEmptyStringSchema,
-  path: TrimmedNonEmptyStringSchema,
-  force: Schema.optional(Schema.Boolean),
-});
-export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
 
 export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -287,11 +263,6 @@ export const VcsListRefsResult = Schema.Struct({
 });
 export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
-export const VcsCreateWorktreeResult = Schema.Struct({
-  worktree: VcsWorktree,
-});
-export type VcsCreateWorktreeResult = typeof VcsCreateWorktreeResult.Type;
-
 export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
 });
@@ -300,9 +271,6 @@ export type GitResolvePullRequestResult = typeof GitResolvePullRequestResult.Typ
 export const GitPreparePullRequestThreadResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
   branch: TrimmedNonEmptyStringSchema,
-  worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
-  /** False when local commits or edits prevented a reused worktree from reaching the PR head. */
-  isOnPullRequestHead: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
 

@@ -1072,14 +1072,10 @@ export default function GitActionsControl({
     sourceControlScope,
     RUNNING_SOURCE_CONTROL_ACTIONS,
   );
-  const isSelectingWorktreeBase =
-    !activeServerThread &&
-    activeDraftThread?.envMode === "worktree" &&
-    activeDraftThread.worktreePath === null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists the draft thread branch when the live git status subscription reports a different branch
   useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
+    if (isGitActionRunning || activeServerThread) {
       return;
     }
 
@@ -1092,13 +1088,7 @@ export default function GitActionsControl({
     }
 
     persistLiveThreadBranch(branchUpdate.branch);
-  }, [
-    activeServerThread,
-    activeDraftThread?.branch,
-    gitStatusForActions,
-    isGitActionRunning,
-    isSelectingWorktreeBase,
-  ]);
+  }, [activeServerThread, activeDraftThread?.branch, gitStatusForActions, isGitActionRunning]);
 
   const isDefaultRef = gitStatusForActions?.isDefaultRef ?? false;
 

@@ -33,15 +33,6 @@ const DERIVED_FROM: ReadonlyMap<string, string> = new Map([
   ["compactIdleThreads", "idleCompaction"],
 ]);
 
-/**
- * Settings another one overrides when it is set: `worktreeCleanup`, also per project, wins over
- * the worktree rules in `storageCleanup`. A lock on the first alone would look enforced without
- * being, so the second must be locked too.
- */
-const OVERRIDDEN_BY: ReadonlyArray<readonly [overridden: string, by: string]> = [
-  ["storageCleanup.worktree", "worktreeCleanup"],
-];
-
 type Segments = ReadonlyArray<string>;
 
 /**
@@ -264,17 +255,6 @@ export function makeManagedSettings(
   }
 
   for (const lock of locks) {
-    const unheld = OVERRIDDEN_BY.find(
-      ([overridden, by]) =>
-        (lock.path.startsWith(overridden) || overridden.startsWith(`${lock.path}.`)) &&
-        !locks.some((other) => other.path === by),
-    );
-    if (unheld !== undefined) {
-      return {
-        _tag: "Invalid",
-        reason: `"${lock.path}" can be overridden by "${unheld[1]}"; lock "${unheld[1]}" too`,
-      };
-    }
     // An instance's fields override each other: a variable replaces launch arguments, a home
     // path rewrites a home variable, and a setup mode brings its own runtime.
     const [head, instanceId] = lock.segments;

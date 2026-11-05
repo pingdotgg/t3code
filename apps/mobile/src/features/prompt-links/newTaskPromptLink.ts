@@ -247,10 +247,7 @@ async function openProjectDraft(project: EnvironmentProject, request: LinkedDraf
     if (detail._tag === "Success") {
       updateComposerDraftSettings(draftKey, {
         workspaceSelection: {
-          mode: "worktree",
           branch: detail.value.headBranch,
-          worktreePath: null,
-          startFromOrigin: false,
           pullRequestReference: detail.value.url,
         },
       });

@@ -439,7 +439,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     action.confirm(
       "delete-branch",
       pullRequestActionLabel("delete-branch", terminology),
-      `Delete ${pr.headBranch} from ${pr.headRepositoryNameWithOwner ?? pr.repository}? Local branches and worktrees are not changed.`,
+      `Delete ${pr.headBranch} from ${pr.headRepositoryNameWithOwner ?? pr.repository}? Local branches are not changed.`,
     );
   const stack = usePullRequestStack(params, pr);
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(requestTarget(params)));

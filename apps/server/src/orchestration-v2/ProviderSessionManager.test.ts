@@ -726,7 +726,6 @@ function makeBrowserAccessProject(projectId: ProjectId): Project {
     faviconPath: null,
     projectIcon: null,
     defaultModelSelection: null,
-    defaultThreadEnvMode: null,
     autoPull: false,
     scripts: [],
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -1810,7 +1809,7 @@ it.effect(
         assert.equal(resolved?.thread.threadId, threadId);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+          new Set(["preview", "orchestration", "pull-requests"]),
         );
 
         yield* manager.close(providerSessionId);
@@ -1918,10 +1917,7 @@ it.effect(
         assert.equal(captured?.browserToolsAvailable, false);
         const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
         const resolved = yield* registry.resolve(token!);
-        assert.deepEqual(
-          resolved?.capabilities,
-          new Set(["orchestration", "worktree", "pull-requests"]),
-        );
+        assert.deepEqual(resolved?.capabilities, new Set(["orchestration", "pull-requests"]));
 
         yield* manager.close(providerSessionId);
       });

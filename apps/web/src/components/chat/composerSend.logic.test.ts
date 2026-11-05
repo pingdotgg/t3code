@@ -7,7 +7,6 @@ import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
   loadBalancingSendWarning,
-  multipleModelSendBlock,
   referencedThreadContexts,
 } from "./composerSend.logic";
 
@@ -54,39 +53,6 @@ describe("loadBalancingSendWarning", () => {
         candidateEnvironmentIds: [remote, local],
       }).description,
     ).toMatch(/No eligible machine has available resources/);
-  });
-});
-
-describe("multipleModelSendBlock", () => {
-  const ready = {
-    selectionCount: 2,
-    serverSupportsWorktreeBootstrap: true,
-    isLocalDraftThread: true,
-    isGitRepo: true,
-    branch: "main",
-  };
-
-  it("lets a new Git draft with a branch and models start", () => {
-    expect(multipleModelSendBlock(ready)).toBeNull();
-  });
-
-  it("asks for a server update before checking the draft", () => {
-    expect(
-      multipleModelSendBlock({
-        ...ready,
-        serverSupportsWorktreeBootstrap: false,
-        isGitRepo: false,
-      }),
-    ).toBe("server-outdated");
-  });
-
-  it.each([
-    { isLocalDraftThread: false },
-    { isGitRepo: false },
-    { branch: null },
-    { selectionCount: 0 },
-  ])("needs a new Git thread with a branch and models (%o)", (override) => {
-    expect(multipleModelSendBlock({ ...ready, ...override })).toBe("needs-new-git-thread");
   });
 });
 

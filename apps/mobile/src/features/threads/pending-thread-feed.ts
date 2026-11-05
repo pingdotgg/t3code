@@ -63,7 +63,7 @@ export function createThreadFeedGrouping() {
   const ungrouped = resolveUserMessageGrouping(undefined, undefined, undefined);
   return (
     feed: ReadonlyArray<ThreadFeedRow>,
-    options: { readonly workflowOpeningMessageId?: string; readonly setupAnchorIndex?: number },
+    options: { readonly workflowOpeningMessageId?: string },
   ): ReadonlyArray<GroupedThreadFeedRow> => {
     const groupingMessage = (index: number) => {
       const entry = feed[index];
@@ -81,8 +81,8 @@ export function createThreadFeedGrouping() {
           ? ungrouped
           : resolveUserMessageGrouping(
               message,
-              index - 1 === options.setupAnchorIndex ? undefined : groupingMessage(index - 1),
-              index === options.setupAnchorIndex ? undefined : groupingMessage(index + 1),
+              groupingMessage(index - 1),
+              groupingMessage(index + 1),
             );
       const previous = rows.get(entry);
       if (

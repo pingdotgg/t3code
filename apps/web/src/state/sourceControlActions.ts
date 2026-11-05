@@ -10,7 +10,6 @@ import {
   type RunVcsStackedActionInput,
 } from "@t3tools/client-runtime/state/vcs";
 import {
-  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   type EnvironmentId,
@@ -311,11 +310,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
   const preparePullRequestThread = useAtomCommand(gitEnvironment.preparePullRequestThread, {
     reportFailure: false,
   });
-  const action = async (input: {
-    reference: string;
-    mode: "local" | "worktree";
-    threadId?: ThreadId;
-  }) => {
+  const action = async (input: { reference: string; threadId?: ThreadId }) => {
     const target = resolveScope(scope);
     if (target === null) {
       return AsyncResult.failure<never, VcsActionUnavailableError>(
@@ -328,26 +323,11 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
         ),
       );
     }
-    if (
-      input.mode === "worktree" &&
-      input.threadId !== undefined &&
-      !readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
-    ) {
-      return AsyncResult.failure<never, EnvironmentAuthorizationError>(
-        Cause.fail(
-          new EnvironmentAuthorizationError({
-            requiredScope: AuthOrchestrationOperateScope,
-            message: "This connection cannot change threads.",
-          }),
-        ),
-      );
-    }
     return preparePullRequestThread({
       environmentId: target.environmentId,
       input: {
         cwd: target.cwd,
         reference: input.reference,
-        mode: input.mode,
         ...(input.threadId ? { threadId: input.threadId } : {}),
       },
     });

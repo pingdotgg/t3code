@@ -75,7 +75,6 @@ export function ActOnEnvironmentPicker({
 export function PullRequestCheckoutMenu({
   handoff,
   checkoutRoot,
-  canPrepareWorktree,
   canCheckoutHere,
   onCheckout,
   pickableEnvironments,
@@ -85,9 +84,8 @@ export function PullRequestCheckoutMenu({
 }: {
   handoff: string | null;
   checkoutRoot: string | null;
-  canPrepareWorktree: boolean;
   canCheckoutHere: boolean;
-  onCheckout: (mode: "worktree" | "local") => void;
+  onCheckout: () => void;
   pickableEnvironments: ReadonlyArray<PickableEnvironment>;
   actingEnvironmentId: EnvironmentId;
   onActingEnvironmentChange: (environmentId: EnvironmentId) => void;
@@ -120,16 +118,7 @@ export function PullRequestCheckoutMenu({
         <TooltipPopup>Check out this {term}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" side="bottom">
-        <MenuItem disabled={!canPrepareWorktree} onClick={() => onCheckout("worktree")}>
-          <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
-          <span className="flex min-w-0 flex-col">
-            <span>In a separate worktree</span>
-            <span className="text-xs text-muted-foreground">
-              Its own folder and thread. Nothing you have open moves.
-            </span>
-          </span>
-        </MenuItem>
-        <MenuItem disabled={!canCheckoutHere} onClick={() => onCheckout("local")}>
+        <MenuItem disabled={!canCheckoutHere} onClick={() => onCheckout()}>
           <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
           <span className="flex min-w-0 flex-col">
             <span>In this repository</span>

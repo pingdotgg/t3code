@@ -68,7 +68,7 @@ function Main({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** A plain row under the card (environment, worktree, branch) with no surface of its own. */
+/** A plain row under the card (environment, branch) with no surface of its own. */
 function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   return (
     <div

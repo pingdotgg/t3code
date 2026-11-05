@@ -265,7 +265,6 @@ function useSettingsIndexSections(): SettingsListSection[] {
           selectedProjectKey !== null ? { value: projectLabel } : undefined,
         ),
         serverPage("SettingsEnvironmentSourceControl", "arrow.triangle.branch", "Source control"),
-        serverPage("SettingsWorktrees", "square.on.square", "Worktrees"),
       ],
     },
     {

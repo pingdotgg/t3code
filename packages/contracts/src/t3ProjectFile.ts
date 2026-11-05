@@ -1,7 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { ProjectScriptIcon } from "./project.ts";
 import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.ts";
 
@@ -34,22 +33,10 @@ export const T3ProjectFileScript = Schema.Struct({
       description: 'Icon shown next to the script in the scripts menu. Defaults to "play".',
     }),
   ),
-  runOnWorktreeCreate: Schema.optionalKey(
-    Schema.Boolean.annotate({
-      description:
-        "When true, the script runs automatically after a worktree is created for a new thread.",
-    }),
-  ),
   runOnSettle: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "When true, the script runs in the thread's worktree each time the thread settles, for example to delete build output. Threads without their own worktree skip it.",
-    }),
-  ),
-  async: Schema.optionalKey(
-    Schema.Boolean.annotate({
-      description:
-        "Only for runOnWorktreeCreate scripts. When true (the default), the agent starts while the script is still running. Set false to hold the agent until the script exits.",
+        "When true, the script runs in the thread's checkout each time the thread settles, for example to delete build output.",
     }),
   ),
   previewUrl: Schema.optionalKey(
@@ -84,18 +71,6 @@ export const T3ProjectFile = Schema.Struct({
       T3_PROJECT_FILE_PATH_MAX_LENGTH,
     ),
   ),
-  defaultThreadEnvMode: Schema.optionalKey(
-    ThreadEnvMode.annotate({
-      description:
-        'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in T3 Code overrides this; when neither is set, the global default applies.',
-    }),
-  ),
-  worktreeSubmodules: Schema.optionalKey(
-    WorktreeSubmodules.annotate({
-      description:
-        'How new worktrees populate git submodules: "recursive" (the default) initializes nested submodules too, "top-level" initializes only those declared by this repository, and "none" leaves every submodule empty for a setup script to handle. A project or environment setting in T3 Code overrides this.',
-    }),
-  ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({
@@ -111,10 +86,7 @@ export const T3ProjectFile = Schema.Struct({
 export type T3ProjectFile = typeof T3ProjectFile.Type;
 
 /** Keys must be nullable in ServerSettings so both environment and project overrides can inherit t3.json. */
-export const PROJECT_FILE_BACKED_SETTINGS = {
-  defaultThreadEnvMode: { field: "defaultThreadEnvMode", builtIn: "local" },
-  worktreeSubmodules: { field: "worktreeSubmodules", builtIn: "recursive" },
-} as const satisfies {
+export const PROJECT_FILE_BACKED_SETTINGS = {} as const satisfies {
   // providerInstances overrides individual fields, so it cannot use whole-setting file inheritance.
   readonly [K in ProjectScopedServerSettingKey & keyof ServerSettings]?: {
     readonly field: {

@@ -119,10 +119,7 @@ const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provide(layerVcsDriverRegistryTest),
 );
-const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
-  pruneWorktrees: () => Effect.void,
-  createWorktree: () => Effect.succeed({} as never),
-});
+const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({});
 const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeedNone,
 });
@@ -5560,46 +5557,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* end("probe", "completed");
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("after-stop")).id);
       yield* releasedAfter("after-stop", "probe");
-    }),
-  );
-
-  it.effect("keeps held agent messages while the thread's worktree setup is unresolved", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const dispatcherId = ThreadId.make("runtime-layer-held-queue-worktree");
-      const dispatcher = yield* queueTestThread(dispatcherId);
-      const witness = yield* queueTestThread(ThreadId.make("runtime-layer-held-queue-witness"));
-      yield* dispatcher.send("setup", "agent", true);
-      yield* dispatcher.send("issue", "agent", false);
-      yield* dispatcher.end("setup", "failed", "", {
-        workspacePreparation: { type: "worktree", baseRef: "main" },
-      });
-      yield* dispatcher.awaitHeld("issue");
-      assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
-      yield* dispatcher.send("tick", "agent", true);
-      assert.equal((yield* dispatcher.runFor("tick")).status, "starting");
-      yield* witness.send("active", "agent", true);
-      yield* witness.send("queued", "agent", false);
-      // The failed setup never produced the thread's worktree.
-      const { thread } = yield* orchestrator.getThreadProjection(dispatcherId);
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make(`${dispatcherId}:worktree-missing`),
-            type: "thread.metadata-updated",
-            threadId: dispatcherId,
-            occurredAt: yield* DateTime.now,
-            payload: { ...thread, worktreePath: null },
-          },
-        ],
-      });
-      yield* dispatcher.end("tick", "completed");
-      // One listener handles every thread's completions in order, so the witness starting
-      // means the tick's completion was handled too.
-      yield* witness.end("active", "completed");
-      assert.equal(yield* Queue.take(witness.startedRunIds), (yield* witness.runFor("queued")).id);
-      assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
     }),
   );
 

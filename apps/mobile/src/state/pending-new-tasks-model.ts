@@ -47,41 +47,16 @@ function draftTitle(draft: ComposerDraft): string {
   return count === 1 ? "1 attachment" : `${count} attachments`;
 }
 
-/** A project's new-task defaults, as useNewTaskProjectDefaults resolves them. */
-export interface PendingDraftProjectDefaults {
-  readonly canChooseWorkspace: boolean;
-  readonly defaultMode: "local" | "worktree";
-  readonly defaultModeSettled: boolean;
-}
-
-/**
- * True when the draft's branch is derived from refs rather than stored, so the list must load
- * refs to show it.
- */
-export function pendingDraftBranchNeedsRefs(
-  draft: ComposerDraft,
-  defaults: PendingDraftProjectDefaults,
-): boolean {
-  const selection = defaults.canChooseWorkspace ? draft.workspaceSelection : undefined;
-  return selection === undefined ? defaults.defaultMode === "worktree" : selection.branch === null;
-}
-
 /** The branch a draft will start on, derived the same way the new-task flow and send path do. */
 export function resolvePendingDraftBranch(input: {
   readonly draft: ComposerDraft;
-  readonly defaults: PendingDraftProjectDefaults;
+  readonly canChooseWorkspace: boolean;
   readonly isGitRepo: boolean;
-  readonly branches: Parameters<typeof resolveNewTaskDraftWorkspace>[0]["branches"];
-  readonly projectCwd: string | null;
 }): string | null {
   return resolveNewTaskDraftWorkspace({
     selection: input.draft.workspaceSelection,
-    canChooseWorkspace: input.defaults.canChooseWorkspace,
-    defaultMode: input.defaults.defaultMode,
-    defaultModeSettled: input.defaults.defaultModeSettled,
+    canChooseWorkspace: input.canChooseWorkspace,
     isGitRepo: input.isGitRepo,
-    branches: input.branches,
-    projectCwd: input.projectCwd,
   }).branch;
 }
 

@@ -223,8 +223,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       !readEnvironmentScope(environmentId, AuthTerminalReadScope)
         ? null
         : findReusableProjectScriptTerminal({
-            // Server sessions cover drawer terminals this client has not opened yet, such as a
-            // worktree setup shell; the helper drops the panel-owned ones.
+            // Server sessions cover drawer terminals this client has not opened yet; the helper drops the panel-owned ones.
             drawerTerminalIds: [
               ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
             ],
@@ -315,7 +314,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         name: "Chat code block",
         command,
         icon: "play",
-        runOnWorktreeCreate: false,
       },
       { rememberAsLastInvoked: false, shellHistory: "preserve" },
     );

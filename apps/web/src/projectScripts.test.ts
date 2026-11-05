@@ -1,6 +1,6 @@
 import { shortcutLabelForCommand } from "./keybindings";
 import { describe, expect, it } from "vite-plus/test";
-import { settleProjectScript, setupProjectScript } from "@t3tools/shared/projectScripts";
+import { settleProjectScript } from "@t3tools/shared/projectScripts";
 
 import {
   commandForProjectScript,
@@ -29,21 +29,13 @@ describe("projectScripts helpers", () => {
     expect(nextProjectScriptId("!!!", [])).toBe("script");
   });
 
-  it("resolves primary, setup, and settle scripts", () => {
+  it("resolves primary and settle scripts", () => {
     const scripts = [
-      {
-        id: "setup",
-        name: "Setup",
-        command: "bun install",
-        icon: "configure" as const,
-        runOnWorktreeCreate: true,
-      },
       {
         id: "clean",
         name: "Clean",
         command: "cargo clean",
         icon: "build" as const,
-        runOnWorktreeCreate: false,
         runOnSettle: true,
       },
       {
@@ -51,22 +43,20 @@ describe("projectScripts helpers", () => {
         name: "Test",
         command: "bun test",
         icon: "test" as const,
-        runOnWorktreeCreate: false,
       },
     ];
 
     expect(primaryProjectScript(scripts)?.id).toBe("test");
-    expect(setupProjectScript(scripts)?.id).toBe("setup");
     expect(settleProjectScript(scripts)?.id).toBe("clean");
     expect(primaryProjectScript(scripts.filter((script) => script.id === "clean"))).toBeNull();
   });
 
-  it("moves the setup and settle roles to the script that claims them", () => {
+  it("moves the settle role to the script that claims it", () => {
     const input = {
       name: "Next",
       command: "true",
       icon: "play",
-      waitForSetup: false,
+      runOnSettle: true,
       previewUrl: null,
       autoOpenPreview: false,
     } as const;
@@ -75,18 +65,10 @@ describe("projectScripts helpers", () => {
       name: "Holder",
       command: "true",
       icon: "play" as const,
-      runOnWorktreeCreate: true,
       runOnSettle: true,
     };
 
-    expect(
-      releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: false, runOnSettle: true }),
-    ).toMatchObject({ runOnWorktreeCreate: true, runOnSettle: false });
-    expect(
-      releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: true, runOnSettle: false }),
-    ).toMatchObject({ runOnWorktreeCreate: false, runOnSettle: true });
-    expect(
-      releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: false, runOnSettle: false }),
-    ).toBe(holder);
+    expect(releaseClaimedRoles(holder, input)).toMatchObject({ runOnSettle: false });
+    expect(releaseClaimedRoles(holder, { ...input, runOnSettle: false })).toBe(holder);
   });
 });

@@ -626,7 +626,7 @@ export const ServerConfig = Schema.Struct({
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and
-   * `getThreadFamily` and `getWorktreeThreadIds` serve the rows it leaves out.
+   * `getThreadFamily` serves the rows it leaves out.
    */
   shellThreadFamilies: Schema.optionalKey(Schema.Boolean),
   /**

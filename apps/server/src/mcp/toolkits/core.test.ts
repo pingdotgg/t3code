@@ -487,7 +487,7 @@ const clientScope = (
   thread: undefined,
   client: { sessionId: "session-1", label: "Claude Code", access },
   issuedAt: 0,
-  capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+  capabilities: new Set(["orchestration", "pull-requests"]),
 });
 
 it.effect("a client caller targets any thread within its ceiling and cannot act as a thread", () =>
@@ -793,7 +793,7 @@ function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
     projectId: "project-a",
     threadId: null,
     schedule: { type: "interval", everyMs: 3_600_000 },
-    workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+    workspaceStrategy: { type: "root" },
     modelSelection: { instanceId: "codex", model: "gpt-5" },
     runtimeMode,
     interactionMode: "default",
@@ -930,7 +930,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-    const denied = yield* call({ ...scope, capabilities: new Set(["worktree"]) });
+    const denied = yield* call({ ...scope, capabilities: new Set(["preview"]) });
     expect(declaredFailure(denied)).toMatchObject({ code: "capability_denied" });
     expect(stopped).toEqual([]);
     const allowed = yield* call(scope);

@@ -16,10 +16,10 @@ describe("buildProviderInstanceOverridePatch", () => {
   const instanceId = ProviderInstanceId.make("codex_work");
 
   it("writes the same choice to every checkout of the project", () => {
-    const siblingId = ProjectId.make("project-a-worktree");
+    const siblingId = ProjectId.make("project-a-sibling");
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
       projectSettingsOverrides: {
-        [siblingId]: { newWorktreesStartFromOrigin: true },
+        [siblingId]: { defaultAutoPull: true },
       },
     };
 
@@ -28,7 +28,7 @@ describe("buildProviderInstanceOverridePatch", () => {
     ).toEqual({
       [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
       [siblingId]: {
-        newWorktreesStartFromOrigin: true,
+        defaultAutoPull: true,
         providerInstances: { [instanceId]: { enabled: false } },
       },
     });
@@ -50,7 +50,7 @@ describe("buildProviderInstanceOverridePatch", () => {
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
       projectSettingsOverrides: {
         [projectId]: {
-          newWorktreesStartFromOrigin: true,
+          defaultAutoPull: true,
           providerInstances: { [instanceId]: { enabled: true } },
         },
       },
@@ -59,7 +59,7 @@ describe("buildProviderInstanceOverridePatch", () => {
     expect(
       buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
     ).toEqual({
-      [projectId]: { newWorktreesStartFromOrigin: true, providerInstances: {} },
+      [projectId]: { defaultAutoPull: true, providerInstances: {} },
     });
   });
 });

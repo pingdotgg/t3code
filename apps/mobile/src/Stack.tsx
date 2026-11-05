@@ -99,7 +99,6 @@ import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowU
 import {
   SettingsEnvironmentMaintenanceRouteScreen,
   SettingsThreadsRouteScreen,
-  SettingsWorktreesRouteScreen,
   SettingsEnvironmentSourceControlRouteScreen,
 } from "./features/settings/SettingsServerControlsRouteScreen";
 import {
@@ -107,10 +106,7 @@ import {
   SettingsScheduledTaskNewRouteScreen,
   SettingsScheduledTaskEditRouteScreen,
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
-import {
-  ScheduledTaskModelPickerRouteScreen,
-  ScheduledTaskBranchPickerRouteScreen,
-} from "./features/settings/ScheduledTaskPickerScreens";
+import { ScheduledTaskModelPickerRouteScreen } from "./features/settings/ScheduledTaskPickerScreens";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
@@ -247,11 +243,6 @@ const SETTINGS_SCREENS = {
     linking: "settings/agent-behavior",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Threads" },
   }),
-  SettingsWorktrees: createNativeStackScreen({
-    screen: SettingsWorktreesRouteScreen,
-    linking: "settings/worktrees",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Worktrees" },
-  }),
   SettingsLabs: createNativeStackScreen({
     screen: SettingsLabsRouteScreen,
     linking: "settings/labs",
@@ -373,10 +364,6 @@ const SETTINGS_SCREENS = {
   SettingsScheduledTaskEdit: createNativeStackScreen({
     screen: SettingsScheduledTaskEditRouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Edit scheduled task" },
-  }),
-  SettingsScheduledTaskBranch: createNativeStackScreen({
-    screen: ScheduledTaskBranchPickerRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Base branch" },
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,

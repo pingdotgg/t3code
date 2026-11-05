@@ -58,10 +58,10 @@ function preparationFailure(
   };
 }
 
-const worktree = { type: "worktree", baseRef: "main" } as const;
+const root = { type: "root" } as const;
 function run(
   status: OrchestrationV2Run["status"],
-  workspacePreparation?: typeof worktree,
+  workspacePreparation?: typeof root,
 ): Pick<OrchestrationV2Run, "id" | "status" | "workspacePreparation"> {
   return {
     id: RunId.make("run-1"),
@@ -81,14 +81,14 @@ describe("turnItemIsWorkspacePreparation", () => {
 describe("workspacePreparationRetryRunIds", () => {
   it("offers a retry while the run still ends in its failed preparation", () => {
     const failure = [preparationFailure("failed")];
-    expect([...workspacePreparationRetryRunIds([run("failed", worktree)], failure)]).toEqual([
+    expect([...workspacePreparationRetryRunIds([run("failed", root)], failure)]).toEqual([
       RunId.make("run-1"),
     ]);
-    expect(workspacePreparationRetryRunIds([run("preparing", worktree)], failure).size).toBe(0);
+    expect(workspacePreparationRetryRunIds([run("preparing", root)], failure).size).toBe(0);
     expect(workspacePreparationRetryRunIds([run("failed")], failure).size).toBe(0);
     expect(
       workspacePreparationRetryRunIds(
-        [run("failed", worktree)],
+        [run("failed", root)],
         [preparationFailure("failed", "provider_crashed")],
       ).size,
     ).toBe(0);

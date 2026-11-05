@@ -11,7 +11,6 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
@@ -1019,7 +1018,6 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
-  const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
 
@@ -1852,52 +1850,6 @@ const make = Effect.gen(function* () {
       effect.pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten)),
   );
 
-  const refExists = (cwd: string, revision: string) =>
-    gitDriver.resolveCommit({ cwd, revision }).pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false),
-    );
-
-  const resolveScheduledTaskBaseRef = Effect.fn(
-    "OrchestratorMcpService.resolveScheduledTaskBaseRef",
-  )(function* (cwd: string) {
-    const remoteName = yield* gitDriver
-      .resolvePrimaryRemoteName(cwd)
-      .pipe(Effect.orElseSucceed(() => null));
-    const conventional = ["main", "master"];
-    if (remoteName !== null) {
-      const remoteDefault = yield* gitDriver
-        .resolveDefaultBranchName(cwd, remoteName)
-        .pipe(Effect.orElseSucceed(() => null));
-      // Fetch does not update a recorded HEAD, so it can outlive the branch it names.
-      for (const branch of remoteDefault === null
-        ? conventional
-        : [remoteDefault, ...conventional]) {
-        // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
-        if (yield* refExists(cwd, `refs/remotes/${remoteName}/${branch}`)) {
-          return `${remoteName}/${branch}`;
-        }
-      }
-    }
-    // Local-only repositories, or a remote with neither a usable HEAD nor a conventional branch.
-    for (const branch of conventional) {
-      if (yield* refExists(cwd, `refs/heads/${branch}`)) return branch;
-    }
-    return "main";
-  });
-
-  const scheduledTaskWorkspaceStrategy = Effect.fn(
-    "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
-  )(function* (boundToThread: boolean, projectId: ProjectId) {
-    if (boundToThread) return { type: "root" as const };
-    const { workspaceRoot } = yield* requireProject(projectId);
-    return {
-      type: "worktree" as const,
-      baseRef: yield* resolveScheduledTaskBaseRef(workspaceRoot),
-      startFromOrigin: true,
-    };
-  });
-
   const scheduledTaskRunModes = Effect.fn("OrchestratorMcpService.scheduledTaskRunModes")(
     function* (task: ScheduledTask) {
       const modes = [{ runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }];
@@ -2009,7 +1961,7 @@ const make = Effect.gen(function* () {
         schedule: input.schedule,
         projectId,
         threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
+        workspaceStrategy: { type: "root" as const },
         modelSelection,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
@@ -2078,10 +2030,6 @@ const make = Effect.gen(function* () {
               ? parent.thread.id
               : null;
         // Update workspace strategy on rebinding so unbound root tasks cannot run in the shared checkout.
-        const workspaceStrategy =
-          input.bindToCurrentThread === undefined
-            ? existing.workspaceStrategy
-            : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2090,7 +2038,7 @@ const make = Effect.gen(function* () {
           schedule: input.schedule ?? existing.schedule,
           projectId: existing.projectId,
           threadId,
-          workspaceStrategy,
+          workspaceStrategy: { type: "root" as const },
           modelSelection: existing.modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
@@ -2420,36 +2368,6 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
-      let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
-      if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
-        const project = yield* requireProject(parent.thread.projectId);
-        const base = yield* gitDriver
-          .resolveCommit({
-            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
-            revision: "HEAD",
-          })
-          .pipe(
-            Effect.mapError(() =>
-              failure("invalid_request", "Unable to resolve the parent checkout commit."),
-            ),
-          );
-        // Launch preparation creates the worktree from the project root, so a
-        // parent checkout in another repository (such as a Git folder inside
-        // Scratch) would hand it a commit it cannot find.
-        if (parent.thread.worktreePath !== null) {
-          yield* gitDriver
-            .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
-            .pipe(
-              Effect.mapError(() =>
-                failure(
-                  "invalid_request",
-                  `Isolation "worktree" creates the child checkout in project "${project.title}" (${project.workspaceRoot}), which does not contain the parent checkout's commit. Use isolation "shared" to work in the parent's checkout.`,
-                ),
-              ),
-            );
-        }
-        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
-      }
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
       // receipt-replay exemption, so no separate assert runs here.
@@ -2467,7 +2385,6 @@ const make = Effect.gen(function* () {
           modelSelection: target.modelSelection,
           runtimeMode,
           interactionMode,
-          ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
           // Async delegations wake the parent on every child terminal; wait
           // delegations deliver through the blocking tool call, so a wake is
           // only needed if the parent settled first (timeout, disconnect).

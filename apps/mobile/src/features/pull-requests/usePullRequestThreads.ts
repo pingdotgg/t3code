@@ -121,10 +121,7 @@ export function usePullRequestThreads(
       if (!thread)
         updateComposerDraftSettings(draftKey, {
           workspaceSelection: {
-            mode: "worktree",
             branch: pr.headBranch,
-            worktreePath: null,
-            startFromOrigin: false,
             pullRequestReference: pr.url,
           },
         });

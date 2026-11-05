@@ -48,7 +48,6 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
-import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -442,7 +441,6 @@ export const layer = Layer.effect(
     const mac = yield* Mac.Mac;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
-    const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
@@ -1309,11 +1307,6 @@ export const layer = Layer.effect(
               return { token, secret, secretChanged };
             })
           : { token: null, secret: null, secretChanged: true };
-      const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
-        input.workspaceStrategy.type === "worktree" &&
-        (yield* managedFolders.isScratchProject(input.projectId))
-          ? { type: "root" }
-          : input.workspaceStrategy;
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
@@ -1328,7 +1321,7 @@ export const layer = Layer.effect(
         schedule,
         projectId: input.projectId,
         threadId: input.threadId ?? null,
-        workspaceStrategy,
+        workspaceStrategy: input.workspaceStrategy,
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,

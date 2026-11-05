@@ -1,9 +1,5 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import type {
-  ProviderApprovalDecision,
-  RuntimeRequestId,
-  WorktreeSetupSnapshot,
-} from "@t3tools/contracts";
+import type { ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
 import {
   type EnvironmentId,
   type MessageId,
@@ -91,11 +87,8 @@ export interface TimelineRowSharedState {
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
-  onCancelWorktreeSetup: (() => void) | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
-  onWorktreeSetupWorkLocally: (() => void) | null;
-  onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
 }
 
@@ -104,9 +97,7 @@ export interface TimelineRowActivityState {
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
   awaitingUser: boolean;
-  isPreparingWorktree: boolean;
   latestRunId: RunId | null;
-  backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
 }
 
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);

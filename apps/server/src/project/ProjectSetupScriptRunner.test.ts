@@ -1,4 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -11,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { TestClock } from "effect/testing";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -20,7 +20,8 @@ import * as ProjectService from "./ProjectService.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
 
 const threadId = "thread-1";
-const terminalId = "setup-setup";
+// Zeroed random bytes make the settle terminal id deterministic.
+const terminalId = "settle-setup-00000000";
 const event = { threadId, terminalId, sequence: 1, createdAt: "2026-01-01T00:00:00.000Z" };
 
 const openSnapshot = (history: string): TerminalSessionSnapshot => ({
@@ -72,7 +73,10 @@ const makeHarness = Effect.fn(function* (options: {
           getThreadShell: () => Effect.succeed(null),
         }),
         ServerSettings.layerTest(),
-        NodeCrypto.layer,
+        Layer.succeed(
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size)),
+        ),
       ),
     ),
   );
@@ -89,7 +93,7 @@ const makeHarness = Effect.fn(function* (options: {
           name: "Setup",
           command: "vp i",
           icon: "configure",
-          runOnWorktreeCreate: true,
+          runOnSettle: true,
         },
       ],
     },

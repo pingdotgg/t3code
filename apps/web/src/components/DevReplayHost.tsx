@@ -70,7 +70,6 @@ export function DevReplayHost() {
             runtimeMode: "approval-required",
             interactionMode: "default",
             branch: null,
-            worktreePath: null,
             createdAt,
           },
         },

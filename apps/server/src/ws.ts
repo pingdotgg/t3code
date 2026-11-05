@@ -221,7 +221,6 @@ import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
-import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -1435,7 +1434,6 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
-      const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -1982,10 +1980,7 @@ export const layerWsRpc = (
 
       // Rows the shell can omit, read with the same snapshot sequence the shell uses.
       const readOmittableShellRows = Effect.fn("ws.orchestrationV2.readOmittableShellRows")(
-        function* (
-          options: { readonly familyOf: ThreadId } | { readonly worktreePath: string },
-          message: string,
-        ) {
+        function* (options: { readonly familyOf: ThreadId }, message: string) {
           const { threads, snapshotSequence } = yield* loadShellSnapshotParts({
             sql,
             readThreads: threadManagement.readShellSnapshot({ location: "active", ...options }),
@@ -2149,11 +2144,6 @@ export const layerWsRpc = (
                 }),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: (input) =>
-          readOmittableShellRows(
-            { worktreePath: input.worktreePath },
-            "Failed to load the worktree's threads",
-          ).pipe(Effect.map(({ threads }) => ({ threadIds: threads.map((thread) => thread.id) }))),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(
@@ -3072,11 +3062,6 @@ export const layerWsRpc = (
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
         [WS_METHODS.subscribeVcsStatus]: (input) => vcsStatusBroadcaster.streamStatus(input),
-        [WS_METHODS.subscribeWorktreeSetup]: (input) => worktreeSetupTracker.stream(input.threadId),
-        [WS_METHODS.worktreeSetupCancel]: (input) =>
-          worktreeSetupTracker
-            .cancel(input.threadId)
-            .pipe(Effect.map((cancelled) => ({ cancelled }))),
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
         [WS_METHODS.vcsPull]: (input) =>
@@ -3133,10 +3118,6 @@ export const layerWsRpc = (
             .preparePullRequestThread(input)
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
-        [WS_METHODS.vcsCreateWorktree]: (input) =>
-          gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>

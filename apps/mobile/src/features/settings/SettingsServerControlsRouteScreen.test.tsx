@@ -143,8 +143,8 @@ vi.mock("./settings-environment-filter", () => ({
 }));
 
 import {
+  SettingsEnvironmentSourceControlRouteScreen,
   SettingsThreadsRouteScreen,
-  SettingsWorktreesRouteScreen,
 } from "./SettingsServerControlsRouteScreen";
 
 function environment(environmentId: string, label: string) {
@@ -188,7 +188,7 @@ describe("SettingsServerControlsRouteScreen", () => {
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<SettingsWorktreesRouteScreen />));
+    act(() => root.render(<SettingsEnvironmentSourceControlRouteScreen />));
 
     act(() => mocks.branchNaming.onChange({ branchNamingMode: "custom" }));
     act(() => mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." }));

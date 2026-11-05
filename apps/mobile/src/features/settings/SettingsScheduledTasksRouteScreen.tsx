@@ -25,7 +25,6 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
@@ -62,7 +61,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
-import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
 import {
@@ -96,7 +94,6 @@ type ScheduledTaskRoutes = {
   SettingsScheduledTaskNew: undefined;
   SettingsScheduledTaskEdit: undefined;
   SettingsScheduledTaskModel: undefined;
-  SettingsScheduledTaskBranch: undefined;
 };
 
 const DAYS = [
@@ -773,13 +770,9 @@ function TaskForm({
       !draft.prompt.trim() ||
       !draft.projectId ||
       !draft.modelSelection ||
-      !schedule ||
-      (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
+      !schedule
     ) {
-      Dialog.alert(
-        "Incomplete task",
-        "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
-      );
+      Dialog.alert("Incomplete task", "Add a name, prompt, project, model, and valid schedule.");
       return;
     }
     if (!projects.some((project) => project.id === draft.projectId)) {
@@ -795,16 +788,7 @@ function TaskForm({
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
-      workspaceStrategy:
-        draft.workspace === "root"
-          ? { type: "root" }
-          : draft.workspace === "existing_worktree"
-            ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
-            : {
-                type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
-                startFromOrigin: draft.startFromOrigin,
-              },
+      workspaceStrategy: { type: "root" },
       // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
       runtimeMode:
         clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
@@ -930,67 +914,6 @@ function TaskForm({
             onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
             disabled={saving || dictationPending || environmentUnavailable}
           />
-        </SettingsSection>
-
-        <SettingsSection title="Workspace">
-          <SelectRow
-            label="Run in"
-            value={
-              draft.workspace === "worktree"
-                ? "New worktree"
-                : draft.workspace === "root"
-                  ? "Project checkout"
-                  : "Specific checkout"
-            }
-            actions={[
-              {
-                id: "worktree",
-                title: "New worktree",
-                state: draft.workspace === "worktree" ? "on" : undefined,
-              },
-              {
-                id: "root",
-                title: "Project checkout",
-                state: draft.workspace === "root" ? "on" : undefined,
-              },
-              {
-                id: "existing_worktree",
-                title: "Specific checkout",
-                state: draft.workspace === "existing_worktree" ? "on" : undefined,
-              },
-            ]}
-            onSelect={(id) => {
-              if (id === "worktree" || id === "root" || id === "existing_worktree")
-                setDraft({ ...draft, workspace: id });
-            }}
-          />
-          {draft.workspace === "worktree" ? (
-            <PickerRow
-              label="Base branch"
-              value={resolveNewTaskBranchLabel({
-                branchName: draft.baseRef,
-                startFromOrigin: draft.startFromOrigin,
-                workspaceMode: "worktree",
-              })}
-              borderTop
-              disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
-              onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
-            />
-          ) : null}
-          {draft.workspace === "existing_worktree" ? (
-            <FormField
-              label="Checkout path"
-              disabled={saving}
-              value={draft.checkoutPath}
-              borderTop
-              onChange={(checkoutPath) =>
-                setDraft({
-                  ...draft,
-                  checkoutPath: resolvePastedPath(draft.checkoutPath, checkoutPath),
-                })
-              }
-            />
-          ) : null}
         </SettingsSection>
 
         <SettingsSection title="Schedule">

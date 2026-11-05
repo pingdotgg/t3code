@@ -18,7 +18,6 @@ const row = (overrides: Partial<ProjectRow> = {}): ProjectRow => ({
   title: "Scripts",
   workspaceRoot: "/tmp/scripts",
   defaultModelSelection: null,
-  defaultThreadEnvMode: null,
   autoPull: false,
   faviconPath: null,
   projectIcon: null,
@@ -36,7 +35,6 @@ const script = (id: string): ProjectScript => ({
   name: "Install dependencies",
   command: "vp i",
   icon: "configure",
-  runOnWorktreeCreate: false,
 });
 
 const plan = (command: ProjectCommand, state: Partial<ProjectCommandState> = {}) =>

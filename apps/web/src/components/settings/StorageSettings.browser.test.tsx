@@ -44,7 +44,6 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
           capabilities: {
             storageCleanup: true,
             storageCleanupRun: true,
-            settledWorktreeCleanup: true,
           },
         },
       },
@@ -96,12 +95,6 @@ function setup() {
   state.settings = {
     ...DEFAULT_SERVER_SETTINGS,
     storageCleanup: {
-      worktreeKeepWhen: "uncommitted-changes",
-      worktreeAfterDays: null,
-      worktreeSettledAfterDays: null,
-      worktreeOnMerge: false,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
     },
@@ -144,7 +137,7 @@ const deleteButton = (container: HTMLElement) =>
     (button) => button.textContent === "Delete now",
   )!;
 
-it("keeps cleanup disabled when settled retention and all other rules are off", async () => {
+it("keeps cleanup disabled when no retention rule is set", async () => {
   setup();
   await using screen = await render(panel());
   const button = deleteButton(screen.container);

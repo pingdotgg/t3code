@@ -36,7 +36,6 @@ describe("project thread title", () => {
     const wire = serializeComposerMessageForServer(text, undefined);
     const spec = {
       projectId: ProjectId.make("project"),
-      projectCwd: "/workspace",
       threadId: "image-thread",
       commandId: "image-command",
       messageId: "image-message",
@@ -47,11 +46,7 @@ describe("project thread title", () => {
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
       runtimeMode: "full-access",
       interactionMode: "default",
-      workspaceMode: "local",
       branch: null,
-      worktreePath: null,
-      startFromOrigin: false,
-      worktreeBranchName: "unused",
     } satisfies ProjectThreadStartTurnSpec;
     const input = buildProjectThreadStartTurnInput(spec);
 

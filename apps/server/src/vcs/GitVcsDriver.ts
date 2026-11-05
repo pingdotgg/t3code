@@ -18,8 +18,6 @@ import {
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
   type VcsCreateRefResult,
-  type VcsCreateWorktreeInput,
-  type VcsCreateWorktreeResult,
   type ReviewBranchCommitsInput,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewInput,
@@ -30,10 +28,8 @@ import {
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsPullResult,
-  type VcsRemoveWorktreeInput,
   type VcsStatusInput,
   type VcsStatusResult,
-  type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -118,32 +114,6 @@ export interface ExecuteGitProgress {
     exitCode: number | null;
     durationMs: number | null;
   }) => Effect.Effect<void, never>;
-}
-
-export interface CreateWorktreeProgress {
-  /** Git refuses existing paths; claimed paths belong to this call and can be removed on cancel. */
-  readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
-  readonly onCheckoutProgress?: (input: {
-    percent: number;
-    completed: number;
-    total: number;
-  }) => Effect.Effect<void, never>;
-  readonly onSubmodulesStarted?: () => Effect.Effect<void, never>;
-  readonly onSubmodulesDisabled?: (input: {
-    source: "settings" | "t3.json";
-  }) => Effect.Effect<void, never>;
-  readonly onSubmoduleLine?: (line: string) => Effect.Effect<void, never>;
-  readonly onSubmodulesFinished?: (input: {
-    ok: boolean;
-    detail: string | null;
-  }) => Effect.Effect<void, never>;
-}
-
-export interface CreateWorktreeOptions {
-  readonly progress?: CreateWorktreeProgress;
-  /** Null or omitted defers to the checkout's t3.json. */
-  readonly submodules?: WorktreeSubmodules | null;
-  readonly worktreesDirectory?: string;
 }
 
 export interface GitCommitProgress {
@@ -268,11 +238,6 @@ export interface GitResolveRemoteTrackingCommitResult {
   remoteRefName: string;
 }
 
-export interface GitFetchWorktreeBaseCommitInput {
-  cwd: string;
-  refName: string;
-}
-
 export interface GitCreateBranchInput {
   readonly cwd: string;
   readonly branch: string;
@@ -283,11 +248,6 @@ export interface GitWriteConfigValueInput {
   readonly cwd: string;
   readonly key: string;
   readonly value: string;
-}
-
-export interface GitWorktreeBaseRemote {
-  remoteName: string;
-  branchName: string;
 }
 
 export interface GitSetBranchUpstreamInput {
@@ -364,10 +324,6 @@ export class GitVcsDriver extends Context.Service<
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
-    readonly createWorktree: (
-      input: VcsCreateWorktreeInput,
-      options?: CreateWorktreeOptions,
-    ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     /** Force-updates local `branch` to the primary remote's `ref`. */
     readonly fetchRefIntoBranch: (
       input: GitFetchRefInput & { readonly branch: string },
@@ -395,16 +351,6 @@ export class GitVcsDriver extends Context.Service<
     readonly resolveRemoteTrackingCommit: (
       input: GitResolveRemoteTrackingCommitInput,
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
-    readonly resolveWorktreeBaseRemote: (
-      input: GitFetchWorktreeBaseCommitInput,
-    ) => Effect.Effect<GitWorktreeBaseRemote | null, GitCommandError>;
-    /**
-     * Fetches the configured upstream, explicit remote ref, or origin; null uses the local base.
-     * A caller that already ran `resolveWorktreeBaseRemote` passes its result as `remote`.
-     */
-    readonly fetchWorktreeBaseCommit: (
-      input: GitFetchWorktreeBaseCommitInput & { readonly remote?: GitWorktreeBaseRemote },
-    ) => Effect.Effect<GitResolveRemoteTrackingCommitResult | null, GitCommandError>;
     readonly fetchRemoteBranch: (
       input: GitFetchRemoteBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
@@ -419,13 +365,6 @@ export class GitVcsDriver extends Context.Service<
     readonly writeConfigValue: (
       input: GitWriteConfigValueInput,
     ) => Effect.Effect<void, GitCommandError>;
-    readonly removeWorktree: (
-      input: VcsRemoveWorktreeInput,
-    ) => Effect.Effect<void, GitCommandError>;
-    readonly pruneWorktrees: (input: {
-      readonly cwd: string;
-    }) => Effect.Effect<void, GitCommandError>;
-    readonly listWorktreePaths: (cwd: string) => Effect.Effect<string[], GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitDeleteLocalBranchInput,
     ) => Effect.Effect<void, GitCommandError>;

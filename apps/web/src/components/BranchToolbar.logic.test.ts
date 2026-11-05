@@ -3,36 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
   deriveLocalBranchNameFromRemoteRef,
-  resolveBranchSelectionTarget,
-  resolveDraftEnvModeAfterBranchChange,
-  resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
-
-describe("resolveDraftEnvModeAfterBranchChange", () => {
-  it("switches to local mode when returning from an existing worktree to the main worktree", () => {
-    expect(
-      resolveDraftEnvModeAfterBranchChange({
-        nextWorktreePath: null,
-        currentWorktreePath: "/repo/.t3/worktrees/feature-a",
-        effectiveEnvMode: "worktree",
-      }),
-    ).toBe("local");
-  });
-
-  it("uses worktree mode when selecting a ref already attached to a worktree", () => {
-    expect(
-      resolveDraftEnvModeAfterBranchChange({
-        nextWorktreePath: "/repo/.t3/worktrees/feature-a",
-        currentWorktreePath: null,
-        effectiveEnvMode: "local",
-      }),
-    ).toBe("worktree");
-  });
-});
 
 describe("resolveBranchToolbarPrBranch", () => {
   it("hides PR state while an optimistic branch switch is in flight", () => {
@@ -49,7 +24,6 @@ describe("resolveLocalCheckoutBranchMismatch", () => {
   it("detects when a local thread is associated with a different branch than the checkout", () => {
     expect(
       resolveLocalCheckoutBranchMismatch({
-        effectiveEnvMode: "local",
         activeWorktreePath: null,
         activeThreadBranch: "feature/thread",
         currentGitBranch: "feature/current",
@@ -58,37 +32,6 @@ describe("resolveLocalCheckoutBranchMismatch", () => {
       threadBranch: "feature/thread",
       currentBranch: "feature/current",
     });
-  });
-
-  it("ignores dedicated worktrees because their checkout is already thread-scoped", () => {
-    expect(
-      resolveLocalCheckoutBranchMismatch({
-        effectiveEnvMode: "worktree",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-thread",
-        activeThreadBranch: "feature/thread",
-        currentGitBranch: "feature/current",
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("resolveEffectiveEnvMode", () => {
-  it("keeps a server thread in worktree mode while its worktree is still being created", () => {
-    expect(
-      resolveEffectiveEnvMode({
-        activeWorktreePath: null,
-        hasServerThread: true,
-        draftThreadEnvMode: undefined,
-        preparingWorktree: true,
-      }),
-    ).toBe("worktree");
-    expect(
-      resolveEffectiveEnvMode({
-        activeWorktreePath: null,
-        hasServerThread: true,
-        draftThreadEnvMode: undefined,
-      }),
-    ).toBe("local");
   });
 });
 
@@ -107,7 +50,6 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
         name: "feature/demo",
         current: false,
         isDefault: false,
-        worktreePath: null,
       },
       {
         name: "origin/feature/demo",
@@ -115,7 +57,6 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
         remoteName: "origin",
         current: false,
         isDefault: false,
-        worktreePath: null,
       },
       {
         name: "origin/feature/remote-only",
@@ -123,7 +64,6 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
         remoteName: "origin",
         current: false,
         isDefault: false,
-        worktreePath: null,
       },
     ];
 
@@ -139,7 +79,6 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
         name: "upstream/feature",
         current: false,
         isDefault: false,
-        worktreePath: null,
       },
       {
         name: "my-org/upstream/feature",
@@ -147,7 +86,6 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
         remoteName: "my-org/upstream",
         current: false,
         isDefault: false,
-        worktreePath: null,
       },
     ];
 
@@ -155,82 +93,6 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
       "upstream/feature",
       "my-org/upstream/feature",
     ]);
-  });
-});
-
-describe("resolveBranchSelectionTarget", () => {
-  it("reuses an existing secondary worktree for the selected ref", () => {
-    expect(
-      resolveBranchSelectionTarget({
-        activeProjectCwd: "/repo/nested-checkout/packages/app",
-        activeProjectCheckoutRoot: "/repo/nested-checkout",
-        activeWorktreePath: null,
-        refName: { isDefault: true, worktreePath: "/repo" },
-      }),
-    ).toEqual({
-      checkoutCwd: "/repo",
-      nextWorktreePath: "/repo",
-      reuseExistingWorktree: true,
-    });
-    expect(
-      resolveBranchSelectionTarget({
-        activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
-        refName: {
-          isDefault: false,
-          worktreePath: "/repo/.t3/worktrees/feature-b",
-        },
-      }),
-    ).toEqual({
-      checkoutCwd: "/repo/.t3/worktrees/feature-b",
-      nextWorktreePath: "/repo/.t3/worktrees/feature-b",
-      reuseExistingWorktree: true,
-    });
-  });
-
-  it("switches back to the main repo when the ref already lives there", () => {
-    // A subdirectory project's own checkout is reported at the repository root.
-    // The checkout root is undefined until the project's status loads.
-    for (const [activeProjectCwd, activeWorktreePath, activeProjectCheckoutRoot] of [
-      ["/repo", "/repo/.t3/worktrees/feature-a", "/repo"],
-      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", "/repo"],
-      ["/repo/packages/app", null, "/repo"],
-      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", undefined],
-      ["/repo/packages/app", null, undefined],
-    ] as const) {
-      expect(
-        resolveBranchSelectionTarget({
-          activeProjectCwd,
-          activeProjectCheckoutRoot,
-          activeWorktreePath,
-          refName: {
-            isDefault: true,
-            worktreePath: "/repo",
-          },
-        }),
-      ).toEqual({
-        checkoutCwd: "/repo",
-        nextWorktreePath: null,
-        reuseExistingWorktree: true,
-      });
-    }
-  });
-
-  it("keeps checkout in the current worktree for non-default refs", () => {
-    expect(
-      resolveBranchSelectionTarget({
-        activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
-        refName: {
-          isDefault: false,
-          worktreePath: null,
-        },
-      }),
-    ).toEqual({
-      checkoutCwd: "/repo/.t3/worktrees/feature-a",
-      nextWorktreePath: "/repo/.t3/worktrees/feature-a",
-      reuseExistingWorktree: false,
-    });
   });
 });
 

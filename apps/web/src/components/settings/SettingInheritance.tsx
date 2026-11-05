@@ -1,10 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  PROJECT_FILE_BACKED_SETTINGS,
-  type ProjectFileBackedSettingKey,
   resolveEnvironmentMachineKind,
   type ServerSettings,
-  type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronRightIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
@@ -12,7 +9,6 @@ import * as Equal from "effect/Equal";
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -24,7 +20,7 @@ import { isProjectScopedSettingKey } from "./scopedSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
 interface InheritanceLayer {
-  readonly key: "project" | "environment" | "t3.json" | "built-in";
+  readonly key: "project" | "environment" | "built-in";
   readonly label: string;
   readonly value: string;
   readonly effective: boolean;
@@ -56,9 +52,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
             ? "Text generation model"
             : key === "reviewGuideModelSelection"
               ? "Source control writer model"
-              : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
-                ? "Inherit"
-                : "Not set";
+              : "Not set";
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
@@ -67,12 +61,6 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
       : String(value);
   }
   if (typeof value === "string") {
-    if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {
-      return resolveEnvModeLabel(value);
-    }
-    if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
-      return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];
-    }
     if (key === "pullRequestMergeMethod" && value in PULL_REQUEST_MERGE_METHOD_LABELS) {
       return PULL_REQUEST_MERGE_METHOD_LABELS[
         value as keyof typeof PULL_REQUEST_MERGE_METHOD_LABELS
@@ -87,7 +75,6 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
     }
     if ("model" in value && typeof value.model === "string") return value.model;
     if ("mode" in value && typeof value.mode === "string") {
-      if (key === "worktreeCleanup") return value.mode === "off" ? "Off" : "Custom";
       return key === "sourceControlWritingStyle"
         ? (WRITING_STYLE_LABELS[value.mode] ?? value.mode)
         : value.mode;
@@ -105,7 +92,6 @@ export function settingInheritanceLayers(
   const environmentValue = environmentSettings[key];
   const source = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
   const environmentSet = !Equal.equals(environmentValue, DEFAULT_SERVER_SETTINGS[key]);
-  const fileBacked = isProjectFileBackedSettingKey(key);
   const layers: InheritanceLayer[] = [];
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
     layers.push({
@@ -123,33 +109,14 @@ export function settingInheritanceLayers(
     effective: source === "environment" && environmentSet,
     set: environmentSet,
   });
-  if (fileBacked && target.projectId !== null) {
-    layers.push({
-      key: "t3.json",
-      label: "t3.json",
-      value: source === "t3.json" ? formatValue(key, target.settings[key]) : "Inherits",
-      effective: source === "t3.json",
-      set: source === "t3.json",
-    });
-  }
-  // File-backed defaults come from the resolver, not the schema's decoded null.
-  const builtIn = fileBacked
-    ? PROJECT_FILE_BACKED_SETTINGS[key].builtIn
-    : DEFAULT_SERVER_SETTINGS[key];
   layers.push({
     key: "built-in",
     label: "Default",
-    value: formatValue(key, builtIn),
+    value: formatValue(key, DEFAULT_SERVER_SETTINGS[key]),
     effective: source === "environment" && !environmentSet,
     set: true,
   });
   return layers;
-}
-
-function isProjectFileBackedSettingKey(
-  key: keyof ServerSettings,
-): key is ProjectFileBackedSettingKey {
-  return Object.hasOwn(PROJECT_FILE_BACKED_SETTINGS, key);
 }
 
 export type SettingInheritanceState =

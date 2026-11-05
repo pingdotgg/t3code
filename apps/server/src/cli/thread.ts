@@ -520,23 +520,6 @@ export const titleFromMessage = (message: string) => {
   return `${firstLine.slice(0, end).trimEnd()}…`;
 };
 
-const launchWorkspaceStrategy = (input: {
-  readonly worktree: Option.Option<string>;
-  readonly branch: Option.Option<string>;
-}) =>
-  Option.match(input.worktree, {
-    onNone: () =>
-      Option.isSome(input.branch)
-        ? Effect.fail(new ThreadUsageError({ detail: "--branch needs --worktree <base-ref>." }))
-        : Effect.void,
-    onSome: (baseRef) =>
-      Effect.succeed({
-        type: "worktree" as const,
-        baseRef,
-        ...Option.match(input.branch, { onNone: () => ({}), onSome: (branch) => ({ branch }) }),
-      }),
-  });
-
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
   Flag.withDefault(false),
@@ -613,16 +596,6 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Model slug. Defaults to the project's default model."),
     Flag.optional,
   ),
-  worktree: Flag.String("worktree").pipe(
-    Flag.withDescription(
-      "Run in a new git worktree based on this branch, tag, or commit, instead of the project folder.",
-    ),
-    Flag.optional,
-  ),
-  branch: Flag.String("branch").pipe(
-    Flag.withDescription("Branch name for the new worktree."),
-    Flag.optional,
-  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -630,7 +603,6 @@ const threadStartCommand = Command.make("start", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const message = yield* readMessageArgument(flags.message);
-      const workspaceStrategy = yield* launchWorkspaceStrategy(flags);
       if (Option.isSome(flags.provider) !== Option.isSome(flags.model)) {
         return yield* new ThreadUsageError({ detail: "--provider and --model go together." });
       }
@@ -647,7 +619,6 @@ const threadStartCommand = Command.make("start", {
               projectId: project.id,
               title,
               message,
-              ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
                 ? {
                     modelSelection: {

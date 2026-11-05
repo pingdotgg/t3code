@@ -314,19 +314,6 @@ export function summarizeT3ToolCalls(
     case "secret-request":
       label = phrase("Asked for", "ask for", quantity(selected.length, "secret"));
       break;
-    case "worktree-handoff":
-      label = phrase(
-        "Handed off to",
-        "hand off to",
-        quantity(countEntities(entityIds("worktreePath")), "worktree"),
-      );
-      break;
-    case "worktree-list":
-      label = phrase("Listed", "list", `workspace branches ${times}`);
-      break;
-    case "worktree-status":
-      label = phrase("Checked", "check", `worktree status ${times}`);
-      break;
     case "project-list":
       label = phrase("Listed", "list", `projects ${times}`);
       break;

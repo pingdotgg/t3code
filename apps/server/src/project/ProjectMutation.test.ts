@@ -15,7 +15,6 @@ const deletedProject: Project = {
   repositoryIdentity: null,
   faviconPath: null,
   defaultModelSelection: null,
-  defaultThreadEnvMode: null,
   autoPull: false,
   projectIcon: null,
   scripts: [],

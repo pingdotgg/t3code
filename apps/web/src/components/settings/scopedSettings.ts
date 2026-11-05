@@ -18,7 +18,6 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import {
   clearProjectSettingsOverrides,
   resolveProjectSettings,
-  resolveWorktreeCleanup,
   type ProjectSettingSource,
 } from "@t3tools/shared/projectSettings";
 import * as Equal from "effect/Equal";
@@ -246,16 +245,6 @@ export function planScopedSettingsPatch(
               const effective = resolveProjectSettings(settings, projectId).settings;
               const next: Record<string, unknown> = { ...current };
               for (const [key, value] of Object.entries<unknown>(serverPatch)) {
-                if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
-                  next[key] = {
-                    mode: "custom",
-                    rules: {
-                      ...resolveWorktreeCleanup(settings, projectId),
-                      ...serverPatch.worktreeCleanup.rules,
-                    },
-                  };
-                  continue;
-                }
                 // Inherit sends null; remove overrides whose keys cannot store null.
                 if (
                   value === null &&
@@ -292,29 +281,7 @@ export function planScopedSettingsPatch(
                   environmentId: environment.environmentId,
                   label: environment.label,
                   previous,
-                  patch: forDestination(
-                    previous,
-                    previous.worktreeCleanup != null &&
-                      serverPatch.storageCleanup &&
-                      Object.keys(serverPatch.storageCleanup).some((key) =>
-                        key.startsWith("worktree"),
-                      )
-                      ? {
-                          ...serverPatch,
-                          worktreeCleanup: {
-                            mode: "custom",
-                            rules: {
-                              ...resolveWorktreeCleanup(previous, null),
-                              ...Object.fromEntries(
-                                Object.entries(serverPatch.storageCleanup).filter(([key]) =>
-                                  key.startsWith("worktree"),
-                                ),
-                              ),
-                            },
-                          },
-                        }
-                      : serverPatch,
-                  ),
+                  patch: forDestination(previous, serverPatch),
                 },
               ];
             })

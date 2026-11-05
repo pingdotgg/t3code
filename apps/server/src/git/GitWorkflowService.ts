@@ -10,8 +10,6 @@ import {
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
   type VcsCreateRefResult,
-  type VcsCreateWorktreeInput,
-  type VcsCreateWorktreeResult,
   type VcsListRefsInput,
   type VcsListRefsResult,
   type GitManagerServiceError,
@@ -19,7 +17,6 @@ import {
   type GitPreparePullRequestThreadResult,
   type GitPullRequestRefInput,
   type VcsPullResult,
-  type VcsRemoveWorktreeInput,
   type GitResolvePullRequestResult,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -74,10 +71,6 @@ export class GitWorkflowService extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
-    readonly createWorktree: (
-      input: VcsCreateWorktreeInput,
-      options?: GitVcsDriver.CreateWorktreeOptions,
-    ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
     readonly fetchRemote: (input: {
       readonly cwd: string;
@@ -101,21 +94,6 @@ export class GitWorkflowService extends Context.Service<
       { readonly commitSha: string; readonly remoteRefName: string },
       GitCommandError
     >;
-    readonly resolveWorktreeBaseRemote: GitVcsDriver.GitVcsDriver["Service"]["resolveWorktreeBaseRemote"];
-    readonly fetchWorktreeBaseCommit: (input: {
-      readonly cwd: string;
-      readonly refName: string;
-      readonly remote?: GitVcsDriver.GitWorktreeBaseRemote;
-    }) => Effect.Effect<
-      { readonly commitSha: string; readonly remoteRefName: string } | null,
-      GitCommandError
-    >;
-    readonly removeWorktree: (
-      input: VcsRemoveWorktreeInput,
-    ) => Effect.Effect<void, GitCommandError>;
-    readonly pruneWorktrees: (input: {
-      readonly cwd: string;
-    }) => Effect.Effect<void, GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitVcsDriver.GitDeleteLocalBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
@@ -393,12 +371,10 @@ export const make = Effect.gen(function* () {
       function (input) {
         return ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
           Effect.flatMap((handle) =>
-            input.mode === "local"
-              ? withCheckoutLease(
-                  handle.repository.rootPath,
-                  gitManager.preparePullRequestThread(input),
-                )
-              : gitManager.preparePullRequestThread(input),
+            withCheckoutLease(
+              handle.repository.rootPath,
+              gitManager.preparePullRequestThread(input),
+            ),
           ),
         );
       },
@@ -408,11 +384,6 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((isGitRepository) =>
           isGitRepository ? git.listRefs(input) : Effect.succeed(nonRepositoryListRefs()),
         ),
-      );
-    }),
-    createWorktree: Effect.fn("GitWorkflowService.createWorktree")(function (input, options) {
-      return ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
-        Effect.andThen(gitManager.createWorktree(input, options)),
       );
     }),
     listLocalBranchNames: Effect.fn("GitWorkflowService.listLocalBranchNames")(function (cwd) {
@@ -442,30 +413,6 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
-    resolveWorktreeBaseRemote: Effect.fn("GitWorkflowService.resolveWorktreeBaseRemote")(
-      function (input) {
-        return ensureGitCommand("GitWorkflowService.resolveWorktreeBaseRemote", input.cwd).pipe(
-          Effect.andThen(git.resolveWorktreeBaseRemote(input)),
-        );
-      },
-    ),
-    fetchWorktreeBaseCommit: Effect.fn("GitWorkflowService.fetchWorktreeBaseCommit")(
-      function (input) {
-        return ensureGitCommand("GitWorkflowService.fetchWorktreeBaseCommit", input.cwd).pipe(
-          Effect.andThen(git.fetchWorktreeBaseCommit(input)),
-        );
-      },
-    ),
-    removeWorktree: Effect.fn("GitWorkflowService.removeWorktree")(function (input) {
-      return ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
-        Effect.andThen(git.removeWorktree(input)),
-      );
-    }),
-    pruneWorktrees: Effect.fn("GitWorkflowService.pruneWorktrees")(function (input) {
-      return ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
-        Effect.andThen(git.pruneWorktrees(input)),
-      );
-    }),
     deleteLocalBranch: Effect.fn("GitWorkflowService.deleteLocalBranch")(function (input) {
       return ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(
         Effect.andThen(git.deleteLocalBranch(input)),

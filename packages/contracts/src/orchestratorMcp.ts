@@ -170,12 +170,6 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
-  isolation: Schema.optional(
-    Schema.Literals(["shared", "worktree"]).annotate({
-      description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
-    }),
-  ),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:

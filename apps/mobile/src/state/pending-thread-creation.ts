@@ -112,7 +112,7 @@ export function clearPendingThreadCreationOutcome(threadKey: string): void {
   appAtomRegistry.set(pendingThreadCreationOutcomesAtom, next);
 }
 
-/** Thread shell and empty detail precede the prompt: worktree setup runs between creation and turn start. */
+/** Thread shell and empty detail precede the prompt until the server's turn lands in detail. */
 function isPendingThreadCreationVisible(input: {
   readonly creationMessageId: string;
   readonly loadedMessageIds: ReadonlyArray<string> | null;
@@ -151,7 +151,7 @@ export function pendingThreadCreationShell(
     interactionMode: message.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: creation.branch,
     pullRequests: [],
-    worktreePath: creation.workspaceMode === "worktree" ? null : creation.worktreePath,
+    worktreePath: null,
     linkedPullRequest: null,
     branchPullRequest: null,
     lineage: { rootThreadId: message.threadId, parentThreadId: null, relationshipToParent: null },

@@ -25,8 +25,8 @@ describe("parseT3ProjectFile", () => {
     expect(
       parseT3ProjectFile(`{
         /* See https://t3.codes/schema/t3.json */
-        "defaultThreadEnvMode": "worktree"
+        "iconPath": "assets/logo.svg"
       }`),
-    ).toEqual({ defaultThreadEnvMode: "worktree" });
+    ).toEqual({ iconPath: "assets/logo.svg" });
   });
 });

@@ -1,6 +1,5 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
-import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
@@ -12,7 +11,6 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { workEntryDisplayIndicatesToolFailure } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { Minimize2Icon, XIcon } from "lucide-react";
-import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
   liveWorkEntryLabel,
@@ -21,9 +19,6 @@ import {
   workEntryIsVisibleInGroup,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Spinner } from "../ui/spinner";
-import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -276,13 +271,9 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
-    use(TimelineRowActivityCtx);
+  const { isCompacting } = use(TimelineRowActivityCtx);
   const compacting = row.compacting === true || isCompacting;
-  const shimmer = isPreparingWorktree || compacting;
-  const label = isPreparingWorktree ? (
-    "Setting up worktree…"
-  ) : compacting ? (
+  const label = compacting ? (
     <CompactingLabel createdAt={row.createdAt} />
   ) : row.createdAt ? (
     <>
@@ -295,51 +286,14 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     <div className="border-b border-border/60 pb-2 pt-1">
       <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
-          ref={shimmer ? observeVisibleAnimation : undefined}
+          ref={compacting ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"
         >
           {label}
-          {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
+          {compacting ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
         </span>
-        {backgroundWorktreeSetup ? (
-          <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
-        ) : null}
       </div>
     </div>
-  );
-}
-
-function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
-  const ctx = use(TimelineRowCtx);
-  const terminalId = snapshot.setupScript?.terminalId ?? null;
-  const openTerminal = ctx.onOpenWorktreeSetupTerminal;
-  const onOpenTerminal = openTerminal && terminalId ? () => openTerminal(terminalId) : null;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost-muted"
-            size="micro"
-            className="ml-auto min-w-0 shrink-0"
-            aria-label={`Background setup is still running: ${scriptName}. Show setup progress.`}
-          />
-        }
-      >
-        <Spinner className="size-3 shrink-0" />
-        <span className="truncate">Background setup</span>
-      </PopoverTrigger>
-      <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
-        <WorktreeSetupCard
-          snapshot={snapshot}
-          embedded
-          onCancel={null}
-          onWorkLocally={null}
-          onOpenTerminal={onOpenTerminal}
-        />
-      </PopoverPopup>
-    </Popover>
   );
 }
 
@@ -360,8 +314,8 @@ function CompactingLabel({ createdAt }: { createdAt: string | null }) {
 
 export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
-  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
+  const { isCompacting } = use(TimelineRowActivityCtx);
+  if (isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
   const activity = (

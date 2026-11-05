@@ -30,7 +30,6 @@ export type SettingsPath =
   | "/settings/devices"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
-  | "/settings/worktrees"
   | "/settings/connections"
   | "/settings/access"
   | "/settings/secrets"
@@ -100,7 +99,6 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/devices": "Devices",
   "/settings/scheduled-tasks": "Scheduled tasks",
   "/settings/source-control": "Source control",
-  "/settings/worktrees": "Worktrees",
   "/settings/connections": "Environments",
   "/settings/access": "Sharing & access",
   "/settings/secrets": "Secrets",
@@ -138,7 +136,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     heading: "Code",
-    paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
+    paths: ["/settings/projects", "/settings/source-control"],
   },
   {
     heading: "Connections",
@@ -217,37 +215,11 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 
 export const SETTINGS_SEARCH_ITEMS = [
   {
-    id: "storage-worktree-keep-when",
-    targetId: "storage-worktrees",
-    title: "Keep worktrees with local changes",
-    to: "/settings/worktrees",
-    scope: "project-defaults",
-    searchTerms: [
-      "any local files uncommitted changes edited tracked files ignored env build output cleanup",
-    ],
-  },
-  {
     id: "storage-delete-now",
     title: "Delete now",
     to: "/settings/maintenance",
     scope: "environment-defaults",
     searchTerms: ["storage cleanup run now results report removed kept failed"],
-  },
-  {
-    id: "storage-worktrees",
-    title: "Worktree cleanup",
-    to: "/settings/worktrees",
-    scope: "project-defaults",
-    searchTerms: [
-      "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom",
-    ],
-  },
-  {
-    id: "storage-worktrees-location",
-    title: "Worktree location",
-    to: "/settings/worktrees",
-    scope: "environment-defaults",
-    searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
     id: "storage-artifacts",
@@ -628,27 +600,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "new-threads",
-    title: "New threads",
-    to: "/settings/threads",
-    scope: "project-defaults",
-    searchTerms: ["default workspace mode draft local worktree"],
-  },
-  {
-    id: "worktree-submodules",
-    title: "Submodules",
-    to: "/settings/worktrees",
-    scope: "project-defaults",
-    searchTerms: ["git submodule init recursive top-level none worktree t3.json"],
-  },
-  {
-    id: "start-from-origin",
-    title: "Start from remote",
-    to: "/settings/worktrees",
-    scope: "project-defaults",
-    searchTerms: ["new worktrees start remote origin latest fetched branch local"],
-  },
-  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/threads",
@@ -994,14 +945,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
     scope: "environment-defaults",
   },
-  {
-    id: "worktree-branch-naming",
-    title: "Worktree branch naming",
-    to: "/settings/worktrees",
-    searchTerms: ["static semantic prefix custom prompt instructions feat fix refactor chore"],
-    environmentOnly: true,
-    scope: "project-defaults",
-  },
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
     id: "source-control-writing-style",
@@ -1059,7 +1002,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-actions",
     title: "Actions",
     to: "/settings/projects",
-    searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
+    searchTerms: ["commands scripts run dev server checkout t3.json import"],
   },
   {
     id: "environment-icon",
@@ -1212,7 +1155,6 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/browser": null,
   "/settings/devices": null,
   "/settings/source-control": "environment-defaults",
-  "/settings/worktrees": "project-defaults",
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/secrets": null,

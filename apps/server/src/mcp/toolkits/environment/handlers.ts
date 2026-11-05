@@ -9,17 +9,9 @@ import { readCaller, unavailable } from "../../threadAccess.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
 export function preferences(settings: ServerSettings) {
-  const {
-    defaultThreadEnvMode,
-    newWorktreesStartFromOrigin,
-    enableProviderUpdateChecks,
-    backgroundActivity,
-    sourceControlWritingStyle,
-  } = settings;
+  const { enableProviderUpdateChecks, backgroundActivity, sourceControlWritingStyle } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
   return {
-    defaultThreadEnvMode,
-    newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
     backgroundActivity: { profile: backgroundActivity.profile },
     sourceControlWritingStyle: {

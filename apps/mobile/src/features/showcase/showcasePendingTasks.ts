@@ -55,7 +55,6 @@ export function buildShowcasePendingTasks(
           projectId: project.id,
           projectTitle: project.title,
           projectCwd: project.workspaceRoot,
-          workspaceMode: "local" as const,
           branch: definition.branch,
           worktreePath: project.workspaceRoot,
         },

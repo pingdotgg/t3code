@@ -11,7 +11,7 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildDraftThreadRouteParams } from "../../threadRoutes";
-import { type DraftThreadEnvMode, useComposerDraftStore, DraftId } from "../../composerDraftStore";
+import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { openPullRequestThreadDialog } from "./ChatOverlayHosts";
 interface PullRequestDraftThreadInput {
   readonly routeKind: "server" | "draft";
@@ -25,8 +25,8 @@ interface PullRequestDraftThreadInput {
 }
 
 /**
- * Checking out a pull request into a thread: opens the dialog, then puts the prepared branch or
- * worktree on the project's draft thread, reusing the one already open when there is one.
+ * Checking out a pull request into a thread: opens the dialog, then puts the prepared branch on
+ * the project's draft thread, reusing the one already open when there is one.
  */
 export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
   const {
@@ -58,11 +58,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
   };
   const openPullRequestDialogStable = useStableCallback(openPullRequestDialog);
 
-  const openOrReuseProjectDraftThread = async (input: {
-    branch: string;
-    worktreePath: string | null;
-    envMode: DraftThreadEnvMode;
-  }) => {
+  const openOrReuseProjectDraftThread = async (input: { branch: string }) => {
     if (!activeProject) {
       throw new Error("No active project is available for this pull request.");
     }
@@ -122,15 +118,8 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     return nextThreadId;
   };
 
-  const handlePreparedPullRequestThread = async (input: {
-    branch: string;
-    worktreePath: string | null;
-  }) => {
-    await openOrReuseProjectDraftThread({
-      branch: input.branch,
-      worktreePath: input.worktreePath,
-      envMode: input.worktreePath ? "worktree" : "local",
-    });
+  const handlePreparedPullRequestThread = async (input: { branch: string }) => {
+    await openOrReuseProjectDraftThread({ branch: input.branch });
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);
   return {

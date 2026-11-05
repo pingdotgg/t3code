@@ -9,7 +9,7 @@ import type {
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
-import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
+import type { EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import BaseGitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
@@ -46,12 +46,9 @@ interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
   "anchor" | "handle"
 > {
-  forceNewWorktree?: boolean;
   environmentId: EnvironmentId;
   threadId: ThreadId;
   projectId: ProjectId;
-  worktreePath: string | null;
-  isServerThread: boolean;
   draftId?: DraftId;
   activeProjectName: string | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -67,12 +64,8 @@ interface ThreadDetailsPanelProps extends Pick<
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
-  onEnvModeChange: (mode: EnvMode) => void;
-  envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
-  startFromOrigin: boolean;
-  onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
@@ -99,13 +92,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     environmentId: props.environmentId,
     threadId: props.threadId,
     projectId: props.projectId,
-    worktreePath: props.worktreePath,
-    isServerThread: props.isServerThread,
     ...(props.draftId ? { draftId: props.draftId } : {}),
-    onEnvModeChange: props.onEnvModeChange,
-    startFromOrigin: props.startFromOrigin,
-    onStartFromOriginChange: props.onStartFromOriginChange,
-    envMode: props.envMode,
     ...(props.activeThreadBranchOverride !== undefined
       ? { activeThreadBranchOverride: props.activeThreadBranchOverride }
       : {}),
@@ -113,7 +100,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       ? { onActiveThreadBranchOverrideChange: props.onActiveThreadBranchOverrideChange }
       : {}),
     envLocked: props.envLocked,
-    forceNewWorktree: props.forceNewWorktree ?? false,
     onComposerFocusRequest: props.onComposerFocusRequest,
     ...(props.onCheckoutPullRequestRequest
       ? { onCheckoutPullRequestRequest: props.onCheckoutPullRequestRequest }

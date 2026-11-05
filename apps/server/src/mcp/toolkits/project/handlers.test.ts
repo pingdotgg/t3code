@@ -17,8 +17,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -49,7 +47,6 @@ const clientLaunchHarness = (input: {
   readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
-  readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
@@ -111,7 +108,6 @@ const clientLaunchHarness = (input: {
       },
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
-      checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
         input.launched.push(launch);
         if (input.refusedByCeiling) {
@@ -419,152 +415,6 @@ it.effect("a retried launch replays after the project loses its default model", 
     projectDefaults.model = null;
     const retried = (yield* launch).at(-1)?.result;
     expect(retried).toMatchObject({ projectId, modelSelection });
-    expect(launched.map((input) => input.threadId)).toEqual([
-      launched[0]?.threadId,
-      launched[0]?.threadId,
-    ]);
-  }),
-);
-
-it.effect("a launch binds only an existing checkout that is one of the project's worktrees", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-worktree-" });
-    const repo = path.join(root, "repo");
-    const worktree = path.join(root, "feature");
-    const outside = path.join(root, "outside");
-    yield* fileSystem.makeDirectory(repo);
-    yield* fileSystem.makeDirectory(outside);
-
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const { projectId, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "auto",
-      launched,
-      workspaceRoot: repo,
-    });
-    const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
-    for (const args of [
-      ["init", "-b", "main"],
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-      ["worktree", "add", "-b", "feature", worktree],
-    ]) {
-      yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
-    }
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    const launchInto = (worktreePath: string) =>
-      toolkit
-        .handle("t3_thread_launch", {
-          title: "Fix",
-          projectId,
-          workspaceStrategy: { type: "existing_worktree", worktreePath },
-        })
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-
-    expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({ projectId });
-    expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
-    for (const elsewhere of [outside, path.join(worktree, "..", "outside"), "/"]) {
-      expect((yield* launchInto(elsewhere)).at(-1)?.result).toMatchObject({
-        code: "invalid_request",
-      });
-    }
-    expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([
-      { type: "existing_worktree", worktreePath: worktree },
-      { type: "existing_worktree", worktreePath: repo },
-    ]);
-
-    yield* fileSystem.remove(worktree, { recursive: true });
-    yield* fileSystem.makeDirectory(worktree);
-    expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({
-      code: "invalid_request",
-    });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("a launch into a new worktree creates nothing when its base ref has no commit", () =>
-  Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const { projectId, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "auto",
-      launched,
-      checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
-        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
-          ? Effect.fail(
-              new ThreadLaunch.ThreadLaunchBaseRefError({
-                projectId,
-                projectTitle: "Client target",
-                workspaceRoot: "/projects/client-target",
-                baseRef: workspaceStrategy.baseRef,
-              }),
-            )
-          : Effect.void,
-    });
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    const launchFrom = (baseRef: string) =>
-      toolkit
-        .handle("t3_thread_launch", {
-          title: "Fix",
-          projectId,
-          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: false },
-        })
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-
-    const refused = (yield* launchFrom("t3/renamed")).at(-1)?.result;
-    expect(refused).toMatchObject({ code: "invalid_request" });
-    expect((refused as { message: string }).message).toContain(
-      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created.',
-    );
-    expect(launched).toHaveLength(0);
-
-    expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
-    expect(launched).toHaveLength(1);
-  }),
-);
-
-it.effect("a retried worktree launch replays after its base ref is gone", () =>
-  Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const base = { exists: true };
-    const { projectId, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "auto",
-      launched,
-      checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
-        base.exists || workspaceStrategy.type !== "worktree"
-          ? Effect.void
-          : Effect.fail(
-              new ThreadLaunch.ThreadLaunchBaseRefError({
-                projectId,
-                projectTitle: "Client target",
-                workspaceRoot: "/projects/client-target",
-                baseRef: workspaceStrategy.baseRef,
-              }),
-            ),
-    });
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    const launch = toolkit
-      .handle("t3_thread_launch", {
-        title: "Fix",
-        projectId,
-        clientRequestId: "fix-worktree",
-        workspaceStrategy: { type: "worktree", baseRef: "feature", startFromOrigin: false },
-      })
-      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-
-    yield* launch;
-    base.exists = false;
-    expect((yield* launch).at(-1)?.result).toMatchObject({ projectId });
     expect(launched.map((input) => input.threadId)).toEqual([
       launched[0]?.threadId,
       launched[0]?.threadId,

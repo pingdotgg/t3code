@@ -50,7 +50,6 @@ const lint: ProjectScript = {
   name: "Lint",
   command: "vp lint",
   icon: "lint",
-  runOnWorktreeCreate: false,
 };
 const lintBinding: ResolvedKeybindingsConfig = [
   {
@@ -69,8 +68,6 @@ const input: NewProjectScriptInput = {
   name: lint.name,
   command: lint.command,
   icon: lint.icon,
-  runOnWorktreeCreate: false,
-  waitForSetup: false,
   runOnSettle: false,
   previewUrl: null,
   autoOpenPreview: false,

@@ -9,7 +9,7 @@ const reference = {
     ...DEFAULT_SERVER_SETTINGS,
     sidebarAutoSettleAfterDays: 7,
     sidebarAutoSettleOnMerge: true,
-    newWorktreesStartFromOrigin: false,
+    ghqCloneLayout: false,
     continueThreadsAfterServerUpdate: false,
   },
 };
@@ -21,7 +21,7 @@ describe("auto-settle settings sync", () => {
       label: "Remote",
       settings: {
         ...reference.settings,
-        newWorktreesStartFromOrigin: true,
+        ghqCloneLayout: true,
         continueThreadsAfterServerUpdate: true,
         sourceControlWritingStyle: {
           ...reference.settings.sourceControlWritingStyle,
@@ -47,7 +47,7 @@ describe("auto-settle settings sync", () => {
         ...reference.settings,
         sidebarAutoSettleAfterDays: null,
         sidebarAutoSettleOnMerge: false,
-        newWorktreesStartFromOrigin: true,
+        ghqCloneLayout: true,
         continueThreadsAfterServerUpdate: true,
         sourceControlWritingStyle: {
           ...reference.settings.sourceControlWritingStyle,
@@ -62,7 +62,7 @@ describe("auto-settle settings sync", () => {
     expect(plan.mismatches).toEqual([target]);
     expect(updated.sidebarAutoSettleAfterDays).toBe(7);
     expect(updated.sidebarAutoSettleOnMerge).toBe(true);
-    expect(updated.newWorktreesStartFromOrigin).toBe(true);
+    expect(updated.ghqCloneLayout).toBe(true);
     expect(updated.continueThreadsAfterServerUpdate).toBe(true);
     expect(updated.sourceControlWritingStyle).toEqual(target.settings.sourceControlWritingStyle);
   });

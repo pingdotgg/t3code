@@ -43,10 +43,6 @@
       "types": "./src/preview/serverBrowserStream.ts",
       "default": "./src/preview/serverBrowserStream.ts"
     },
-    "./worktree-setup": {
-      "types": "./src/worktreeSetup.ts",
-      "default": "./src/worktreeSetup.ts"
-    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"

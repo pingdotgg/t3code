@@ -36,7 +36,6 @@ import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { toastManager } from "../ui/toast";
-import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import {
   checkoutFailureDescription,
   handoffPrompt,
@@ -268,7 +267,7 @@ export function usePullRequestHandoffs({
     sourceControlClients.get(undefined)
   ).changeRequest;
 
-  // Questions must not change checkouts or create worktrees.
+  // Questions must not change checkouts.
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
     task: PullRequestThreadTask | null,
@@ -326,11 +325,7 @@ export function usePullRequestHandoffs({
     });
   };
 
-  const startHandoff = async (
-    kind: string,
-    task: PullRequestThreadTask | null,
-    mode: "worktree" | "local" = "worktree",
-  ) => {
+  const startHandoff = async (kind: string, task: PullRequestThreadTask | null) => {
     if (!detail || handoff !== null) return;
     setHandoff(kind);
     // Explicit timeouts survive toast updates and would pin the result after loading.
@@ -355,7 +350,6 @@ export function usePullRequestHandoffs({
     }
     const prepared = await prepareThread.run({
       reference: detail.url,
-      mode,
       threadId: opened.threadId,
     });
     if (prepared._tag === "Failure") {
@@ -371,8 +365,6 @@ export function usePullRequestHandoffs({
     }
     const pointed = await newThread(projectRef, {
       branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
     }).then(
       (session) => session !== null,
       () => false,
@@ -388,32 +380,19 @@ export function usePullRequestHandoffs({
     }
     setHandoff(null);
     if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
-            }
-          : offHeadPullRequestCheckoutToast(terminology),
-      );
+      toastManager.update(toastId, {
+        type: "success",
+        title: "Checked out here",
+        description: `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`,
+      });
       return;
     }
     await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
-          }
-        : offHeadPullRequestCheckoutToast(terminology),
-    );
+    toastManager.update(toastId, {
+      type: "success",
+      title: "Checkout ready",
+      description: "The task is in the composer. Read it over, then send.",
+    });
   };
 
   return { handoff, startAsk, startHandoff };

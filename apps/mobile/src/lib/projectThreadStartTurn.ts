@@ -18,7 +18,6 @@ import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
-  readonly projectCwd: string;
   readonly threadId: string;
   readonly commandId: string;
   readonly messageId: string;
@@ -30,11 +29,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  readonly workspaceMode: "local" | "worktree";
   readonly branch: string | null;
-  readonly worktreePath: string | null;
-  readonly startFromOrigin: boolean;
-  readonly worktreeBranchName: string;
 }
 
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
@@ -42,7 +37,6 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     text: spec.titleText ?? spec.text,
     attachments: spec.uploadedAttachments,
   });
-  const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
     creationSource: "mobile" as const,
@@ -66,20 +60,8 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
         branch: spec.branch,
-        worktreePath: isWorktree ? null : spec.worktreePath,
         createdAt: spec.createdAt,
       },
-      ...(isWorktree
-        ? {
-            prepareWorktree: {
-              projectCwd: spec.projectCwd,
-              baseBranch: spec.branch!,
-              branch: spec.worktreeBranchName,
-              ...(spec.startFromOrigin ? { startFromOrigin: true } : {}),
-            },
-            runSetupScript: true,
-          }
-        : {}),
     },
     createdAt: spec.createdAt,
   };

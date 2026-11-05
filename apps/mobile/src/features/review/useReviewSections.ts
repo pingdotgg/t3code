@@ -12,7 +12,7 @@ import { lastReviewGitSectionsAtom, reviewEnvironment } from "../../state/review
 import { lastReviewTurnDiffsAtom } from "../../state/reviewTurnDiffs";
 import { environmentSession } from "../../state/session";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useSelectedThreadCwd } from "../../state/use-selected-thread-cwd";
 import {
   buildReviewSectionItems,
   getReadyReviewCheckpoints,
@@ -52,7 +52,7 @@ export function useReviewSections(input: {
   });
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd } = useSelectedThreadCwd();
   const diffPreview = useEnvironmentQuery(
     canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({

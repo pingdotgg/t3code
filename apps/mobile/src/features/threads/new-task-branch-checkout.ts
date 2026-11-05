@@ -15,7 +15,6 @@ export interface BranchCheckoutRequest {
   readonly environmentId: EnvironmentId | null;
   readonly workspaceRoot: string | null;
   readonly branch: string;
-  readonly worktreePath: string | null;
 }
 
 // The family key lists the request's fields in a fixed order, so equal
@@ -27,7 +26,6 @@ const RequestKey = Schema.fromJsonString(
     Schema.NullOr(EnvironmentId),
     Schema.NullOr(Schema.String),
     Schema.String,
-    Schema.NullOr(Schema.String),
   ]),
 );
 const encodeRequestKey = Schema.encodeSync(RequestKey);
@@ -41,14 +39,12 @@ export function branchCheckoutRequestKey(request: BranchCheckoutRequest): string
     request.environmentId,
     request.workspaceRoot,
     request.branch,
-    request.worktreePath,
   ]);
 }
 
 function requestFromKey(key: string): BranchCheckoutRequest {
-  const [flowKey, routeKey, environmentId, workspaceRoot, branch, worktreePath] =
-    decodeRequestKey(key);
-  return { flowKey, routeKey, environmentId, workspaceRoot, branch, worktreePath };
+  const [flowKey, routeKey, environmentId, workspaceRoot, branch] = decodeRequestKey(key);
+  return { flowKey, routeKey, environmentId, workspaceRoot, branch };
 }
 
 interface CheckoutEntry {

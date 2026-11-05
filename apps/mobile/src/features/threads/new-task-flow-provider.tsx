@@ -88,11 +88,7 @@ import {
   resolveProviderInteractionMode,
 } from "../../state/legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
-import {
-  resolveNewTaskDraftWorkspace,
-  resolveNewTaskBranchWorktreePath,
-  resolveNewTaskLocalWorkspaceSelection,
-} from "./new-task-context-presentation";
+import { resolveNewTaskDraftWorkspace } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
@@ -110,17 +106,9 @@ import {
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 
-type WorkspaceMode = "local" | "worktree";
-
-export function branchBadgeLabel(input: {
-  readonly branch: VcsRef;
-  readonly project: EnvironmentProject | null;
-}): string | null {
+export function branchBadgeLabel(input: { readonly branch: VcsRef }): string | null {
   if (input.branch.current) {
     return "current";
-  }
-  if (input.branch.worktreePath && input.branch.worktreePath !== input.project?.workspaceRoot) {
-    return "worktree";
   }
   if (input.branch.isRemote) {
     return "remote";
@@ -137,16 +125,12 @@ type NewTaskFlowContextValue = {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
-  readonly workspaceMode: WorkspaceMode;
   readonly isGitRepo: boolean;
-  readonly isGitRepoKnown: boolean;
   readonly canChooseWorkspace: boolean;
   readonly selectedBranchName: string | null;
-  readonly selectedWorktreePath: string | null;
   readonly resolveWorkspaceSelection: (
     selection: ComposerDraftWorkspaceSelection | undefined,
   ) => ComposerDraftWorkspaceSelection;
-  readonly startFromOrigin: boolean;
   readonly pullRequestReference: string | undefined;
   readonly draftKey: string | null;
   readonly prompt: string;
@@ -188,9 +172,7 @@ type NewTaskFlowContextValue = {
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
   ) => void;
-  readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
   readonly selectBranch: (branch: VcsRef) => void;
-  readonly setStartFromOrigin: (value: boolean) => void;
   readonly buildPendingTaskMessage: (
     metadata: TurnCommandMetadata,
     options?: {
@@ -385,7 +367,6 @@ export function NewTaskFlowProvider(
   const isGitRepo = knownIsGitRepo ?? true;
   const projectSettings = projectDefaults.projectSettings;
   const canChooseWorkspace = !isScratchDraft;
-  const defaultWorkspaceMode: WorkspaceMode = projectDefaults.defaultWorkspaceMode;
   const branchState = usePaginatedBranches({
     environmentId: selectedProject?.environmentId ?? null,
     cwd: selectedProject?.workspaceRoot || null,
@@ -401,22 +382,10 @@ export function NewTaskFlowProvider(
     resolveNewTaskDraftWorkspace({
       selection,
       canChooseWorkspace,
-      defaultMode: defaultWorkspaceMode,
-      defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
       isGitRepo,
-      branches: allBranchRefs,
-      projectCwd: selectedProject?.workspaceRoot ?? null,
     });
   const workspaceSelection = resolveWorkspaceSelection(selectedProjectDraft.workspaceSelection);
-  const workspaceMode = workspaceSelection.mode;
   const selectedBranchName = workspaceSelection.branch;
-  const selectedWorktreePath = workspaceSelection.worktreePath;
-  // Keep the user's explicit choice separate from the resolved display value:
-  // only the explicit flag is ever written back to the draft, so the resolved
-  // value keeps tracking the server setting when the config loads late.
-  const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
-  const startFromOrigin =
-    isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
   const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
   const managedPolicy = selectedEnvironmentServerConfig?.managedPolicy;
   const runtimeMode = resolveNewThreadRuntimeMode(
@@ -635,63 +604,12 @@ export function NewTaskFlowProvider(
     return false;
   };
 
-  const setWorkspaceMode = (mode: WorkspaceMode) => {
-    if (!selectedProjectDraftKey) {
-      return;
-    }
-    if (!selectedProject) {
-      return;
-    }
-    const localSelection = resolveNewTaskLocalWorkspaceSelection({
-      branches: availableBranches,
-      projectCwd: selectedProject.workspaceRoot,
-    });
-    updateComposerDraftSettings(selectedProjectDraftKey, {
-      workspaceSelection: {
-        mode,
-        branch: mode === "local" ? localSelection.branch : selectedBranchName,
-        worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
-        ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
-        // Refs have not named the current branch yet; the selection follows it.
-        ...(mode === "local" && localSelection.awaitsCurrentBranch
-          ? { followsCurrentCheckout: true }
-          : {}),
-      },
-    });
-  };
-
   const selectBranch = (branch: VcsRef) => {
     if (!selectedProject || !selectedProjectDraftKey) {
       return;
     }
     updateComposerDraftSettings(selectedProjectDraftKey, {
-      workspaceSelection: {
-        mode: workspaceMode,
-        branch: branch.name,
-        worktreePath: resolveNewTaskBranchWorktreePath({
-          workspaceMode,
-          projectCwd: selectedProject.workspaceRoot,
-          branchWorktreePath: branch.worktreePath,
-        }),
-        ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
-      },
-    });
-  };
-
-  const setStartFromOrigin = (value: boolean) => {
-    if (!selectedProjectDraftKey) {
-      return;
-    }
-    updateComposerDraftSettings(selectedProjectDraftKey, {
-      workspaceSelection: {
-        mode: workspaceMode,
-        branch: selectedBranchName,
-        worktreePath: selectedWorktreePath,
-        startFromOrigin: value,
-        ...(selectedBranchName === null && workspaceSelection.followsCurrentCheckout
-          ? { followsCurrentCheckout: true }
-          : {}),
-      },
+      workspaceSelection: { branch: branch.name },
     });
   };
 
@@ -746,7 +664,6 @@ export function NewTaskFlowProvider(
       return null;
     }
     const workspaceSelection = resolveWorkspaceSelection(draft.workspaceSelection);
-    const mode = workspaceSelection.mode;
     return {
       environmentId: selectedProject.environmentId,
       threadId: ThreadId.make(metadata.threadId),
@@ -772,20 +689,14 @@ export function NewTaskFlowProvider(
         projectId: selectedProject.id,
         projectTitle: selectedProject.title,
         projectCwd: selectedProject.workspaceRoot,
-        workspaceMode: mode,
-        ...(mode === "worktree" && workspaceSelection?.pullRequestReference
+        ...(workspaceSelection.pullRequestReference
           ? { pullRequestReference: workspaceSelection.pullRequestReference }
           : {}),
         // Queued local tasks use drain-time checkout; snapshot branches only for immediate sends or explicit choices.
         branch: resolveProjectThreadCreationBranch({
-          workspaceMode: mode,
-          selectedBranch: workspaceSelection?.branch ?? null,
+          selectedBranch: workspaceSelection.branch,
           currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
         }),
-        worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
-        ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
-          ? { startFromOrigin: true }
-          : {}),
       },
       createdAt: metadata.createdAt,
     };
@@ -858,14 +769,10 @@ export function NewTaskFlowProvider(
     selectedEnvironmentId,
     selectedProjectKey,
     selectedModelKey,
-    workspaceMode,
     isGitRepo,
-    isGitRepoKnown: knownIsGitRepo !== null,
     canChooseWorkspace,
     selectedBranchName,
-    selectedWorktreePath,
     resolveWorkspaceSelection,
-    startFromOrigin,
     draftKey: selectedProjectDraftKey,
     pullRequestReference: selectedProjectDraft.workspaceSelection?.pullRequestReference,
     prompt,
@@ -895,9 +802,7 @@ export function NewTaskFlowProvider(
     switchEnvironment,
     switchingToEnvironmentId,
     setSelectedModelKey,
-    setWorkspaceMode,
     selectBranch,
-    setStartFromOrigin,
     buildPendingTaskMessage,
     setPrompt,
     replaceAttachments,

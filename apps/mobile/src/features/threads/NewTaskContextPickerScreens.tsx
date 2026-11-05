@@ -30,7 +30,6 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
-import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentScope } from "../../state/session";
@@ -143,31 +142,6 @@ function EnvironmentPickerRow(props: {
   );
 }
 
-function ToggleRow(props: {
-  readonly title: string;
-  readonly value: boolean;
-  readonly onValueChange: (value: boolean) => void;
-}) {
-  return (
-    <View className="min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3">
-      <Text
-        className={cn(
-          "min-w-0 flex-1 text-base text-foreground",
-          Platform.OS !== "android" && "font-t3-medium",
-        )}
-        numberOfLines={1}
-      >
-        {props.title}
-      </Text>
-      <ThemedSwitch
-        accessibilityLabel={props.title}
-        onValueChange={props.onValueChange}
-        value={props.value}
-      />
-    </View>
-  );
-}
-
 function PickerSurface(props: { readonly children: ReactNode }) {
   return (
     <View
@@ -260,11 +234,7 @@ export function NewTaskBranchPickerRouteScreen() {
   };
 
   const selectBranch = async (branch: VcsRef) => {
-    const needsCheckout = shouldCheckoutNewTaskBranch({
-      branchIsCurrent: branch.current,
-      branchWorktreePath: branch.worktreePath,
-      workspaceMode: flow.workspaceMode,
-    });
+    const needsCheckout = shouldCheckoutNewTaskBranch({ branchIsCurrent: branch.current });
     if (selectingBranchNameRef.current !== null || (needsCheckout && !canWriteSourceControl)) {
       return;
     }
@@ -285,7 +255,6 @@ export function NewTaskBranchPickerRouteScreen() {
     const result = await checkoutNewTaskBranch({
       branch,
       project,
-      workspaceMode: flow.workspaceMode,
       readRefs,
       switchRef,
     }).finally(releaseRemovalGuard);
@@ -314,7 +283,7 @@ export function NewTaskBranchPickerRouteScreen() {
 
   return (
     <BranchPickerScreen
-      title={flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}
+      title="Branch"
       project={flow.selectedProject}
       branches={filterNewTaskBranches(branchState.refs, branchQuery)}
       selectedBranchName={
@@ -333,14 +302,6 @@ export function NewTaskBranchPickerRouteScreen() {
       onLoadMore={branchState.loadNext}
       selectionDisabled={switchingBranchName !== null}
       onSelect={selectBranch}
-      worktree={
-        flow.workspaceMode === "worktree"
-          ? {
-              startFromOrigin: flow.startFromOrigin,
-              onChangeStartFromOrigin: flow.setStartFromOrigin,
-            }
-          : undefined
-      }
     />
   );
 }
@@ -360,10 +321,6 @@ export function BranchPickerScreen(props: {
   readonly onLoadMore: () => void;
   readonly selectionDisabled?: boolean;
   readonly onSelect: (branch: VcsRef) => void;
-  readonly worktree?: {
-    readonly startFromOrigin: boolean;
-    readonly onChangeStartFromOrigin: (value: boolean) => void;
-  };
 }) {
   const searchRef = useRef<import("react-native").TextInputInstance>(null);
   const navigation = useNavigation();
@@ -392,25 +349,10 @@ export function BranchPickerScreen(props: {
       isLast={index === props.branches.length - 1}
       onPress={() => props.onSelect(item)}
       selected={selectedBranchName === item.name}
-      subtitle={branchBadgeLabel({ branch: item, project: props.project })?.toUpperCase()}
+      subtitle={branchBadgeLabel({ branch: item })?.toUpperCase()}
       title={item.name}
     />
   );
-
-  const branchListHeader = props.worktree ? (
-    <View
-      className={cn(
-        "mb-3 overflow-hidden",
-        Platform.OS === "android" ? "rounded-[28px]" : "rounded-2xl",
-      )}
-    >
-      <ToggleRow
-        onValueChange={props.worktree.onChangeStartFromOrigin}
-        title="Start from remote"
-        value={props.worktree.startFromOrigin}
-      />
-    </View>
-  ) : null;
 
   const branchContent =
     props.branches.length === 0 ? (
@@ -421,7 +363,6 @@ export function BranchPickerScreen(props: {
         scrollEnabled={false}
         showsVerticalScrollIndicator={false}
       >
-        {branchListHeader}
         <View
           className="flex-1 items-center justify-center gap-3 px-4"
           style={{
@@ -459,10 +400,7 @@ export function BranchPickerScreen(props: {
         data={props.branches}
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
-        keyExtractor={(branch) =>
-          `${branch.remoteName ?? "local"}:${branch.name}:${branch.worktreePath ?? ""}`
-        }
-        ListHeaderComponent={branchListHeader}
+        keyExtractor={(branch) => `${branch.remoteName ?? "local"}:${branch.name}`}
         ListFooterComponent={
           props.refreshing ? (
             <View className="items-center py-4">

@@ -27,14 +27,12 @@ const PROJECT_SCRIPTS = JSON.stringify([
     name: "Dev",
     command: "pnpm dev",
     icon: "play",
-    runOnWorktreeCreate: false,
   },
   {
     id: "test",
     name: "Tests",
     command: "pnpm test",
     icon: "test",
-    runOnWorktreeCreate: false,
   },
 ]);
 

@@ -55,7 +55,7 @@ export function BranchNamingSettings(props: {
   useEffect(() => () => saveDrafts(), []);
   return (
     <SettingsSection
-      title="Worktree branch naming"
+      title="Branch naming"
       trailing={
         props.mode === null ? <Text className="text-xs text-foreground-muted">Mixed</Text> : null
       }

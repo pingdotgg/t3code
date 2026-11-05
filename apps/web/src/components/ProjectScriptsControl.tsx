@@ -134,8 +134,6 @@ export default function ProjectScriptsControl({
       name: fileScript.name,
       command: fileScript.command,
       icon: fileScript.icon ?? "play",
-      runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
-      waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       runOnSettle: fileScript.runOnSettle ?? false,
       ...(readEnvironmentScope(environmentId, AuthSettingsWriteScope) ? { keybinding: null } : {}),
       previewUrl: fileScript.previewUrl ?? null,

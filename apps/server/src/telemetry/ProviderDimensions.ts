@@ -156,11 +156,7 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
         workspace:
           input.scratch === true
             ? "scratch"
-            : (oneOf(stringField(asFields(input.workspaceStrategy), "type"), [
-                "root",
-                "worktree",
-                "existing_worktree",
-              ]) ?? "root"),
+            : (oneOf(stringField(asFields(input.workspaceStrategy), "type"), ["root"]) ?? "root"),
       });
     case "t3_thread_send":
       return defined({ delivery: stringField(output, "delivery") });

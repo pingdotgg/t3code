@@ -70,15 +70,13 @@ describe("pending timeline messages", () => {
     expect(steers[1]).not.toBe(singleSteer[1]);
   });
 
-  it("preserves setup, workflow, and compaction grouping boundaries", () => {
+  it("preserves workflow and compaction grouping boundaries", () => {
     const group = createThreadFeedGrouping();
     const feed = appendPendingThreadMessages([], [], [pending("first"), pending("second")]);
     expect(group(feed, {})[0]?.userMessageGrouping.groupedWithNext).toBe(true);
-    for (const options of [{ setupAnchorIndex: 0 }, { workflowOpeningMessageId: "first" }]) {
-      const rows = group(feed, options);
-      expect(rows[0]?.userMessageGrouping.groupedWithNext).toBe(false);
-      expect(rows[1]?.userMessageGrouping.groupedWithPrevious).toBe(false);
-    }
+    const rows = group(feed, { workflowOpeningMessageId: "first" });
+    expect(rows[0]?.userMessageGrouping.groupedWithNext).toBe(false);
+    expect(rows[1]?.userMessageGrouping.groupedWithPrevious).toBe(false);
     const compact = appendPendingThreadMessages(
       [],
       [],
@@ -125,9 +123,7 @@ describe("pending timeline messages", () => {
       ...pending("creation"),
       creation: {
         projectId: ProjectId.make("project"),
-        workspaceMode: "local" as const,
         branch: "main",
-        worktreePath: null,
       },
     };
     const prompt = appendPendingThreadMessages([], [], [queued])[0]!;

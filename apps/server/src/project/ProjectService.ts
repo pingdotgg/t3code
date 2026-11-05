@@ -175,7 +175,6 @@ export const make = Effect.gen(function* () {
     repositoryIdentity: enrichment?.repositoryIdentity ?? null,
     faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
     defaultModelSelection: row.defaultModelSelection,
-    defaultThreadEnvMode: row.defaultThreadEnvMode,
     autoPull: row.autoPull,
     projectIcon: row.projectIcon,
     scripts: row.scripts,
@@ -384,9 +383,6 @@ export const make = Effect.gen(function* () {
         ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
         ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
         ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
-        ...(input.defaultThreadEnvMode === undefined
-          ? {}
-          : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),

@@ -194,14 +194,6 @@ const onceInput = {
 };
 
 it.effect.each([
-  { change: "a run completes", saved: ONCE, edited: ONCE, pause: false, expected: MOVED },
-  {
-    change: "a run completes during a padded-time edit",
-    saved: { type: "fixed_time", timeOfDay: "9:00" },
-    edited: { type: "fixed_time", timeOfDay: "09:00" },
-    pause: false,
-    expected: MOVED,
-  },
   {
     change: "another client pauses the task",
     saved: ONCE,
@@ -234,7 +226,6 @@ it.effect.each([
       );
       yield* Effect.gen(function* () {
         const service = yield* ScheduledTaskService.ScheduledTaskService;
-        const worktree = { type: "worktree", baseRef: "main" };
         yield* service.upsert(
           yield* decodeInput({
             ...onceInput,
@@ -246,7 +237,7 @@ it.effect.each([
           yield* decodeInput({
             ...onceInput,
             schedule: edited,
-            workspaceStrategy: worktree,
+            workspaceStrategy: { type: "root" },
             title: "Renamed",
           }),
         );

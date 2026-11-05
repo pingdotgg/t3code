@@ -1759,9 +1759,7 @@ describe("mobile composer drafts", () => {
             runtimeMode: "approval-required",
             interactionMode: "plan",
             workspaceSelection: {
-              mode: "worktree",
               branch: "main",
-              worktreePath: null,
             },
           },
         },
@@ -1782,9 +1780,7 @@ describe("mobile composer drafts", () => {
       runtimeMode: "approval-required",
       interactionMode: "plan",
       workspaceSelection: {
-        mode: "worktree",
         branch: "main",
-        worktreePath: null,
       },
       project: {
         environmentId: "environment-1",
@@ -1914,7 +1910,7 @@ describe("mobile composer drafts", () => {
       [key]: {
         ...getComposerDraftSnapshot(key),
         runtimeMode: "approval-required",
-        workspaceSelection: { mode: "worktree", branch: "feature/a", worktreePath: null },
+        workspaceSelection: { branch: "feature/a" },
       },
     });
     const createdAt = getComposerDraftSnapshot(key).project?.createdAt;
@@ -2091,9 +2087,7 @@ describe("mobile composer drafts", () => {
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
       workspaceSelection: {
-        mode: "worktree",
         branch: "main",
-        worktreePath: null,
       },
     };
 

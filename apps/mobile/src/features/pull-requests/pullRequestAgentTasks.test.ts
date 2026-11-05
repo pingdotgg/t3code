@@ -53,12 +53,12 @@ describe("PR agent tasks", () => {
   });
   it("names the change request with its host's term", () => {
     expect(pullRequestAgentPrompt("conflicts", GITHUB)).toContain(
-      "Resolve this pull request's conflicts with its base branch. First confirm this thread is on the PR's branch; if it isn't, prepare the PR in its own worktree.",
+      "Resolve this pull request's conflicts with its base branch. First confirm this thread is on the PR's branch; if it isn't, prepare the PR on this checkout.",
     );
     expect(
       pullRequestAgentPrompt("conflicts", sourceControlClients.get("gitlab").changeRequest),
     ).toContain(
-      "Resolve this merge request's conflicts with its base branch. First confirm this thread is on the MR's branch; if it isn't, prepare the MR in its own worktree.",
+      "Resolve this merge request's conflicts with its base branch. First confirm this thread is on the MR's branch; if it isn't, prepare the MR on this checkout.",
     );
   });
 });

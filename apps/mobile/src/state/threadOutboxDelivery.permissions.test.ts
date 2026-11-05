@@ -241,19 +241,13 @@ describe("queued PR checkout", () => {
       creation: {
         projectId: ProjectId.make("project"),
         projectCwd: "/repo",
-        workspaceMode: "worktree",
         branch: "fork/feature",
-        worktreePath: null,
         pullRequestReference: "https://github.com/acme/repo/pull/123",
       },
     });
-  const preparedCheckout = {
-    branch: "pr-123",
-    worktreePath: "/repo/.t3/worktrees/pr-123",
-    isOnPullRequestHead: true,
-  };
+  const preparedCheckout = { branch: "pr-123" };
 
-  it("waits for the provider's PR checkout and launches in that worktree", async () => {
+  it("waits for the provider's PR checkout and launches on its branch", async () => {
     setOperateGrant("secondary", true);
     await state.manager.enqueue(queuedPullRequest());
     const started = Promise.withResolvers<void>();
@@ -268,17 +262,13 @@ describe("queued PR checkout", () => {
     expect(state.start).not.toHaveBeenCalled();
     expect(state.checkout).toHaveBeenCalledWith({
       environmentId: "secondary",
-      input: { cwd: "/repo", reference: "https://github.com/acme/repo/pull/123", mode: "worktree" },
+      input: { cwd: "/repo", reference: "https://github.com/acme/repo/pull/123" },
     });
     checkout.resolve(AsyncResult.success(preparedCheckout));
     await drained;
     expect(state.start).toHaveBeenCalledOnce();
     const bootstrap = state.start.mock.calls[0]?.[0].input.bootstrap;
-    expect(bootstrap.createThread).toMatchObject({
-      branch: "pr-123",
-      worktreePath: preparedCheckout.worktreePath,
-    });
-    expect(bootstrap.prepareWorktree).toBeUndefined();
+    expect(bootstrap.createThread).toMatchObject({ branch: "pr-123" });
     expect(remaining()).toEqual([]);
   });
 
@@ -419,9 +409,7 @@ describe("queued task operation access", () => {
               creation: {
                 projectId: ProjectId.make("project"),
                 projectCwd: "/repo",
-                workspaceMode: "local",
                 branch: null,
-                worktreePath: null,
               },
             }
           : {},
@@ -473,9 +461,7 @@ describe("queued task operation access", () => {
               creation: {
                 projectId: ProjectId.make("project"),
                 projectCwd: "/repo",
-                workspaceMode: "local",
                 branch: null,
-                worktreePath: null,
               },
             }
           : {},

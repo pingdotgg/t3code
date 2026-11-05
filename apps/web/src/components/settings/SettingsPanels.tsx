@@ -542,13 +542,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Continue threads after restarts"]
       : []),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
-    ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
-      ? ["New thread mode"]
-      : []),
-    ...(settings.newWorktreesStartFromOrigin !==
-    DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
-      ? ["New worktrees start from remote"]
-      : []),
     ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
       ? ["Add project base directory"]
       : []),
@@ -665,8 +658,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
-      defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
-      newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       ghqCloneLayout: DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,

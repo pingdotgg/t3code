@@ -209,7 +209,7 @@ const clientScope = (
   requestNamespace: `client:${sessionId}`,
   thread: undefined,
   client: { sessionId, label: `T3 Code · ${sessionId}`, access, linked },
-  capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+  capabilities: new Set(["orchestration", "pull-requests"]),
   issuedAt: 0,
 });
 const laptop = clientScope("laptop", true, "auto");

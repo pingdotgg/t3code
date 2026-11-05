@@ -23,7 +23,6 @@ import { threadSelectionDeferral } from "../layout/deferred-navigation";
 import { useWorkspaceState } from "../../state/workspace";
 import { vcsEnvironment } from "../../state/vcs";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
-import { resolveNewTaskBranchWorktreePath } from "./new-task-context-presentation";
 import {
   type BranchCheckoutResult,
   branchCheckoutRequestKey,
@@ -45,13 +44,11 @@ const branchCheckouts = makeNewTaskBranchCheckouts({
         name: request.branch,
         current: false,
         isDefault: false,
-        worktreePath: request.worktreePath,
       },
       project:
         request.environmentId !== null && request.workspaceRoot !== null
           ? { environmentId: request.environmentId, workspaceRoot: request.workspaceRoot }
           : null,
-      workspaceMode: "local",
       readRefs: (input) =>
         runAtomCommand(appAtomRegistry, vcsEnvironment.readRefs, input, {
           reportFailure: false,
@@ -100,7 +97,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       : params.environmentId,
     projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
     branch: params.branch,
-    worktreePath: params.worktreePath,
     cloning: (Array.isArray(params.cloning) ? params.cloning[0] : params.cloning) === "1",
   };
 
@@ -146,7 +142,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
           environmentId: checkoutProject?.environmentId ?? null,
           workspaceRoot: checkoutProject?.workspaceRoot ?? null,
           branch: initialProjectRef.branch,
-          worktreePath: initialProjectRef.worktreePath ?? null,
         })
       : null;
   const checkout = useAtomValue(
@@ -167,19 +162,8 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     branchCheckouts.release(checkoutKey);
   }, [checkoutKey, checkoutPending, removalBlocked]);
 
-  const prepared =
-    result?._tag === "Success" && workspaceRoot
-      ? {
-          branch: result.value.name,
-          worktreePath: resolveNewTaskBranchWorktreePath({
-            workspaceMode: "local",
-            projectCwd: workspaceRoot,
-            branchWorktreePath: result.value.worktreePath,
-          }),
-        }
-      : null;
-  const preparedBranch = prepared ? prepared.branch : initialProjectRef.branch;
-  const preparedWorktreePath = prepared ? prepared.worktreePath : initialProjectRef.worktreePath;
+  const preparedBranch =
+    result?._tag === "Success" && workspaceRoot ? result.value.name : initialProjectRef.branch;
   // NewTaskDraftScreen re-applies the route project (and rewrites the draft's
   // workspace) whenever this object's identity changes. initialProjectRef is new
   // every render, so read its fields first: the compiler then memoizes this
@@ -189,7 +173,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     environmentId,
     projectId,
     branch: preparedBranch,
-    worktreePath: preparedWorktreePath,
     cloning,
   };
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");

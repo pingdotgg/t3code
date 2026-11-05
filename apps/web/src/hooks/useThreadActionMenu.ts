@@ -213,8 +213,6 @@ export function useThreadActionMenu(input: {
             handleNewThread(scopeProjectRef(threadRef.environmentId, thread.projectId), {
               branch: thread.branch,
               worktreePath: thread.worktreePath,
-              envMode: thread.worktreePath ? "worktree" : "local",
-              startFromOrigin: false,
             }),
           );
           if (result._tag === "Failure") {
