@@ -1,10 +1,10 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+import * as Stream from "effect/Stream";
 
 /**
  * The trailer the in-VM server appends after a command's output so the
@@ -33,9 +33,7 @@ export const ShellBuildRole = AWS.IAM.Role("ShellMicrovmBuildRole");
  * by the endpoint proxy in front of this server, so the server itself
  * trusts every request it receives.
  */
-export class ShellMicrovm extends AWS.Lambda.MicrovmImage<ShellMicrovm>()(
-  "ShellMicrovm",
-) {}
+export class ShellMicrovm extends AWS.Lambda.MicrovmImage<ShellMicrovm>()("ShellMicrovm") {}
 
 export default ShellMicrovm.make(
   ShellBuildRole.pipe(
@@ -58,11 +56,10 @@ export default ShellMicrovm.make(
         }
 
         if (request.method === "POST" && url.pathname === "/exec") {
-          const body = (yield* request.json.pipe(
-            Effect.orElseSucceed(() => undefined),
-          )) as { command?: unknown } | undefined;
-          const command =
-            typeof body?.command === "string" ? body.command : "";
+          const body = (yield* request.json.pipe(Effect.orElseSucceed(() => undefined))) as
+            | { command?: unknown }
+            | undefined;
+          const command = typeof body?.command === "string" ? body.command : "";
           if (!command.trim()) {
             return HttpServerResponse.text("empty command", { status: 400 });
           }
@@ -80,9 +77,7 @@ export default ShellMicrovm.make(
                     Stream.concat(
                       Stream.fromEffect(
                         handle.exitCode.pipe(
-                          Effect.map((code) =>
-                            encoder.encode(`\n${EXIT_MARKER}${code}\n`),
-                          ),
+                          Effect.map((code) => encoder.encode(`\n${EXIT_MARKER}${code}\n`)),
                         ),
                       ),
                     ),
@@ -93,9 +88,7 @@ export default ShellMicrovm.make(
             // Spawn/pipe failures still terminate the protocol: report them
             // as a non-zero exit with the error as output.
             Stream.catchCause((cause) =>
-              Stream.make(
-                encoder.encode(`\n${EXIT_MARKER}1\n${String(cause)}\n`),
-              ),
+              Stream.make(encoder.encode(`\n${EXIT_MARKER}1\n${String(cause)}\n`)),
             ),
           );
 

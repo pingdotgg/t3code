@@ -113,6 +113,23 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
   };
 }
 
+function toSummary(pullRequest: AzureDevOpsPullRequest): ProviderChangeRequestSummary {
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    author: pullRequest.author,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+    mergeability: pullRequest.mergeability,
+    closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+    mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+    updatedAt: pullRequest.updatedAt,
+  };
+}
+
 export const make = Effect.gen(function* () {
   const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
@@ -296,20 +313,7 @@ export const make = Effect.gen(function* () {
     getChangeRequestSummary: (input) =>
       readPullRequest(input).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),
-        Effect.map((pullRequest): ProviderChangeRequestSummary => ({
-          number: pullRequest.number,
-          title: pullRequest.title,
-          url: pullRequest.url,
-          author: pullRequest.author,
-          headBranch: pullRequest.headBranch,
-          baseBranch: pullRequest.baseBranch,
-          state: pullRequest.state,
-          isDraft: pullRequest.isDraft,
-          mergeability: pullRequest.mergeability,
-          closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
-          mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
-          updatedAt: pullRequest.updatedAt,
-        })),
+        Effect.map(toSummary),
       ),
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
@@ -540,7 +544,19 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(
+          Effect.mapError(fail("runAction")),
+          Effect.map(
+            (pullRequest) =>
+              pullRequest && {
+                ...toSummary(pullRequest),
+                autoMergeEnabled: pullRequest.autoMergeEnabled,
+                ...(pullRequest.autoMergeMethod === undefined
+                  ? {}
+                  : { autoMergeMethod: pullRequest.autoMergeMethod }),
+              },
+          ),
+        ),
 
     updateChangeRequest: (input) =>
       cli
