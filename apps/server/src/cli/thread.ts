@@ -277,6 +277,14 @@ const readMessageArgument = Effect.fn("cli.thread.readMessage")(function* (argum
   return text;
 });
 
+/** A peer on another version could repeat a cursor; following it would never end. */
+const nextPageCursor = (tool: string, cursor: number, next: number | null) =>
+  next !== null && next <= cursor
+    ? Effect.fail(
+        new ThreadToolFailedError({ tool, detail: `${tool} did not advance its page cursor.` }),
+      )
+    : Effect.succeed(next);
+
 const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (
   tools: ThreadTools,
   environmentId?: EnvironmentId,
@@ -290,7 +298,7 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (
       ProjectListResult,
     );
     projects.push(...page.projects);
-    cursor = page.nextCursor;
+    cursor = yield* nextPageCursor("t3_project_list", cursor, page.nextCursor);
   }
   return projects;
 });
@@ -643,7 +651,7 @@ const listThreadsIn = Effect.fn("cli.thread.listThreadsIn")(function* (
       OrchestratorMcpThreadListResult,
     );
     threads.push(...page.threads);
-    cursor = page.nextCursor;
+    cursor = yield* nextPageCursor("t3_thread_list", cursor, page.nextCursor);
   }
   return threads;
 });

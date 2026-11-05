@@ -284,3 +284,21 @@ it.effect("--all-environments skips a linked environment it cannot list", () =>
     );
   }).pipe(listAt),
 );
+
+it.effect("list fails instead of looping when a page repeats its cursor", () =>
+  Effect.gen(function* () {
+    const { tools, calls } = scriptedTools({
+      t3_thread_list: [threadPage(1), threadPage(1)],
+    });
+
+    const error = yield* listThreads(tools, {
+      environment: Option.none(),
+      allEnvironments: false,
+      project: Option.none(),
+      allProjects: true,
+    }).pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "ThreadToolFailedError");
+    assert.strictEqual(calls.length, 2);
+  }).pipe(listAt),
+);
