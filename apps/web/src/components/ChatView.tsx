@@ -410,6 +410,7 @@ const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
 const EMPTY_RUNS: ThreadStructure["runs"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
+const EMPTY_ARTIFACTS: readonly never[] = [];
 
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 
@@ -3488,6 +3489,7 @@ export default function ChatView(props: ChatViewProps) {
                   )}
                   runningRunId={activeRunningTurnId}
                   turnDiffSummaries={turnDiffSummaries}
+                  artifacts={serverProjection?.artifacts ?? EMPTY_ARTIFACTS}
                   activeThreadEnvironmentId={
                     displayedThreadRef?.environmentId ?? activeThread.environmentId
                   }
