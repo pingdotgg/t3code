@@ -55,7 +55,7 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
-import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { limitRecoveryCommand } from "./usageLimitRecovery.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
 

@@ -1406,6 +1406,40 @@ it.effect("a handoff after the pause resumes the run once the agent's turn ends"
   ),
 );
 
+it.effect("a handoff from a failed or stopped step's thread resumes the run without Continue", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      for (const [index, ended] of (["failed", "interrupted"] as const).entries()) {
+        const { run } = yield* service.start(startInput(`cmd-reopen-${index}`));
+        const first = yield* Queue.take(harness.launches);
+        harness.outputs.set(first.threadId, { error: "provider unavailable" });
+        yield* harness.settle(first.threadId, ended);
+        yield* awaitRun(service, run.id, (current) => current.status === "paused");
+
+        // The user fixed the cause in the thread; the agent finishes and hands off.
+        const resumed = yield* service.handoffStep({
+          runId: run.id,
+          threadId: first.threadId,
+          output: "plan after fix",
+        });
+        assert.strictEqual(resumed.run.status, "running");
+        assert.strictEqual(resumed.run.steps[0]?.status, "running");
+        assert.strictEqual(resumed.run.steps[0]?.error, null);
+        harness.outputs.set(first.threadId, { reply: "Done." });
+        yield* harness.settle(first.threadId, "completed");
+
+        const second = yield* Queue.take(harness.launches);
+        assert.strictEqual(
+          promptBody(second.input.initialMessage?.text),
+          "Build from: plan after fix",
+        );
+        yield* service.cancel({ runId: run.id });
+      }
+    }),
+  ),
+);
+
 it.effect("a step's pull request watch ends when the step stops being the active one", () =>
   withService(
     Effect.fn(function* (harness, service) {

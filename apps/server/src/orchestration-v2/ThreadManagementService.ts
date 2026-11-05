@@ -66,6 +66,7 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { limitResumeExpected } from "./usageLimitRecovery.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -180,6 +181,11 @@ export interface ThreadManagementWaitInput {
    * completion delivery will wake it again, as a delegated task's result does.
    */
   readonly untilDelegatedWorkSettled?: boolean;
+  /**
+   * With `untilDelegatedWorkSettled`: a run that failed on a usage limit T3 Code will
+   * auto-resume is not the answer yet; the resumed run's is.
+   */
+  readonly throughUsageLimitResume?: boolean;
 }
 
 export interface ThreadManagementWaitResult {
@@ -967,6 +973,19 @@ const make = Effect.gen(function* () {
       return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
+    const throughUsageLimitResume = input.throughUsageLimitResume === true;
+    const limitResumePending = Effect.fnUntraced(function* (run: OrchestrationV2Run) {
+      const shell = yield* orchestrator
+        .getThreadShell(input.threadId)
+        .pipe(Effect.mapError(loadError));
+      if (shell === null || shell.latestRunId !== run.id) return false;
+      const settings = yield* serverSettings.getSettings.pipe(Effect.mapError(loadError));
+      return limitResumeExpected(
+        shell,
+        settings.autoResumeLimitedThreads,
+        DateTime.toEpochMillis(yield* DateTime.now),
+      );
+    });
     const delegatedWorkResult = Effect.gen(function* () {
       const records = yield* getProjectThreadRecords(
         input,
@@ -995,7 +1014,11 @@ const make = Effect.gen(function* () {
         return { ...current, resultRun: undefined };
       }
       const resultRun = yield* delegatedWorkResult;
-      return { ...current, settled: resultRun !== undefined, resultRun };
+      const resuming =
+        resultRun?.status === "failed" &&
+        throughUsageLimitResume &&
+        (yield* limitResumePending(resultRun));
+      return { ...current, settled: resultRun !== undefined && !resuming, resultRun };
     });
     const settledResult = (current: Effect.Success<ReturnType<typeof evaluate>>) => ({
       threadId: input.threadId,
@@ -1018,6 +1041,10 @@ const make = Effect.gen(function* () {
             // deliveries, and a provider thread's background tasks.
             ...(untilDelegatedWorkSettled
               ? (["subagent.updated", "provider-thread.updated"] as const)
+              : []),
+            // Arming, disarming (a stop), settling or archiving decides whether a limited run resumes.
+            ...(throughUsageLimitResume
+              ? (["thread.metadata-updated", "thread.settled", "thread.archived"] as const)
               : []),
           ] as const
         ).map((eventType) =>

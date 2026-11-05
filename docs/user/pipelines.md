@@ -77,6 +77,12 @@ A step that waits on checks, reviews or a merge watches its pull request and end
 then shows **Waiting on pull request** instead of **No handoff**. The watch ends when the step
 hands off or stops being the run's current step, and when the pull request merges.
 
+If a step's turn fails or you stop it, the run pauses and the step shows **Failed** or **Stopped**.
+Fix the cause and ask the agent to go on in the step's thread; when it hands off, the run continues
+on its own, as after **No handoff**. A step that hits a usage limit does not pause the run while
+T3 Code will resume its thread at the reset, for example with **Resume after usage limits** enabled
+in **Settings → Threads**; the run picks up the resumed turn's result.
+
 - **Refine before continuing.** When a run is paused, before a step or after a failure, keep
   chatting in the previous step's thread. **Continue** then passes that thread's latest answer on.
   A paused run is marked as needing attention in the sidebar, unless its step is waiting on a

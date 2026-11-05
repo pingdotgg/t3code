@@ -14,7 +14,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
-import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { limitRecoveryCommand, limitResumeExpected } from "./usageLimitRecovery.ts";
 
 it.effect("idle sweeps skip SQL until the next wake time or a relevant event", () =>
   Effect.gen(function* () {
@@ -114,5 +114,25 @@ describe("limitRecoveryCommand arming", () => {
   it("does not arm a reset that is 24 hours and 1ms overdue", () => {
     const thread = failedThread(30 * HOUR_MS, 24 * HOUR_MS + 1);
     assert.isNull(limitRecoveryCommand(thread, true, nowMs));
+  });
+});
+
+describe("limitResumeExpected", () => {
+  // Failed an hour ago; the window resets in an hour.
+  const limited = failedThread(HOUR_MS, -HOUR_MS);
+  const armed = (autoResume: boolean) => ({
+    ...limited,
+    limitRecovery: { runId: limited.latestRunId!, resetAt: limited.usageLimitResetAt!, autoResume },
+  });
+
+  it.each([
+    ["not yet armed, auto-resume on", limited, true, true],
+    ["not yet armed, auto-resume off", limited, false, false],
+    ["armed and waiting for its reset", armed(true), false, true],
+    ["armed, then disarmed by a stop", armed(false), true, false],
+    ["armed but settled", { ...armed(true), settledOverride: "settled" as const }, true, false],
+    ["a reset that passed days ago", failedThread(5 * 24 * HOUR_MS, 4 * 24 * HOUR_MS), true, false],
+  ])("%s", (_name, thread, autoResume, expected) => {
+    assert.equal(limitResumeExpected(thread, autoResume, nowMs), expected);
   });
 });

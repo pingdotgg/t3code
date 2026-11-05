@@ -364,6 +364,118 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
   }),
 );
 
+it.effect(
+  "waitForThread waits through a usage limit T3 Code will resume, until it is disarmed",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:thread-management:wait-limited");
+      const threadId = ThreadId.make("thread:thread-management:wait-limited");
+      const runId = RunId.make("run:thread-management:wait-limited");
+      const resumedId = RunId.make("run:thread-management:wait-limited:resumed");
+      const subscriptions = yield* Queue.unbounded<void>();
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1_000);
+      const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"], end: number) =>
+        ({
+          id,
+          ordinal,
+          status,
+          startedAt: at(end - 1),
+          completedAt: at(end),
+        }) as unknown as OrchestrationV2Run;
+      let runs = [run(runId, 1, "failed", 1)];
+      let autoResume = true;
+      const resetAt = "1970-01-01T01:00:00.000Z";
+      const shell = () => ({
+        id: threadId,
+        status: runs.length === 1 ? "failed" : "idle",
+        lastErrorClass: runs.length === 1 ? "usage_limit" : null,
+        usageLimitResetAt: runs.length === 1 ? resetAt : null,
+        latestRunId: runs.at(-1)!.id,
+        latestRunCompletedAt: at(1),
+        updatedAt: at(1),
+        archivedAt: null,
+        settledOverride: null,
+        pendingRuntimeRequest: null,
+        limitRecovery: { runId, resetAt, autoResume },
+        snoozedUntil: null,
+      });
+      const stored = (sequence: number, event: object) =>
+        ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadEventSequence: () => Effect.succeed(0),
+            restartContinuationPending: () => Effect.succeed(false),
+            delegatedTaskResultPending: () => Effect.succeed(false),
+            getThreadShell: () => Effect.sync(shell) as never,
+            streamStoredEventsFrom: (input) =>
+              input?.eventType === "thread.metadata-updated"
+                ? Stream.fromEffect(Queue.offer(subscriptions, undefined)).pipe(
+                    Stream.drain,
+                    Stream.concat(Stream.fromQueue(events)),
+                  )
+                : Stream.never,
+            getThreadRecords: () =>
+              Effect.sync(
+                () =>
+                  ({
+                    thread: { id: threadId, projectId, deletedAt: null },
+                    runs,
+                    messages: [],
+                    subagents: [],
+                    providerThreads: [],
+                  }) as unknown as OrchestrationV2ThreadProjection,
+              ),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+      const input = {
+        projectId,
+        threadId,
+        runId,
+        timeoutMs: 60 * 60 * 1_000,
+        untilDelegatedWorkSettled: true,
+      };
+      // Without the option, the limited run is the answer, as before.
+      expect(yield* service.waitForThread(input)).toMatchObject({
+        timedOut: false,
+        resultRun: { id: runId, status: "failed" },
+      });
+
+      // Stopping the thread disarms the resume, so the limited run is the answer after all.
+      const disarmed = yield* service
+        .waitForThread({ ...input, throughUsageLimitResume: true })
+        .pipe(Effect.forkChild);
+      yield* Effect.raceFirst(Queue.take(subscriptions), Fiber.await(disarmed));
+      autoResume = false;
+      yield* Queue.offer(events, stored(1, { type: "thread.metadata-updated", payload: {} }));
+      expect(yield* Fiber.join(disarmed)).toMatchObject({
+        timedOut: false,
+        resultRun: { id: runId, status: "failed" },
+      });
+
+      // Armed again, the wait ends with the resumed run's answer.
+      autoResume = true;
+      const resumed = yield* service
+        .waitForThread({ ...input, throughUsageLimitResume: true })
+        .pipe(Effect.forkChild);
+      yield* Effect.raceFirst(Queue.take(subscriptions), Fiber.await(resumed));
+      runs = [...runs, run(resumedId, 2, "completed", 3)];
+      yield* Queue.offer(events, stored(2, { type: "thread.metadata-updated", payload: {} }));
+      expect(yield* Fiber.join(resumed)).toMatchObject({
+        timedOut: false,
+        resultRun: { id: resumedId, status: "completed" },
+      });
+    }),
+);
+
 it.effect("waitForThread settles delegated work on a thread rolled back past its only run", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-rolled-back");

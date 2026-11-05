@@ -439,6 +439,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             ...(runId === undefined ? {} : { runId }),
             timeoutMs: WAIT_TIMEOUT_MS,
             untilDelegatedWorkSettled: true,
+            throughUsageLimitResume: true,
           });
           if (!result.timedOut) return result;
         }
@@ -1482,8 +1483,9 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
 
   /**
    * Records a step agent's result. The run advances when the agent's turn ends; a run that paused
-   * because an earlier turn ended without a handoff resumes. While the run waits before the next
-   * step, the feeding step's agent can still replace its output.
+   * because an earlier turn ended without a handoff, failed or was stopped resumes, so fixing a
+   * step in its thread needs no Continue. While the run waits before the next step, the feeding
+   * step's agent can still replace its output.
    */
   const handoffStep = Effect.fn("PipelineRunner.handoffStep")(function* (input: {
     readonly runId: PipelineRunId;
@@ -1503,7 +1505,12 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         const now = yield* nowIso;
         const handedOff = { output: input.output, handedOff: true } as const;
         const current = step.index === run.currentStepIndex && step.status === "running";
-        const resume = current && run.status === "paused" && run.pauseReason === "awaiting_handoff";
+        const reopen =
+          step.index === run.currentStepIndex &&
+          run.status === "paused" &&
+          (step.status === "failed" || step.status === "stopped");
+        const resume =
+          reopen || (current && run.status === "paused" && run.pauseReason === "awaiting_handoff");
         const record =
           (current && run.status === "running") ||
           (step.status === "completed" &&
@@ -1522,7 +1529,16 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             run.id,
             { updatedAt: now, status: "running", pauseReason: null, error: null },
             // The thread may have gone on since the revision message; wait for its latest run.
-            [{ index: step.index, patch: { ...handedOff, revising: false } }],
+            [
+              {
+                index: step.index,
+                patch: {
+                  ...handedOff,
+                  revising: false,
+                  ...(reopen ? { status: "running", error: null, completedAt: null } : {}),
+                },
+              },
+            ],
           );
           yield* wake(run.id);
         } else {
