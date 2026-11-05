@@ -16,7 +16,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import type * as CodexClient from "effect-codex-app-server/client";
+import * as CodexErrors from "effect-codex-app-server/errors";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -41,7 +44,11 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { revertCodexThreadAfter } from "../provider/CodexThreadRevert.ts";
+import {
+  CodexProviderCapabilitiesV2,
+  resolveCodexRollbackBoundary,
+} from "./Adapters/CodexAdapterV2.ts";
 import { SHARED_WORKSPACE_RESTORE_MESSAGE } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -69,7 +76,50 @@ interface ActiveTurn {
 interface Agent {
   readonly started: Queue.Queue<ActiveTurn>;
   readonly rollbacks: Ref.Ref<number>;
+  /** The provider's own turn history, oldest first, which a rewind really truncates. */
+  readonly nativeTurns: Ref.Ref<ReadonlyArray<string>>;
+  /** Drops the reply to the next revert after it lands, as a lost connection would. */
+  readonly loseNextRevertReply: Ref.Ref<boolean>;
 }
+
+/** Answers Codex's history requests from `agent.nativeTurns`. */
+const codexHistory = (agent: Agent) => ({
+  request: ((
+    method: string,
+    params: {
+      readonly threadId: string;
+      readonly cursor?: string | null;
+      readonly limit?: number;
+      readonly beforeTurnId?: string;
+    },
+  ) =>
+    Effect.gen(function* () {
+      const turns = yield* Ref.get(agent.nativeTurns);
+      if (method === "thread/turns/list") {
+        const newestFirst = turns.toReversed();
+        const start = Number(params.cursor ?? 0);
+        const end = start + (params.limit ?? 100);
+        return {
+          data: newestFirst.slice(start, end).map((id) => ({ id, items: [], status: "completed" })),
+          nextCursor: end < newestFirst.length ? String(end) : null,
+        };
+      }
+      if (method === "thread/revert") {
+        const index = turns.indexOf(params.beforeTurnId ?? "");
+        const reply = (message: string) =>
+          CodexErrors.CodexAppServerRequestError.internalError(message, undefined, {
+            method: "thread/revert",
+            operation: "decode-payload",
+          });
+        if (index < 0) return yield* reply(`Unknown turn ${params.beforeTurnId}.`);
+        yield* Ref.set(agent.nativeTurns, turns.slice(0, index));
+        if (yield* Ref.getAndSet(agent.loseNextRevertReply, false)) {
+          return yield* reply("The connection closed before Codex replied.");
+        }
+      }
+      return { thread: { id: params.threadId } };
+    })) as unknown as CodexClient.CodexAppServerClient["Service"]["request"],
+});
 
 /** Starts a turn and hands it to the test, which plays the agent and then finishes it. */
 function makeAgentAdapter(
@@ -153,16 +203,40 @@ function makeAgentAdapter(
                   completedAt: null,
                 },
               });
+              yield* Ref.update(agent.nativeTurns, (turns) => [
+                ...turns,
+                `native:${providerTurnId}`,
+              ]);
               yield* Queue.offer(agent.started, { input: turnInput, providerTurnId, events });
             }),
           steerTurn: () => Effect.void,
           interruptTurn: () => Effect.void,
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
-          rollbackThread: ({ providerThread }) =>
-            Ref.update(agent.rollbacks, (count) => count + 1).pipe(
-              Effect.as({ providerThread, providerTurns: [], messages: [], runtimeRequests: [] }),
-            ),
+          // Codex's own rewind, against history that a revert really changes.
+          rollbackThread: (rollbackInput) =>
+            Effect.gen(function* () {
+              yield* Ref.update(agent.rollbacks, (count) => count + 1);
+              const boundary = yield* resolveCodexRollbackBoundary(rollbackInput);
+              if (boundary.laterTurnIds.size > 0) {
+                yield* revertCodexThreadAfter(codexHistory(agent), "native", boundary).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                        driver,
+                        providerThreadId: rollbackInput.providerThread.id,
+                        cause,
+                      }),
+                  ),
+                );
+              }
+              return {
+                providerThread: rollbackInput.providerThread,
+                providerTurns: [],
+                messages: [],
+                runtimeRequests: [],
+              };
+            }),
           forkThread: () => Effect.die("unused forkThread"),
         };
       }),
@@ -523,6 +597,8 @@ const withHarness = <A, E, R>(
     const agent: Agent = {
       started: yield* Queue.unbounded<ActiveTurn>(),
       rollbacks: yield* Ref.make(0),
+      nativeTurns: yield* Ref.make<ReadonlyArray<string>>([]),
+      loseNextRevertReply: yield* Ref.make(false),
     };
     return yield* Effect.gen(function* () {
       yield* createProject(folderProjectId, fixture.folder);
@@ -961,67 +1037,195 @@ describe("repository worktree checkpoints", () => {
   );
 
   // Permissions do not stop root or Windows from writing.
-  it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "names the repositories it restored when a later one fails",
-    () =>
-      withHarness(({ agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const threadId = yield* createThread({ threadId: "thread:partial" });
-          let alpha = "";
-          let beta = "";
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              alpha = (yield* repoWorktrees.ensure({
-                threadId,
-                repository: "alpha",
-                branch: "t3/partial",
-                baseRef: "main",
-              })).repoWorktree.worktreePath;
-              beta = (yield* repoWorktrees.ensure({
-                threadId,
-                repository: "beta",
-                branch: "t3/partial",
-                baseRef: "main",
-              })).repoWorktree.worktreePath;
-              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
-              yield* write(path.join(beta, "README.md"), "# beta\nturn 1\n");
-            }),
+  const permissionsBlockWrites =
+    HostProcess.Platform.defaultValue() !== "win32" && HostProcess.UserId.defaultValue() !== 0;
+  const failsPartway = (finish: "rollback" | "outbox") =>
+    withHarness(({ fixture, agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        yield* initRepo(path.join(fixture.folder, "gamma"));
+        const threadId = yield* createThread({ threadId: "thread:partial" });
+        const ensure = (repository: string) =>
+          Effect.map(
+            repoWorktrees.ensure({ threadId, repository, branch: "t3/partial", baseRef: "main" }),
+            (result) => result.repoWorktree.worktreePath,
           );
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
-              yield* write(path.join(beta, "README.md"), "# beta\nturn 2\n");
-            }),
-          );
-          // Git can read beta but not replace its files.
-          yield* fileSystem.chmod(beta, 0o555);
-          yield* Effect.addFinalizer(() => fileSystem.chmod(beta, 0o755).pipe(Effect.ignore));
+        let alpha = "";
+        let beta = "";
+        let gamma = "";
+        yield* runTurn(agent, threadId, Effect.void);
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            alpha = yield* ensure("alpha");
+            beta = yield* ensure("beta");
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
+            yield* write(path.join(beta, "README.md"), "# beta\nturn 2\n");
+          }),
+        );
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 3\n");
+            yield* git(alpha, ["commit", "-am", "turn 3 work"]);
+            yield* write(path.join(beta, "README.md"), "# beta\nturn 3\n");
+            // First used in the turn being rewound, so its baseline is the target.
+            gamma = yield* ensure("gamma");
+            yield* write(path.join(gamma, "README.md"), "# gamma\nturn 3\n");
+          }),
+        );
+        const committed = yield* git(alpha, ["rev-parse", "HEAD"]);
+        const nativeTurns = yield* Ref.get(agent.nativeTurns);
+        assert.equal(nativeTurns.length, 3);
+        const retained = nativeTurns.slice(0, 2);
 
-          yield* rollback(threadId, 1);
-          for (let attempt = 0; attempt < 5; attempt += 1) {
+        // Git can read beta but not replace its files.
+        yield* fileSystem.chmod(beta, 0o555);
+        yield* Effect.addFinalizer(() => fileSystem.chmod(beta, 0o755).pipe(Effect.ignore));
+
+        const partial = yield* rollback(threadId, 2);
+        // Codex and the thread both went back to turn 2, in one step.
+        assert.deepEqual(yield* Ref.get(agent.nativeTurns), retained);
+        assert.deepEqual(
+          partial.runs.map((run) => run.status),
+          ["completed", "completed", "rolled_back"],
+        );
+        const message = partial.thread.rollbackFailure?.message ?? "";
+        assert.include(
+          message,
+          "The conversation was rewound, but restoring files stopped at the beta worktree",
+        );
+        assert.include(message, "Already restored: alpha.");
+        // Not finished: turn 3's checkpoint still holds what the retry restores.
+        assert.equal(
+          partial.checkpoints.find((checkpoint) => checkpoint.appRunOrdinal === 3)?.status,
+          "ready",
+        );
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 2\n");
+        assert.equal(yield* git(alpha, ["rev-parse", "HEAD"]), committed);
+        assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 3\n");
+
+        if (finish === "outbox") {
+          // Fixed before the outbox's next attempt, which finishes the files.
+          yield* fileSystem.chmod(beta, 0o755);
+          yield* TestClock.adjust(Duration.seconds(31));
+          yield* worker.drain();
+        } else {
+          // The outbox's remaining attempts find nothing left to rewind.
+          for (let attempt = 0; attempt < 4; attempt += 1) {
             yield* TestClock.adjust(Duration.seconds(31));
             yield* worker.drain();
           }
-          const after = yield* projectionOf(threadId);
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
-          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 2\n");
-          assert.equal(after.runs.find((run) => run.ordinal === 2)?.status, "completed");
+          assert.equal(yield* Ref.get(agent.rollbacks), 1);
+          assert.deepEqual(yield* Ref.get(agent.nativeTurns), retained);
+          assert.equal((yield* projectionOf(threadId)).thread.rollbackFailure?.message, message);
+
+          // The rewound turn's checkpoint is not a target while its files wait.
+          const refused = yield* orchestrator
+            .dispatch(yield* rollbackCommand(threadId, 3, true))
+            .pipe(Effect.flip);
           assert.include(
-            after.thread.rollbackFailure?.message ?? "",
-            "Restoring files stopped at the beta worktree",
+            refused._tag === "OrchestratorDispatchError" ? String(refused.cause) : "",
+            "already rolled back",
           );
-          assert.include(after.thread.rollbackFailure?.message ?? "", "Already restored: alpha.");
-        }),
-      ),
+
+          // Fixed, the same rollback finishes the files.
+          yield* fileSystem.chmod(beta, 0o755);
+          yield* rollback(threadId, 2);
+        }
+        // Codex was asked once, and kept its first two turns.
+        const finished = yield* projectionOf(threadId);
+        assert.equal(yield* Ref.get(agent.rollbacks), 1);
+        assert.deepEqual(yield* Ref.get(agent.nativeTurns), retained);
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 2\n");
+        assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 2\n");
+        assert.equal(yield* read(path.join(gamma, "README.md")), "# gamma\n");
+        assert.equal(
+          finished.checkpoints.find((checkpoint) => checkpoint.appRunOrdinal === 3)?.status,
+          "stale",
+        );
+        assert.isNull(finished.thread.rollbackFailure ?? null);
+
+        // The thread goes on from turn 2.
+        yield* runTurn(
+          agent,
+          threadId,
+          write(path.join(alpha, "README.md"), "# alpha\nturn 2\nturn 4\n"),
+        );
+        const continued = yield* Ref.get(agent.nativeTurns);
+        assert.deepEqual(continued.slice(0, 2), retained);
+        assert.equal(continued.length, 3);
+        const fourth = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 3, toTurnCount: 4 });
+        assert.include(fourth.diff, "+turn 4");
+        assert.notInclude(fourth.diff, "beta/");
+        assert.notInclude(fourth.diff, "gamma/");
+      }),
+    );
+  it.effect.skipIf(!permissionsBlockWrites)(
+    "keeps the retained turns when restoring files fails partway, then finishes on a later rollback",
+    () => failsPartway("rollback"),
     { timeout: 120_000 },
+  );
+  it.effect.skipIf(!permissionsBlockWrites)(
+    "finishes restoring files on the outbox's next attempt once the worktree is fixed",
+    () => failsPartway("outbox"),
+    { timeout: 120_000 },
+  );
+
+  it.effect("recovers a rewind whose reply was lost without removing earlier turns", () =>
+    withHarness(({ agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* createThread({ threadId: "thread:lost-reply" });
+        // History the provider thread started with, as a fork's does.
+        yield* Ref.set(agent.nativeTurns, ["native:inherited"]);
+        let alpha = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            alpha = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "alpha",
+              branch: "t3/lost-reply",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
+          }),
+        );
+        yield* runTurn(agent, threadId, write(path.join(alpha, "README.md"), "# alpha\nturn 2\n"));
+
+        yield* Ref.set(agent.loseNextRevertReply, true);
+        const lost = yield* rollback(threadId, 0);
+        // Codex rewound, but without its reply nothing was recorded or restored.
+        assert.deepEqual(yield* Ref.get(agent.nativeTurns), ["native:inherited"]);
+        assert.deepEqual(
+          lost.runs.map((run) => run.status),
+          ["completed", "completed"],
+        );
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 2\n");
+
+        yield* TestClock.adjust(Duration.seconds(31));
+        yield* worker.drain();
+        const recovered = yield* projectionOf(threadId);
+        assert.equal(yield* Ref.get(agent.rollbacks), 2);
+        assert.deepEqual(yield* Ref.get(agent.nativeTurns), ["native:inherited"]);
+        assert.deepEqual(
+          recovered.runs.map((run) => run.status),
+          ["rolled_back", "rolled_back"],
+        );
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+      }),
+    ),
   );
 
   it.effect.each(["removed", "replaced"] as const)(

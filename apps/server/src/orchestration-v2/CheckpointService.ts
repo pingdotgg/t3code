@@ -425,10 +425,24 @@ export const resolveRepositorySnapshot = Effect.fn("resolveRepositorySnapshot")(
         ),
       ),
     );
+  // A rollback that rewound the conversation but stopped restoring files
+  // leaves its runs rolled back with ready checkpoints, and finishing it must
+  // find the same snapshots.
+  const restorePending = (ordinal: number) =>
+    input.history.checkpoints.some(
+      (checkpoint) =>
+        checkpoint.scopeId === input.history.scopeId &&
+        checkpoint.ordinalWithinScope === ordinal &&
+        checkpoint.status === "ready",
+    );
   const laterRuns = [
     ...new Set(
       input.history.runs
-        .filter((run) => run.ordinal > input.targetOrdinal && run.status !== "rolled_back")
+        .filter(
+          (run) =>
+            run.ordinal > input.targetOrdinal &&
+            (run.status !== "rolled_back" || restorePending(run.ordinal)),
+        )
         .map((run) => run.ordinal),
     ),
   ].toSorted((left, right) => left - right);

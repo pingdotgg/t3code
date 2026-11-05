@@ -22,7 +22,7 @@ import * as Layer from "effect/Layer";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
+import { resolveCodexRollbackBoundary } from "./Adapters/CodexAdapterV2.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -607,6 +607,7 @@ it.effect.each([
                 id: "turn-0",
                 providerThreadId,
                 runAttemptId: "attempt-1",
+                nativeTurnRef: { nativeId: "native-0" },
                 ordinal: 0,
                 status: "completed",
               },
@@ -616,6 +617,7 @@ it.effect.each([
           id: `turn-${ordinal}`,
           providerThreadId,
           runAttemptId: `attempt-${ordinal}`,
+          nativeTurnRef: { nativeId: `native-${ordinal}` },
           ordinal,
           status: "completed",
         })),
@@ -691,8 +693,11 @@ it.effect.each([
               Effect.succeed({
                 rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                   Effect.gen(function* () {
-                    const count = yield* resolveCodexRollbackTurnCount(input);
-                    assert.equal(count, 2 - targetOrdinal);
+                    const boundary = yield* resolveCodexRollbackBoundary(input);
+                    assert.deepEqual(
+                      [...boundary.laterTurnIds],
+                      ["native-1", "native-2"].slice(targetOrdinal),
+                    );
                     calls.push("provider");
                     return { providerThread };
                   }),

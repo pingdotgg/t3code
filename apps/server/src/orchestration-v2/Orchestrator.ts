@@ -9717,6 +9717,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its provider turn is unavailable.`,
           });
         }
+        // Its checkpoint stays ready while an earlier rollback finishes restoring files.
+        if (targetRun.status === "rolled_back") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its turn was already rolled back.`,
+          });
+        }
         if (targetProviderTurn.providerThreadId !== providerThread.id) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
