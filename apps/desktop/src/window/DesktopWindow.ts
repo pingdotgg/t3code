@@ -39,8 +39,6 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
-const TITLEBAR_HEIGHT = 40;
-
 class ContextMenuImageCopyError extends Schema.TaggedError<ContextMenuImageCopyError>()(
   "ContextMenuImageCopyError",
   { cause: Schema.Defect() },
@@ -64,9 +62,6 @@ function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
   });
 }
 
-const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
-const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
-const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
@@ -76,7 +71,7 @@ const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, 
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
-  "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
+  "frame" | "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
 >;
 
 type DesktopWindowRuntimeServices =
@@ -242,28 +237,12 @@ function concealPendingQuitWindow(
   window.setOpacity(0);
 }
 
+// Local fork: no native frame and no titlebar overlay on any platform.
 function getWindowTitleBarOptions(
-  shouldUseDarkColors: boolean,
-  platform: NodeJS.Platform,
+  _shouldUseDarkColors: boolean,
+  _platform: NodeJS.Platform,
 ): WindowTitleBarOptions {
-  if (platform === "darwin") {
-    return {
-      titleBarStyle: "hiddenInset",
-      trafficLightPosition: {
-        x: 16,
-        y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
-      },
-    };
-  }
-
-  return {
-    titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: TITLEBAR_COLOR,
-      height: TITLEBAR_HEIGHT,
-      symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
-    },
-  };
+  return { frame: false, titleBarOverlay: false };
 }
 
 function syncWindowAppearance(
