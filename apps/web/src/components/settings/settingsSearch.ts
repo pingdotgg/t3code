@@ -496,6 +496,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice dictation stt transcription environment machine consent privacy"],
   },
   {
+    id: "speech-endpoint",
+    title: "Speech engine",
+    to: "/settings/voice",
+    searchTerms: ["voice transcription endpoint url api key whisper parakeet openai custom server"],
+  },
+  {
     id: "voice-microphone",
     title: "Microphone",
     to: "/settings/voice",

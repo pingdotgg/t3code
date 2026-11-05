@@ -1,8 +1,38 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;
+
+export const SpeechEndpointUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(2_048),
+  Schema.makeFilter((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        (["http:", "https:"].includes(url.protocol) &&
+          !url.username &&
+          !url.password &&
+          !url.search &&
+          !url.hash) ||
+        "Use an HTTP or HTTPS transcription URL without credentials, query parameters, or a fragment."
+      );
+    } catch {
+      return "Enter a valid HTTP or HTTPS transcription URL.";
+    }
+  }),
+);
+
+export const SpeechEndpointConfig = Schema.Struct({
+  url: SpeechEndpointUrl,
+  model: TrimmedNonEmptyString.check(Schema.isMaxLength(160)),
+  apiKey: Schema.String.check(Schema.isMaxLength(8_192), Schema.isPattern(/^[^\r\n]*$/)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({ settingsSecret: true }),
+  ),
+});
+export type SpeechEndpointConfig = typeof SpeechEndpointConfig.Type;
 
 const SpeechCustomWord = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(50));
 export const SpeechCustomWords = Schema.Array(
@@ -109,6 +139,8 @@ export const EnvironmentSpeechStatus = Schema.Union([
     acceleration: SpeechAcceleration,
     modelUnloadTimeout: SpeechModelUnloadTimeout,
     gpuDevices: Schema.Array(SpeechGpuDevice),
+    /** Audio is forwarded here only when the recording explicitly consents to this URL. */
+    endpointUrl: Schema.optionalKey(SpeechEndpointUrl),
   }),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
@@ -133,6 +165,8 @@ export const SpeechCorrectionCue = Schema.String.check(Schema.isMaxLength(50));
 
 /** Recognition preferences that travel with every recording. */
 export const SpeechTranscriptionOptions = Schema.Struct({
+  /** Bind consent to the configured external destination; absent means local inference only. */
+  speechEndpointUrl: Schema.optionalKey(SpeechEndpointUrl),
   speechLanguage: SpeechLanguage,
   speechTranslateToEnglish: Schema.Boolean,
   speechCustomWords: SpeechCustomWords,

@@ -30,6 +30,11 @@ export function createBrowserVoiceInputPlatform(input: {
     throwIfVoiceTranscriptionAborted(options.signal);
     if (!status.supported)
       throw new VoiceTranscriptionError({ code: "unavailable", message: status.reason });
+    if (status.endpointUrl !== recordingOptions.speechEndpointUrl)
+      throw new VoiceTranscriptionError({
+        code: "unavailable",
+        message: "The transcription destination changed. Confirm it in Settings > Voice.",
+      });
     const language = status.languages
       ? effectiveSpeechLanguage(
           {
@@ -38,7 +43,7 @@ export function createBrowserVoiceInputPlatform(input: {
           },
           recordingOptions.speechLanguage,
         )
-      : "auto";
+      : recordingOptions.speechLanguage;
     const locale =
       !status.supportsStreaming &&
       status.supportsTranslation &&

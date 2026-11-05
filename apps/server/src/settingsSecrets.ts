@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Secret slot mapping is synchronous; URL hashes keep filenames bounded.
+import * as NodeCrypto from "node:crypto";
 import {
   AntigravitySettings,
   ClaudeSettings,
@@ -7,6 +9,7 @@ import {
   type ServerSettings,
   type SettingsSecretValue,
   SimlockDeviceHostConfig,
+  SpeechEndpointConfig,
   UsageLimitSourceConfig,
   isSecretReference,
   secretSettingsFields,
@@ -47,6 +50,7 @@ const providerSecretFields = new Map([
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
+const speechEndpointSecretFields = secretSettingsFields(SpeechEndpointConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -232,6 +236,15 @@ function mapSecretFieldGroups(
 
   return {
     ...settings,
+    speechEndpoint: settings.speechEndpoint
+      ? (mapFields(
+          settings.speechEndpoint,
+          speechEndpointSecretFields,
+          // Bind credentials to this destination without exceeding filesystem name limits.
+          (field) =>
+            `speech-endpoint-${NodeCrypto.createHash("sha256").update(settings.speechEndpoint!.url).digest("hex")}-${encode(field)}`,
+        ) as SpeechEndpointConfig)
+      : null,
     providerInstances,
     sourceControlHosts,
     usageLimitSources,

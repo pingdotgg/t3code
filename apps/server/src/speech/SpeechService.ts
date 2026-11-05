@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
+import { transcribeSpeechEndpoint } from "./endpoint.ts";
 import {
   DEFAULT_SPEECH_MODEL_ID,
   effectiveSpeechLanguage,
@@ -89,6 +90,15 @@ export class SpeechBusyError extends Schema.TaggedError<SpeechBusyError>()("Spee
   operation: Schema.String,
 }) {}
 
+export class SpeechDestinationChangedError extends Schema.TaggedError<SpeechDestinationChangedError>()(
+  "SpeechDestinationChangedError",
+  {},
+) {
+  override get message(): string {
+    return "The transcription destination changed. Confirm it in Voice settings before recording.";
+  }
+}
+
 export class SpeechModelNotFoundError extends Schema.TaggedError<SpeechModelNotFoundError>()(
   "SpeechModelNotFoundError",
   { modelId: Schema.String },
@@ -105,6 +115,7 @@ export type SpeechError =
   | SpeechUnsupportedPlatformError
   | SpeechModelNotFoundError
   | SpeechDownloadCancelledError
+  | SpeechDestinationChangedError
   | SpeechBusyError;
 
 const isSpeechError = Schema.is(
@@ -115,6 +126,7 @@ const isSpeechError = Schema.is(
     SpeechModelNotFoundError,
     SpeechDownloadCancelledError,
     SpeechOperationError,
+    SpeechDestinationChangedError,
   ]),
 );
 
@@ -448,6 +460,23 @@ const make = Effect.gen(function* () {
   const currentStatus = Effect.fn("SpeechService.currentStatus")(function* (
     settings: SettingsSnapshot,
   ): Effect.fn.Return<EnvironmentSpeechStatus> {
+    if (settings.speechEndpoint) {
+      return {
+        supported: true,
+        state: activeTranscriptions > 0 ? "transcribing" : "ready",
+        modelId: settings.speechEndpoint.model,
+        model: settings.speechEndpoint.model,
+        endpointUrl: settings.speechEndpoint.url,
+        size: 0,
+        supportsStreaming: false,
+        supportsBufferedStreaming: false,
+        supportsTranslation: false,
+        supportsLanguageDetection: true,
+        acceleration: "cpu",
+        modelUnloadTimeout: settings.speechModelUnloadTimeout,
+        gpuDevices: [],
+      };
+    }
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
     const ready = yield* store.isReady(definition);
@@ -472,6 +501,7 @@ const make = Effect.gen(function* () {
     settings: SettingsSnapshot,
     includeBenchmarks: boolean,
   ): Effect.fn.Return<SpeechModels> {
+    if (settings.speechEndpoint) return { models: [] };
     const selected = selectedModel(settings);
     const models = yield* Effect.forEach(
       SPEECH_MODELS,
@@ -537,28 +567,32 @@ const make = Effect.gen(function* () {
 
   const prepareModel = readSettings("model preparation").pipe(
     Effect.flatMap((settings) =>
-      exclusive(
-        "model preparation",
-        requireSupported.pipe(
-          Effect.andThen(installedModelPath(selectedModel(settings))),
-          Effect.flatMap((modelPath) =>
-            attempt("model preparation", (signal) =>
-              loadModel(
-                modelPath,
-                selectedModel(settings),
-                AbortSignal.any([signal, lifetime.signal]),
-                settings.speechAcceleration,
+      settings.speechEndpoint
+        ? Effect.void
+        : exclusive(
+            "model preparation",
+            requireSupported.pipe(
+              Effect.andThen(installedModelPath(selectedModel(settings))),
+              Effect.flatMap((modelPath) =>
+                attempt("model preparation", (signal) =>
+                  loadModel(
+                    modelPath,
+                    selectedModel(settings),
+                    AbortSignal.any([signal, lifetime.signal]),
+                    settings.speechAcceleration,
+                  ),
+                ).pipe(
+                  Effect.timeout("2 minutes"),
+                  Effect.catchTags({
+                    TimeoutError: (cause) =>
+                      Effect.fail(
+                        new SpeechOperationError({ operation: "model preparation", cause }),
+                      ),
+                  }),
+                ),
               ),
-            ).pipe(
-              Effect.timeout("2 minutes"),
-              Effect.catchTags({
-                TimeoutError: (cause) =>
-                  Effect.fail(new SpeechOperationError({ operation: "model preparation", cause })),
-              }),
             ),
           ),
-        ),
-      ),
     ),
   );
 
@@ -577,7 +611,10 @@ const make = Effect.gen(function* () {
       return yield* exclusive(
         "transcription",
         Effect.gen(function* () {
-          yield* requireSupported;
+          // Older clients have no forwarding consent and must never send audio to a new destination.
+          if (options.speechEndpointUrl !== settings.speechEndpoint?.url)
+            return yield* new SpeechDestinationChangedError();
+          if (!settings.speechEndpoint) yield* requireSupported;
           const pcm = yield* Effect.try({
             try: () => decodeSpeechPcm(pcmBytes),
             catch: (cause) => speechError("transcription", cause),
@@ -585,6 +622,29 @@ const make = Effect.gen(function* () {
           if (pcm.length === 0) return "";
           activeTranscriptions += 1;
           return yield* Effect.gen(function* () {
+            if (settings.speechEndpoint) {
+              const endpoint = settings.speechEndpoint;
+              const text = yield* Effect.tryPromise({
+                try: (signal) =>
+                  transcribeSpeechEndpoint({
+                    endpoint,
+                    pcm,
+                    language: options.speechLanguage,
+                    signal: AbortSignal.any([signal, lifetime.signal]),
+                  }),
+                catch: (cause) => speechError("endpoint transcription", cause),
+              });
+              const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
+              const correct = makeSpeechTextCorrector(
+                dictionary.map(({ term }) => term),
+                dictionary,
+              );
+              return finalizeTranscript(
+                correct(text),
+                options,
+                options.speechLanguage === "auto" ? undefined : options.speechLanguage,
+              );
+            }
             const definition = selectedModel(settings);
             const language = effectiveSpeechLanguage(definition, options.speechLanguage);
             const translateToEnglish =
@@ -678,6 +738,9 @@ const make = Effect.gen(function* () {
   // Stream setup shares the public startStream span.
   const openStream = Effect.fnUntraced(function* (options: SpeechTranscriptionOptions) {
     const operation = "streaming transcription";
+    const settings = yield* readSettings(operation);
+    if (settings.speechEndpoint || options.speechEndpointUrl !== undefined)
+      return yield* new SpeechDestinationChangedError();
     yield* requireSupported;
     const released = Promise.withResolvers<void>();
     // @effect-diagnostics-next-line abortControllerInEffect:off - Stream cancellation must abort native work independently of the caller fiber.
@@ -726,7 +789,6 @@ const make = Effect.gen(function* () {
         }
       }),
     );
-    const settings = yield* readSettings(operation);
     const definition = selectedModel(settings);
     const language = effectiveSpeechLanguage(definition, options.speechLanguage);
     const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);

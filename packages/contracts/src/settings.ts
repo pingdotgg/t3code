@@ -56,6 +56,8 @@ import {
   SpeechAcceleration,
   SpeechCorrectionCue,
   SpeechCustomWords,
+  SpeechEndpointConfig,
+  SpeechEndpointUrl,
   SpeechLanguage,
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
@@ -362,10 +364,11 @@ export type ModelPreferences = {
 export const VoiceShortcutMode = Schema.Literals(["auto", "hold", "toggle"]);
 export type VoiceShortcutMode = typeof VoiceShortcutMode.Type;
 
-/** Where this device sends microphone audio. A later backend adds its own kind here. */
+/** Where this device sends microphone audio, including an explicitly consented forwarding URL. */
 export const VoiceTranscriptionDestination = Schema.Struct({
   kind: Schema.Literal("environment"),
   environmentId: EnvironmentId,
+  endpointUrl: Schema.optionalKey(SpeechEndpointUrl),
 });
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
@@ -1243,6 +1246,9 @@ export const ServerSettings = Schema.Struct({
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  speechEndpoint: Schema.NullOr(SpeechEndpointConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1663,6 +1669,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   speechModelId: Schema.optionalKey(Schema.String),
+  speechEndpoint: Schema.optionalKey(Schema.NullOr(SpeechEndpointConfig)),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),

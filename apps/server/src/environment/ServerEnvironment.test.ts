@@ -126,9 +126,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
   it.effect.each([
     { platform: "darwin", architecture: "arm64", supported: true },
     { platform: "linux", architecture: "x64", supported: true },
-    { platform: "linux", architecture: "x64", libc: "musl", supported: false },
-    { platform: "win32", architecture: "arm64", supported: false },
-    { platform: "linux", architecture: "arm", supported: false },
+    { platform: "linux", architecture: "x64", libc: "musl", supported: true },
+    { platform: "win32", architecture: "arm64", supported: true },
+    { platform: "linux", architecture: "arm", supported: true },
   ] as const)("advertises voice transcription on $platform-$architecture: $supported", (host) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -5,7 +5,19 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { filterSharedServerPatch } from "./sharedSettings.ts";
+import { filterSharedServerPatch, splitSharedServerPatch } from "./sharedSettings.ts";
+
+it("keeps speech endpoint destinations and credentials on their own environment", () => {
+  const speechEndpoint = {
+    url: "http://localhost:8000/v1/audio/transcriptions",
+    model: "whisper",
+    apiKey: "test-key",
+  };
+  expect(splitSharedServerPatch({ speechEndpoint, sidebarAutoSettleAfterDays: 7 })).toEqual({
+    sharedPatch: { sidebarAutoSettleAfterDays: 7 },
+    localPatch: { speechEndpoint },
+  });
+});
 
 describe("filterSharedServerPatch", () => {
   it("holds the restart preference until the target's config loads", () => {

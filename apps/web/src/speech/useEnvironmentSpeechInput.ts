@@ -113,6 +113,7 @@ export function useVoiceTranscriptionDestination() {
   return {
     environmentId,
     grantId: grant?.id ?? null,
+    ...(grant?.destination.endpointUrl ? { endpointUrl: grant.destination.endpointUrl } : {}),
     label: environment?.label ?? null,
     prepared: supported && canDictate ? connection : null,
   };
@@ -122,6 +123,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
   const grantId = destination.grantId;
+  const endpointUrl = destination.endpointUrl;
   const originatingEnvironment = useEnvironment(input.environmentId);
   const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
   const canCleanUp = useEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope);
@@ -259,6 +261,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
             : null,
         };
         return {
+          ...(endpointUrl ? { speechEndpointUrl: endpointUrl } : {}),
           speechLanguage: settings.speechLanguage,
           speechTranslateToEnglish: settings.speechTranslateToEnglish,
           speechCustomWords,
@@ -346,7 +349,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [prepared, grantId]);
+  }, [prepared, grantId, endpointUrl]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the chosen environment's speech status once its connection is available
   useEffect(() => {
@@ -455,6 +458,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         type: "error",
         title: "Voice input is not available",
         description: latestStatus.reason,
+      });
+      return;
+    }
+    if (latestStatus.endpointUrl !== endpointUrl) {
+      toastManager.add({
+        type: "error",
+        title: "Confirm the transcription destination",
+        description: "The destination changed. Review it in Settings > Voice before recording.",
       });
       return;
     }

@@ -2,17 +2,34 @@ import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
 import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { DraftInput } from "../ui/draft-input";
 
 const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
 export const languageLabel = (code: string) => languageNames.of(code) ?? code;
 
 type ModelLanguages = Pick<
   Extract<EnvironmentSpeechStatus, { supported: true }>,
-  "languages" | "supportsLanguageDetection"
+  "languages" | "supportsLanguageDetection" | "endpointUrl"
 >;
 
 export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages | null }) {
   const preference = useClientSettings((settings) => settings.speechLanguage);
+  if (model?.endpointUrl) {
+    return (
+      <DraftInput
+        aria-label="Transcription language"
+        value={preference}
+        className="max-w-32"
+        placeholder="auto"
+        maxLength={16}
+        onCommit={(next) => {
+          const speechLanguage = next.trim();
+          if (/^[a-z]{2,3}(?:-[a-z0-9]+)*$|^auto$/i.test(speechLanguage))
+            void updateClientSettings({ speechLanguage });
+        }}
+      />
+    );
+  }
   const languages = model?.languages ?? [];
   const resolved = model
     ? effectiveSpeechLanguage(

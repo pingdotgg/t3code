@@ -144,6 +144,118 @@ it("rejects empty, misaligned, non-finite, and oversized PCM as invalid audio", 
   }
 });
 
+it.effect(
+  "transcribes through an endpoint without a native engine and preserves dictionary corrections",
+  () =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const endpoint = {
+        url: "http://localhost:8000/v1/audio/transcriptions",
+        model: "parakeet",
+        apiKey: "test-key",
+      };
+      yield* settings.updateSettings({ speechEndpoint: endpoint });
+      using network = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(Response.json({ text: "hello tay three" }));
+      expect(yield* speech.status).toMatchObject({
+        supported: true,
+        state: "ready",
+        endpointUrl: endpoint.url,
+        supportsStreaming: false,
+        supportsBufferedStreaming: false,
+      });
+      expect(yield* speech.models(false)).toEqual({ models: [] });
+      yield* speech.prepareModel;
+      expect(
+        yield* speech.transcribe(pcm(), {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechEndpointUrl: endpoint.url,
+          speechCustomWords: [{ term: "T3", aliases: ["tay three"] }],
+        }),
+      ).toBe("hello T3");
+      expect(network).toHaveBeenCalledTimes(1);
+      expect(loadNative).not.toHaveBeenCalled();
+      expect(download).not.toHaveBeenCalled();
+      yield* settings.updateSettings({ speechEndpoint: null });
+      expect(yield* speech.status).toMatchObject({ supported: false });
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Architecture, "arm64"),
+    ),
+);
+
+it.effect(
+  "rejects absent or stale endpoint consent before forwarding audio, including streaming",
+  () =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const endpoint = {
+        url: "https://speech.example.test/v1/audio/transcriptions",
+        model: "whisper",
+        apiKey: "",
+      };
+      using network = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(Response.json({ text: "unused" }));
+      yield* settings.updateSettings({ speechEndpoint: endpoint });
+      for (const speechEndpointUrl of [undefined, "https://previous.example.test/transcribe"]) {
+        const options = {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          ...(speechEndpointUrl ? { speechEndpointUrl } : {}),
+        };
+        const result = yield* Effect.result(speech.transcribe(pcm(), options));
+        expect(Result.isFailure(result) && result.failure).toMatchObject({
+          _tag: "SpeechDestinationChangedError",
+        });
+      }
+      const options = { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechEndpointUrl: endpoint.url };
+      const stream = yield* Effect.result(speech.startStream(options).pipe(Effect.scoped));
+      expect(Result.isFailure(stream) && stream.failure).toMatchObject({
+        _tag: "SpeechDestinationChangedError",
+      });
+      yield* settings.updateSettings({ speechEndpoint: null });
+      const local = yield* Effect.result(speech.transcribe(pcm(), options));
+      expect(Result.isFailure(local) && local.failure).toMatchObject({
+        _tag: "SpeechDestinationChangedError",
+      });
+      expect(network).not.toHaveBeenCalled();
+      expect(loadNative).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect("reports an endpoint failure without falling back to native transcription", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const endpoint = {
+      url: "https://speech.example.test/transcribe",
+      model: "whisper",
+      apiKey: "",
+    };
+    yield* settings.updateSettings({ speechEndpoint: endpoint });
+    using network = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 503 }));
+    const result = yield* Effect.result(
+      speech.transcribe(pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechEndpointUrl: endpoint.url,
+      }),
+    );
+    expect(Result.isFailure(result) && result.failure).toMatchObject({
+      _tag: "SpeechOperationError",
+      operation: "endpoint transcription",
+    });
+    expect(network).toHaveBeenCalledTimes(1);
+    expect(loadNative).not.toHaveBeenCalled();
+    expect(yield* speech.status).toMatchObject({ state: "ready" });
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("prepares a batch model before audio arrives and reuses it for transcription", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;

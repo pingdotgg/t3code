@@ -523,7 +523,28 @@ describe("voice settings", () => {
       speechModelId: "handy-computer/parakeet-unified-en-0.6b-gguf",
       speechAcceleration: "auto",
       speechModelUnloadTimeout: "min_15",
+      speechEndpoint: null,
     });
+    const endpoint = { url: "http://localhost:8000/v1/audio/transcriptions", model: "whisper" };
+    expect(decodeServerSettingsPatch({ speechEndpoint: endpoint })).toEqual({
+      speechEndpoint: { ...endpoint, apiKey: "" },
+    });
+    expect(decodeServerSettingsPatch({ speechEndpoint: null })).toEqual({ speechEndpoint: null });
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).not.toContain("speechEndpoint");
+    for (const url of [
+      "file:///tmp/audio",
+      "https://user:pass@example.test/transcribe",
+      "https://example.test/?key=secret",
+      "https://example.test/#fragment",
+      "not-a-url",
+    ]) {
+      expect(() => decodeServerSettingsPatch({ speechEndpoint: { ...endpoint, url } })).toThrow();
+    }
+    expect(() =>
+      decodeServerSettingsPatch({
+        speechEndpoint: { ...endpoint, apiKey: "key\r\nInjected: header" },
+      }),
+    ).toThrow();
   });
 });
 

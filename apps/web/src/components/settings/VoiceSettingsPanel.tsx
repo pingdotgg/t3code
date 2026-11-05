@@ -40,10 +40,15 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import {
   chooseAudioDestination,
+  bindAudioGrant,
   chooseTranscriptCleanup,
   useCleanupGrant,
 } from "../../speech/voiceConsent";
-import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
+import {
+  updateClientSettings,
+  useClientSettings,
+  useEnvironmentSettings,
+} from "../../hooks/useSettings";
 import { runtime } from "../../lib/runtime";
 import {
   getCustomModelOptionsByInstance,
@@ -52,7 +57,8 @@ import {
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   useEnvironmentSpeechInput,
   useVoiceTranscriptionDestination,
@@ -69,6 +75,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
+import { SpeechEndpointForm } from "./SpeechEndpointForm";
 import { LanguageRow, ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import {
@@ -596,6 +603,52 @@ function useVoiceModels(prepared: PreparedConnection | null) {
 
 type VoiceModels = ReturnType<typeof useVoiceModels>;
 
+function SpeechEndpointSettings(props: {
+  prepared: PreparedConnection;
+  catalog: VoiceModels;
+  grantId: string | null;
+  environmentLabel: string;
+}) {
+  const endpoint = useEnvironmentSettings(
+    props.prepared.environmentId,
+    (settings) => settings.speechEndpoint,
+  );
+  const persist = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  return (
+    <SettingsRow
+      {...searchableSetting("speech-endpoint")}
+      title="Speech engine"
+      description={`Choose a local model or a custom transcription endpoint for ${props.environmentLabel}.`}
+    >
+      <SpeechEndpointForm
+        key={JSON.stringify([endpoint?.url, endpoint?.model])}
+        current={endpoint}
+        disabled={props.catalog.controlsDisabled}
+        environmentLabel={props.environmentLabel}
+        onSave={async (speechEndpoint) => {
+          const canUpdateConsent = props.grantId ? bindAudioGrant(props.grantId) : () => false;
+          let saved = false;
+          await props.catalog.run("Could not save speech endpoint", async () => {
+            const result = await persist({
+              environmentId: props.prepared.environmentId,
+              input: { patch: { speechEndpoint } },
+            });
+            if (result._tag === "Failure") return;
+            saved = true;
+            if (canUpdateConsent())
+              chooseAudioDestination({
+                kind: "environment",
+                environmentId: props.prepared.environmentId,
+                ...(speechEndpoint ? { endpointUrl: speechEndpoint.url } : {}),
+              });
+          });
+          return saved;
+        }}
+      />
+    </SettingsRow>
+  );
+}
+
 function AdvancedSpeechSettings({
   prepared,
   catalog,
@@ -1031,13 +1084,24 @@ export function VoiceSettingsPanel() {
   return (
     <SettingsPageContainer
       searchTargetFallbacks={{
-        "speech-models": prepared ? undefined : "voice-transcription-destination",
-        "speech-hardware": prepared && model ? undefined : "voice-transcription-destination",
+        "speech-endpoint": prepared ? undefined : "voice-transcription-destination",
+        "speech-models": !prepared
+          ? "voice-transcription-destination"
+          : model?.endpointUrl
+            ? "speech-endpoint"
+            : undefined,
+        "speech-hardware": !prepared
+          ? "voice-transcription-destination"
+          : model?.endpointUrl
+            ? "speech-endpoint"
+            : undefined,
         "transcription-test": !prepared
           ? "voice-transcription-destination"
-          : !model || model.state === "missing-model"
-            ? "speech-models"
-            : undefined,
+          : model?.endpointUrl
+            ? "speech-endpoint"
+            : !model || model.state === "missing-model"
+              ? "speech-models"
+              : undefined,
         "speech-post-processing-model":
           cleanupEnabled && settingsScope ? undefined : "speech-post-processing",
         "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
@@ -1122,8 +1186,8 @@ export function VoiceSettingsPanel() {
           title="Send microphone audio to"
           description={
             <>
-              Microphone audio recorded on this device is sent to the environment you choose here,
-              where it is transcribed and discarded. Off keeps voice input off on this device. This
+              Microphone audio is sent to the environment you choose here. A custom endpoint
+              forwards audio after your confirmation. Off keeps voice input off on this device. This
               choice is saved on this device only.
             </>
           }
@@ -1170,13 +1234,48 @@ export function VoiceSettingsPanel() {
           ) : null}
         </SettingsRow>
 
+        {prepared ? (
+          <SpeechEndpointSettings
+            prepared={prepared}
+            catalog={catalog}
+            grantId={destination.grantId}
+            environmentLabel={chosenEnvironment?.label ?? "this environment"}
+          />
+        ) : null}
+        {prepared && model && model.endpointUrl !== destination.endpointUrl ? (
+          <SettingsRow
+            title="Confirm audio destination"
+            description={
+              model.endpointUrl
+                ? `${chosenEnvironment?.label ?? "This environment"} will forward recordings to ${model.endpointUrl}.`
+                : `Recordings will be transcribed locally on ${chosenEnvironment?.label ?? "this environment"}.`
+            }
+            control={
+              <Button
+                size="sm"
+                onClick={() =>
+                  chooseAudioDestination({
+                    kind: "environment",
+                    environmentId: prepared.environmentId,
+                    ...(model.endpointUrl ? { endpointUrl: model.endpointUrl } : {}),
+                  })
+                }
+              >
+                Use this destination
+              </Button>
+            }
+          />
+        ) : null}
+
         <SettingsRow
           {...searchableSetting("speech-language")}
           title="Language"
           description={
-            model
-              ? `${model.model} ${model.supportsLanguageDetection ? "can detect the language" : "uses a fixed language"}.`
-              : "Choose an environment to see which languages its model supports."
+            model?.endpointUrl
+              ? "Language code accepted by your endpoint, or auto to let it decide."
+              : model
+                ? `${model.model} ${model.supportsLanguageDetection ? "can detect the language" : "uses a fixed language"}.`
+                : "Choose an environment to see which languages its model supports."
           }
           control={<SpeechLanguageSelect model={model} />}
         />
@@ -1195,7 +1294,7 @@ export function VoiceSettingsPanel() {
             }
           />
         ) : null}
-        {prepared ? (
+        {prepared && !model?.endpointUrl ? (
           <SpeechModelBrowser
             key={prepared.environmentId}
             prepared={prepared}
@@ -1212,10 +1311,15 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("speech-silence-filtering")}
           title="Silence filtering"
-          description="Skip non-speech audio before transcription. Keeps a short buffer around speech to preserve words."
+          description={
+            model?.endpointUrl
+              ? "Custom endpoints receive the full recording and manage their own silence filtering."
+              : "Skip non-speech audio before transcription. Keeps a short buffer around speech to preserve words."
+          }
           control={
             <Switch
               aria-label="Silence filtering"
+              disabled={Boolean(model?.endpointUrl)}
               checked={settings.speechSilenceFiltering}
               onCheckedChange={(checked) =>
                 void updateClientSettings({ speechSilenceFiltering: checked })

@@ -10,11 +10,12 @@ On iPhone and Android, voice input transcribes on the device. See
 
 ## Choose where audio goes
 
-On web and desktop, transcription runs on one of your T3 Code environments.
+On web and desktop, transcription is handled by one of your T3 Code environments.
 Nothing is sent until you choose one: open **Settings → Voice** and set
 **Send microphone audio to** the environment that should transcribe for you.
 Microphone audio recorded on this device is sent to that environment over your
-authenticated connection, transcribed there, and discarded. The choice is saved
+authenticated connection. By default, it is transcribed there and discarded; a
+custom speech endpoint forwards it as described below. The choice is saved
 on this device only, so every computer and browser you use asks for it once.
 Set it back to **Off** at any time; a recording in progress is discarded.
 
@@ -36,6 +37,31 @@ environment's CPU; a GPU you picked yourself reports the error instead. Nothing
 is ever retried on another environment. Models marked **Live preview** show
 text while you speak. Other models can process long recordings in chunks at pauses
 while you record; models with built-in long-form support transcribe when you stop.
+
+## Use a Whisper or Parakeet endpoint
+
+In **Settings → Voice → Speech engine**, choose **Custom endpoint**. Enter the
+full transcription URL, the model name your server expects, and an optional API
+key, then choose **Save and use endpoint**. For example, a local server could use
+`http://localhost:8000/v1/audio/transcriptions`. Localhost means the machine running
+the chosen T3 environment, which may differ from the computer with your microphone.
+T3 stores the key in that environment's protected secret store.
+
+The server must accept OpenAI-compatible multipart transcription requests with a
+WAV `file`, `model`, optional `language`, and `response_format=json`, and return
+`{"text":"..."}`. A local Whisper service or a Parakeet service with that API works;
+native NVIDIA Riva gRPC endpoints need an adapter. Start and manage the service
+separately. T3 does not install an endpoint server or download its model.
+
+Endpoint settings belong to one environment. Saving authorizes forwarding from
+this device to that exact URL; other devices must confirm the destination in Voice
+settings. Changing the URL requires fresh confirmation. Audio is sent when you
+finish speaking, with no live preview, translation, or T3 silence filtering. The
+endpoint controls its own audio retention. Redirects are rejected, and failures
+never send the recording to a different destination. Dictionary corrections and
+filler removal still apply to the returned text.
+
+Choose **Local models → Use local models** to return to the built-in engine.
 
 ## Dictate
 

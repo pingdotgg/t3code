@@ -48,6 +48,7 @@ const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError
       SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
       SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
       SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+      SpeechDestinationChangedError: () => failEnvironmentInvalidRequest("invalid_command"),
       SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
     }),
   );

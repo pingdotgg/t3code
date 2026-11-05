@@ -1311,7 +1311,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
   );
 
   it.effect(
-    "uses the same secret lifecycle for provider config, environment, host tokens, and quota keys",
+    "uses the same secret lifecycle for provider config, environment, host tokens, quota keys, and speech",
     () =>
       Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -1319,7 +1319,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const fs = yield* FileSystem.FileSystem;
         const store = yield* ServerSecretStore.ServerSecretStore;
         const instanceId = ProviderInstanceId.make("antigravity_secrets");
+        const speechEndpoint = {
+          url: `https://speech.example.test/${"a".repeat(300)}/transcribe`,
+          model: "whisper",
+          apiKey: "speech-secret",
+        };
         const saved = yield* service.updateSettings({
+          speechEndpoint,
           providerInstances: {
             [instanceId]: {
               driver: ProviderDriverKind.make("antigravity"),
@@ -1363,6 +1369,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "gitcafe-secret",
           "quota-secret",
           "expo-secret",
+          "speech-secret",
         ];
         const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
           secretReferences: true,
@@ -1380,8 +1387,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           sourceControlHosts: client.sourceControlHosts,
           usageLimitSources: client.usageLimitSources,
           easDeviceHosts: client.easDeviceHosts,
+          speechEndpoint: client.speechEndpoint,
         });
         for (const value of values) assert.include(JSON.stringify(echoed), value);
+        // An echoed placeholder must never carry another destination's credentials.
+        const moved = yield* service.updateSettings({
+          speechEndpoint: {
+            ...client.speechEndpoint!,
+            url: "https://other.example.test/transcribe",
+          },
+        });
+        assert.equal(moved.speechEndpoint?.apiKey, "");
+        for (const apiKey of ["replacement-speech-secret", ""]) {
+          const changed = yield* service.updateSettings({
+            speechEndpoint: { ...speechEndpoint, apiKey },
+          });
+          assert.equal(changed.speechEndpoint?.apiKey, apiKey);
+          assert.equal(
+            ServerSettingsModule.redactServerSettingsForClient(changed, { secretReferences: true })
+              .speechEndpoint?.apiKey,
+            apiKey ? "••••••" : "",
+          );
+        }
+        yield* service.updateSettings({ speechEndpoint });
         const renamed = yield* service.updateProviderInstance({
           operation: "upsert",
           instanceId,
@@ -1432,6 +1460,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           sourceControlHostSecretName({ kind: "gitcafe", field: "token", serverHost: null }),
           "usage-limit-source-aHVi",
         ];
+        const files = yield* fs.readDirectory(config.secretsDir);
+        secretNames.push(
+          ...files
+            .filter((name) => name.startsWith("speech-endpoint-"))
+            .map((name) => name.replace(/\.bin$/, "")),
+        );
+        assert.lengthOf(
+          secretNames.filter((name) => name.startsWith("speech-endpoint-")),
+          1,
+        );
         for (const name of secretNames) {
           assert.isTrue(Option.isSome(yield* store.get(name)), name);
         }
@@ -1463,6 +1501,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             gitcafe: { token: "" },
           },
           usageLimitSources: { [UsageLimitSourceId.make("hub")]: null },
+          speechEndpoint: null,
         });
         for (const name of secretNames) {
           assert.isTrue(Option.isNone(yield* store.get(name)));
