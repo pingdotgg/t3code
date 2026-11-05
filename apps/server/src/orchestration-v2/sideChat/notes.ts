@@ -4,7 +4,10 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ConversationMessage,
 } from "@t3tools/contracts";
-import { sanitizeSideChatText } from "@t3tools/provider-core/server/textGenerationUtils";
+import {
+  sanitizeSideChatText,
+  splitsSurrogatePair,
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 import { isNativeMaintenanceCommand } from "../CommandPolicy.ts";
 
@@ -73,14 +76,6 @@ const TRANSCRIPT_HEADER = "Side chat transcript:";
 const CHILD_NOTES_HEADER = "Notes from nested side chats:";
 const PREVIOUS_NOTE_HEADER =
   "Note already sent to the lesson for this side chat (write only what is new; otherwise reply null):";
-
-/** Whether cutting `text` at `index` would separate the two halves of a surrogate pair. */
-function splitsSurrogatePair(text: string, index: number): boolean {
-  if (index < 1 || index >= text.length) return false;
-  const before = text.charCodeAt(index - 1);
-  const after = text.charCodeAt(index);
-  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
-}
 
 /** `line` cut to at most `maxChars` UTF-16 units, keeping its start and ending in an ellipsis. */
 function clipLine(line: string, maxChars: number): string {

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import * as Equal from "effect/Equal";
+import { SIDE_CHAT_DEFAULT_TEACHING_LINE } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -45,8 +46,6 @@ import {
   SettingResetButton,
 } from "./settingsLayout";
 
-const DEFAULT_TEACHING_LINE =
-  "Answer at their level, briefly and clearly, and stay on the highlighted topic; the lesson continues elsewhere.";
 const normalizeSkillName = (name: string) => name.trim().replace(/^[\p{Sc}/]+/u, "");
 
 export function SideChatSettings() {
@@ -274,7 +273,7 @@ export function SideChatSettings() {
             placeholder={
               mixedInstructions
                 ? "Mixed. Enter instructions to apply to all selected targets."
-                : DEFAULT_TEACHING_LINE
+                : SIDE_CHAT_DEFAULT_TEACHING_LINE
             }
             onChange={() => {
               edited.current = true;

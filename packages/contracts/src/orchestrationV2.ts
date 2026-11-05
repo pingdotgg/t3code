@@ -426,6 +426,8 @@ export const SIDE_CHAT_EXCERPT_MAX_CHARS = 4_000;
 export const SIDE_CHAT_EXCERPT_CONTEXT_MAX_CHARS = 1_500;
 export const SIDE_CHAT_LABEL_MAX_CHARS = 120;
 export const SIDE_CHAT_NOTE_MAX_CHARS = 300;
+export const SIDE_CHAT_DEFAULT_TEACHING_LINE =
+  "Answer at their level, briefly and clearly, and stay on the highlighted topic; the lesson continues elsewhere.";
 export const SIDE_CHAT_SUMMARY_MAX_CHARS = 2_000;
 export const SIDE_CHAT_WAIT_CAP_MS = 15_000;
 export const SIDE_CHAT_SUMMARIZER_INPUT_BUDGET_CHARS = 24_000;

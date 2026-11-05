@@ -366,8 +366,8 @@ it("does not split an emoji when clipping the lesson topic", () => {
   assert.isFalse(LONE_SURROGATE.test(text));
 });
 
-it("clips custom instructions on UTF-8 boundaries", () => {
-  const instructions = `${"x".repeat(1997)}😀y`;
+it("clips custom instructions on UTF-16 boundaries", () => {
+  const instructions = `${"x".repeat(1998)}😀y`;
   const text = buildSideChatOpeningSummaryText({
     opening: READY_OPENING,
     excerpt: "x",
@@ -377,10 +377,10 @@ it("clips custom instructions on UTF-8 boundaries", () => {
     sideChatInstructions: instructions,
   });
   assert.isFalse(LONE_SURROGATE.test(text));
-  assert.include(text, `${"x".repeat(1997)}\nDon't change files`);
+  assert.include(text, `${"x".repeat(1998)}😀\nDon't change files`);
 });
 
-it("keeps non-Latin instructions within the byte cap", () => {
+it("keeps non-Latin instructions within the character cap", () => {
   const text = buildSideChatOpeningSummaryText({
     opening: READY_OPENING,
     excerpt: "x",
@@ -390,8 +390,22 @@ it("keeps non-Latin instructions within the byte cap", () => {
     sideChatInstructions: "я".repeat(1900),
   });
   const teaching = text.split("\n")[1]!;
-  assert.isAtMost(new TextEncoder().encode(teaching).length, 2000);
+  assert.isAtMost(teaching.length, 2000);
   assert.isFalse(LONE_SURROGATE.test(text));
+});
+
+it("keeps 2000 non-Latin instruction characters", () => {
+  const instructions = "é".repeat(2000);
+  const text = buildSideChatOpeningSummaryText({
+    opening: READY_OPENING,
+    excerpt: "x",
+    excerptContext: "",
+    lessonTopic: null,
+    parentOpeningText: null,
+    sideChatInstructions: instructions,
+  });
+
+  assert.strictEqual(text.split("\n")[1], instructions);
 });
 
 it("names no topic when the lesson has none, and leaves out blank surroundings", () => {

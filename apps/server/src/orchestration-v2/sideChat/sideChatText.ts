@@ -1,18 +1,21 @@
 import {
   SIDE_CHAT_EXCERPT_CONTEXT_MAX_CHARS,
+  SIDE_CHAT_DEFAULT_TEACHING_LINE,
   SIDE_CHAT_LABEL_MAX_CHARS,
   SIDE_CHAT_SUMMARIZER_INPUT_BUDGET_CHARS,
   type MessageId,
   type OrchestrationV2SideChatAnchor,
   type OrchestrationV2SideChatOpening,
 } from "@t3tools/contracts";
+import {
+  splitsSurrogatePair,
+  truncateGraphemes,
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 const ELLIPSIS = "…";
 const MARKDOWN_MARKER = /[*_`]/;
 const WHITESPACE = /\s/;
 const PARAGRAPH_BREAK = /\n[ \t]*\n/g;
-
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /**
  * The label for a side chat, from its highlighted text. The label schema counts UTF-16 units,
@@ -24,13 +27,7 @@ export function deriveSideChatLabel(excerpt: string): string {
   if (collapsed.length <= SIDE_CHAT_LABEL_MAX_CHARS) {
     return collapsed;
   }
-  const budget = SIDE_CHAT_LABEL_MAX_CHARS - ELLIPSIS.length;
-  let used = 0;
-  for (const { segment } of graphemeSegmenter.segment(collapsed)) {
-    if (used + segment.length > budget) break;
-    used += segment.length;
-  }
-  return `${collapsed.slice(0, used).trimEnd()}${ELLIPSIS}`;
+  return `${truncateGraphemes(collapsed, SIDE_CHAT_LABEL_MAX_CHARS - ELLIPSIS.length).trimEnd()}${ELLIPSIS}`;
 }
 
 interface PlainText {
@@ -124,19 +121,6 @@ function splitParagraphs(text: string): ReadonlyArray<Paragraph> {
   }
   push(text.length);
   return paragraphs;
-}
-
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff;
-}
-
-function isLowSurrogate(code: number): boolean {
-  return code >= 0xdc00 && code <= 0xdfff;
-}
-
-/** True when a cut before `index` would separate the two halves of a surrogate pair. */
-function splitsSurrogatePair(text: string, index: number): boolean {
-  return isHighSurrogate(text.charCodeAt(index - 1)) && isLowSurrogate(text.charCodeAt(index));
 }
 
 function isCutInsideWord(text: string, index: number): boolean {
@@ -320,36 +304,15 @@ export function buildSideChatSummarizerInput(input: {
 /** Fixed copy: the side chat's AI is told what the chat is and how to behave in it. */
 export const SIDE_CHAT_OPENING_FRAMING = [
   "You are in a side chat. The user is learning in a separate main conversation (the lesson), highlighted part of an answer there, and opened this chat to ask about it.",
-  "Answer at their level, briefly and clearly, and stay on the highlighted topic; the lesson continues elsewhere.",
+  SIDE_CHAT_DEFAULT_TEACHING_LINE,
   "Don't change files unless the user explicitly asks you to.",
 ].join("\n");
 
-const SIDE_CHAT_DEFAULT_TEACHING_LINE =
-  "Answer at their level, briefly and clearly, and stay on the highlighted topic; the lesson continues elsewhere.";
-const SIDE_CHAT_INSTRUCTIONS_BYTE_CAP = 2_000;
-
-function clipSideChatInstructions(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  if (bytes.length <= SIDE_CHAT_INSTRUCTIONS_BYTE_CAP) return value;
-  let end = Math.min(value.length, SIDE_CHAT_INSTRUCTIONS_BYTE_CAP);
-  while (
-    end > 0 &&
-    new TextEncoder().encode(value.slice(0, end)).length > SIDE_CHAT_INSTRUCTIONS_BYTE_CAP
-  ) {
-    end -= 1;
-  }
-  return value.slice(0, safeCut(value, end));
-}
-
 function sideChatOpeningFraming(instructions: string | undefined): string {
-  const teaching = clipSideChatInstructions(
-    instructions?.trim() || SIDE_CHAT_DEFAULT_TEACHING_LINE,
+  const teaching = instructions?.trim() || SIDE_CHAT_DEFAULT_TEACHING_LINE;
+  return SIDE_CHAT_OPENING_FRAMING.replace(SIDE_CHAT_DEFAULT_TEACHING_LINE, () =>
+    teaching.slice(0, safeCut(teaching, 2_000)),
   );
-  return [
-    "You are in a side chat. The user is learning in a separate main conversation (the lesson), highlighted part of an answer there, and opened this chat to ask about it.",
-    teaching,
-    "Don't change files unless the user explicitly asks you to.",
-  ].join("\n");
 }
 
 const OPENING_TOPIC_MAX_CHARS = 1_000;
