@@ -53,7 +53,6 @@ function ArchivedThreadsHeader(props: {
   return (
     <AppBar
       title="Archived threads"
-      sidebar={false}
       onBack={() => navigation.goBack()}
       search={{
         value: props.searchQuery,

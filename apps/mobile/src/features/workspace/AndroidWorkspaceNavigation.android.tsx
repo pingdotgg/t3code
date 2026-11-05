@@ -10,7 +10,6 @@ import {
   type ViewProps,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardState } from "react-native-keyboard-controller";
 
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
@@ -22,6 +21,8 @@ import {
   type AndroidWorkspaceNavigationTab,
 } from "./android-workspace-tabs";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useSoftKeyboardShowing } from "../keyboard/useSoftKeyboardShowing";
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -79,7 +80,8 @@ export function AndroidWorkspaceNavigation(props: {
   const insets = useSafeAreaInsets();
   const toolbar = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
-  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardVisible = useSoftKeyboardShowing();
+  const { layout, keyboardHoldsSidebar } = useAdaptiveWorkspaceLayout();
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
@@ -97,23 +99,11 @@ export function AndroidWorkspaceNavigation(props: {
   );
   // FloatingWorkspaceTabs starts the bar at the left inset, so a cutout narrows the room.
   const barWidth =
-    props.paneWidth ??
-    window.width - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
-  // A phone draws compose on the Chats list only; the split sidebar draws it on every tab
-  // except the Settings and Usage pages.
-  const composeBesideBar =
-    props.paneWidth === undefined
-      ? selectedTab === "threads"
-      : selectedTab !== "settings" && selectedTab !== "usage";
-  const metrics = floatingTabsMetrics(
-    tabs.length,
-    scale,
-    fabSize,
-    barWidth,
-    props.fillWidth,
-    composeBesideBar && connectionState.hasConnections,
-  );
-  if (!rail && keyboardVisible) return null;
+    (props.paneWidth ?? window.width) -
+    (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
+  const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
+  // The composer's keyboard slides the sidebar away with the bar on it; other keyboards don't.
+  if (!rail && keyboardVisible && !keyboardHoldsSidebar) return null;
 
   return (
     <View
@@ -154,7 +144,9 @@ export function AndroidWorkspaceNavigation(props: {
           const rootState = rootNavigationRef.getRootState();
           if (root && rootState) {
             navigation.dispatch({
-              ...CommonActions.reset(androidWorkspaceTabNavigationState(rootState, tab, rail)),
+              ...CommonActions.reset(
+                androidWorkspaceTabNavigationState(rootState, tab, layout.usesSplitView),
+              ),
               target: root.key,
             });
           }
