@@ -31,59 +31,58 @@ export function KnowledgeMapSection() {
   if (supported.length === 0) return null;
   return (
     <SettingsSection id="knowledge-map" title="What you know">
-      {maps.flatMap((query, index) =>
-        query._tag === "Success"
-          ? query.value.map((entry) => (
-              <SettingsRow
-                key={`${ids[index]}-${entry.topic}`}
-                {...searchableSetting("knowledge-map")}
-                serverScoped
-                description={`${entry.explanation} · ${new Date(entry.doneAt).toLocaleDateString()}`}
-                status={
-                  <Link
-                    to="/$environmentId/$threadId"
-                    params={{ environmentId: ids[index]!, threadId: entry.threadId }}
-                  >
-                    Lesson
-                  </Link>
-                }
-                control={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={pending === entry.topic || !permissions[index]}
-                    onClick={async () => {
-                      setPending(entry.topic);
-                      await remove({ environmentId: ids[index]!, input: { topic: entry.topic } });
-                      setPending(null);
-                    }}
-                  >
-                    Remove
-                  </Button>
-                }
-              />
-            ))
-          : [],
-      )}
+      <SettingsRow
+        {...searchableSetting("knowledge-map")}
+        serverScoped
+        description={
+          maps.every((query) => query._tag === "Success" && query.value.length === 0)
+            ? 'Nothing yet. In any lesson, say "mark <topic> done" and explain it back.'
+            : "Topics you explained back in a lesson. Lessons start from here."
+        }
+      />
       {maps.flatMap((query, index) =>
         query._tag === "Failure" ? (
           <SettingsRow
             key={`${ids[index]}-error`}
-            {...searchableSetting("knowledge-map")}
+            title="Couldn't load"
             serverScoped
-            description={`Couldn't load What you know: ${errorMessage(Cause.squash(query.cause))}`}
+            description={errorMessage(Cause.squash(query.cause))}
           />
+        ) : query._tag === "Success" ? (
+          query.value.map((entry) => (
+            <SettingsRow
+              key={`${ids[index]}-${entry.topic}`}
+              title={entry.topic}
+              serverScoped
+              description={`${entry.explanation} · ${new Date(entry.doneAt).toLocaleDateString()}`}
+              status={
+                <Link
+                  to="/$environmentId/$threadId"
+                  params={{ environmentId: ids[index]!, threadId: entry.threadId }}
+                >
+                  Lesson
+                </Link>
+              }
+              control={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pending === entry.topic || !permissions[index]}
+                  onClick={async () => {
+                    setPending(entry.topic);
+                    await remove({ environmentId: ids[index]!, input: { topic: entry.topic } });
+                    setPending(null);
+                  }}
+                >
+                  Remove
+                </Button>
+              }
+            />
+          ))
         ) : (
           []
         ),
       )}
-      {maps.every((query) => query._tag === "Success" && query.value.length === 0) ? (
-        <SettingsRow
-          {...searchableSetting("knowledge-map")}
-          serverScoped
-          description={'Nothing yet. In any lesson, say "mark <topic> done" and explain it back.'}
-        />
-      ) : null}
     </SettingsSection>
   );
 }
