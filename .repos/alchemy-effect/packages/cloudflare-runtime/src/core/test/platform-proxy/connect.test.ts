@@ -14,10 +14,7 @@ interface TestEnv {
 
 it("connect() rebuilds working proxies from plain connect info", async () => {
   const proxy = await getPlatformProxy<TestEnv>({
-    bindings: [
-      Text.local("TEXT", "from-connect"),
-      KvNamespace.local({ binding: "KV" }),
-    ],
+    bindings: [Text.local("TEXT", "from-connect"), KvNamespace.local({ binding: "KV" })],
   });
   try {
     expect(proxy.connectInfo.url).toBe(proxy.url.href);
@@ -33,17 +30,10 @@ it("connect() rebuilds working proxies from plain connect info", async () => {
     expect(await proxy.env.KV.get("key")).toBe("value");
 
     // Caches round-trip (also shared with the owning instance).
-    await client.caches.default.put(
-      "https://example.com/connect",
-      new Response("cached"),
-    );
-    const match = await client.caches.default.match(
-      "https://example.com/connect",
-    );
+    await client.caches.default.put("https://example.com/connect", new Response("cached"));
+    const match = await client.caches.default.match("https://example.com/connect");
     expect(match && (await match.text())).toBe("cached");
-    const shared = await proxy.caches.default.match(
-      "https://example.com/connect",
-    );
+    const shared = await proxy.caches.default.match("https://example.com/connect");
     expect(shared && (await shared.text())).toBe("cached");
 
     // cf/ctx mocks match the instance's contract.
@@ -56,17 +46,12 @@ it("connect() rebuilds working proxies from plain connect info", async () => {
 
 it("connect() fails fast and descriptively once the instance is disposed", async () => {
   const proxy = await getPlatformProxy<TestEnv>({
-    bindings: [
-      Text.local("TEXT", "gone"),
-      KvNamespace.local({ binding: "KV" }),
-    ],
+    bindings: [Text.local("TEXT", "gone"), KvNamespace.local({ binding: "KV" })],
   });
   const info = proxy.connectInfo;
   await proxy.dispose();
   const start = Date.now();
-  await expect(connect(info)).rejects.toThrow(
-    /could not reach the proxy worker/,
-  );
+  await expect(connect(info)).rejects.toThrow(/could not reach the proxy worker/);
   // No retry loop: unreachable means a single fast failure.
   expect(Date.now() - start).toBeLessThan(5_000);
 }, 60_000);
