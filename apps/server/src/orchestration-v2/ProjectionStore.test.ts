@@ -6671,7 +6671,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               yield* projectionStore.getThreadProjection(threadId),
             ),
           ]) {
-            assert.equal(shell?.pendingRuntimeRequest?.id, fresh ? requestId : "secret:b");
+            assert.equal(shell?.pendingRuntimeRequest?.id, fresh ? requestId : "approval:d");
           }
         }
       }
