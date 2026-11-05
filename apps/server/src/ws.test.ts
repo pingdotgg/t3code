@@ -117,6 +117,7 @@ import * as ServerConfigModule from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
+import * as LessonService from "./orchestration-v2/lesson/LessonService.ts";
 
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -790,6 +791,7 @@ it.effect.each([
       const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
       const configRpcServices = Layer.mergeAll(
         layerUnusedConfigRpcServices,
+        Layer.mock(LessonService.LessonService)({}),
         Layer.mock(ExternalLauncher.ExternalLauncher)({
           resolveAvailableEditors: () =>
             Deferred.succeed(discoveryStarted, undefined).pipe(
@@ -1040,6 +1042,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     const responses = yield* Queue.unbounded<unknown>();
     const configRpcServices = Layer.mergeAll(
       layerUnusedConfigRpcServices,
+      Layer.mock(LessonService.LessonService)({}),
       Layer.mock(ExternalLauncher.ExternalLauncher)({
         resolveAvailableEditors: () => Effect.succeed([]),
         // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.

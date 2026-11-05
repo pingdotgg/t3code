@@ -1565,6 +1565,13 @@ export class ChatSyncError extends Schema.TaggedError<ChatSyncError>()("ChatSync
   message: Schema.String,
 }) {}
 
+export class LessonCreateError extends Schema.TaggedError<LessonCreateError>()(
+  "LessonCreateError",
+  {
+    message: Schema.String,
+  },
+) {}
+
 export type UnifiedSettings = Omit<ServerSettings, keyof ModelPreferences> & ClientSettings;
 export const DEFAULT_UNIFIED_SETTINGS: UnifiedSettings = {
   ...DEFAULT_SERVER_SETTINGS,

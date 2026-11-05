@@ -56,6 +56,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  BookOpenIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -82,6 +83,7 @@ import {
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { openWelcomeGuide } from "./onboarding/WelcomeGuideDialog";
+import { openNewLesson } from "./lesson/NewLessonDialog";
 import {
   useDeferredValue,
   useEffect,
@@ -499,7 +501,8 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
-  const activeThreadServerConfig = useServerConfigs().get(
+  const serverConfigs = useServerConfigs();
+  const activeThreadServerConfig = serverConfigs.get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   // An upstream side chat (`lineage.sideChat`) is never a T3 Learn lesson.
@@ -710,6 +713,11 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
+  const canCreateLesson = useAtomValue(
+    serverEnvironment.createLesson.permissionAtom(
+      currentProjectEnvironmentId ?? defaultProjectRef?.environmentId ?? null,
+    ),
+  );
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
@@ -1282,6 +1290,53 @@ function OpenCommandPaletteDialog(props: {
           });
         },
       });
+      const lessonProject =
+        activeThread ??
+        activeDraftThread ??
+        currentProject ??
+        (defaultProjectRef
+          ? (projects.find(
+              (project) =>
+                project.environmentId === defaultProjectRef.environmentId &&
+                project.id === defaultProjectRef.projectId,
+            ) ?? null)
+          : null);
+      const lessonProjectId =
+        lessonProject === null
+          ? null
+          : "projectId" in lessonProject
+            ? lessonProject.projectId
+            : lessonProject.id;
+      const lessonEnvironment = lessonProject
+        ? serverConfigs.get(lessonProject.environmentId)?.environment
+        : undefined;
+      if (
+        lessonProject !== null &&
+        lessonProjectId !== null &&
+        lessonEnvironment !== undefined &&
+        canCreateLesson &&
+        supportsLessonSideChats(lessonEnvironment)
+      ) {
+        actionItems.push({
+          kind: "action",
+          value: "action:new-lesson",
+          searchTerms: ["new lesson", "lesson", "learn"],
+          title: "New lesson",
+          icon: <BookOpenIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            openNewLesson({
+              projectRef: scopeProjectRef(lessonProject.environmentId, lessonProjectId),
+              ...(activeThread
+                ? {
+                    modelSelection: activeThread.modelSelection,
+                    runtimeMode: activeThread.runtimeMode,
+                    interactionMode: activeThread.interactionMode,
+                  }
+                : {}),
+            });
+          },
+        });
+      }
     }
 
     actionItems.push({

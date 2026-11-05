@@ -1,4 +1,4 @@
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -17,6 +17,8 @@ export interface SidebarThreadHeaderProps {
   projectScope: ReactNode;
   onNewProject: () => void;
   onNewThread: (event: ReactMouseEvent) => void;
+  onNewLesson: () => void;
+  showNewLesson: boolean;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
   newThreadInProjectShortcutLabel: string | null | undefined;
@@ -36,6 +38,8 @@ export function SidebarThreadHeader({
   projectScope,
   onNewProject,
   onNewThread,
+  onNewLesson,
+  showNewLesson,
   newThreadDisabled,
   newThreadShortcutLabel,
   newThreadInProjectShortcutLabel,
@@ -104,6 +108,11 @@ export function SidebarThreadHeader({
               <FolderPlusIcon />
             </SidebarHeaderIconButton>
           </>
+        ) : null}
+        {showNewLesson ? (
+          <SidebarHeaderIconButton label="New lesson" onClick={onNewLesson}>
+            <BookOpenIcon />
+          </SidebarHeaderIconButton>
         ) : null}
         <SidebarHeaderIconButton
           label="New thread"

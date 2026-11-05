@@ -14,6 +14,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   dispatchFailure,
+  launchCommandId,
   newCommandId,
   readCaller,
   readThread,
@@ -23,6 +24,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
+import * as LessonService from "../../../orchestration-v2/lesson/LessonService.ts";
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -91,6 +93,50 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  lesson_create: McpToolAccess.startsThreads(
+    () => ({}),
+    (input, { runtimeMode, interactionMode, linkOrigin }) =>
+      Effect.gen(function* () {
+        const lessons = yield* LessonService.LessonService;
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const { projection } = yield* readThread(undefined);
+        const lesson = {
+          topic: input.topic,
+          depth: input.depth,
+          purpose: input.purpose,
+          ...(input.goal === undefined ? {} : { goal: input.goal }),
+          ...(input.excerpt === undefined
+            ? {}
+            : { source: { threadId: projection.thread.id, excerpt: input.excerpt } }),
+        };
+        const created = yield* lessons
+          .create({
+            commandId:
+              input.clientRequestId === undefined
+                ? yield* newCommandId()
+                : yield* launchCommandId(scope.requestNamespace, input.clientRequestId),
+            projectId: projection.thread.projectId,
+            lesson,
+            modelSelection: projection.thread.modelSelection,
+            runtimeMode,
+            interactionMode,
+            ...(linkOrigin === undefined ? {} : { linkOrigin }),
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+            ),
+          );
+        return {
+          threadId: created.threadId,
+          link: McpInvocationContext.threadLinkFor(scope, created.threadId),
+        };
+      }),
+    "stamped",
+  ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;

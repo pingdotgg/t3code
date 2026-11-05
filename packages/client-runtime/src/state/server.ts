@@ -1225,6 +1225,11 @@ export function createServerEnvironmentAtoms<R, E>(
     onSuccess: ({ environmentId }, registry) =>
       Effect.sync(() => registry.refresh(chatSyncStatus({ environmentId, input: {} }))),
   });
+  const createLesson = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:lesson:create",
+    tag: WS_METHODS.lessonCreate,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+  });
 
   return {
     configValueAtom,
@@ -1234,6 +1239,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     startChatSync,
+    createLesson,
     chatSyncStatus,
     knowledgeMap,
     removeKnowledge,
