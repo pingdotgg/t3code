@@ -41,7 +41,8 @@ export function DelegationApprovalCard(props: {
         icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
         label={
           <>
-            Delegate to {delegationSelectionLabel(item.proposed)} · {display.label}
+            Delegate to {delegationSelectionLabel(item.proposed)}
+            {item.environmentId === undefined ? null : ` · ${item.environmentId}`} · {display.label}
           </>
         }
       />
@@ -93,8 +94,8 @@ function PendingDelegationApproval(props: {
       <div className="flex min-w-0 flex-col gap-1">
         <p className="text-sm font-medium text-foreground">
           {item.environmentId === undefined
-            ? "Run a subagent on a different model?"
-            : "Run a subagent in another environment on a different model?"}
+            ? "Run a subagent with a different provider, model or options?"
+            : "Run a subagent in another environment with a different provider, model or options?"}
         </p>
         <p className="line-clamp-3 text-sm wrap-anywhere text-muted-foreground">{item.task}</p>
       </div>
