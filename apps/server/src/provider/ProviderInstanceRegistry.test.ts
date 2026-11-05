@@ -5,6 +5,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -15,6 +16,7 @@ import {
   type ResolvedProviderInstanceEnvironment,
   ProviderInstanceId,
   SecretProviderId,
+  SettingsSecretValue,
   type SecretReference,
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -23,6 +25,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -41,6 +45,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
+import { ProviderDriverError } from "./Errors.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
@@ -166,7 +171,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         endpoint: Effect.succeed("unused-private-pipe"),
       }),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "unused-managed-installation",
@@ -200,6 +205,81 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provide(PortScanner.layerTest),
     Layer.provideMerge(layerBase),
+  );
+
+  it.effect.each(["replacement", "removal", "creation failure"] as const)(
+    "detaches retired provider scopes after repeated %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const parent = yield* Scope.make();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped();
+        let creates = 0;
+        let closes = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: Effect.fn("ProviderInstanceRegistry.test.create")(function* (
+            input: Parameters<typeof CodexDriver.create>[0],
+          ) {
+            creates++;
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                closes++;
+              }),
+            );
+            if (input.config.binaryPath === "creation-failure") {
+              return yield* new ProviderDriverError({
+                driver: CodexDriver.driverKind,
+                instanceId: input.instanceId,
+                detail: "fixture creation failed",
+              });
+            }
+            return yield* CodexDriver.create(input);
+          }),
+        };
+        const siblingId = ProviderInstanceId.make("sibling");
+        const retiredId = ProviderInstanceId.make("retired");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          config: makeCodexConfig({ homePath }),
+        };
+        yield* Effect.gen(function* () {
+          const { registry, mutator } = yield* makeProviderInstanceRegistry({
+            drivers: [driver],
+            configMap: { [siblingId]: entry },
+          });
+          const sibling = yield* registry.getInstance(siblingId);
+          const finalizerCount = () => {
+            const state = parent.state;
+            return state._tag === "Open" ? (state.finalizers?.size ?? 1) : 0;
+          };
+          const baseline = finalizerCount();
+          for (let index = 0; index < 20; index++) {
+            yield* mutator.reconcile({
+              [siblingId]: entry,
+              [retiredId]: {
+                ...entry,
+                config: makeCodexConfig({
+                  homePath,
+                  binaryPath: scenario === "creation failure" ? "creation-failure" : "unused-codex",
+                  customModels: [`revision-${index}`],
+                }),
+              },
+            });
+            if (scenario === "removal") yield* mutator.reconcile({ [siblingId]: entry });
+          }
+          yield* mutator.reconcile({ [siblingId]: entry });
+          expect(yield* registry.getInstance(siblingId)).toBe(sibling);
+          expect(closes).toBe(creates - 1);
+          expect(parent.state._tag).toBe("Open");
+          expect(finalizerCount()).toBe(baseline);
+        }).pipe(
+          Effect.provideService(Scope.Scope, parent),
+          Effect.ensuring(Scope.close(parent, Exit.void)),
+        );
+        expect(closes).toBe(creates);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["replacement", "removal"] as const)(
@@ -278,6 +358,24 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("lists a blocked driver's instances as unavailable without running them", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const reason = "Example Corp's policy does not allow the Codex provider.";
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver],
+        configMap: { [instanceId]: { driver: ProviderDriverKind.make("codex") } },
+        blockedReason: (driver) => (driver === "codex" ? reason : undefined),
+      });
+
+      expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+      const [unavailable] = yield* registry.listUnavailable;
+      expect(unavailable?.instanceId).toBe(instanceId);
+      expect(unavailable?.availability).toBe("unavailable");
+      expect(unavailable?.unavailableReason).toBe(reason);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -724,11 +822,13 @@ describe("ProviderInstanceRegistry secret environment", () => {
   function setup(
     initial: Record<string, string>,
     configSchema: AnyProviderDriver["configSchema"] = Schema.Unknown,
+    config: unknown = {},
   ) {
     const vault = new Map(Object.entries(initial));
     const reads: Array<ReadonlyArray<string>> = [];
     const invalidated: Array<ReadonlyArray<string>> = [];
     const created: Array<ResolvedProviderInstanceEnvironment> = [];
+    const configs: Array<unknown> = [];
     const driver: AnyProviderDriver = {
       driverKind,
       metadata: { displayName: "Fake" },
@@ -737,6 +837,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       create: (input) =>
         Effect.sync(() => {
           created.push(input.environment);
+          configs.push(input.config);
           return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
         }),
     };
@@ -759,7 +860,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     const configMap: ProviderInstanceConfigMap = {
       [instanceId]: {
         driver: driverKind,
-        config: {},
+        config,
         environment: [
           { name: "OPENAI_API_KEY", value: secret, sensitive: true },
           { name: "BASE_URL", value: "https://example.test", sensitive: false },
@@ -777,7 +878,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       return built;
     });
-    return { vault, reads, invalidated, created, make, makeGated, gate };
+    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
   }
 
   it.effect("starts an instance with the secret its environment points at", () => {
@@ -839,6 +940,26 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(fixture.created.map((environment) => environment[0]?.value)).toEqual([
         "sk-live",
         "sk-rotated",
+      ]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("reads a config field typed SettingsSecretValue and rebuilds when it rotates", () => {
+    const apiKey: SecretReference = { ...secret, reference: "op://Private/Gateway/key" };
+    const fixture = setup(
+      { [secret.reference]: "sk-live", [apiKey.reference]: "gw-live" },
+      Schema.Struct({ apiKey: SettingsSecretValue, model: Schema.String }),
+      { apiKey, model: "m" },
+    );
+    return Effect.gen(function* () {
+      const { mutator } = yield* fixture.make;
+      expect(fixture.reads.at(-1)).toEqual([secret.reference, apiKey.reference]);
+
+      fixture.vault.set(apiKey.reference, "gw-rotated");
+      yield* mutator.reloadSecrets();
+      expect(fixture.configs).toEqual([
+        { apiKey: "gw-live", model: "m" },
+        { apiKey: "gw-rotated", model: "m" },
       ]);
     }).pipe(Effect.scoped);
   });
