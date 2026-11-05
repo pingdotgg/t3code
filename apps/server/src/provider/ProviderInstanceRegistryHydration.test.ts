@@ -10,7 +10,6 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -150,39 +149,51 @@ describe("seedDevReplayInstance", () => {
 });
 
 describe("layerSettingsWatcher", () => {
-  effectIt.effect("retries unreadable secrets when a secret provider changes", () =>
-    Effect.gen(function* () {
-      const settings = yield* ServerSettingsService;
-      const changes = yield* Queue.unbounded<ServerSettings>();
-      const calls: Array<"reconcile" | "reloadSecrets"> = [];
-      const reconciled = yield* Deferred.make<void>();
-      let reconciles = 0;
-      const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
-        reconcile: () =>
-          Effect.suspend(() => {
-            calls.push("reconcile");
-            return ++reconciles === 2 ? Deferred.succeed(reconciled, undefined) : Effect.void;
-          }),
-        reloadSecrets: () => Effect.sync(() => void calls.push("reloadSecrets")),
-      });
-      yield* Layer.build(
-        layerSettingsWatcher(Stream.fromQueue(changes)).pipe(Layer.provide(mutator)),
-      );
+  effectIt.effect(
+    "retries unreadable secrets when a secret provider changes, not when it is renamed",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsService;
+        const changes = yield* Queue.unbounded<ServerSettings>();
+        const calls: Array<"reconcile" | "reloadSecrets"> = [];
+        const reconciled = yield* Queue.unbounded<void>();
+        const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
+          reconcile: () =>
+            Effect.suspend(() => {
+              calls.push("reconcile");
+              return Queue.offer(reconciled, undefined);
+            }),
+          reloadSecrets: () => Effect.sync(() => void calls.push("reloadSecrets")),
+        });
+        yield* Layer.build(
+          layerSettingsWatcher(Stream.fromQueue(changes)).pipe(Layer.provide(mutator)),
+        );
 
-      const next = yield* settings.updateSettings({
-        secretProviders: {
-          [SecretProviderId.make("personal")]: {
-            kind: SecretProviderKind.make("one_password"),
-            label: "Personal",
-            config: { account: "my" },
+        const next = yield* settings.updateSettings({
+          secretProviders: {
+            [SecretProviderId.make("personal")]: {
+              kind: SecretProviderKind.make("one_password"),
+              label: "Personal",
+              config: { account: "my" },
+            },
           },
-        },
-      });
-      yield* Queue.offer(changes, next);
-      yield* Queue.offer(changes, next);
-      yield* Deferred.await(reconciled);
+        });
+        yield* Queue.offer(changes, next);
+        yield* Queue.take(reconciled);
+        const relabeled = yield* settings.updateSettings({
+          secretProviders: {
+            [SecretProviderId.make("personal")]: {
+              kind: SecretProviderKind.make("one_password"),
+              label: "Renamed",
+              config: { account: "my" },
+            },
+          },
+        });
+        yield* Queue.offer(changes, relabeled);
+        yield* Queue.take(reconciled);
 
-      expect(calls).toEqual(["reconcile", "reloadSecrets", "reconcile"]);
-    }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
+        // A label is not read by any vault, so renaming a provider retries nothing.
+        expect(calls).toEqual(["reconcile", "reloadSecrets", "reconcile"]);
+      }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
   );
 });
