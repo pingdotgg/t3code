@@ -25,6 +25,7 @@ import {
   type GuestMessageId,
   isCompactionCommandMessage,
   IDLE_COMPACTION_TEXT,
+  idleCompactionOf,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -803,13 +804,6 @@ function worktreeSetupPending(
     )
   );
 }
-
-const CONTEXT_COMPACTION_MESSAGE_PREFIX = "context-compact:";
-const CONTEXT_COMPACTION_CONTINUE_PREFIX = "context-compact-continue:";
-
-const isCompactionRecoveryMessage = (messageId: MessageId) =>
-  messageId.startsWith(CONTEXT_COMPACTION_MESSAGE_PREFIX) ||
-  messageId.startsWith(CONTEXT_COMPACTION_CONTINUE_PREFIX);
 
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -2365,15 +2359,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  // Clients send their own "onReturn" compactions; the server sends one only to recover a full session.
+  const isRecoveryCompaction = (message: OrchestrationV2ConversationMessage) =>
+    message.creationSource === "server" && idleCompactionOf(message) === "onReturn";
+
   // A full native session is compacted in place, then continued. Both steps start by id so a
   // held queue cannot strand them; queued work waits behind them instead of failing in turn.
   const compactionRecoveryRun = Effect.fn("Orchestrator.compactionRecoveryRun")(function* (
     threadId: ThreadId,
     run: OrchestrationV2Run,
   ) {
-    const compacted =
-      run.status === "completed" && run.userMessageId.startsWith(CONTEXT_COMPACTION_MESSAGE_PREFIX);
-    if (run.status !== "failed" && !compacted) return undefined;
+    const failed = run.status === "failed";
+    if (!failed && run.status !== "completed") return undefined;
+    if (!failed) {
+      const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+        messageIds: [run.userMessageId],
+      });
+      if (!messages.some(isRecoveryCompaction)) return undefined;
+    }
     const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "turnItems"], {
       turnItemTypes: ["error", "run_interrupt_request"],
       turnItemRunIds: [run.id],
@@ -2383,42 +2386,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.turnItems.some((item) => item.type === "run_interrupt_request")
     )
       return undefined;
-    if (
-      !compacted &&
-      latestRootProviderFailure(run, projection.turnItems)?.code !==
+    if (failed) {
+      if (
+        latestRootProviderFailure(run, projection.turnItems)?.code !==
         CONTEXT_COMPACTION_REQUIRED_CODE
-    )
-      return undefined;
-    const step = compacted
-      ? ({
-          prefix: CONTEXT_COMPACTION_CONTINUE_PREFIX,
-          text: "Continue where you left off.",
-        } as const)
-      : ({ prefix: CONTEXT_COMPACTION_MESSAGE_PREFIX, text: IDLE_COMPACTION_TEXT } as const);
-    // Work that slipped in ahead of the compaction fails the same way; one compaction covers both.
-    const pending = projection.runs.find(
-      (candidate) =>
-        candidate.status === "queued" &&
-        candidate.userMessageId.startsWith(CONTEXT_COMPACTION_MESSAGE_PREFIX),
+      )
+        return undefined;
+      const queued = projection.runs.filter((candidate) => candidate.status === "queued");
+      const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+        messageIds: queued.map((candidate) => candidate.userMessageId),
+      });
+      // Work that slipped in ahead of the compaction fails the same way; one compaction covers both.
+      const pending = queued.find((candidate) =>
+        messages.some(
+          (message) => message.id === candidate.userMessageId && isRecoveryCompaction(message),
+        ),
+      );
+      if (pending !== undefined) return pending.id;
+    }
+    const messageId = MessageId.make(
+      failed ? `context-compact:${run.id}` : `context-compact-continue:${run.id}`,
     );
-    if (!compacted && pending !== undefined) return pending.id;
-    const messageId = MessageId.make(`${step.prefix}${run.id}`);
     yield* dispatchWithReceiptEffect({
       type: "message.dispatch",
-      commandId: CommandId.make(`server:${step.prefix}${run.id}`),
+      commandId: CommandId.make(`server:${messageId}`),
       messageId,
       threadId,
-      text: step.text,
       attachments: [],
-      ...(step.text === IDLE_COMPACTION_TEXT
-        ? { createdBy: "agent", idleCompaction: "onReturn" }
-        : { createdBy: "user" }),
+      ...(failed
+        ? { text: IDLE_COMPACTION_TEXT, idleCompaction: "onReturn" }
+        : { text: "Continue where you left off." }),
+      createdBy: "agent",
       creationSource: "server",
       dispatchMode: { type: "queue_after_active" },
     });
-    return (yield* projectionStore.getThreadRecords(threadId, ["runs"])).runs.find(
-      (candidate) => candidate.userMessageId === messageId,
-    )?.id;
+    const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+      runStatuses: ["queued"],
+    });
+    return runs.find((candidate) => candidate.userMessageId === messageId)?.id;
   });
 
   // A hold waits for a person to review what they queued. Nobody reviews messages from agents,
@@ -5608,12 +5613,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = applyToProjection(projection, event);
     }
-    // Background wakes and delegated completions continue work the user already snoozed, so
-    // only a message someone actually sent ends the snooze.
+    // Background wakes, delegated completions and T3 Code's own recovery continue work the user
+    // already snoozed, so only a message someone actually sent ends the snooze.
     const automaticWake =
       command.notification !== undefined ||
       command.delegatedCompletion !== undefined ||
-      (command.creationSource === "server" && isCompactionRecoveryMessage(command.messageId));
+      (command.createdBy === "agent" && command.creationSource === "server");
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {

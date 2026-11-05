@@ -116,11 +116,6 @@ function curatedCauseMessages(cause: unknown): {
       switch (tag) {
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
-        case "ContextCompactionRequiredError":
-          return {
-            known: new ContextCompactionRequiredError().message,
-            category: categoryMessage(),
-          };
         case "ContextHandoffBackgroundWorkError":
           return {
             known: new ContextHandoffBackgroundWorkError().message,

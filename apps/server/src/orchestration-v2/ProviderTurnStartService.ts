@@ -1290,15 +1290,16 @@ export const layer: Layer.Layer<
           const previousRun = projection.runs.findLast(
             (source) => source.ordinal < run.ordinal && source.startedAt !== null,
           );
-          const previousMessage = projection.messages.find(
-            (candidate) => candidate.id === previousRun?.userMessageId,
-          );
           if (
             session.compactThread !== undefined &&
             effectiveHandoffs.length === 0 &&
             !isCompactionCommandMessage(message) &&
             !goalCommand &&
-            (previousMessage === undefined || !isCompactionCommandMessage(previousMessage))
+            !projection.messages.some(
+              (candidate) =>
+                candidate.id === previousRun?.userMessageId &&
+                isCompactionCommandMessage(candidate),
+            )
           ) {
             yield* settleStartFailure({
               signal: "provider-context-compaction-required",
