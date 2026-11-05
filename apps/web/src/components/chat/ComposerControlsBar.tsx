@@ -22,6 +22,8 @@ import {
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
 import { resolveComposerTraitsInput } from "./composerProviderState";
+import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   ComposerEffortColumn,
   ComposerPickerFooter,
@@ -152,10 +154,16 @@ export function ComposerControlsBar(props: {
     measuredHiddenBlockCount,
   });
   const controlSize = composerControlsCollapsed ? "xs" : "sm";
+  const applyThreadModelPick = useApplyThreadModelPick();
+  const applyRouteThreadModelPick = useStableCallback(
+    () => void applyThreadModelPick(routeThreadRef),
+  );
   const traitsInput = resolveComposerTraitsInput({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+    ...(routeKind === "server"
+      ? { threadRef: routeThreadRef, onDraftModelOptionsChange: applyRouteThreadModelPick }
+      : {}),
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
     models: selectedProviderModels,
