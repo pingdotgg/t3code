@@ -35,11 +35,7 @@ import {
 } from "./TimelineWorkEntryRow";
 import { formatWorkingTimer, formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 import { WorkLogButton, WorkLogList, WorkLogRow, WorkLogTarget, WorkLogVerb } from "./WorkLog";
-import {
-  type WorktreeSetupSnapshot,
-  type ToolActivityIcon,
-  type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+import { type WorktreeSetupSnapshot, type ToolActivityIcon } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { observeResize } from "~/lib/observeResize";
@@ -970,7 +966,7 @@ function WorkingWindowView({
     !turnEnded &&
     !pendingRequest &&
     !window.answering &&
-    !workingWindowItemIsLive(window.items.at(-1)) &&
+    window.items.length === 0 &&
     !isCompacting &&
     !isPreparingWorktree &&
     !workingWindowHasActiveCompaction(window);
@@ -983,7 +979,9 @@ function WorkingWindowView({
         aria-label="Work history"
         className={cn(
           // The gap under the bar sits inside the window, so its fade reaches the hairline.
-          "flex min-w-0 flex-col justify-end gap-1 overflow-clip pt-2 transition-[height] duration-200 ease-out motion-reduce:transition-none",
+          "flex min-w-0 flex-col justify-end gap-1 overflow-clip pt-2",
+          history !== null &&
+            "transition-[height] duration-200 ease-out motion-reduce:transition-none",
           open
             ? "[height:calc-size(auto,size)]"
             : "[height:calc-size(auto,min(size,220px))] not-supports-[height:calc-size(auto,size)]:max-h-[220px]",
@@ -1152,15 +1150,6 @@ function CollapsedWorkingWindow({
   );
 }
 
-function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
-  if (item === undefined) return false;
-  if (item.kind === "work") return item.entry.toolLifecycleStatus === "inProgress";
-  if (item.kind === "text") return Boolean(item.message.streaming);
-  return (item.row.subagents ?? [item.row.projectedItem]).some(({ item: member }) =>
-    subagentItemIsLive(member.status),
-  );
-}
-
 const WORKING_WINDOW_TAIL = 12;
 const WORKING_WINDOW_COLLAPSED_HEIGHT = 220;
 
@@ -1241,10 +1230,6 @@ function WorkingBarSlot({
   return window.diff ? (
     <DiffStatBlocks additions={window.diff.additions} deletions={window.diff.deletions} />
   ) : null;
-}
-
-function subagentItemIsLive(status: OrchestrationV2TurnItem["status"]): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
 }
 
 function workingWindowHasActiveCompaction(window: WorkingWindow | undefined): boolean {

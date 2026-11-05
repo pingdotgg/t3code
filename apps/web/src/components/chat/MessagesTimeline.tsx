@@ -220,11 +220,6 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   },
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
-const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
-  ...TIMELINE_MAINTAIN_SCROLL_AT_END,
-  animated: true,
-} as const satisfies MaintainScrollAtEndOptions;
-
 const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
 
 export interface MessagesTimelineHistoryControls {
@@ -469,7 +464,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
   const [playingAudioRows, setPlayingAudioRows] = useState<ReadonlyMap<HTMLAudioElement, string>>(
     () => new Map(),
   );
@@ -490,7 +484,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       findOpenAtOpening: findOpen,
     });
     setPositionedThreadKey(null);
-    setSettlingListIdentity(listIdentityKey);
     // A viewer pinned in another thread must not keep live follow off here,
     // nor when that thread comes back.
     setFullscreenAppRowId(null);
@@ -1087,12 +1080,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   // Rows added, removed or rewrapped (chat width) change the content size,
   // which moves the scroll position, the overflow, and the content lane width.
-  const handleContentSizeChanged = useStableCallback((laidOutData: unknown) => {
-    // The first laid-out content of a newly shown thread ends its settling; a
-    // frame the previous thread scheduled laid out the previous thread's rows.
-    if (laidOutData === rows) {
-      setSettlingListIdentity((current) => (current === listIdentityKey ? null : current));
-    }
+  const handleContentSizeChanged = useStableCallback(() => {
     handleScroll();
   });
   // The content lane only changes width with the viewport or the chat width
@@ -1272,7 +1260,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       scheduledData = laidOutData;
       contentSizeFrame = requestAnimationFrame(() => {
         contentSizeFrame = null;
-        handleContentSizeChanged(laidOutData);
+        handleContentSizeChanged();
       });
     };
     const stopListeningToContentSize = list
@@ -1473,9 +1461,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 workingHistoryOpen ||
                 workingHistoryCollapsing
                   ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
+                  : TIMELINE_MAINTAIN_SCROLL_AT_END
               }
               maintainVisibleContentPosition={
                 findActive ||

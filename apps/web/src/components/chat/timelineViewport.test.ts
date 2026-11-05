@@ -81,13 +81,13 @@ describe("navigationReleasesFollow", () => {
     ).toBe(false);
   });
 
-  it("releases on downward keys, touch and row clicks only away from the end", () => {
+  it("releases on downward keys and touch only away from the end", () => {
     const down = { source: "key", key: "PageDown", direction: "down" } as const;
     expect(navigationReleasesFollow(down, viewport(true, false))).toBe(false);
     expect(navigationReleasesFollow(down, viewport(false, true))).toBe(true);
     expect(navigationReleasesFollow({ source: "touch" }, viewport(true, false))).toBe(false);
     expect(
-      navigationReleasesFollow({ source: "pointer", onScrollbar: false }, viewport(true, false)),
+      navigationReleasesFollow({ source: "pointer", onScrollbar: false }, viewport(true, true)),
     ).toBe(false);
     expect(
       navigationReleasesFollow({ source: "pointer", onScrollbar: true }, viewport(true, false)),
@@ -98,6 +98,6 @@ describe("navigationReleasesFollow", () => {
     expect(
       navigationReleasesFollow({ source: "command", releasesFollow: false }, viewport(true, true)),
     ).toBe(false);
-    expect(navigationReleasesFollow({ source: "scroll" }, viewport(false, false))).toBe(true);
+    expect(navigationReleasesFollow({ source: "scroll" }, viewport(false, false))).toBe(false);
   });
 });

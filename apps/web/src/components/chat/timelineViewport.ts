@@ -191,13 +191,13 @@ export function navigationReleasesFollow(
     case "key":
       return navigation.direction === "up" ? viewport.contentScrollsUp() : viewport.awayFromEnd();
     case "pointer":
-      return navigation.onScrollbar ? viewport.contentScrollsUp() : viewport.awayFromEnd();
+      return navigation.onScrollbar && viewport.contentScrollsUp();
     case "touch":
       // Touch direction is not observable; an upward flick leaves the end
       // band within its first few events.
       return viewport.awayFromEnd();
     case "scroll":
-      return true;
+      return false;
     case "command":
       return navigation.releasesFollow;
   }

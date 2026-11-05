@@ -2859,7 +2859,7 @@ export function applyWorkingWindow(
     failedTests: deriveFailedTests(items),
     retryAttempt: deriveRetryAttempt(items),
     stopping: interruptRequested && !interruptSettled,
-    answering: answer?.kind === "text" && answer.message.streaming,
+    answering: answer?.kind === "text",
     historyOpen: historyOpenKey === key,
   };
   return [

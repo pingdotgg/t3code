@@ -2061,6 +2061,22 @@ describe("MessagesTimeline work rows", () => {
     expect(screen.text()).toContain("Thinking");
 
     await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          ...props.timelineEntries,
+          work("completed-command", {
+            runId,
+            label: "Ran pwd",
+            itemType: "command_execution",
+            toolLifecycleStatus: "completed",
+          }),
+        ]}
+      />,
+    );
+    expect(screen.text()).not.toContain("Thinking");
+
+    await screen.rerender(
       <MessagesTimeline {...props} latestRun={{ ...props.latestRun, turnEnded: true }} />,
     );
     expect(screen.text()).not.toContain("Thinking");
