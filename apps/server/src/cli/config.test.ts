@@ -214,14 +214,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }),
   );
 
-  it.effect("names the pair command for an explicit home when refusing a manual launch", () =>
+  it.effect("names the pair command for the refused server's home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const child = yield* liveProcess;
       assert(child.pid !== undefined);
-      for (const source of ["flag", "T3CODE_HOME"] as const) {
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-pair-" });
+      for (const source of ["flag", "T3CODE_HOME", "default"] as const) {
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-pair-" });
+        const baseDir = source === "default" ? path.join(home, ".t3") : home;
         const stateDir = path.join(baseDir, "userdata");
         yield* fs.makeDirectory(stateDir, { recursive: true });
         yield* fs.writeFileString(
@@ -238,7 +239,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           {
             ...minimalWebFlags(baseDir),
             baseDir: source === "flag" ? Option.some(baseDir) : Option.none(),
-            cwd: Option.some(path.join(baseDir, "project")),
+            cwd: Option.some(path.join(home, "project")),
           },
           Option.none(),
           { rejectRunningServer: true },
@@ -253,6 +254,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ),
             ),
           ),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.flip,
         );
         expect(String(error)).toContain(`pair --base-dir ${baseDir}`);
