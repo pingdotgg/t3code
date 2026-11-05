@@ -5,7 +5,6 @@ import * as NodeReadline from "node:readline";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
