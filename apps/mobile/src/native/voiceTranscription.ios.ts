@@ -9,6 +9,9 @@ import {
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 
+// Apple's speech model sometimes marks a hesitation with a leading "#", as in "#um" or "#Ah".
+const HESITATION_MARKER = /(^|\s)#(u+h*m+|u+h+|a+h+|e+r+m*|h+m+|m+h*m+)(?![\w-])/gi;
+
 function getDeviceLocale(): string {
   return Intl.DateTimeFormat().resolvedOptions().locale;
 }
@@ -90,6 +93,7 @@ async function transcribeVoiceRecording(
     return result.segments
       .map((segment) => segment.text)
       .join(" ")
+      .replace(HESITATION_MARKER, "$1$2")
       .trim();
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);

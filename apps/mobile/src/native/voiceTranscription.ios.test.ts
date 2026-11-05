@@ -79,4 +79,20 @@ describe("getLocalVoiceTranscriber", () => {
     expect(error).toMatchObject({ code: "cancelled" });
     expect(mocks.transcribe).not.toHaveBeenCalled();
   });
+
+  it("drops the hash Apple puts before hesitations and keeps real hashtags", async () => {
+    mocks.transcribe.mockResolvedValue({
+      duration: 3,
+      segments: [
+        { text: "#um there is a ticket for issue #42 #um.", startSecond: 0, endSecond: 1 },
+        { text: " Yeah, #Ah, tag it #short #umbrella.", startSecond: 1, endSecond: 3 },
+      ],
+    });
+    const options = { signal: new AbortController().signal };
+    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+
+    await expect(prepared.transcribe("file:///voice.m4a", options)).resolves.toBe(
+      "um there is a ticket for issue #42 um.  Yeah, Ah, tag it #short #umbrella.",
+    );
+  });
 });
