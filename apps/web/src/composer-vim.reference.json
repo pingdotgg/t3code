@@ -1,0 +1,748 @@
+[
+  {
+    "text": "one two\nthree four",
+    "start": [0, 0],
+    "keys": "d3w",
+    "value": "four",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "one two\nthree four",
+    "start": [0, 0],
+    "keys": "d2w",
+    "value": "\nthree four",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "one two\nthree four",
+    "start": [0, 4],
+    "keys": "dw",
+    "value": "one \nthree four",
+    "cursor": [0, 3]
+  },
+  {
+    "text": "one two\nthree four",
+    "start": [0, 4],
+    "keys": "d2w",
+    "value": "one four",
+    "cursor": [0, 4]
+  },
+  {
+    "text": "one two\nthree four",
+    "start": [0, 0],
+    "keys": "2$",
+    "value": "one two\nthree four",
+    "cursor": [1, 9]
+  },
+  { "text": "one two\nthree four", "start": [0, 0], "keys": "d2$", "value": "", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "5j", "value": "a\nb\nc", "cursor": [2, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "d5j", "value": "", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "3ix<Esc>", "value": "xxxabc", "cursor": [0, 2] },
+  { "text": "abc", "start": [0, 0], "keys": "3Ax<Esc>", "value": "abcxxx", "cursor": [0, 5] },
+  {
+    "text": "abc\ndef",
+    "start": [0, 0],
+    "keys": "2ox<Esc>",
+    "value": "abc\nx\nx\ndef",
+    "cursor": [2, 0]
+  },
+  {
+    "text": "abc\ndef",
+    "start": [1, 0],
+    "keys": "2Ox<Esc>",
+    "value": "abc\nx\nx\ndef",
+    "cursor": [2, 0]
+  },
+  {
+    "text": "   \"string1\":  \"string2\";",
+    "start": [0, 11],
+    "keys": "ci\"X<Esc>",
+    "value": "   \"X\":  \"string2\";",
+    "cursor": [0, 4]
+  },
+  {
+    "text": "   \"string1\":  \"string2\";",
+    "start": [0, 12],
+    "keys": "ci\"X<Esc>",
+    "value": "   \"string1\"X\"string2\";",
+    "cursor": [0, 12]
+  },
+  {
+    "text": "say \"hi there\" now",
+    "start": [0, 6],
+    "keys": "di\"",
+    "value": "say \"\" now",
+    "cursor": [0, 5]
+  },
+  {
+    "text": "say \"hi there\" now",
+    "start": [0, 6],
+    "keys": "da\"",
+    "value": "say now",
+    "cursor": [0, 4]
+  },
+  {
+    "text": "f(a, (b), c)",
+    "start": [0, 6],
+    "keys": "di(",
+    "value": "f(a, (), c)",
+    "cursor": [0, 6]
+  },
+  {
+    "text": "f(a, (b), c)",
+    "start": [0, 6],
+    "keys": "da(",
+    "value": "f(a, , c)",
+    "cursor": [0, 5]
+  },
+  {
+    "text": "f(a, (b), c)",
+    "start": [0, 2],
+    "keys": "ci(X<Esc>",
+    "value": "f(X)",
+    "cursor": [0, 2]
+  },
+  { "text": "x [a b] y", "start": [0, 3], "keys": "di[", "value": "x [] y", "cursor": [0, 3] },
+  { "text": "x {a b} y", "start": [0, 3], "keys": "ca{Z<Esc>", "value": "x Z y", "cursor": [0, 2] },
+  { "text": "x 'a b' y", "start": [0, 3], "keys": "di'", "value": "x '' y", "cursor": [0, 3] },
+  { "text": "foo.bar baz", "start": [0, 0], "keys": "dW", "value": "baz", "cursor": [0, 0] },
+  { "text": "foo.bar baz", "start": [0, 0], "keys": "dw", "value": ".bar baz", "cursor": [0, 0] },
+  { "text": "foo.bar baz", "start": [0, 4], "keys": "diW", "value": " baz", "cursor": [0, 0] },
+  { "text": "foo bar baz", "start": [0, 4], "keys": "daw", "value": "foo baz", "cursor": [0, 4] },
+  { "text": "foo bar", "start": [0, 4], "keys": "daw", "value": "foo", "cursor": [0, 2] },
+  {
+    "text": "foo bar baz",
+    "start": [0, 4],
+    "keys": "yiwP",
+    "value": "foo barbar baz",
+    "cursor": [0, 6]
+  },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "vee<Esc>",
+    "value": "hello world",
+    "cursor": [0, 10]
+  },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "vey$p",
+    "value": "hello worldhello",
+    "cursor": [0, 15]
+  },
+  { "text": "hello world", "start": [0, 0], "keys": "vld", "value": "llo world", "cursor": [0, 0] },
+  { "text": "hello world", "start": [0, 6], "keys": "vbd", "value": "orld", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "Vjd", "value": "c", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "Vky", "value": "a\nb\nc", "cursor": [0, 0] },
+  {
+    "text": "a\nb\nc",
+    "start": [0, 0],
+    "keys": "Vjyjp",
+    "value": "a\nb\na\nb\nc",
+    "cursor": [2, 0]
+  },
+  { "text": "hello world", "start": [0, 0], "keys": "viwd", "value": " world", "cursor": [0, 0] },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "viwc!<Esc>",
+    "value": "! world",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "vlU",
+    "value": "HEllo world",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "vlr-",
+    "value": "--llo world",
+    "cursor": [0, 0]
+  },
+  { "text": "hello", "start": [0, 0], "keys": "vl~", "value": "HEllo", "cursor": [0, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "VjJ", "value": "a b", "cursor": [0, 1] },
+  { "text": "hello world", "start": [0, 0], "keys": "veoxd", "value": " world", "cursor": [0, 0] },
+  { "text": "ab cd", "start": [0, 0], "keys": "yiwwviwp", "value": "ab ab", "cursor": [0, 4] },
+  {
+    "text": "foo\nbar\nbaz",
+    "start": [0, 0],
+    "keys": "ddp",
+    "value": "bar\nfoo\nbaz",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "foo\nbar\nbaz",
+    "start": [0, 0],
+    "keys": "yyP",
+    "value": "foo\nfoo\nbar\nbaz",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "foo\nbar\nbaz",
+    "start": [0, 0],
+    "keys": "yy2p",
+    "value": "foo\nfoo\nfoo\nbar\nbaz",
+    "cursor": [1, 0]
+  },
+  { "text": "foo\nbar\nbaz", "start": [2, 0], "keys": "dd", "value": "foo\nbar", "cursor": [1, 0] },
+  { "text": "foo\nbar", "start": [0, 1], "keys": "xp", "value": "foo\nbar", "cursor": [0, 2] },
+  { "text": "abc", "start": [0, 0], "keys": "xxx", "value": "", "cursor": [0, 0] },
+  { "text": "abc def", "start": [0, 0], "keys": "dwP", "value": "abc def", "cursor": [0, 3] },
+  { "text": "foo\nbar", "start": [0, 0], "keys": "Jx", "value": "foobar", "cursor": [0, 3] },
+  {
+    "text": "foo\nbar\nbaz",
+    "start": [0, 0],
+    "keys": "3J",
+    "value": "foo bar baz",
+    "cursor": [0, 7]
+  },
+  { "text": "a b", "start": [0, 0], "keys": "~~~", "value": "A B", "cursor": [0, 2] },
+  { "text": "abc", "start": [0, 0], "keys": "3~", "value": "ABC", "cursor": [0, 2] },
+  { "text": "abc def", "start": [0, 0], "keys": "gUiw", "value": "ABC def", "cursor": [0, 0] },
+  { "text": "ABC DEF", "start": [0, 0], "keys": "guu", "value": "abc def", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "g~~", "value": "ABC", "cursor": [0, 0] },
+  { "text": "abc def", "start": [0, 0], "keys": "gUU", "value": "ABC DEF", "cursor": [0, 0] },
+  { "text": "a b c d", "start": [0, 0], "keys": "dw.", "value": "c d", "cursor": [0, 0] },
+  { "text": "a b c d", "start": [0, 0], "keys": "dw2.", "value": "d", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "x.", "value": "c", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "ix<Esc>.", "value": "xxabc", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "Ax<Esc>.", "value": "abcxx", "cursor": [0, 4] },
+  { "text": "a\nb", "start": [0, 0], "keys": "ox<Esc>.", "value": "a\nx\nx\nb", "cursor": [2, 0] },
+  { "text": "a b c", "start": [0, 0], "keys": "cwX<Esc>w.", "value": "X X c", "cursor": [0, 2] },
+  { "text": "a b c", "start": [0, 0], "keys": "ciwX<Esc>w.", "value": "X X c", "cursor": [0, 2] },
+  { "text": "abcdef", "start": [0, 0], "keys": "rx.l.", "value": "xxcdef", "cursor": [0, 1] },
+  { "text": "abc abc", "start": [0, 0], "keys": "~.", "value": "ABc abc", "cursor": [0, 2] },
+  {
+    "text": "  a\n  b",
+    "start": [0, 0],
+    "keys": ">>j.",
+    "value": "    a\n    b",
+    "cursor": [1, 4]
+  },
+  { "text": "a\nb", "start": [0, 0], "keys": ">>j.", "value": "  a\n  b", "cursor": [1, 2] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "2>>", "value": "  a\n  b\nc", "cursor": [0, 2] },
+  { "text": "a\nb", "start": [0, 0], "keys": ">j", "value": "  a\n  b", "cursor": [0, 2] },
+  { "text": "    a", "start": [0, 0], "keys": "<<", "value": "  a", "cursor": [0, 2] },
+  { "text": "(a (b) c)", "start": [0, 0], "keys": "%", "value": "(a (b) c)", "cursor": [0, 8] },
+  { "text": "(a (b) c)", "start": [0, 0], "keys": "d%", "value": "", "cursor": [0, 0] },
+  { "text": "x(a)y", "start": [0, 0], "keys": "d%", "value": "y", "cursor": [0, 0] },
+  { "text": "[a]\n{b}", "start": [0, 0], "keys": "%x", "value": "[a\n{b}", "cursor": [0, 1] },
+  {
+    "text": "one\n\ntwo\nthree\n\nfour",
+    "start": [0, 0],
+    "keys": "}",
+    "value": "one\n\ntwo\nthree\n\nfour",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "one\n\ntwo\nthree\n\nfour",
+    "start": [0, 0],
+    "keys": "d}",
+    "value": "\ntwo\nthree\n\nfour",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "one\n\ntwo\nthree\n\nfour",
+    "start": [5, 0],
+    "keys": "{",
+    "value": "one\n\ntwo\nthree\n\nfour",
+    "cursor": [4, 0]
+  },
+  {
+    "text": "one\n\ntwo\nthree\n\nfour",
+    "start": [0, 0],
+    "keys": "}}x",
+    "value": "one\n\ntwo\nthree\n\nfour",
+    "cursor": [4, 0]
+  },
+  {
+    "text": "Hi there. Next one. Last",
+    "start": [0, 0],
+    "keys": ")x",
+    "value": "Hi there. ext one. Last",
+    "cursor": [0, 10]
+  },
+  {
+    "text": "Hi there. Next one. Last",
+    "start": [0, 11],
+    "keys": "(x",
+    "value": "Hi there. ext one. Last",
+    "cursor": [0, 10]
+  },
+  { "text": "foo bar foo", "start": [0, 0], "keys": "*x", "value": "foo bar oo", "cursor": [0, 8] },
+  { "text": "foo bar foo", "start": [0, 0], "keys": "#x", "value": "foo bar oo", "cursor": [0, 8] },
+  {
+    "text": "foo bar foo baz",
+    "start": [0, 0],
+    "keys": "/foo<CR>x",
+    "value": "foo bar oo baz",
+    "cursor": [0, 8]
+  },
+  {
+    "text": "foo bar foo baz",
+    "start": [0, 12],
+    "keys": "?foo<CR>x",
+    "value": "foo bar oo baz",
+    "cursor": [0, 8]
+  },
+  {
+    "text": "foo bar foo baz",
+    "start": [0, 0],
+    "keys": "/foo<CR>nx",
+    "value": "oo bar foo baz",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "foo bar foo",
+    "start": [0, 0],
+    "keys": "/bar<CR>dw",
+    "value": "foo foo",
+    "cursor": [0, 4]
+  },
+  { "text": "foo bar baz", "start": [0, 0], "keys": "d/baz<CR>", "value": "baz", "cursor": [0, 0] },
+  { "text": "ab", "start": [0, 0], "keys": "ix<C-[>x", "value": "ab", "cursor": [0, 0] },
+  {
+    "text": "abc def",
+    "start": [0, 0],
+    "keys": "wi<C-w>x<Esc>",
+    "value": "xdef",
+    "cursor": [0, 0]
+  },
+  { "text": "one two", "start": [0, 7], "keys": "a<C-w><Esc>", "value": "one ", "cursor": [0, 3] },
+  { "text": "one two", "start": [0, 7], "keys": "a<C-u><Esc>", "value": "", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "Rxy<Esc>", "value": "xyc", "cursor": [0, 1] },
+  { "text": "abc", "start": [0, 0], "keys": "Rxyzw<Esc>", "value": "xyzw", "cursor": [0, 3] },
+  { "text": "abc", "start": [0, 1], "keys": "sX<Esc>", "value": "aXc", "cursor": [0, 1] },
+  { "text": "abc\ndef", "start": [0, 1], "keys": "SX<Esc>", "value": "X\ndef", "cursor": [0, 0] },
+  { "text": "abc def", "start": [0, 1], "keys": "Dx", "value": "", "cursor": [0, 0] },
+  { "text": "abc def", "start": [0, 1], "keys": "CX<Esc>", "value": "aX", "cursor": [0, 1] },
+  {
+    "text": "abc\ndef",
+    "start": [0, 0],
+    "keys": "Yjp",
+    "value": "abc\ndef\nabc",
+    "cursor": [2, 0]
+  },
+  { "text": "abc def", "start": [0, 4], "keys": "d0", "value": "def", "cursor": [0, 0] },
+  { "text": "  abc", "start": [0, 4], "keys": "d^", "value": "  c", "cursor": [0, 2] },
+  {
+    "text": "abc\n  def",
+    "start": [0, 1],
+    "keys": "jI<Esc>",
+    "value": "abc\n  def",
+    "cursor": [1, 1]
+  },
+  { "text": "  abc", "start": [0, 4], "keys": "IX<Esc>", "value": "  Xabc", "cursor": [0, 2] },
+  { "text": "abc", "start": [0, 0], "keys": "$aX<Esc>", "value": "abcX", "cursor": [0, 3] },
+  { "text": "abc", "start": [0, 0], "keys": "xu", "value": "abc", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "xxuu", "value": "abc", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "xu<C-r>", "value": "bc", "cursor": [0, 0] },
+  { "text": "abc def", "start": [0, 0], "keys": "dwu", "value": "abc def", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "ixyz<Esc>u", "value": "abc", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "Ax<Esc>Ay<Esc>u", "value": "abcx", "cursor": [0, 3] },
+  { "text": "abcabc", "start": [0, 0], "keys": "fbx", "value": "acabc", "cursor": [0, 1] },
+  { "text": "abcabc", "start": [0, 0], "keys": "2fbx", "value": "abcac", "cursor": [0, 4] },
+  { "text": "abcabc", "start": [0, 0], "keys": "tbx", "value": "bcabc", "cursor": [0, 0] },
+  { "text": "abcabc", "start": [0, 0], "keys": "fb;x", "value": "abcac", "cursor": [0, 4] },
+  { "text": "abcabc", "start": [0, 5], "keys": "Fbx", "value": "abcac", "cursor": [0, 4] },
+  { "text": "abcabc", "start": [0, 5], "keys": "Tbx", "value": "abcab", "cursor": [0, 4] },
+  { "text": "abcabc", "start": [0, 5], "keys": "Fb,x", "value": "abcac", "cursor": [0, 4] },
+  { "text": "abc", "start": [0, 0], "keys": "dfb", "value": "c", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "dtc", "value": "c", "cursor": [0, 0] },
+  { "text": "a,b,c", "start": [0, 0], "keys": "t,;x", "value": "a,,c", "cursor": [0, 2] },
+  { "text": "ma\nb\nc", "start": [0, 0], "keys": "majd'a", "value": "c", "cursor": [0, 0] },
+  { "text": "abc\ndef", "start": [0, 1], "keys": "mxjd`x", "value": "aef", "cursor": [0, 1] },
+  { "text": "abc\ndef", "start": [0, 1], "keys": "mxj'xx", "value": "bc\ndef", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "Gggx", "value": "\nb\nc", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "2Gx", "value": "a\n\nc", "cursor": [1, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "dG", "value": "", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [2, 0], "keys": "dgg", "value": "", "cursor": [0, 0] },
+  { "text": "  a\nb", "start": [1, 0], "keys": "ggx", "value": "  \nb", "cursor": [0, 1] },
+  { "text": "  a b", "start": [0, 4], "keys": "0x", "value": " a b", "cursor": [0, 0] },
+  { "text": "  a b", "start": [0, 4], "keys": "^x", "value": "   b", "cursor": [0, 2] },
+  { "text": "a\nb", "start": [0, 0], "keys": "+x", "value": "a\n", "cursor": [1, 0] },
+  { "text": "a\nb", "start": [1, 0], "keys": "-x", "value": "\nb", "cursor": [0, 0] },
+  { "text": "a\n  b", "start": [0, 0], "keys": "<CR>x", "value": "a\n  ", "cursor": [1, 1] },
+  { "text": "abc", "start": [0, 2], "keys": "<BS>x", "value": "ac", "cursor": [0, 1] },
+  { "text": "a b", "start": [0, 0], "keys": " x", "value": "ab", "cursor": [0, 1] },
+  { "text": "abc", "start": [0, 0], "keys": "\"ayl\"ap", "value": "aabc", "cursor": [0, 1] },
+  {
+    "text": "abc\ndef",
+    "start": [0, 0],
+    "keys": "\"ayyj\"ap",
+    "value": "abc\ndef\nabc",
+    "cursor": [2, 0]
+  },
+  { "text": "abc", "start": [0, 0], "keys": "\"_xp", "value": "bc", "cursor": [0, 0] },
+  { "text": "ab cd", "start": [0, 0], "keys": "yw\"_dwP", "value": "ab cd", "cursor": [0, 2] },
+  { "text": "ab", "start": [0, 0], "keys": "ylx\"0p", "value": "ba", "cursor": [0, 1] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "ddj\"1p", "value": "b\nc\na", "cursor": [2, 0] },
+  { "text": "abc", "start": [0, 0], "keys": "qaxq@a", "value": "c", "cursor": [0, 0] },
+  { "text": "abcde", "start": [0, 0], "keys": "qaxq2@a", "value": "de", "cursor": [0, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "qaA!<Esc>jq@a", "value": "a!\nb!", "cursor": [1, 1] },
+  { "text": "a1 b", "start": [0, 0], "keys": "<C-a>", "value": "a2 b", "cursor": [0, 1] },
+  { "text": "7", "start": [0, 0], "keys": "3<C-a>", "value": "10", "cursor": [0, 1] },
+  { "text": "9", "start": [0, 0], "keys": "<C-x>", "value": "8", "cursor": [0, 0] },
+  { "text": "a b", "start": [0, 0], "keys": ":s/a/z/<CR>", "value": "z b", "cursor": [0, 0] },
+  { "text": "a a", "start": [0, 0], "keys": ":s/a/z/g<CR>", "value": "z z", "cursor": [0, 0] },
+  { "text": "a\na", "start": [0, 0], "keys": ":%s/a/b/<CR>", "value": "b\nb", "cursor": [1, 0] },
+  { "text": "a\nb\na", "start": [0, 0], "keys": ":g/a/d<CR>", "value": "b", "cursor": [0, 0] },
+  {
+    "text": "   \"string1\":  \"string2\";",
+    "start": [0, 11],
+    "keys": "ci\"X<Esc>uf\"lci\"Y<Esc>",
+    "value": "   \"string1\"Y\"string2\";",
+    "cursor": [0, 12]
+  },
+  { "text": "ox", "start": [0, 0], "keys": "r<CR>", "value": "\nx", "cursor": [1, 0] },
+  { "text": "ox", "start": [0, 0], "keys": "r<Esc>x", "value": "x", "cursor": [0, 0] },
+  { "text": "abc", "start": [0, 1], "keys": "r<CR>", "value": "a\nc", "cursor": [1, 0] },
+  { "text": "abcd", "start": [0, 0], "keys": "2r<CR>", "value": "\ncd", "cursor": [1, 0] },
+  {
+    "text": "one two three",
+    "start": [0, 0],
+    "keys": "wmaw`ax",
+    "value": "one wo three",
+    "cursor": [0, 4]
+  },
+  { "text": "a\nb\nc\nd", "start": [0, 0], "keys": "jmajd'a", "value": "a\nd", "cursor": [1, 0] },
+  { "text": "a\nb\nc\nd", "start": [0, 0], "keys": "mxjjd'x", "value": "d", "cursor": [0, 0] },
+  {
+    "text": "foo\nbar",
+    "start": [0, 0],
+    "keys": "/nope<CR>x",
+    "value": "oo\nbar",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "foo\nbar",
+    "start": [0, 0],
+    "keys": "/bar<CR>Nx",
+    "value": "foo\nar",
+    "cursor": [1, 0]
+  },
+  { "text": "aaa bbb", "start": [0, 0], "keys": "/b*<CR>x", "value": "aa bbb", "cursor": [0, 1] },
+  { "text": "a\nxx\nb", "start": [2, 0], "keys": "?x*<CR>x", "value": "a\nx\nb", "cursor": [1, 0] },
+  {
+    "text": "word1 word2",
+    "start": [0, 0],
+    "keys": "<C-o>",
+    "value": "word1 word2",
+    "cursor": [0, 0]
+  },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "Gg;", "value": "a\nb\nc", "cursor": [2, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "G``x", "value": "\nb\nc", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "G<C-o>x", "value": "\nb\nc", "cursor": [0, 0] },
+  { "text": "ab cd ef", "start": [0, 0], "keys": "wvawd", "value": "ab ef", "cursor": [0, 3] },
+  { "text": "ab cd ef", "start": [0, 0], "keys": "vawd", "value": "cd ef", "cursor": [0, 0] },
+  { "text": "ab (cd) ef", "start": [0, 4], "keys": "vi(d", "value": "ab () ef", "cursor": [0, 4] },
+  { "text": "ab (cd) ef", "start": [0, 4], "keys": "va(d", "value": "ab  ef", "cursor": [0, 3] },
+  {
+    "text": "a \"b c\" d",
+    "start": [0, 3],
+    "keys": "vi\"d",
+    "value": "a \"\" d",
+    "cursor": [0, 3]
+  },
+  { "text": "abcd", "start": [0, 0], "keys": "vlylvp", "value": "aabcd", "cursor": [0, 2] },
+  { "text": "abcd\nef", "start": [0, 0], "keys": "vjd", "value": "f", "cursor": [0, 0] },
+  { "text": "abcd\nef", "start": [0, 2], "keys": "vj$d", "value": "ab", "cursor": [0, 1] },
+  { "text": "abc\ndef\nghi", "start": [1, 0], "keys": "Vd", "value": "abc\nghi", "cursor": [1, 0] },
+  {
+    "text": "abc\ndef\nghi",
+    "start": [0, 0],
+    "keys": "Vjj<Esc>x",
+    "value": "abc\ndef\nhi",
+    "cursor": [2, 0]
+  },
+  { "text": "abc def", "start": [0, 0], "keys": "vee<Esc>gvd", "value": "", "cursor": [0, 0] },
+  { "text": "abc def", "start": [0, 0], "keys": "vaw<Esc>gvd", "value": "def", "cursor": [0, 0] },
+  { "text": "  foo", "start": [0, 0], "keys": "wD", "value": "  ", "cursor": [0, 1] },
+  { "text": "foo bar", "start": [0, 0], "keys": "wcbX<Esc>", "value": "Xbar", "cursor": [0, 0] },
+  { "text": "foo bar", "start": [0, 4], "keys": "cbX<Esc>", "value": "Xbar", "cursor": [0, 0] },
+  { "text": "foo bar", "start": [0, 0], "keys": "ceX<Esc>", "value": "X bar", "cursor": [0, 0] },
+  { "text": "foo bar", "start": [0, 0], "keys": "c$X<Esc>", "value": "X", "cursor": [0, 0] },
+  { "text": "foo\nbar", "start": [0, 0], "keys": "cjX<Esc>", "value": "X", "cursor": [0, 0] },
+  { "text": "foo bar", "start": [0, 0], "keys": "yeP", "value": "foofoo bar", "cursor": [0, 2] },
+  { "text": "foo bar", "start": [0, 0], "keys": "ye$p", "value": "foo barfoo", "cursor": [0, 9] },
+  { "text": "a\n\n\nb", "start": [0, 0], "keys": "j", "value": "a\n\n\nb", "cursor": [1, 0] },
+  { "text": "a\n\n\nb", "start": [0, 0], "keys": "jjj", "value": "a\n\n\nb", "cursor": [3, 0] },
+  { "text": "a\n\nb", "start": [1, 0], "keys": "dd", "value": "a\nb", "cursor": [1, 0] },
+  { "text": "a\n\nb", "start": [1, 0], "keys": "x", "value": "a\n\nb", "cursor": [1, 0] },
+  { "text": "", "start": [0, 0], "keys": "x", "value": "", "cursor": [0, 0] },
+  { "text": "", "start": [0, 0], "keys": "dd", "value": "", "cursor": [0, 0] },
+  { "text": "", "start": [0, 0], "keys": "ix<Esc>", "value": "x", "cursor": [0, 0] },
+  { "text": "", "start": [0, 0], "keys": "p", "value": "", "cursor": [0, 0] },
+  { "text": "\n", "start": [0, 0], "keys": "jdd", "value": "", "cursor": [0, 0] },
+  { "text": "一二三 四", "start": [0, 0], "keys": "lx", "value": "一三 四", "cursor": [0, 1] },
+  { "text": "naïve café", "start": [0, 0], "keys": "wx", "value": "naïve afé", "cursor": [0, 6] },
+  { "text": "naïve café", "start": [0, 0], "keys": "ex", "value": "naïv café", "cursor": [0, 4] },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "ciwX<Esc>u",
+    "value": "hello world",
+    "cursor": [0, 0]
+  },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "cwX<Esc>u",
+    "value": "hello world",
+    "cursor": [0, 0]
+  },
+  { "text": "hello", "start": [0, 0], "keys": "sX<Esc>u", "value": "hello", "cursor": [0, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "ox<Esc>u", "value": "a\nb", "cursor": [0, 0] },
+  { "text": "a b", "start": [0, 0], "keys": "ccX<Esc>u", "value": "a b", "cursor": [0, 0] },
+  { "text": "hello", "start": [0, 0], "keys": "CX<Esc>u", "value": "hello", "cursor": [0, 0] },
+  {
+    "text": "a b c",
+    "start": [0, 0],
+    "keys": "cwX<Esc>wcwY<Esc>uu",
+    "value": "a b c",
+    "cursor": [0, 0]
+  },
+  { "text": "ab", "start": [0, 0], "keys": "ix<Esc>iy<Esc>uu", "value": "ab", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "dG", "value": "a", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "2dd", "value": "a", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "dj", "value": "a", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "VGd", "value": "a", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "Vjd", "value": "a", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [2, 0], "keys": "dk", "value": "a", "cursor": [0, 0] },
+  {
+    "text": "a\nb\nc\nd",
+    "start": [1, 0],
+    "keys": "2ddp",
+    "value": "a\nd\nb\nc",
+    "cursor": [2, 0]
+  },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "2ccX<Esc>", "value": "a\nX", "cursor": [1, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "3ccX<Esc>", "value": "X", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "VGcX<Esc>", "value": "a\nX", "cursor": [1, 0] },
+  { "text": "a\nb", "start": [1, 0], "keys": "ccX<Esc>", "value": "a\nX", "cursor": [1, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "dG", "value": "", "cursor": [0, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "VGd", "value": "", "cursor": [0, 0] },
+  { "text": "a\n\nb", "start": [0, 0], "keys": "ddjdd", "value": "", "cursor": [0, 0] },
+  { "text": "a b", "start": [0, 0], "keys": "Ox<Esc>", "value": "x\na b", "cursor": [0, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "Ox<Esc>.", "value": "x\nx\na\nb", "cursor": [0, 0] },
+  { "text": "a\nb", "start": [1, 0], "keys": "Ox<Esc>", "value": "a\nx\nb", "cursor": [1, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "yyjP", "value": "a\na\nb", "cursor": [1, 0] },
+  { "text": "a\nb", "start": [1, 0], "keys": "ddp", "value": "a\nb", "cursor": [1, 0] },
+  { "text": "a\nb\nc", "start": [2, 0], "keys": "ddkP", "value": "c\na\nb", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [2, 0], "keys": "ddP", "value": "a\nc\nb", "cursor": [1, 0] },
+  { "text": "a\nb\nc", "start": [2, 0], "keys": "Vdgg0P", "value": "c\na\nb", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "VjcX<Esc>", "value": "X\nc", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "VjsX<Esc>", "value": "X\nc", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "VjSX<Esc>", "value": "X\nc", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [0, 0], "keys": "VGcX<Esc>", "value": "X", "cursor": [0, 0] },
+  { "text": "a\nb\nc", "start": [1, 0], "keys": "VcX<Esc>", "value": "a\nX\nc", "cursor": [1, 0] },
+  { "text": "ab\ncd", "start": [0, 1], "keys": "k", "value": "ab\ncd", "cursor": [0, 1] },
+  { "text": "ab\ncd", "start": [1, 0], "keys": "j", "value": "ab\ncd", "cursor": [1, 0] },
+  { "text": "a\nb", "start": [1, 0], "keys": "dj", "value": "a\nb", "cursor": [1, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "dk", "value": "a\nb", "cursor": [0, 0] },
+  { "text": "a\nb", "start": [0, 0], "keys": "yk", "value": "a\nb", "cursor": [0, 0] },
+  { "text": "\na", "start": [0, 0], "keys": "dG", "value": "", "cursor": [0, 0] },
+  { "text": "a\n\nb", "start": [1, 0], "keys": "dG", "value": "a", "cursor": [0, 0] },
+  { "text": "ab", "start": [0, 0], "keys": "d<Esc>x", "value": "b", "cursor": [0, 0] },
+  { "text": "ab cd", "start": [0, 0], "keys": "vey\"apx", "value": "b cd", "cursor": [0, 0] },
+  { "text": "a\n\nb", "start": [1, 0], "keys": "diw", "value": "a\n\nb", "cursor": [1, 0] },
+  {
+    "text": "a\n\nb\nc",
+    "start": [1, 0],
+    "keys": "ciwZ<Esc>",
+    "value": "a\nZ\nb\nc",
+    "cursor": [1, 0]
+  },
+  { "text": "a\n\nb", "start": [1, 0], "keys": "yiwp", "value": "a\n\nb", "cursor": [1, 0] },
+  {
+    "text": "foo bar baz",
+    "start": [0, 5],
+    "keys": "yiwP",
+    "value": "foo barbar baz",
+    "cursor": [0, 6]
+  },
+  { "text": "a\nb\nc", "start": [2, 0], "keys": "ykP", "value": "a\nb\nc\nb\nc", "cursor": [1, 0] },
+  {
+    "text": "a\nb\nc",
+    "start": [2, 0],
+    "keys": "yggP",
+    "value": "a\nb\nc\na\nb\nc",
+    "cursor": [0, 0]
+  },
+  { "text": "ab\ncd\nef", "start": [2, 1], "keys": "yk", "value": "ab\ncd\nef", "cursor": [1, 1] },
+  { "text": "ab\ncd\nef", "start": [0, 1], "keys": "yj", "value": "ab\ncd\nef", "cursor": [0, 1] },
+  {
+    "text": "a\nb\n\nc",
+    "start": [1, 0],
+    "keys": "yipP",
+    "value": "a\nb\na\nb\n\nc",
+    "cursor": [0, 0]
+  },
+  { "text": "hello", "start": [0, 0], "keys": "df)", "value": "hello", "cursor": [0, 0] },
+  {
+    "text": "hello world",
+    "start": [0, 0],
+    "keys": "cfzx",
+    "value": "ello world",
+    "cursor": [0, 0]
+  },
+  { "text": "hello", "start": [0, 0], "keys": "yfzp", "value": "hello", "cursor": [0, 0] },
+  { "text": "hello", "start": [0, 0], "keys": "d%", "value": "hello", "cursor": [0, 0] },
+  { "text": "hello", "start": [0, 0], "keys": "d;", "value": "hello", "cursor": [0, 0] },
+  { "text": "hello", "start": [0, 0], "keys": "dtz", "value": "hello", "cursor": [0, 0] },
+  {
+    "text": "foo == bar baz",
+    "start": [0, 4],
+    "keys": "diW",
+    "value": "foo  bar baz",
+    "cursor": [0, 4]
+  },
+  {
+    "text": "end }\nnext line",
+    "start": [0, 4],
+    "keys": "diW",
+    "value": "end \nnext line",
+    "cursor": [0, 3]
+  },
+  {
+    "text": "foo -> bar",
+    "start": [0, 4],
+    "keys": "yiWP",
+    "value": "foo ->-> bar",
+    "cursor": [0, 5]
+  },
+  { "text": "foo.bar baz", "start": [0, 0], "keys": "daW", "value": "baz", "cursor": [0, 0] },
+  {
+    "text": "para one\nmore two",
+    "start": [1, 0],
+    "keys": "db",
+    "value": "para \nmore two",
+    "cursor": [0, 4]
+  },
+  {
+    "text": "para one\nmore two",
+    "start": [1, 0],
+    "keys": "dB",
+    "value": "para \nmore two",
+    "cursor": [0, 4]
+  },
+  { "text": "one\n\ntwo", "start": [0, 0], "keys": "d}", "value": "\ntwo", "cursor": [0, 0] },
+  {
+    "text": "one\n  x\n\ntwo",
+    "start": [0, 1],
+    "keys": "d}",
+    "value": "o\n\ntwo",
+    "cursor": [0, 0]
+  },
+  { "text": "x one\n\ntwo", "start": [0, 2], "keys": "d}", "value": "x \n\ntwo", "cursor": [0, 1] },
+  { "text": "a😀b", "start": [0, 0], "keys": "yllp", "value": "a😀ab", "cursor": [0, 3] },
+  { "text": "a😀b", "start": [0, 0], "keys": "xp", "value": "😀ab", "cursor": [0, 2] },
+  { "text": "😀😀", "start": [0, 0], "keys": "yl$p", "value": "😀😀😀", "cursor": [0, 4] },
+  { "text": " word1\nword2 ", "start": [1, 0], "keys": "db", "value": "word2 ", "cursor": [0, 0] },
+  {
+    "text": "0123456789",
+    "start": [0, 0],
+    "keys": "$F4$y;p",
+    "value": "012344567856789",
+    "cursor": [0, 9]
+  },
+  {
+    "text": "0123456789",
+    "start": [0, 0],
+    "keys": "f4 0y;P",
+    "value": "012340123456789",
+    "cursor": [0, 4]
+  },
+  {
+    "text": "a\t{\n  foo\n}b",
+    "start": [1, 2],
+    "keys": "di{",
+    "value": "a\t{\n}b",
+    "cursor": [1, 0]
+  },
+  { "text": "a{\n  foo\n}b", "start": [1, 2], "keys": "di{", "value": "a{\n}b", "cursor": [1, 0] },
+  {
+    "text": "x {\n\ta\n\tb\n} y",
+    "start": [1, 1],
+    "keys": "di{",
+    "value": "x {\n} y",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "first para\n\nsecond para",
+    "start": [2, 0],
+    "keys": "dd",
+    "value": "first para\n",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "first para\n\nsecond para",
+    "start": [2, 0],
+    "keys": "ddP",
+    "value": "first para\nsecond para\n",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "first para\n\nsecond para",
+    "start": [2, 0],
+    "keys": "ddAtail<Esc>",
+    "value": "first para\ntail",
+    "cursor": [1, 3]
+  },
+  {
+    "text": "first para\n\nsecond para",
+    "start": [2, 0],
+    "keys": "Vd",
+    "value": "first para\n",
+    "cursor": [1, 0]
+  },
+  { "text": "a\n\nb", "start": [2, 0], "keys": "dd.", "value": "a", "cursor": [0, 0] },
+  { "text": "a\n\nb", "start": [1, 0], "keys": "dG", "value": "a", "cursor": [0, 0] },
+  { "text": "a\n\nb", "start": [1, 0], "keys": "VGd", "value": "a", "cursor": [0, 0] },
+  {
+    "text": "top\n\nitem one two\nplain",
+    "start": [2, 0],
+    "keys": "dw.",
+    "value": "top\n\ntwo\nplain",
+    "cursor": [2, 0]
+  },
+  {
+    "text": "top\n\nnote\n\nthanks",
+    "start": [2, 0],
+    "keys": "dw.",
+    "value": "top\n\n\nthanks",
+    "cursor": [2, 0]
+  },
+  { "text": "a b c\nd e f", "start": [0, 0], "keys": "dw.j.", "value": "c\ne f", "cursor": [1, 0] },
+  {
+    "text": "first\nsecond\n",
+    "start": [1, 0],
+    "keys": "dd",
+    "value": "first\n",
+    "cursor": [1, 0]
+  },
+  { "text": "a\nb\n", "start": [0, 0], "keys": "jdd", "value": "a\n", "cursor": [1, 0] },
+  {
+    "text": "one two\n\nthree",
+    "start": [0, 0],
+    "keys": "ddxp",
+    "value": "\none two\nthree",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "one\n\nthree",
+    "start": [1, 0],
+    "keys": "yyxp",
+    "value": "one\n\n\nthree",
+    "cursor": [2, 0]
+  },
+  { "text": "ab\n\nc", "start": [0, 0], "keys": "yljxp", "value": "ab\na\nc", "cursor": [1, 0] },
+  { "text": "ab\n\nc", "start": [0, 0], "keys": "yl0Xp", "value": "aab\n\nc", "cursor": [0, 1] },
+  { "text": "ab\n\nc", "start": [0, 0], "keys": "ylj0Dp", "value": "ab\na\nc", "cursor": [1, 0] },
+  { "text": "ab", "start": [0, 0], "keys": "yl0db$p", "value": "aba", "cursor": [0, 2] }
+]
