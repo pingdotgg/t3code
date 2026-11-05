@@ -124,13 +124,17 @@ export const seedDevReplayInstance = Effect.fn(
   });
 });
 
+// A label is display-only, so only kind and config can change what a vault returns.
+const vaultConfigs = (settings: ServerSettings) =>
+  Object.entries(settings.secretProviders).map(([id, { kind, config }]) => [id, kind, config]);
+
 export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
       const serverSettings = yield* Settings.ServerSettingsService;
       let secretProviders = yield* serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.secretProviders),
+        Effect.map(vaultConfigs),
         Effect.orElseSucceed(() => undefined),
       );
       yield* settingsChanges.pipe(
@@ -143,8 +147,9 @@ export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettin
                 yield* mutator.reconcile(deriveProviderInstanceConfigMap(current));
                 // Reconcile leaves instances parked on an unreadable secret alone,
                 // and a corrected secret provider is what can make them readable.
-                if (!NodeUtil.isDeepStrictEqual(secretProviders, current.secretProviders)) {
-                  secretProviders = current.secretProviders;
+                const next = vaultConfigs(current);
+                if (!NodeUtil.isDeepStrictEqual(secretProviders, next)) {
+                  secretProviders = next;
                   yield* mutator.reloadSecrets();
                 }
               }),
