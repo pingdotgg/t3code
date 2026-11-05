@@ -90,6 +90,16 @@ export function resolveProviderSkillSourceKind(
   }
 }
 
+/** Skills a provider ships with (such as Cursor's `~/.cursor/skills-cursor`) report the system source. */
+export function filterProviderSystemSkills<T extends Pick<ServerProviderSkill, "path" | "scope">>(
+  skills: ReadonlyArray<T>,
+  showSystemSkills: boolean,
+): ReadonlyArray<T> {
+  return showSystemSkills
+    ? skills
+    : skills.filter((skill) => resolveProviderSkillSourceKind(skill) !== "system");
+}
+
 function resolveProviderWorkspaceSnapshot(
   provider: ServerProvider,
   cwd: string | null | undefined,

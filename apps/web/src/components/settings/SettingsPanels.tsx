@@ -570,6 +570,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? [gt("Show skills in slash menu")]
       : []),
+    ...(settings.showSystemSkills !== DEFAULT_UNIFIED_SETTINGS.showSystemSkills
+      ? [gt("Show built-in skills")]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? [gt("Rich text composer")]
       : []),
@@ -707,6 +710,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      showSystemSkills: DEFAULT_UNIFIED_SETTINGS.showSystemSkills,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1300,7 +1304,9 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
-        <AdvancedSettings targetIds={[setting("skills-in-slash-menu").id]}>
+        <AdvancedSettings
+          targetIds={[setting("skills-in-slash-menu").id, setting("system-skills").id]}
+        >
           <SettingsRow
             {...setting("skills-in-slash-menu")}
             description={gt(
@@ -1325,6 +1331,33 @@ export function ChatSettingsPanel() {
                   updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
                 }
                 aria-label={gt("Show skills in slash menu")}
+              />
+            }
+          />
+          <SettingsRow
+            {...setting("system-skills")}
+            description={gt(
+              "List skills that ship with a provider, such as Cursor's, in the / and $ menus. You can still type them by name.",
+            )}
+            resetAction={
+              settings.showSystemSkills !== DEFAULT_UNIFIED_SETTINGS.showSystemSkills ? (
+                <SettingResetButton
+                  ariaLabel={gt("Reset built-in skills to default")}
+                  onClick={() =>
+                    updateSettings({
+                      showSystemSkills: DEFAULT_UNIFIED_SETTINGS.showSystemSkills,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.showSystemSkills}
+                onCheckedChange={(checked) =>
+                  updateSettings({ showSystemSkills: Boolean(checked) })
+                }
+                aria-label={gt("Show built-in skills")}
               />
             }
           />
