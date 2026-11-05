@@ -1605,7 +1605,7 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("advertises Cursor conversation rollback and replaces the agent", () =>
+  it.effect("advertises Cursor conversation rollback and clears the native agent", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
@@ -1645,7 +1645,7 @@ describe("CursorAdapterV2", () => {
       );
       const capabilities = yield* adapter.getCapabilities();
       assert.isTrue(capabilities.threads.canRollbackThread);
-      assert.isTrue(capabilities.checkpointing.providerCanRollbackConversation);
+      assert.isFalse(capabilities.checkpointing.providerCanRollbackConversation);
       assert.isTrue(capabilities.checkpointing.providerRollbackReturnsSnapshot);
 
       const runtime = yield* adapter.openSession({
@@ -1671,11 +1671,11 @@ describe("CursorAdapterV2", () => {
         providerThreadTurns: [],
       });
       assert.equal(snapshot.providerThread.id, providerThread.id);
-      assert.equal(snapshot.providerThread.nativeThreadRef?.nativeId, "native-cursor-rollback-2");
+      assert.isNull(snapshot.providerThread.nativeThreadRef);
       assert.isNull(snapshot.providerThread.nativeConversationHeadRef);
       assert.deepEqual(snapshot.providerTurns, []);
       assert.deepEqual(snapshot.messages, []);
-      assert.equal(createCount, 2);
+      assert.equal(createCount, 1);
       assert.deepEqual(closedAgents, ["native-cursor-rollback-1"]);
     }).pipe(
       Effect.scoped,

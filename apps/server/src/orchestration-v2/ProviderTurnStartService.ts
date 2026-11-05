@@ -1302,7 +1302,7 @@ export const layer: Layer.Layer<
         }
         if (providerThread.nativeThreadRef === null) {
           // Pass the stored provider row for adoption; adapter-minted duplicates make activeProviderThreadId flap.
-          return yield* loadFromProvider(
+          const created = yield* loadFromProvider(
             session.ensureThread({
               threadId: projection.thread.id,
               title: projection.thread.title,
@@ -1312,6 +1312,56 @@ export const layer: Layer.Layer<
               existingProviderThread: providerThread,
             }),
           );
+          // Non-truncating providers clear the native ref on rollback; hand the new session the kept turns.
+          if (
+            created !== undefined &&
+            !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
+            nativeSessionMissesKeptTurns(projection, created, run)
+          ) {
+            const { handoff, transferId, createdAt } = yield* recoveryHandoff;
+            effectiveHandoffs = withRecoveryHandoff(handoff);
+            resumeFellBack = true;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "context-handoff.updated",
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: createdAt,
+                  payload: handoff,
+                },
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "context-transfer.updated",
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: createdAt,
+                  payload: {
+                    id: transferId,
+                    type: "provider_handoff",
+                    sourceThreadId: projection.thread.id,
+                    targetThreadId: projection.thread.id,
+                    sourcePoint: { threadId: projection.thread.id },
+                    basePoint: null,
+                    sourceProviderInstanceId: providerThread.providerInstanceId,
+                    targetProviderInstanceId: run.providerInstanceId,
+                    targetRunId: run.id,
+                    status: "resolved_portable",
+                    resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
+                    createdBy: "system",
+                    error: null,
+                    createdAt,
+                    updatedAt: createdAt,
+                    consumedAt: null,
+                  },
+                },
+              ],
+            });
+          }
+          return created;
         }
         const uncertainDelivery = projection.contextHandoffs.some(
           (handoff) =>

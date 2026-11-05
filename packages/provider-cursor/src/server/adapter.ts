@@ -153,8 +153,8 @@ export const CursorProviderCapabilitiesV2 = {
   checkpointing: {
     appCanCheckpointFilesystem: true,
     supportsNestedCheckpointScopes: true,
-    // Cursor SDK lacks truncation; rollback restores T3 checkpoints and starts a fresh agent.
-    providerCanRollbackConversation: true,
+    // SDK cannot truncate; rollback clears the native agent and the next turn hands off kept turns.
+    providerCanRollbackConversation: false,
     providerRollbackReturnsSnapshot: true,
     providerCanReadConversationSnapshot: true,
   },
@@ -2802,6 +2802,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ),
               ),
           ),
+          // The SDK cannot truncate; the next turn creates an agent and hands it the kept turns.
           rollbackThread: Effect.fn("CursorAdapterV2.rollbackThread")(
             function* (rollbackInput: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) {
               const currentTurn = yield* Ref.get(activeTurn);
@@ -2811,27 +2812,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   detail: `Cannot roll back Cursor provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
                 });
               }
-              const opened = yield* openAgent({
-                operation: "create",
-                threadId: rollbackInput.providerThread.appThreadId ?? input.threadId,
-                modelSelection: input.modelSelection,
-                runtimePolicy: input.runtimePolicy,
-              });
-              // Fresh agent must receive orchestration/device context on the next turn.
-              yield* Ref.set(told, {
-                agent: opened.nativeThreadId,
-                orchestration: false,
-                device: false,
-              });
+              const existing = yield* Ref.get(liveAgent);
+              if (existing !== null) {
+                yield* existing.session.close.pipe(Effect.ignore);
+                yield* Ref.set(liveAgent, null);
+              }
+              yield* Ref.set(told, null);
               const now = yield* DateTime.now;
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,
-                  nativeThreadRef: {
-                    driver: CursorAgentSdk.CURSOR_PROVIDER,
-                    nativeId: opened.nativeThreadId,
-                    strength: "strong" as const,
-                  },
+                  nativeThreadRef: null,
                   nativeConversationHeadRef: null,
                   status: "idle" as const,
                   updatedAt: now,
