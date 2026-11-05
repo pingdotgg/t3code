@@ -128,15 +128,16 @@ export const seedDevReplayInstance = Effect.fn(
 const vaultConfigs = (settings: ServerSettings) =>
   Object.entries(settings.secretProviders).map(([id, { kind, config }]) => [id, kind, config]);
 
-export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
+export const layerSettingsWatcher = (
+  settingsChanges: Stream.Stream<ServerSettings>,
+  // The settings the registry was built from: a change queued during startup differs from these.
+  initialSettings: ServerSettings | undefined,
+) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
       const serverSettings = yield* Settings.ServerSettingsService;
-      let secretProviders = yield* serverSettings.getSettings.pipe(
-        Effect.map(vaultConfigs),
-        Effect.orElseSucceed(() => undefined),
-      );
+      let secretProviders = initialSettings && vaultConfigs(initialSettings);
       yield* settingsChanges.pipe(
         Stream.runForEach(() =>
           // The subscription predates the seed read, so a queued change can be
@@ -205,7 +206,9 @@ export const layer: Layer.Layer<
       Layer.provide(SecretResolver.layer),
     );
 
-    return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
+    return layerSettingsWatcher(settingsChanges, initialSettings).pipe(
+      Layer.provideMerge(layerMutable),
+    );
   }),
 ) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
