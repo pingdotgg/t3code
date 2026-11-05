@@ -1248,6 +1248,18 @@ describe("DesktopWindow", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps a renamed duplicate of a 255-byte name within the filesystem limit", () =>
+    Effect.gen(function* () {
+      const { downloads, fileSystem, path, download } = yield* mainWindowDownloads;
+      const longName = `${"a".repeat(251)}.mp4`;
+      yield* fileSystem.writeFileString(path.join(downloads, longName), "existing");
+
+      const [savePath] = download(longName).savePaths;
+      assert.strictEqual(path.basename(savePath ?? ""), `${"a".repeat(247)} (1).mp4`);
+      yield* fileSystem.writeFileString(savePath ?? "", "duplicate");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "retries opening the real main on activate when a failed post-readiness open left only the splash",
     () =>

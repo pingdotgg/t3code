@@ -332,6 +332,8 @@ export const make = Effect.gen(function* () {
   );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
+  const utf8 = new TextEncoder();
+  const byteLength = (text: string) => utf8.encode(text).length;
   const downloadSessions = new WeakSet<Electron.Session>();
   const reservedDownloadPaths = new Set<string>();
   // Electron needs the save path before will-download returns, so the name is picked synchronously.
@@ -340,18 +342,26 @@ export const make = Effect.gen(function* () {
     const directory = Electron.app.getPath("downloads");
     const extension = path.extname(fileName);
     const stem = path.basename(fileName, extension) || "download";
+    // Filesystems cap a name at 255 bytes, so a suffix shortens the stem instead of overflowing.
+    const nameWith = (suffix: string) => {
+      let budget = 255 - byteLength(`${suffix}${extension}`);
+      let kept = "";
+      for (const char of stem) {
+        budget -= byteLength(char);
+        if (budget < 0) break;
+        kept += char;
+      }
+      return `${kept}${suffix}${extension}`;
+    };
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      const target = path.join(
-        directory,
-        attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
-      );
+      const target = path.join(directory, nameWith(attempt === 0 ? "" : ` (${attempt})`));
       // macOS and Windows treat names differing only in case as the same file.
       if (reservedDownloadPaths.has(target.toLowerCase()) || NodeFS.existsSync(target)) continue;
       reservedDownloadPaths.add(target.toLowerCase());
       return target;
     }
     // @effect-diagnostics-next-line cryptoRandomUUID:off -- Must stay synchronous, as above.
-    const target = path.join(directory, `${stem} (${crypto.randomUUID()})${extension}`);
+    const target = path.join(directory, nameWith(` (${crypto.randomUUID()})`));
     reservedDownloadPaths.add(target.toLowerCase());
     return target;
   };
