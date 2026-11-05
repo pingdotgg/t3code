@@ -192,6 +192,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           a !== undefined && b !== undefined && a !== b;
         const switchedAccount =
           accountReset ||
+          (probedSnapshot.auth.status === "authenticated" && previous.status !== "authenticated") ||
           differs(probedSnapshot.auth.type, previous.type) ||
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&

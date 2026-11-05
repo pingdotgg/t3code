@@ -86,6 +86,40 @@ describe("useLiveRefresh", () => {
     },
   );
 
+  it("rechecks the shared deadline between simultaneous usage consumers", async () => {
+    const reads: Array<{ promise: Promise<void>; resolve: () => void }> = [];
+    const refresh = vi.fn(() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      const read = { promise, resolve };
+      reads.push(read);
+      return read.promise;
+    });
+    using _timers = fakeTimers({ now: 5_000_000 });
+    // Bare hook probes share one usage surface key; nothing here navigates.
+    await using _screen = await render(
+      <>
+        <Probe refresh={refresh} viewKey="shared-usage" refreshOnShow refreshWhileIdle />
+        <Probe refresh={refresh} viewKey="shared-usage" refreshOnShow refreshWhileIdle />
+      </>,
+      { router: false },
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTime(1000));
+    await act(() => reads[0]!.resolve());
+    await act(() => vi.advanceTimersByTime(300_000));
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTime(1000));
+    await act(() => reads[1]!.resolve());
+    await act(() => vi.advanceTimersByTime(299_000));
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTime(1000));
+    expect(refresh).toHaveBeenCalledTimes(3);
+    await act(() => reads[2]!.resolve());
+  });
+
   it.each([true, false])(
     "refreshes a hidden mount on arrival with refreshOnShow=%s",
     async (refreshOnShow) => {

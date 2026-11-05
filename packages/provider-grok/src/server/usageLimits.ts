@@ -1,6 +1,8 @@
 import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -179,6 +181,10 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   if (!token) {
     return { email, usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) };
   }
+  const digest = yield* Digest.Digest;
+  const credentialFingerprint = yield* digest
+    .digest(Digest.sha256, new TextEncoder().encode(`grok\0${token}`))
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -205,5 +211,5 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() => probeFailed),
   );
-  return { email, usageLimits };
+  return { email, usageLimits: { ...usageLimits, credentialFingerprint } };
 });

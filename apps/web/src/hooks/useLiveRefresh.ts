@@ -155,6 +155,7 @@ export function useLiveRefresh(
       const now = Date.now();
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId) ?? now;
       if (
+        (!refreshWhileIdle || now - lastRefreshedAt >= refreshFloorMs) &&
         shouldRefreshOnInterval({
           visible: visible(),
           now,
