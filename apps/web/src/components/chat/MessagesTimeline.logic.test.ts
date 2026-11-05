@@ -3165,6 +3165,44 @@ describe("v2 run and attempt history", () => {
       supportsConversationRollback: false,
     };
 
+    const liveInput = {
+      ...common,
+      timelineEntries: timelineEntries.filter((entry) => entry.kind !== "event"),
+      isWorking: true,
+      activeTurnStartedAt: common.latestRun.startedAt,
+    };
+    const liveRows = applyWorkingWindow(deriveMessagesTimelineRows(liveInput), liveInput);
+    expect(liveRows.some((row) => row.kind === "attempt-fold")).toBe(false);
+    expect(liveRows.find((row) => row.id === "initial-user-entry")).toMatchObject({
+      groupedWithNext: true,
+    });
+    const completedInput = {
+      ...common,
+      latestRun: {
+        ...common.latestRun,
+        status: "completed" as const,
+        startedAt: "2026-01-01T00:00:03Z",
+        completedAt: "2026-01-01T00:00:08Z",
+      },
+      timelineEntries: timelineEntries.map((entry) =>
+        entry.kind === "message" && entry.id === "active-assistant-entry"
+          ? {
+              ...entry,
+              message: { ...entry.message, streaming: false, updatedAt: "2026-01-01T00:00:08Z" },
+            }
+          : entry,
+      ),
+    };
+    const completedRows = deriveMessagesTimelineRows(completedInput);
+    expect(completedRows.find((row) => row.kind === "turn-fold")).toMatchObject({
+      label: "Worked for 8s",
+    });
+    expect(
+      deriveMessagesTimelineRows({ ...completedInput, latestRun: null }).find(
+        (row) => row.kind === "turn-fold",
+      ),
+    ).toMatchObject({ label: "Worked for 8s" });
+
     const collapsedRows = deriveMessagesTimelineRows(common);
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "context-handoff-entry",

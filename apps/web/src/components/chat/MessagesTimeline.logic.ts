@@ -1391,7 +1391,12 @@ function deriveTurnFolds(input: {
     const lastEntryEnd = timelineEntryEnd(lastEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
+        ? computeElapsedMs(
+            prompt?.attempt?.status === "superseded"
+              ? (group.startBoundary ?? input.latestRun.startedAt)
+              : input.latestRun.startedAt,
+            input.latestRun.completedAt,
+          )
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
@@ -2177,7 +2182,10 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     const supersededFold = supersededFoldsByAnchorEntryId.get(timelineEntry.id);
-    if (supersededFold) {
+    if (
+      supersededFold &&
+      !(input.isWorking && activeVisualResponseRunIds.has(supersededFold.runId))
+    ) {
       nextRows.push({
         kind: "attempt-fold",
         deferredWorkItemIds: supersededFold.deferredWorkItemIds,
