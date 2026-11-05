@@ -207,6 +207,39 @@ describe("DesktopUpdates", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps other checks out while it validates a cached download", () =>
+    Effect.gen(function* () {
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        offeredUpdateFiles: macUpdateFiles,
+        pendingDownloadDirectory: yield* pendingDownloadCache({ packageBytes: x64Package }),
+        beforePendingDownloadRead: Deferred.succeed(readStarted, undefined).pipe(
+          Effect.flatMap((first) => (first ? Deferred.await(releaseRead) : Effect.void)),
+        ),
+        checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+        downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+      });
+
+      yield* Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const startupCheck = yield* updates.check("startup").pipe(Effect.forkScoped);
+        yield* Deferred.await(readStarted);
+
+        const manualCheck = yield* updates.check("manual");
+        assert.isFalse(manualCheck.checked);
+        assert.equal(harness.checkCount(), 1);
+
+        yield* Deferred.succeed(releaseRead, undefined);
+        yield* Fiber.join(startupCheck);
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "downloaded");
+        assert.equal(harness.downloadCount(), 1);
+      }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect.each([
     { name: "a cached package for another release", cache: { packageBytes: "T3 Code 1.2.3 x64" } },
     // The harness is an Intel Mac, so electron-updater would fetch the x64 zip instead.

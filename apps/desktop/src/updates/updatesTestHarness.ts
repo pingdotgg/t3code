@@ -30,6 +30,7 @@ export interface UpdatesHarnessOptions {
   readonly downloadUpdate?: Effect.Effect<void>;
   /** electron-updater's pending cache directory; its files are read from disk. */
   readonly pendingDownloadDirectory?: string;
+  readonly beforePendingDownloadRead?: Effect.Effect<void>;
   /** What electron-updater's provider resolved for the offered release. */
   readonly offeredUpdateFiles?: ElectronUpdater.ElectronUpdaterOfferedFiles;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
@@ -262,7 +263,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         stream: (path, options) =>
           isPendingDownloadPath(path) ? disk.stream(path, options) : missing.stream(path, options),
         readFileString: (path) => {
-          if (isPendingDownloadPath(path)) return disk.readFileString(path);
+          if (isPendingDownloadPath(path)) {
+            return (options.beforePendingDownloadRead ?? Effect.void).pipe(
+              Effect.andThen(disk.readFileString(path)),
+            );
+          }
           const installRecord = isInstallRecord(path)
             ? (installRecords.get(path) ?? previousInstallRecord)
             : undefined;

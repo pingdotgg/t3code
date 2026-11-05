@@ -619,13 +619,67 @@ export const make = Effect.gen(function* () {
     });
 
     if (actionReservation === "held") return yield* check;
-    const checked = yield* check.pipe(
+    // The restore validates the cache against the offer this check left, so no other check may
+    // replace that offer before the download starts.
+    return yield* check.pipe(
       Effect.onInterrupt(() => setState(state)),
+      Effect.tap(() => resumeCachedDownload),
       Effect.ensuring(finishUpdateAction("check")),
     );
-    yield* resumeCachedDownload;
-    return checked;
   });
+
+  const downloadReservedUpdate = Effect.fn("desktop.updates.downloadReservedUpdate")(
+    function* (state: DesktopUpdateState) {
+      yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
+      yield* electronUpdater.setDisableDifferentialDownload(
+        isArm64HostRunningIntelBuild(environment.runtimeInfo),
+      );
+      yield* logUpdaterInfo("downloading update");
+      yield* electronUpdater.downloadUpdate;
+      return { accepted: true, completed: true };
+    },
+    (effect, state) =>
+      effect.pipe(
+        Effect.catchTags({
+          ElectronUpdaterDownloadUpdateError: Effect.fn("desktop.updates.handleDownloadFailure")(
+            function* (error) {
+              yield* updateState((current) =>
+                reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
+              );
+              yield* logUpdaterError(error.message, {
+                errorTag: error._tag,
+                cause: describeUpdateErrorCause(error.cause),
+                channel: error.channel,
+              });
+              return { accepted: true, completed: false };
+            },
+          ),
+        }),
+        Effect.onInterrupt(() =>
+          updateState((current) => (current.status === "downloading" ? state : current)).pipe(
+            Effect.asVoid,
+          ),
+        ),
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          const error = new DesktopUpdateUnexpectedActionError({ action: "download", cause });
+          return Effect.gen(function* () {
+            yield* updateState((current) =>
+              reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
+            );
+            yield* logUpdaterError(error.message, {
+              errorTag: error._tag,
+              cause: describeUpdateErrorCause(error.cause),
+              action: error.action,
+            });
+            return { accepted: true, completed: false };
+          });
+        }),
+        Effect.ensuring(finishUpdateAction("download")),
+      ),
+  );
 
   const downloadAvailableUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
@@ -637,54 +691,7 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
-    return yield* Effect.gen(function* () {
-      yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
-      yield* electronUpdater.setDisableDifferentialDownload(
-        isArm64HostRunningIntelBuild(environment.runtimeInfo),
-      );
-      yield* logUpdaterInfo("downloading update");
-      yield* electronUpdater.downloadUpdate;
-      return { accepted: true, completed: true };
-    }).pipe(
-      Effect.catchTags({
-        ElectronUpdaterDownloadUpdateError: Effect.fn("desktop.updates.handleDownloadFailure")(
-          function* (error) {
-            yield* updateState((current) =>
-              reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
-            );
-            yield* logUpdaterError(error.message, {
-              errorTag: error._tag,
-              cause: describeUpdateErrorCause(error.cause),
-              channel: error.channel,
-            });
-            return { accepted: true, completed: false };
-          },
-        ),
-      }),
-      Effect.onInterrupt(() =>
-        updateState((current) => (current.status === "downloading" ? state : current)).pipe(
-          Effect.asVoid,
-        ),
-      ),
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        const error = new DesktopUpdateUnexpectedActionError({ action: "download", cause });
-        return Effect.gen(function* () {
-          yield* updateState((current) =>
-            reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
-          );
-          yield* logUpdaterError(error.message, {
-            errorTag: error._tag,
-            cause: describeUpdateErrorCause(error.cause),
-            action: error.action,
-          });
-          return { accepted: true, completed: false };
-        });
-      }),
-      Effect.ensuring(finishUpdateAction("download")),
-    );
+    return yield* downloadReservedUpdate(state);
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
   // A launch that quit without installing leaves its verified package in electron-updater's cache.
@@ -730,7 +737,13 @@ export const make = Effect.gen(function* () {
     if ((yield* Ref.get(desktopState.quitting)) || !(yield* isOffered)) return;
 
     yield* logUpdaterInfo("restoring cached update download", { version });
-    yield* downloadAvailableUpdate;
+    const state = yield* Ref.get(updateStateRef);
+    const claimedFromCheck = yield* Ref.modify(activeUpdateActionRef, (activeAction) =>
+      Option.isSome(activeAction) && activeAction.value === "check"
+        ? ([true, Option.some<UpdateAction>("download")] as const)
+        : ([false, activeAction] as const),
+    );
+    if (claimedFromCheck) yield* downloadReservedUpdate(state);
   }).pipe(Effect.withSpan("desktop.updates.resumeCachedDownload"));
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
