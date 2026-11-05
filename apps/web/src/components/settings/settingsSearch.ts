@@ -546,6 +546,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "window-title-waiting-count",
+    title: "Waiting count in window title",
+    to: "/settings/general",
+    searchTerms: ["window title tab count waiting approval needs you badge"],
+  },
+  {
     id: "in-app-notifications",
     title: "In-app notifications",
     to: "/settings/general",

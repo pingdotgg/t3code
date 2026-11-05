@@ -536,6 +536,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarHideLoneProvider !== DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider
       ? ["Hide lone provider logo"]
       : []),
+    ...(settings.windowTitleWaitingCount !== DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount
+      ? ["Waiting count in window title"]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
@@ -658,6 +661,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      windowTitleWaitingCount: DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount,
       sidebarHideLoneProvider: DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider,
       chatWorkingShimmer: DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer,
       composerQuietStopWhileWaiting: DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
@@ -821,6 +825,32 @@ export function GeneralSettingsPanel() {
               checked={settings.inAppNotificationsEnabled}
               onCheckedChange={(checked) => updateSettings({ inAppNotificationsEnabled: checked })}
               aria-label="In-app notifications"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("window-title-waiting-count")}
+          description="Show how many threads wait on you in the window title, like (2) T3 Code."
+          resetAction={
+            settings.windowTitleWaitingCount !==
+            DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount ? (
+              <SettingResetButton
+                label="waiting count in window title"
+                onClick={() =>
+                  updateSettings({
+                    windowTitleWaitingCount: DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.windowTitleWaitingCount}
+              onCheckedChange={(checked) =>
+                updateSettings({ windowTitleWaitingCount: Boolean(checked) })
+              }
+              aria-label="Waiting count in window title"
             />
           }
         />
