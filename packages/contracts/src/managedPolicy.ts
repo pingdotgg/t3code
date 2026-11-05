@@ -115,12 +115,19 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
 });
 export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
 
+export const MANAGED_POLICY_SCHEMA_URL = "https://t3.codes/schema/policy.json";
+
 /**
  * The machine-wide policy file an administrator deploys. Decoded with excess properties
  * rejected: a key this build does not know might be a restriction it cannot enforce, and
  * starting anyway would look managed without being managed.
  */
 export const ManagedPolicyDocument = Schema.Struct({
+  $schema: Schema.optionalKey(
+    Schema.String.annotate({
+      description: `URL of the JSON Schema for this file, typically "${MANAGED_POLICY_SCHEMA_URL}".`,
+    }),
+  ),
   schemaVersion: Schema.Literal(1),
   /** Shown to users as "Managed by <organization>". */
   organization: TrimmedNonEmptyString,

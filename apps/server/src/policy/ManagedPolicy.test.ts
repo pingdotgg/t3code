@@ -8,6 +8,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  MANAGED_POLICY_SCHEMA_URL,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -37,6 +38,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
     Effect.gen(function* () {
       const policy = yield* loadFrom(
         JSON.stringify({
+          $schema: MANAGED_POLICY_SCHEMA_URL,
           schemaVersion: 1,
           organization: "Example Corp",
           supportUrl: "https://it.example/t3",
