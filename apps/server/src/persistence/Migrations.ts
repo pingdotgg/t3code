@@ -350,7 +350,9 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
         THEN json_extract(payload_json, '$.sideChat.anchor.threadId') END IS NOT NULL
     `.pipe(Effect.catch((cause) => Effect.logWarning("Side-chat anchor index failed", { cause })));
     yield* backfillSideChatSectionsAtStartup().pipe(
-      Effect.catch((cause) => Effect.logWarning("Side-chat section backfill failed", { cause })),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Side-chat section backfill failed", { cause }),
+      ),
     );
   }
   return executedMigrations;

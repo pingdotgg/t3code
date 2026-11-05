@@ -182,6 +182,26 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("still starts when a side-chat payload is malformed", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, payload_json)
+        VALUES ('bad', 'project-1', 'bad', 'codex', 'full-access', 'default', 'x', 'x',
+          ${JSON.stringify({ sideChat: { lessonThreadId: "lesson" } })})
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        VALUES ('m1', 'lesson', 'assistant', 0, 'x', 'x', ${JSON.stringify({ text: "hi" })})
+      `;
+      yield* runMigrations();
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([30, 54])("still starts with a site-local migration at id %s", (id) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
