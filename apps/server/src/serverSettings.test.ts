@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProjectScript,
   ProviderDriverKind,
+  type ProviderInstanceEnvironment,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   SecretProviderId,
@@ -1280,6 +1281,50 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       );
       assert.equal(reloaded.providerInstances[instanceId]?.environment?.[0]?.value, expected);
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect.each(
+    [
+      { label: "redacted then empty sensitive", duplicate: { value: "", sensitive: true } },
+      {
+        label: "empty sensitive then redacted",
+        duplicate: { value: "", sensitive: true },
+        redactedLast: true,
+      },
+      { label: "redacted then plain", duplicate: { value: "plain-foo", sensitive: false } },
+    ].map((testCase) => [testCase.label, testCase] as const),
+  )(
+    "keeps a stored secret a redacted row still claims when a duplicate name is saved (%s)",
+    ([, { duplicate, redactedLast }]) =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const save = (environment: ProviderInstanceEnvironment) =>
+          service.updateSettings({
+            providerInstances: {
+              [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+            },
+          });
+        yield* save([{ name: "FOO", value: "stored-foo", sensitive: true }]);
+        const redacted = { name: "FOO", value: "", sensitive: true, valueRedacted: true };
+        const copy = { name: "FOO", ...duplicate };
+        yield* save(redactedLast ? [copy, redacted] : [redacted, copy]);
+
+        const reloaded = yield* Effect.gen(function* () {
+          const fresh = yield* ServerSettingsModule.ServerSettingsService;
+          return yield* fresh.getSettings;
+        }).pipe(
+          Effect.provide(
+            Layer.fresh(ServerSettingsModule.layer).pipe(
+              Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+            ),
+          ),
+        );
+        assert.equal(
+          reloaded.providerInstances[instanceId]?.environment?.[redactedLast ? 1 : 0]?.value,
+          "stored-foo",
+        );
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect.each([true, false])(
