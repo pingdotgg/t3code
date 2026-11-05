@@ -17,6 +17,7 @@ function createSpeech() {
     available: true,
     state: { phase: "idle", error: null, errorAction: null } as VoiceInputState<true>,
     start: vi.fn(async () => {}),
+    startPending: vi.fn(() => false),
     stop: vi.fn(async () => {}),
     cancel: vi.fn(),
   };
@@ -120,6 +121,16 @@ it("stops and cancels the recording owner even after focus moves", async () => {
   expect(fixture.comment.stop).toHaveBeenCalledOnce();
   expect(fixture.comment.cancel).toHaveBeenCalledOnce();
   expect(fixture.main.start).not.toHaveBeenCalled();
+});
+
+it("cancels a start that is still checking the environment", async () => {
+  const fixture = setup();
+  await using screen = await render(fixture.view());
+  fixture.comment.startPending.mockReturnValue(true);
+  screen.container.querySelector<HTMLTextAreaElement>('[aria-label="Main"]')!.focus();
+  await act(() => key("keydown", "Escape"));
+  expect(fixture.comment.cancel).toHaveBeenCalledOnce();
+  expect(fixture.main.cancel).not.toHaveBeenCalled();
 });
 
 it("finishes hold dictation on release", async () => {

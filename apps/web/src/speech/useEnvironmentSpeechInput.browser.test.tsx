@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   microphoneFailure: true,
   missingModel: false,
   downloadGate: null as { promise: Promise<void>; resolve(): void } | null,
+  statusGate: null as Promise<void> | null,
   downloadCancelled: false,
   microphoneRequests: 0,
   onLevel: (_level: number) => {},
@@ -50,12 +51,19 @@ vi.mock("../localApi", () => ({ ensureLocalApi: () => ({}) }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
   getEnvironmentSpeechStatus: () =>
-    Effect.succeed({
-      supported: true,
-      state: mocks.busy ? "transcribing" : mocks.missingModel ? "missing-model" : "ready",
-      model: "test",
-      modelId: "test-model",
-      size: 731_357_568,
+    Effect.promise(async () => {
+      await mocks.statusGate;
+      return {
+        supported: true as const,
+        state: mocks.busy
+          ? ("transcribing" as const)
+          : mocks.missingModel
+            ? ("missing-model" as const)
+            : ("ready" as const),
+        model: "test",
+        modelId: "test-model",
+        size: 731_357_568,
+      };
     }),
   downloadEnvironmentSpeechModel: () =>
     Effect.promise(async () => {
@@ -139,6 +147,7 @@ function setup() {
   mocks.microphoneFailure = true;
   mocks.missingModel = false;
   mocks.downloadGate = null;
+  mocks.statusGate = null;
   mocks.downloadCancelled = false;
   mocks.microphoneRequests = 0;
   mocks.ownerKey = "draft";
@@ -247,7 +256,18 @@ it("opens setup before requesting microphone access for a missing model", async 
   mocks.missingModel = true;
   const probe = createProbe();
   await using _screen = await render(probe.view());
-  await act(() => probe.voice.start());
+  const status = Promise.withResolvers<void>();
+  mocks.statusGate = status.promise;
+  let starting!: Promise<void>;
+  await act(async () => {
+    starting = probe.voice.start();
+  });
+  expect(probe.voice.state.phase).toBe("idle");
+  await act(async () => {
+    status.resolve();
+    await starting;
+  });
+  expect(probe.voice.state.phase).toBe("idle");
   expect(probe.voice.setup.open).toBe(true);
   expect(probe.voice.setup.step).toBe(0);
   expect(mocks.microphoneRequests).toBe(0);
