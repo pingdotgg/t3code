@@ -21,6 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as CodexInstallation from "./CodexInstallation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const archive = Buffer.from(
   "H4sIAAAAAAAC/+3W0W6DIBQGYB/FcD0sKNSkD7J7aom6tmAQtzXL3n3QZM3qdWVt+n8XoCckJp78wLY3q8bu9Ge2HBbUUp7nYD4H8s9zrNdSsCxnWQLT6JULn8ye09K9h/u2/c0/jSM9xqGzo0+bf3Gdf15WQiD/Kdy61/CA+z8dlO9Wrv2387+c5Z9VZY38p7BY0+Gh8t/sVauLt9Ga9Pnnop7ln1e4/6fxRQ7qZCf/qt3YW0M2OX/JyfvljbCCy3XBSaiGH9VqH4tKuaZbC6qG4aDpTrmP3sQV2nh3Gmxvzqsud0vyjaABAAAAAAAAAAAAAAAk8gOq19rvACgAAA==",
@@ -46,6 +47,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     githubToken?: string;
     githubCredential?: () => string | undefined;
     releaseResponse?: () => unknown;
+    enableProviderUpdateChecks?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -155,6 +157,11 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
         }),
       ),
     ),
+    Effect.provide(
+      ServerSettings.ServerSettingsService.layerTest({
+        enableProviderUpdateChecks: input.enableProviderUpdateChecks ?? true,
+      }),
+    ),
   );
   return {
     installation,
@@ -180,7 +187,10 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
   "reuses installed Codex %s without downloading or taking ownership of it",
   (version) =>
     Effect.gen(function* () {
-      const h = yield* makeHarness({ local: { version } });
+      const h = yield* makeHarness({
+        local: { version },
+        options: { releaseAsset: undefined },
+      });
       expect(yield* h.installation.start()).toMatchObject({
         source: "local",
         phase: "succeeded",
@@ -196,6 +206,7 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
       });
       yield* h.installation.acquire().pipe(Effect.scoped);
       expect(h.downloads()).toBe(0);
+      expect(h.releaseChecks()).toBe(0);
       expect(yield* h.fs.exists(h.installation.managedDirectory)).toBe(false);
       expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
         "--version",
@@ -445,31 +456,63 @@ it.effect("requires an update before running an older activated managed installa
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect("updates an older supported managed installation to the pinned release on startup", () =>
-  Effect.gen(function* () {
-    const first = yield* makeHarness();
-    yield* first.installation.start();
-    yield* terminalState(first.installation);
-    const executable = yield* first.installation.resolve();
-    const oldDirectory = `${first.installation.managedDirectory}/0.156.0`;
-    yield* first.fs.rename(executable.managedVersionDirectory!, oldDirectory);
-    for (const name of ["codex-package.json", ".install-complete.json"]) {
-      const file = `${oldDirectory}/${name}`;
+it.effect.each(["enabled", "disabled", "discovery fails"] as const)(
+  "updates an older supported managed installation after startup discovery: %s",
+  (policy) =>
+    Effect.gen(function* () {
+      const first = yield* makeHarness();
+      yield* first.installation.start();
+      yield* terminalState(first.installation);
+      const executable = yield* first.installation.resolve();
+      const oldDirectory = `${first.installation.managedDirectory}/0.156.0`;
+      yield* first.fs.rename(executable.managedVersionDirectory!, oldDirectory);
+      for (const name of ["codex-package.json", ".install-complete.json"]) {
+        const file = `${oldDirectory}/${name}`;
+        yield* first.fs.writeFileString(
+          file,
+          (yield* first.fs.readFileString(file)).replaceAll("0.156.1", "0.156.0"),
+        );
+      }
       yield* first.fs.writeFileString(
-        file,
-        (yield* first.fs.readFileString(file)).replaceAll("0.156.1", "0.156.0"),
+        `${first.installation.managedDirectory}/active.json`,
+        '{"version":"0.156.0"}',
       );
-    }
-    yield* first.fs.writeFileString(
-      `${first.installation.managedDirectory}/active.json`,
-      '{"version":"0.156.0"}',
-    );
-    const restarted = yield* makeHarness({ baseDir: first.baseDir });
-    expect((yield* restarted.installation.state).operationId).not.toBeNull();
-    expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
-    expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
-    expect(restarted.downloads()).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      const restarted = yield* makeHarness({
+        baseDir: first.baseDir,
+        options: { releaseAsset: undefined },
+        enableProviderUpdateChecks: policy !== "disabled",
+        releaseResponse: () =>
+          policy === "discovery fails" ? Response.json({}, { status: 503 }) : undefined,
+      });
+      expect(restarted.releaseChecks()).toBe(policy === "disabled" ? 0 : 1);
+      if (policy !== "enabled") {
+        expect((yield* restarted.installation.state).phase).toBe("idle");
+        expect((yield* restarted.installation.state).operationId).toBeNull();
+        expect((yield* restarted.installation.resolve()).version).toBe("0.156.0");
+        expect(restarted.downloads()).toBe(0);
+        expect(
+          yield* first.fs.readFileString(`${first.installation.managedDirectory}/active.json`),
+        ).toBe('{"version":"0.156.0"}');
+        if (policy === "disabled") {
+          yield* restarted.installation.start();
+          expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
+          expect((yield* restarted.installation.resolve()).version).toBe(asset.version);
+          expect(restarted.releaseChecks()).toBe(1);
+          expect(restarted.downloads()).toBe(1);
+        }
+        return;
+      }
+      expect((yield* restarted.installation.state).operationId).not.toBeNull();
+      expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
+      expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
+      expect(restarted.downloads()).toBe(1);
+      yield* restarted.installation.refresh({ fresh: true });
+      expect(restarted.downloads()).toBe(1);
+      yield* restarted.installation.remove();
+      yield* restarted.installation.refresh({ fresh: true });
+      expect((yield* restarted.installation.state).installedVersion).toBeNull();
+      expect(restarted.downloads()).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("rejects corrupted downloads without publishing a runtime", () =>

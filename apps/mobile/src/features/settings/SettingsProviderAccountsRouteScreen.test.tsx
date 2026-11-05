@@ -59,7 +59,7 @@ vi.mock("../../components/ui/ListActionRow", () => ({
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
-  AndroidSettingsEnvironmentFilter: () => null,
+  useSettingsEnvironmentMenu: () => ({ title: "Filter", items: [] }),
   SettingsEnvironmentFilterHeader: () => null,
 }));
 vi.mock("./components/SettingsSwitchRow", () => ({

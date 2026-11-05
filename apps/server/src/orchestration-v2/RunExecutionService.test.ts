@@ -48,6 +48,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import { ProviderUsageLimitHook, type UsageLimitResolution } from "./ProviderPoolFailover.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
@@ -3698,6 +3699,10 @@ function runBackgroundItemScenario(
     readonly onFinalized?: (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) => Effect.Effect<void>;
+    readonly onSinkWrite?: (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) => Effect.Effect<void>;
+    readonly usageLimitResolution?: UsageLimitResolution;
   },
 ) {
   return Effect.gen(function* () {
@@ -3715,10 +3720,16 @@ function runBackgroundItemScenario(
           Layer.succeed(PreviewAgentActivity.PreviewAgentActivity, previewActivity),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
+          options?.usageLimitResolution === undefined
+            ? Layer.empty
+            : Layer.succeed(ProviderUsageLimitHook, {
+                onUsageLimit: () => Effect.succeed(options.usageLimitResolution!),
+              }),
           Layer.mock(EventSink.EventSinkV2)({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
+                yield* options?.onSinkWrite?.(input.events) ?? Effect.void;
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,
@@ -3842,25 +3853,79 @@ function runBackgroundItemScenario(
   });
 }
 
+const nativeChildTurnEvent = (
+  ids: BackgroundScenarioIds,
+  status: "running" | "completed",
+): ProviderAdapter.ProviderAdapterV2Event =>
+  ({
+    type: "provider_turn.updated",
+    driver,
+    threadId: ids.childThreadId,
+    providerTurn: {
+      id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
+      providerThreadId: ProviderThreadId.make(`${ids.providerThreadId}:child`),
+      nodeId: NodeId.make(`${ids.subagentNodeId}:child-root`),
+      runAttemptId: null,
+      status,
+    },
+  }) as ProviderAdapter.ProviderAdapterV2Event;
+
+it.effect.each([
+  ["settles", false],
+  ["keeps live", true],
+] as const)("%s a failed-over attempt's run-owned children (flagged: %s)", ([, flagged]) =>
+  Effect.gen(function* () {
+    const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const observed = yield* runBackgroundItemScenario(
+      `failed-over-child-${flagged}`,
+      (ids) => [
+        childThreadCreatedEvent(ids),
+        subagentEvent(ids, "running"),
+        nativeChildTurnEvent(ids, "running"),
+        {
+          ...rootTerminalEvent(ids, "failed"),
+          failure: {
+            class: "usage_limit",
+            message: "Usage limit reached",
+            code: null,
+            retryable: null,
+          },
+          ...(flagged ? { childTurnsContinue: true } : {}),
+        } as ProviderAdapter.ProviderAdapterV2Event,
+        subagentEvent(ids, "completed"),
+        nativeChildTurnEvent(ids, "completed"),
+      ],
+      {
+        keepEventStreamOpen: true,
+        usageLimitResolution: { type: "failed_over" },
+        onSinkWrite: (events) => Ref.update(written, (current) => [...current, ...events]),
+      },
+    );
+
+    const cascaded = yield* Ref.get(written);
+    assert.isFalse(
+      cascaded.some((event) => event.type === "run.updated"),
+      "the replacement attempt owns the run",
+    );
+    if (flagged) {
+      assert.deepEqual(observed, ["subagent:running", "subagent:completed"]);
+      assert.deepEqual(cascaded, []);
+      return;
+    }
+    assert.deepEqual(observed, ["subagent:running"]);
+    assert.deepEqual(
+      cascaded.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.payload.status] : [],
+      ),
+      ["failed"],
+    );
+  }),
+);
+
 it.effect("keeps a failed root's still-running native children live while the run settles", () =>
   Effect.gen(function* () {
     const finalized = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
-    const childTurn = (
-      ids: BackgroundScenarioIds,
-      status: "running" | "completed",
-    ): ProviderAdapter.ProviderAdapterV2Event =>
-      ({
-        type: "provider_turn.updated",
-        driver,
-        threadId: ids.childThreadId,
-        providerTurn: {
-          id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
-          providerThreadId: ProviderThreadId.make(`${ids.providerThreadId}:child`),
-          nodeId: NodeId.make(`${ids.subagentNodeId}:child-root`),
-          runAttemptId: null,
-          status,
-        },
-      }) as ProviderAdapter.ProviderAdapterV2Event;
+    const childTurn = nativeChildTurnEvent;
     const observed = yield* runBackgroundItemScenario(
       "failed-root-live-child",
       (ids) => [

@@ -843,6 +843,16 @@ function queuedRunModelSelection(
     : run.modelSelection;
 }
 
+/**
+ * Claude's wake only drains output its CLI already produced and never prompts, and it is the only
+ * pooled wake of this kind (Codex wakes are prompts). Moving one needs that busy session gone.
+ */
+function isBufferedWake(
+  message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "creationSource">,
+): boolean {
+  return message.createdBy === "agent" && message.creationSource === "provider";
+}
+
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
@@ -1857,7 +1867,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
-      const repinnedRun = yield* repinQueuedRun({ projection, queuedRun: pinnedRun });
+      const wakeStaysOnMember =
+        queuedMessage !== undefined &&
+        isBufferedWake(queuedMessage) &&
+        pinnedRun.providerInstanceId === projection.thread.providerInstanceId;
+      const repinnedRun = wakeStaysOnMember
+        ? null
+        : yield* repinQueuedRun({ projection, queuedRun: pinnedRun });
       const poolUnavailable = repinnedRun === "unavailable";
       if (repinnedRun !== null && repinnedRun !== "unavailable") {
         projection = yield* readCommandProjection(threadId);
@@ -4959,6 +4975,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const resumesNativeThreadOnInstance = Effect.fn("Orchestrator.resumesNativeThreadOnInstance")(
+    function* (input: {
+      readonly command: OrchestrationV2ServerCommand;
+      readonly projection: Pick<
+        OrchestrationV2ThreadProjection,
+        | "runs"
+        | "providerSessions"
+        | "providerThreads"
+        | "providerTurns"
+        | "attempts"
+        | "nodes"
+        | "thread"
+      >;
+      readonly run: OrchestrationV2Run;
+      readonly providerThread: OrchestrationV2ProviderThread;
+      readonly modelSelection: ModelSelection;
+    }) {
+      if (
+        input.run.providerInstanceId === input.modelSelection.instanceId ||
+        input.providerThread.nativeThreadRef === null
+      ) {
+        return false;
+      }
+      const plan = yield* providerSwitchService
+        .plan({
+          projection: {
+            ...input.projection,
+            thread: { ...input.projection.thread, modelSelection: input.run.modelSelection },
+          },
+          targetModelSelection: input.modelSelection,
+        })
+        .pipe(mapDispatchError(input.command));
+      return plan.transition.type === "restart_and_resume";
+    },
+  );
+
   const replaceRunAttempt = Effect.fn("Orchestrator.replaceRunAttempt")(function* (input: {
     readonly command: OrchestrationV2ServerCommand;
     readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
@@ -5027,18 +5079,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | null = null;
     let restartHandoff: OrchestrationV2ContextHandoff | null = null;
     let restartTransfer: OrchestrationV2ContextTransfer | null = null;
-    const canResumeAcrossInstances =
-      providerInstanceChanged &&
-      input.providerThread.nativeThreadRef !== null &&
-      (yield* providerSwitchService
-        .plan({
-          projection: {
-            ...input.projection,
-            thread: { ...input.projection.thread, modelSelection: input.run.modelSelection },
-          },
-          targetModelSelection: input.modelSelection,
-        })
-        .pipe(mapDispatchError(input.command))).transition.type === "restart_and_resume";
+    const canResumeAcrossInstances = yield* resumesNativeThreadOnInstance({
+      command: input.command,
+      projection: input.projection,
+      run: input.run,
+      providerThread: input.providerThread,
+      modelSelection: input.modelSelection,
+    });
     const requiresProviderThreadHandoff =
       (providerInstanceChanged && !canResumeAcrossInstances) ||
       input.selectionTransition?.type === "create_with_handoff";
@@ -5804,6 +5851,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (routed.type !== "routed" || routed.decision.type !== "member") {
       return;
     }
+    const limitedSession = projection.providerSessions.find(
+      (session) =>
+        session.id === providerThread.providerSessionId &&
+        session.status !== "stopped" &&
+        session.status !== "error",
+    );
+    const limitedSessionBusy =
+      limitedSession !== undefined &&
+      (yield* sessionHasBackgroundWork(limitedSession, projection.providerThreads));
+    // A handoff runs in its own session, so a busy one stays up. Resuming the busy session's
+    // native thread would fork its history, so the run fails like an unpooled limit instead.
+    if (
+      limitedSessionBusy &&
+      (yield* resumesNativeThreadOnInstance({
+        command,
+        projection,
+        run,
+        providerThread,
+        modelSelection: routed.selection,
+      }))
+    ) {
+      yield* Effect.logInfo(
+        "Skipping pool failover: the limited provider session still runs background work",
+        { threadId: command.threadId, runId: run.id, providerSessionId: limitedSession.id },
+      );
+      return;
+    }
+    const now = yield* DateTime.now;
+    const emitEvent = emit(events, command);
+    // The failed attempt's thread settles as in a failed run. This goes first because
+    // provider-thread.updated also moves the app thread's active provider thread.
+    if (providerThread.status === "active") {
+      yield* emitEvent({
+        type: "provider-thread.updated",
+        threadId: command.threadId,
+        driver: providerThread.driver,
+        providerInstanceId: providerThread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...providerThread, status: "idle", updatedAt: now },
+      });
+    }
     const rootNode = projection.nodes.find((candidate) => candidate.id === rootNodeId);
     const replaced = yield* replaceRunAttempt({
       command,
@@ -5829,8 +5917,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !(item.type === "error" && item.nodeId === rootNodeId) &&
         !(item.type === "user_message" && item.messageId === run.userMessageId),
     });
-    const now = yield* DateTime.now;
-    const emitEvent = emit(events, command);
     const providers = yield* poolCatalog.getPublishedProviders;
     const nameOf = (instanceId: ProviderInstanceId) =>
       providers.find((provider) => provider.instanceId === instanceId)?.displayName ?? instanceId;
@@ -5863,13 +5949,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         message: `${nameOf(run.providerInstanceId)} reached its usage limit. Continuing on ${nameOf(routed.selection.instanceId)}.`,
       },
     });
-    const releasedSession = projection.providerSessions.find(
-      (session) =>
-        session.id === providerThread.providerSessionId &&
-        session.id !== replaced.providerThread.providerSessionId &&
-        session.status !== "stopped" &&
-        session.status !== "error",
-    );
+    const releasedSession =
+      limitedSessionBusy || limitedSession?.id === replaced.providerThread.providerSessionId
+        ? undefined
+        : limitedSession;
     if (releasedSession !== undefined) {
       yield* emitEvent({
         type: "provider-session.detached",
@@ -6123,7 +6206,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    const modelSelection = (yield* routeSelection({
+    const routedSelection = yield* routeSelection({
       commandId: command.commandId,
       commandType: command.type,
       selection: command.modelSelection ?? projection.thread.modelSelection,
@@ -6133,7 +6216,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
       threadId: command.threadId,
       projectId: projection.thread.projectId,
-    })).selection;
+    });
+    const modelSelection =
+      routedSelection.type === "routed" && isBufferedWake(command)
+        ? { ...routedSelection.selection, instanceId: projection.thread.providerInstanceId }
+        : routedSelection.selection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,

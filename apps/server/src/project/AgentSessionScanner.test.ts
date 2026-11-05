@@ -298,6 +298,29 @@ const awaitGateReader = (gatePath: string) =>
     (handle) => Effect.promise(() => handle.close()),
   );
 
+/**
+ * The read deadline fires for every read still in flight, so a real `cat` of a
+ * healthy file must have exited before a test moves the clock past it.
+ */
+const layerReportingFinishedReads = (
+  filePaths: ReadonlyArray<string>,
+  finishedReads: Queue.Queue<string>,
+) =>
+  Layer.effect(
+    ProcessRunner.ProcessRunner,
+    Effect.gen(function* () {
+      const runner = yield* ProcessRunner.ProcessRunner;
+      return ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          const filePath = input.args.at(-1) ?? "";
+          return filePaths.includes(filePath)
+            ? runner.run(input).pipe(Effect.ensuring(Queue.offer(finishedReads, filePath)))
+            : runner.run(input);
+        },
+      });
+    }),
+  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(NodeServices.layer));
+
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   describe("scan", () => {
     it.effect("reads Claude project cwds from transcripts, newest first", () =>
@@ -1995,8 +2018,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
-    // Real cat completions must not race a virtual jump past every read's deadline.
-    it.live("still reads the git identity of repositories next to a blocked one", () =>
+    it.effect("still reads the git identity of repositories next to a blocked one", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -2023,28 +2045,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           });
         }
 
-        // The deadline fires for every read still in flight, so on a slow runner the
-        // neighbours' `cat` children must have exited before the clock moves.
-        const neighbourConfigs = new Set(
-          [repos[0], repos[2]].map((repo) => path.join(repo, ".git", "config")),
-        );
         const finishedNeighbourReads = yield* Queue.unbounded<string>();
-        const processRunner = Layer.effect(
-          ProcessRunner.ProcessRunner,
-          Effect.gen(function* () {
-            const runner = yield* ProcessRunner.ProcessRunner;
-            return ProcessRunner.ProcessRunner.of({
-              run: (input) => {
-                const filePath = input.args.at(-1) ?? "";
-                return neighbourConfigs.has(filePath)
-                  ? runner
-                      .run(input)
-                      .pipe(Effect.ensuring(Queue.offer(finishedNeighbourReads, filePath)))
-                  : runner.run(input);
-              },
-            });
-          }),
-        ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(NodeServices.layer));
+        const processRunner = layerReportingFinishedReads(
+          [repos[0], repos[2]].map((repo) => path.join(repo, ".git", "config")),
+          finishedNeighbourReads,
+        );
 
         for (let attempt = 1; attempt <= 2; attempt++) {
           const scan = yield* Effect.forkChild(
@@ -2134,8 +2139,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const root = yield* makeTempDir("t3code-workspace-blocked-pointers-");
         const pointerCheckout = path.join(root, "pointer");
+        const blockedPointer = path.join(pointerCheckout, ".git");
         yield* fileSystem.makeDirectory(pointerCheckout);
-        yield* makeOpenGate(path.join(pointerCheckout, ".git"));
+        yield* makeOpenGate(blockedPointer);
         const worktree = path.join(root, "worktree");
         const worktreeGitDir = path.join(root, "main", ".git", "worktrees", "worktree");
         yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
@@ -2153,6 +2159,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           });
         }
 
+        const finishedPointerReads = yield* Queue.unbounded<string>();
+        const processRunner = layerReportingFinishedReads(
+          [path.join(worktree, ".git")],
+          finishedPointerReads,
+        );
+
         // One scanner across scans: later scans skip the files that blocked.
         yield* Effect.gen(function* () {
           const scanner = yield* AgentSessionScanner.AgentSessionScanner;
@@ -2161,13 +2173,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           );
           const first = yield* Effect.forkChild(scanPaths);
           // Pointer files are read first, then the commondir files they lead to.
-          for (const gatePath of [
-            path.join(pointerCheckout, ".git"),
-            path.join(worktreeGitDir, "commondir"),
-          ]) {
+          for (const gatePath of [blockedPointer, path.join(worktreeGitDir, "commondir")]) {
             yield* Effect.scoped(
               Effect.gen(function* () {
                 yield* awaitGateReader(gatePath);
+                if (gatePath === blockedPointer) yield* Queue.take(finishedPointerReads);
                 yield* TestClock.adjust("2 seconds");
               }),
             );
@@ -2176,7 +2186,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           for (let attempt = 2; attempt <= LIBUV_POOL_SIZE + 1; attempt++) {
             expect(yield* scanPaths, `scan ${attempt}`).toEqual([pointerCheckout]);
           }
-        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath, processRunner })));
         // Hangs if the scans left libuv pool threads stuck in open().
         yield* fileSystem.readFileString(path.join(worktree, ".git"));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

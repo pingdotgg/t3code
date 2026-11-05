@@ -67,10 +67,8 @@ vi.mock("react-native-screens", () => ({
       </div>
     ) : null,
 }));
-vi.mock("./ui/AndroidScreenHeader", () => ({
-  AndroidSheetHeader: ({ onBack }: { onBack: () => void }) => (
-    <button onClick={onBack}>Header Back</button>
-  ),
+vi.mock("./ui/AppBar", () => ({
+  AppBar: ({ onBack }: { onBack: () => void }) => <button onClick={onBack}>Header Back</button>,
 }));
 vi.mock("../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("react-native-safe-area-context", () => ({
