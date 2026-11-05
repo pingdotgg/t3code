@@ -2,7 +2,7 @@ import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import { useChangeRequestTerms } from "~/hooks/useSettings";
 
-import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
+import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
