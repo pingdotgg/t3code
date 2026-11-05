@@ -67,6 +67,15 @@ export function savedPullRequestStack(
   };
 }
 
+/** The list summary describes the layer it was opened from, so another layer's route drops it. */
+export function pullRequestLayerParams<Params extends { readonly initialSummary?: unknown }>(
+  params: Params,
+  number: number,
+) {
+  const { initialSummary: _, ...layer } = params;
+  return { ...layer, number };
+}
+
 export function singlePullRequestMergeAllowed(input: {
   readonly supportsStackActions: boolean;
   readonly hasStack: boolean;
