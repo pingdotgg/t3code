@@ -1,8 +1,12 @@
 import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 import { BackgroundThreadContext } from "../components/chat/backgroundThread";
-import { useUsageLimitsRefresh } from "./useUsageLimitsRefresh";
+import { useUsageLimitsPanel } from "../components/chat/useUsageLimitsPanel";
+
+vi.mock("../components/chat/ComposerUsageLimits", () => ({ usageLimitsBannerItem: () => ({}) }));
+vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => mocks.refresh }));
@@ -18,31 +22,66 @@ function setup() {
   return mocks;
 }
 
-function Probe() {
-  useUsageLimitsRefresh(
-    EnvironmentId.make("retained-usage"),
-    ProviderInstanceId.make("cursor-retained"),
-    true,
-    ProviderDriverKind.make("cursor"),
+function Probe({ visible }: { readonly visible: boolean }) {
+  const instanceId = ProviderInstanceId.make("cursor-retained");
+  const driver = ProviderDriverKind.make("cursor");
+  const panel = useUsageLimitsPanel({
+    environmentId: EnvironmentId.make("retained-usage"),
+    threadKey: "thread-one",
+    panelKey: "report-one",
+    providerInstanceId: instanceId,
+    providerDriver: driver,
+    visible,
+    providers: [
+      {
+        instanceId,
+        driver,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-04-10T00:00:01.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        usageLimits: {
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 70 }],
+        },
+      },
+    ],
+    sources: [],
+  });
+  return (
+    <button type="button" onClick={panel.open}>
+      Open usage report
+    </button>
   );
-  return null;
 }
 
-it("pauses a retained report under Settings and Usage, then refreshes on return", async () => {
+it("pauses a retained report when its column is hidden or covered, then refreshes on return", async () => {
   const { refresh } = setup();
   using _timers = fakeTimers({ now: 4_000_000 });
-  await using screen = await render(
+  const probe = (visible: boolean) => (
     <BackgroundThreadContext value>
-      <Probe />
-    </BackgroundThreadContext>,
-    { router: "/environment-one/thread-one" },
+      <Probe visible={visible} />
+    </BackgroundThreadContext>
   );
+  await using screen = await render(probe(true), { router: "/environment-one/thread-one" });
+  expect(refresh).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Open usage report" }));
   expect(refresh).toHaveBeenCalledTimes(1);
+  await screen.rerender(probe(false));
+  await act(() => vi.advanceTimersByTime(600_000));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  await screen.rerender(probe(true));
+  expect(refresh).toHaveBeenCalledTimes(2);
   for (const href of ["/settings", "/usage"]) {
     await act(() => screen.router!.navigate({ href }));
     await act(() => vi.advanceTimersByTime(600_000));
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledTimes(2);
   }
   await act(() => screen.router!.navigate({ href: "/environment-one/thread-one" }));
-  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(refresh).toHaveBeenCalledTimes(3);
 });

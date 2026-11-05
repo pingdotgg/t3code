@@ -16,6 +16,7 @@ export function useUsageLimitsPanel(input: {
   readonly environmentId: EnvironmentId;
   readonly threadKey: string;
   readonly panelKey: string | null;
+  readonly visible: boolean;
   readonly providerInstanceId: ProviderInstanceId | null;
   readonly providerDriver: ServerProvider["driver"] | null;
   readonly providers: readonly ServerProvider[];
@@ -25,6 +26,7 @@ export function useUsageLimitsPanel(input: {
     environmentId,
     threadKey,
     panelKey,
+    visible,
     providerInstanceId,
     providerDriver,
     providers,
@@ -42,7 +44,12 @@ export function useUsageLimitsPanel(input: {
     panel !== null && panelKey !== null && panel.key === panelKey && providerInstanceId !== null
       ? collectProviderUsageLimits(providerInstanceId, providers, sources, panel.now)
       : null;
-  useUsageLimitsRefresh(environmentId, providerInstanceId, report !== null, providerDriver);
+  useUsageLimitsRefresh(
+    environmentId,
+    providerInstanceId,
+    visible && report !== null,
+    providerDriver,
+  );
   const banner =
     report !== null && panel !== null
       ? // A fresh id per opening: the stack keeps the last dismissed id as "exiting".
