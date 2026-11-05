@@ -181,6 +181,24 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
     : records;
 }
 
+// Pi retains every entry, keeping tool results as links outside the history budget.
+function makePiToolResultTranscript(sessionId: string, cwd: string, recordCount: number): string {
+  const entry = (id: number, message: { readonly role: string; readonly content: string }) =>
+    encodeTranscriptRecord({
+      type: "message",
+      id: `e${id}`,
+      parentId: id === 0 ? null : `e${id - 1}`,
+      message,
+    });
+  return [
+    encodeTranscriptRecord({ type: "session", version: 3, id: sessionId, cwd }),
+    entry(0, { role: "user", content: "Imported prompt" }),
+    ...Array.from({ length: recordCount - 2 }, (_, index) =>
+      entry(index + 1, { role: "toolResult", content: "Tool output" }),
+    ),
+  ].join("\n");
+}
+
 const makeFileIdentityFixture = Effect.fn("AgentSessionScanner.test.makeFileIdentityFixture")(
   function* (originalInode = 10_000_000_000_000_001n, replacementInode = 10_000_000_000_000_000n) {
     const path = yield* Path.Path;
@@ -1458,22 +1476,20 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
         const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
         const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
-        const exactLimit = makeRecordLimitTranscript(workspace, false);
-        // The newer transcript has 100,001 records; the older one has exactly 100,000.
-        for (const [sessionId, contents, mtimeMs] of [
-          ["excessive", exactLimit.replace("record-limit-session", "excessive") + "{}\n", nowMs],
-          ["older", exactLimit, nowMs - 1_000],
+        // The newer transcript retains 100,001 records; the older one exactly 100,000.
+        for (const [sessionId, recordCount, mtimeMs] of [
+          ["excessive", 100_001, nowMs],
+          ["older", 100_000, nowMs - 1_000],
         ] as const) {
           yield* writeTranscript({
             filePath: path.join(
-              codexHomePath,
+              claudeHomePath,
+              "pi-agent",
               "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${sessionId}.jsonl`,
+              "--workspace--",
+              `${sessionId}.jsonl`,
             ),
-            contents,
+            contents: makePiToolResultTranscript(sessionId, workspace, recordCount),
             mtimeMs,
           });
         }
@@ -1483,9 +1499,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: workspace,
         });
         expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
-        expect(outcomes[1]).toMatchObject({
-          thread: { providerSessionId: "record-limit-session" },
-        });
+        expect(outcomes[1]).toMatchObject({ thread: { providerSessionId: "older" } });
       }),
     );
 
@@ -1502,26 +1516,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         for (const [index, recordCount] of recordCounts.entries()) {
           yield* writeTranscript({
             filePath: path.join(
-              codexHomePath,
+              claudeHomePath,
+              "pi-agent",
               "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${index}.jsonl`,
+              "--workspace--",
+              `${index}.jsonl`,
             ),
-            contents:
-              [
-                encodeTranscriptRecord({
-                  type: "session_meta",
-                  payload: { id: `session-${index}`, cwd: workspace },
-                }),
-                encodeTranscriptRecord({
-                  type: "event_msg",
-                  payload: { type: "user_message", message: "Imported prompt" },
-                }),
-              ].join("\n") +
-              "\n" +
-              "{}\n".repeat(recordCount - 2),
+            contents: makePiToolResultTranscript(`session-${index}`, workspace, recordCount),
             mtimeMs: nowMs - index * 1_000,
           });
         }
