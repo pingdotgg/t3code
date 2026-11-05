@@ -512,7 +512,7 @@ export type OrchestrationV2SideChat = typeof OrchestrationV2SideChat.Type;
 export const OrchestrationV2ThreadShellSideChat = Schema.Struct({
   lessonThreadId: ThreadId,
   anchor: OrchestrationV2SideChatAnchor,
-  section: Schema.optional(OrchestrationV2SideChat.fields.section),
+  section: OrchestrationV2SideChat.fields.section,
   label: OrchestrationV2SideChat.fields.label,
   state: Schema.Literals(["open", "done"]),
   noteStatus: Schema.NullOr(OrchestrationV2SideChatOutcome.fields.status),

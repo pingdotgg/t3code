@@ -141,6 +141,47 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("fills missing side-chat sections once, nested side chats from their parent", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+      const sideChat = (threadId: string, createdAt: string, anchorThreadId: string) => sql`
+        INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, payload_json)
+        VALUES (${threadId}, 'project-1', ${threadId}, 'codex', 'full-access', 'default',
+          ${createdAt}, ${createdAt}, ${JSON.stringify({
+            sideChat: {
+              lessonThreadId: "lesson",
+              anchor: { threadId: anchorThreadId, messageId: "reply-2", start: 0, end: 0 },
+            },
+          })})
+      `;
+      yield* sideChat("parent", "2026-01-01T00:00:01Z", "lesson");
+      yield* sideChat("child", "2026-01-01T00:00:02Z", "parent");
+      for (const [id, text] of [
+        ["reply-1", "## Lesson 2: Ohm's law\nV = IR"],
+        ["reply-2", "## Lesson 3: later"],
+      ] as const) {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_messages
+            (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+          VALUES (${id}, 'lesson', 'assistant', 0, ${id}, ${id}, ${JSON.stringify({ text })})
+        `;
+      }
+
+      yield* runMigrations();
+      const sections = yield* sql<{ readonly thread_id: string; readonly section: string }>`
+        SELECT thread_id, json_extract(payload_json, '$.sideChat.section') AS section
+        FROM orchestration_v2_projection_threads ORDER BY thread_id
+      `;
+      assert.deepStrictEqual(sections, [
+        { thread_id: "child", section: "Lesson 2: Ohm's law" },
+        { thread_id: "parent", section: "Lesson 2: Ohm's law" },
+      ]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([30, 54])("still starts with a site-local migration at id %s", (id) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

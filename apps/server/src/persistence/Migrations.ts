@@ -220,30 +220,49 @@ const backfillSideChatSectionsAtStartup = Effect.fn("backfillSideChatSectionsAtS
   function* () {
     const sql = yield* SqlClient.SqlClient;
     // Projection rebuilds from events drop section for pre-APP-55 side chats; refill it at the next start.
-    const threads = yield* sql<{
+    const rows = yield* sql<{
       readonly thread_id: string;
       readonly created_at: string;
-      readonly payload_json: string;
-      readonly needs_update: number;
+      readonly side_chat_json: string;
     }>`
-    SELECT thread_id, created_at, payload_json,
-      CASE WHEN json_type(payload_json, '$.sideChat.section') IS NULL THEN 1 ELSE 0 END AS needs_update
+    SELECT thread_id, created_at,
+      json_object(
+        'lessonThreadId', json_extract(payload_json, '$.sideChat.lessonThreadId'),
+        'anchor', json_extract(payload_json, '$.sideChat.anchor'),
+        'section', json_extract(payload_json, '$.sideChat.section'),
+        'checked', json_type(payload_json, '$.sideChat.section') IS NOT NULL
+      ) AS side_chat_json
     FROM orchestration_v2_projection_threads
     WHERE json_valid(payload_json)
       AND json_type(payload_json, '$.sideChat') IS NOT NULL
     ORDER BY created_at, thread_id
   `;
-    if (threads.length === 0) return;
+    const sideChats = rows.map((row) => {
+      const sideChat = JSON.parse(row.side_chat_json) as {
+        lessonThreadId: string;
+        anchor: { threadId: string; messageId: string; start: number };
+        section: string | null;
+        checked: number;
+      };
+      return {
+        threadId: row.thread_id,
+        createdAt: row.created_at,
+        lessonThreadId: sideChat.lessonThreadId,
+        anchor: sideChat.anchor,
+        section: sideChat.checked === 1 ? sideChat.section : undefined,
+      };
+    });
     const lessonIds = [
       ...new Set(
-        threads.map((thread) => {
-          const payload = JSON.parse(thread.payload_json) as {
-            sideChat: { lessonThreadId: string };
-          };
-          return payload.sideChat.lessonThreadId;
-        }),
+        sideChats.flatMap((sideChat) =>
+          sideChat.section === undefined ? [sideChat.lessonThreadId] : [],
+        ),
       ),
     ];
+    if (lessonIds.length === 0) return;
+    const pendingIds = new Set(
+      sideChats.flatMap((sideChat) => (sideChat.section === undefined ? [sideChat.threadId] : [])),
+    );
     const messages = yield* sql<{
       readonly thread_id: string;
       readonly message_id: string;
@@ -264,26 +283,10 @@ const backfillSideChatSectionsAtStartup = Effect.fn("backfillSideChatSectionsAtS
     }
     const resolved = backfillSideChatSections({
       lessons: lessonMessages,
-      sideChats: threads.map((thread) => {
-        const payload = JSON.parse(thread.payload_json) as {
-          sideChat: {
-            lessonThreadId: string;
-            anchor: { threadId: string; messageId: string; start: number };
-            section?: string | null;
-          };
-        };
-        return {
-          threadId: thread.thread_id,
-          createdAt: thread.created_at,
-          lessonThreadId: payload.sideChat.lessonThreadId,
-          anchor: payload.sideChat.anchor,
-          section: payload.sideChat.section,
-        };
-      }),
+      sideChats,
     });
     for (const update of resolved) {
-      const thread = threads.find((candidate) => candidate.thread_id === update.threadId);
-      if (thread?.needs_update !== 1) continue;
+      if (!pendingIds.has(update.threadId)) continue;
       yield* sql`
       UPDATE orchestration_v2_projection_threads
       SET payload_json = json_set(payload_json, '$.sideChat.section', ${update.section})
