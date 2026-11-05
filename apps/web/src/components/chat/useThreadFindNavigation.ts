@@ -86,6 +86,7 @@ function revealThreadFindMatch(
     state.settledMatch = null;
     state.revealedMatch = null;
     state.pagingPosition = null;
+    state.positionedEntries = null;
     return;
   }
   const list = listRef.current;
