@@ -18,12 +18,13 @@ VARIABLES
   turn,      \* "idle" | "running" | "stopping": the chat's active run, if any (isActiveRun)
   queued,    \* how many runs have status "queued"
   held,      \* whether they are queueHeld (Stop holds them; only a user's client message resumes)
+  parked,    \* held queued runs of messages that reached the chat while it was done
   pending,   \* side-chat.outcome effects in the outbox, as <<chat, requestId>>
   nextReq,
   finishes,  \* finishSideChat calls since the chat last opened
   landed     \* requestId of the outcome that landed since it last opened, or 0
 
-vars == <<done, req, turn, queued, held, pending, nextReq, finishes, landed>>
+vars == <<done, req, turn, queued, held, parked, pending, nextReq, finishes, landed>>
 
 Init ==
   /\ done = [c \in Chats |-> "open"]
@@ -31,6 +32,7 @@ Init ==
   /\ turn = [c \in Chats |-> "idle"]
   /\ queued = [c \in Chats |-> 0]
   /\ held = [c \in Chats |-> FALSE]
+  /\ parked = [c \in Chats |-> 0]
   /\ pending = {}
   /\ nextReq = 1
   /\ finishes = [c \in Chats |-> 0]
@@ -38,9 +40,10 @@ Init ==
 
 \* One step inside a command: a record of the variables a command threads through.
 St == [done |-> done, req |-> req, turn |-> turn, queued |-> queued, held |-> held,
-       pending |-> pending, nextReq |-> nextReq, finishes |-> finishes, landed |-> landed]
+       parked |-> parked, pending |-> pending, nextReq |-> nextReq, finishes |-> finishes, landed |-> landed]
 Commit(s) ==
   /\ done' = s.done /\ req' = s.req /\ turn' = s.turn /\ queued' = s.queued /\ held' = s.held
+  /\ parked' = s.parked
   /\ pending' = s.pending /\ nextReq' = s.nextReq /\ finishes' = s.finishes /\ landed' = s.landed
 
 \* finishSideChat: done = generating with a fresh requestId, and a side-chat.outcome effect.
@@ -77,10 +80,14 @@ AutoFinishBelow(s0, t) ==
       r2 == IF Len(b) >= 2 THEN step(r1[1], b[2], r1[2]) ELSE r1
   IN r2[1]
 
-\* reopenDoneSideChats: the chat and every done side chat above it reopen.
+\* reopenDoneSideChats: the chat and every done side chat above it reopen. What each had parked
+\* is now an ordinary held queue; UserSend then releases the one in c.
 Reopen(s, c) ==
   LET up == IF c = "B" THEN {"A", "B"} ELSE {"A"}
   IN [s EXCEPT !.done = [x \in Chats |-> IF x \in up THEN "open" ELSE @[x]],
+               !.queued = [x \in Chats |-> IF x \in up THEN @[x] + s.parked[x] ELSE @[x]],
+               !.held = [x \in Chats |-> IF x \in up THEN @[x] \/ s.parked[x] > 0 ELSE @[x]],
+               !.parked = [x \in Chats |-> IF x \in up THEN 0 ELSE @[x]],
                !.finishes = [x \in Chats |-> IF x \in up /\ s.done[x] /= "open" THEN 0 ELSE @[x]],
                !.landed = [x \in Chats |-> IF x \in up /\ s.done[x] /= "open" THEN 0 ELSE @[x]]]
 
@@ -103,31 +110,35 @@ LessonSend ==
   /\ Commit(AutoFinishBelow(St, "L"))
 
 \* message.dispatch that isTrigger rejects (a scheduled task, a notification, a delegated
-\* task's completion, an agent's send): applySideChatUserMessage returns before reopening.
+\* task's completion, an agent's send): applySideChatUserMessage returns before reopening,
+\* and dispatchMessage parks it, held, in a done side chat (parksInDoneSideChat).
 ExternalSend(c) ==
   /\ ExternalSends
-  /\ queued[c] < MaxQueued
-  /\ Commit(StartOrQueue(St, c, FALSE))
+  /\ queued[c] + parked[c] < MaxQueued
+  /\ IF done[c] /= "open"
+       THEN /\ parked' = [parked EXCEPT ![c] = @ + 1]
+            /\ UNCHANGED <<done, req, turn, queued, held, pending, nextReq, finishes, landed>>
+       ELSE Commit(StartOrQueue(St, c, FALSE))
 
 \* Stop on an open side chat: interrupt requested, queued runs held (holdStoppedThread).
 Stop(c) ==
   /\ done[c] = "open" /\ turn[c] = "running"
   /\ turn' = [turn EXCEPT ![c] = "stopping"]
   /\ held' = [held EXCEPT ![c] = queued[c] > 0]
-  /\ UNCHANGED <<done, req, queued, pending, nextReq, finishes, landed>>
+  /\ UNCHANGED <<done, req, queued, parked, pending, nextReq, finishes, landed>>
 
 \* The provider ends the active run (completed, or interrupted after a stop).
 RunEnds(c) ==
   /\ turn[c] /= "idle"
   /\ turn' = [turn EXCEPT ![c] = "idle"]
-  /\ UNCHANGED <<done, req, queued, held, pending, nextReq, finishes, landed>>
+  /\ UNCHANGED <<done, req, queued, held, parked, pending, nextReq, finishes, landed>>
 
 \* The next queued run starts once nothing is active and the queue is not held.
 QueuedStarts(c) ==
   /\ turn[c] = "idle" /\ queued[c] > 0 /\ ~held[c]
   /\ turn' = [turn EXCEPT ![c] = "running"]
   /\ queued' = [queued EXCEPT ![c] = @ - 1]
-  /\ UNCHANGED <<done, req, held, pending, nextReq, finishes, landed>>
+  /\ UNCHANGED <<done, req, held, parked, pending, nextReq, finishes, landed>>
 
 \* SideChatLifecycleService.writeOutcome, then dispatchSideChatOutcomeComplete: only the
 \* generating request of the chat lands; a stale one emits the row unchanged.
@@ -139,7 +150,7 @@ OutcomeComplete(e) ==
               /\ landed' = [landed EXCEPT ![c] = e[2]]
          ELSE UNCHANGED <<done, landed>>
   /\ pending' = pending \ {e}
-  /\ UNCHANGED <<req, turn, queued, held, nextReq, finishes>>
+  /\ UNCHANGED <<req, turn, queued, held, parked, nextReq, finishes>>
 
 Next ==
   \/ \E c \in Chats : Done(c) \/ UserSend(c) \/ ExternalSend(c) \/ Stop(c) \/ RunEnds(c) \/ QueuedStarts(c)

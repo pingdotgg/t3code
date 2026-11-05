@@ -6213,7 +6213,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    // A finished side chat parks a message that isn't the learner's own, held, so it runs only
+    // after the learner's own message reopens the chat.
+    const parksInDoneSideChat =
+      (projection.thread.sideChat?.done ?? null) !== null &&
+      !isUserAuthoredSideChatTrigger(command);
+    const queueBehindRun =
+      activeRun ?? worktreeMissingRun ?? (parksInDoneSideChat ? latestRun : undefined);
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -6366,6 +6372,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeAttemptId: attemptId,
         status: "queued",
         ...(worktreeMissingRun !== undefined ||
+        parksInDoneSideChat ||
         (heldRunsToRelease.length === 0 && queueIsHeld && !wakeSkipsHold)
           ? { queueHeld: true }
           : {}),
