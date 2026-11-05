@@ -595,6 +595,7 @@ const makeTurnHarness = (
     const subscriptions = yield* Ref.make(0);
     const failedReads = yield* Queue.unbounded<void>();
     const dropStream = yield* Deferred.make<void>();
+    const listening = yield* Deferred.make<void>();
     const firstMessage = yield* Ref.make<MessageId | null>(null);
     const messageReads = yield* Ref.make(0);
     const errorReads = yield* Ref.make(0);
@@ -654,7 +655,13 @@ const makeTurnHarness = (
                       Effect.as(Stream.fail(new Error("event stream dropped") as never)),
                     )
                   : (options.liveTail ? Queue.clear(events) : Effect.void).pipe(
-                      Effect.as(Stream.fromQueue(events)),
+                      // The first pull comes after the listener's catch-up.
+                      Effect.as(
+                        Stream.fromEffect(Deferred.succeed(listening, undefined)).pipe(
+                          Stream.drain,
+                          Stream.concat(Stream.fromQueue(events)),
+                        ),
+                      ),
                     ),
               ),
             ),
@@ -669,7 +676,7 @@ const makeTurnHarness = (
         ),
       ),
     );
-    return { events, dispatched, subscriptions, failedReads, dropStream, layer };
+    return { events, dispatched, subscriptions, listening, failedReads, dropStream, layer };
   });
 
 const upsertBoundTask = (
@@ -828,6 +835,8 @@ it.effect("a queued message promoted to a steer keeps its run going in the activ
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const { task } = yield* upsertBoundTask(service);
+      // Reads fail here, so the listener's first catch-up must run before the dispatch.
+      yield* Deferred.await(harness.listening);
       yield* service.runNow({ id: task.id });
       const messageId = yield* Queue.take(harness.dispatched);
       yield* Queue.offerAll(harness.events, [
@@ -954,6 +963,8 @@ it.effect("a cancelled run is still recorded when its first save fails", () =>
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const sql = yield* SqlClient.SqlClient;
       const { task } = yield* upsertBoundTask(service);
+      // Reads fail here, so the listener's first catch-up must run before the dispatch.
+      yield* Deferred.await(harness.listening);
       yield* service.runNow({ id: task.id });
       const messageId = yield* Queue.take(harness.dispatched);
       // Fails the first write only; the retry must still record the cancel.
