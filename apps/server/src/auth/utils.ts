@@ -4,10 +4,11 @@ import type {
   AuthClientPresentationMetadata,
 } from "@t3tools/contracts";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Digest is effectful; the cookie name stays a plain function.
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 import { normalizeHostname } from "@t3tools/shared/hostClassification";
+import * as Mac from "effect/crypto/Mac";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
@@ -79,17 +80,14 @@ export function base64UrlDecodeUtf8(input: string): string {
   return Result.getOrThrow(Base64Url.decodeString(input));
 }
 
-export function signPayload(payload: string, secret: Uint8Array): string {
-  return NodeCrypto.createHmac("sha256", Buffer.from(secret)).update(payload).digest("base64url");
-}
-
 export function timingSafeEqualBase64Url(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, "base64url");
-  const rightBuffer = Buffer.from(right, "base64url");
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return NodeCrypto.timingSafeEqual(leftBuffer, rightBuffer);
+  const leftBytes = Base64Url.decode(left);
+  const rightBytes = Base64Url.decode(right);
+  return (
+    Result.isSuccess(leftBytes) &&
+    Result.isSuccess(rightBytes) &&
+    Mac.timingSafeEqual(leftBytes.success, rightBytes.success)
+  );
 }
 
 function normalizeNonEmptyString(value: string | null | undefined): string | undefined {
