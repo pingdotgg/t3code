@@ -362,6 +362,8 @@ export function useComposerMenuItems({
       return [...threadItems(), ...machineItems(), ...fileItems()];
     }
     if (composerTrigger.kind === "jira") {
+      // Question answers carry thread links, not Jira chips.
+      if (questionAttachmentTarget !== null) return [];
       return (jiraMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
         if (hit.jira === undefined) return [];
         return [
@@ -381,7 +383,8 @@ export function useComposerMenuItems({
       });
     }
     if (composerTrigger.kind === "figma") {
-      if (pullRequestProjectId === null) return [];
+      // Question answers carry thread links, not Figma chips.
+      if (questionAttachmentTarget !== null || pullRequestProjectId === null) return [];
       return (figmaMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
         if (hit.figma === undefined) return [];
         return [
@@ -612,6 +615,8 @@ export function useComposerMenuItems({
       }));
     };
 
+    // Question answers carry thread links, not PR/issue chips.
+    if (questionAttachmentTarget !== null) return [];
     if (composerTrigger.kind === "issue") return issueItems();
     if (composerTrigger.kind === "pull-request") return pullRequestItems();
     if (composerTrigger.kind === "hash") return [...pullRequestItems(), ...issueItems()];

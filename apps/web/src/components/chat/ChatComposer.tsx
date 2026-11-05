@@ -2030,6 +2030,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "pull-request") {
       if (
+        questionAttachmentTarget !== null ||
         (trigger.kind !== "pull-request" && trigger.kind !== "hash") ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
@@ -2098,6 +2099,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "jira") {
       if (
+        questionAttachmentTarget !== null ||
         trigger.kind !== "jira" ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
@@ -2127,6 +2129,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "figma") {
       if (
+        questionAttachmentTarget !== null ||
         trigger.kind !== "figma" ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
@@ -2156,6 +2159,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "issue") {
       if (
+        questionAttachmentTarget !== null ||
         (trigger.kind !== "issue" && trigger.kind !== "hash") ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
