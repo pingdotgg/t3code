@@ -124,6 +124,59 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
   return !nonText.includes(element.type) && !element.disabled && !element.readOnly;
 }`;
+const SELECT_MENU_OPTION_LIMIT = 1000;
+const SELECT_MENU_LABEL_LIMIT = 150;
+/** Returns the dropdown select at a viewport point, through shadow roots and same-origin frames. */
+const DROPDOWN_SELECT_AT_POINT_SCRIPT = `(x, y) => {
+  let root = document;
+  for (;;) {
+    let element = root.elementFromPoint(x, y);
+    while (element && element.shadowRoot) {
+      const inner = element.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === element) break;
+      element = inner;
+    }
+    if (element && (element.tagName === "IFRAME" || element.tagName === "FRAME") && element.contentDocument) {
+      const box = element.getBoundingClientRect();
+      x -= box.left + element.clientLeft;
+      y -= box.top + element.clientTop;
+      root = element.contentDocument;
+      continue;
+    }
+    if (element && element.tagName === "OPTION") element = element.closest("select");
+    if (!element || element.tagName !== "SELECT") return null;
+    if (element.multiple || element.size > 1 || element.matches(":disabled")) return null;
+    return element;
+  }
+}`;
+/** Describes a select in top-level viewport CSS px and focuses it like a native press would. */
+const DESCRIBE_SELECT_MENU_SCRIPT = `function (optionLimit, labelLimit) {
+  let { left, top, width, height } = this.getBoundingClientRect();
+  for (let view = this.ownerDocument.defaultView; view && view.frameElement; view = view.parent) {
+    const frame = view.frameElement;
+    const box = frame.getBoundingClientRect();
+    left += box.left + frame.clientLeft;
+    top += box.top + frame.clientTop;
+  }
+  this.focus({ preventScroll: true });
+  return {
+    options: Array.from(this.options)
+      .slice(0, optionLimit)
+      .map((option) => ({ label: option.label.slice(0, labelLimit), disabled: option.matches(":disabled") })),
+    selectedIndex: this.selectedIndex,
+    x: left,
+    y: top,
+    width,
+    height,
+  };
+}`;
+const CHOOSE_SELECT_OPTION_SCRIPT = `function (index) {
+  const option = this.options[index];
+  if (!option || option.matches(":disabled") || this.matches(":disabled") || this.selectedIndex === index) return;
+  this.selectedIndex = index;
+  this.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  this.dispatchEvent(new Event("change", { bubbles: true }));
+}`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
@@ -204,6 +257,16 @@ export type ServerBrowserViewerOutput =
       readonly accept: string;
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
+  | {
+      readonly _tag: "selectMenu";
+      readonly id: string;
+      readonly options: ReadonlyArray<{ readonly label: string; readonly disabled: boolean }>;
+      readonly selectedIndex: number;
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    }
   | { readonly _tag: "popup"; readonly tabId: string }
   | {
       readonly _tag: "download";
@@ -264,6 +327,10 @@ interface ViewerState {
   readonly canOperate: boolean;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
+  /** A press that opened a select menu instead of reaching the page; its release is dropped too. */
+  selectPress: boolean;
+  /** The select this viewer was last offered; only that offer can be answered. */
+  selectMenu: { readonly id: string; readonly objectId: string } | null;
   readonly push: (output: ServerBrowserViewerOutput) => void;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
@@ -2378,7 +2445,36 @@ const make = Effect.gen(function* () {
         .catch(constVoid);
     }
     viewer.pressedButtons.clear();
+    viewer.selectPress = false;
     viewer.requestedSize = null;
+  };
+
+  // Chromium draws a select's popup outside the page, where the screencast never sees it.
+  const offerSelectMenu = async (
+    session: CDPSession,
+    viewer: ViewerState,
+    x: number,
+    y: number,
+  ) => {
+    const { result } = await session.send("Runtime.evaluate", {
+      expression: `(${DROPDOWN_SELECT_AT_POINT_SCRIPT})(${x}, ${y})`,
+    });
+    if (!result.objectId) return false;
+    const described = await session.send("Runtime.callFunctionOn", {
+      objectId: result.objectId,
+      functionDeclaration: DESCRIBE_SELECT_MENU_SCRIPT,
+      arguments: [{ value: SELECT_MENU_OPTION_LIMIT }, { value: SELECT_MENU_LABEL_LIMIT }],
+      returnByValue: true,
+    });
+    const menu = described.result.value as
+      | Omit<Extract<ServerBrowserViewerOutput, { _tag: "selectMenu" }>, "_tag" | "id">
+      | undefined;
+    const stale = menu ? viewer.selectMenu?.objectId : result.objectId;
+    if (stale) await session.send("Runtime.releaseObject", { objectId: stale }).catch(constVoid);
+    if (!menu) return false;
+    viewer.selectMenu = { id: NodeCrypto.randomUUID(), objectId: result.objectId };
+    viewer.push({ _tag: "selectMenu", id: viewer.selectMenu.id, ...menu });
+    return true;
   };
 
   const dispatchViewerInput = async (
@@ -2393,6 +2489,22 @@ const make = Effect.gen(function* () {
     switch (message.type) {
       case "mouse": {
         const action = message.action;
+        if (message.button === "left" && action === "up" && viewer.selectPress) {
+          viewer.selectPress = false;
+          return;
+        }
+        if (message.button === "left" && action === "down" && !tab.dialog) {
+          const offered = await offerSelectMenu(
+            session,
+            viewer,
+            num(message.x),
+            num(message.y),
+          ).catch(() => false);
+          if (offered) {
+            viewer.selectPress = true;
+            return;
+          }
+        }
         const type =
           action === "down" ? "mousePressed" : action === "up" ? "mouseReleased" : "mouseMoved";
         const button = ["none", "left", "middle", "right"].includes(String(message.button))
@@ -2504,6 +2616,20 @@ const make = Effect.gen(function* () {
         }
         tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
+      case "selectMenu": {
+        const offer = viewer.selectMenu;
+        if (!offer || message.id !== offer.id || typeof message.index !== "number") return;
+        viewer.selectMenu = null;
+        await session
+          .send("Runtime.callFunctionOn", {
+            objectId: offer.objectId,
+            functionDeclaration: CHOOSE_SELECT_OPTION_SCRIPT,
+            arguments: [{ value: message.index }],
+          })
+          .catch(constVoid);
+        await session.send("Runtime.releaseObject", { objectId: offer.objectId }).catch(constVoid);
+        return;
+      }
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);
@@ -2568,13 +2694,19 @@ const make = Effect.gen(function* () {
       canOperate: input.canOperate,
       pressedKeys: new Map(),
       pressedButtons: new Map(),
+      selectPress: false,
+      selectMenu: null,
       push: (next) => {
         // Dropped frames must still release Chromium.
         if (Queue.offerUnsafe(output, next)) return;
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
-        else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
+        else if (
+          ["gone", "reconnect", "control", "viewport", "fileChooser", "selectMenu"].includes(
+            next._tag,
+          )
+        ) {
           const dropped = runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];

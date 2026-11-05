@@ -1601,6 +1601,12 @@ it.live("a click on a native select offers its options to the viewer and takes i
           height: 30,
         },
       ]);
+      expect(
+        yield* Effect.promise(() =>
+          page.evaluate(`document.querySelector("select").matches(":open")`),
+        ),
+        "the native picker stays closed",
+      ).toBe(false);
       const offerId = (offers[0] as unknown as { id: string }).id;
       const chosen = () =>
         Effect.promise(() =>

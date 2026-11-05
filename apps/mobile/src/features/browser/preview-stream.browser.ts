@@ -175,6 +175,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         onClipboard: (text) => post({ type: "clipboard", text }),
         onDownload: (download) => post({ type: "download", ...download }),
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
+        onSelectMenu: (menu) => post({ type: "selectMenu", menu }),
         onViewport: (page) => {
           if (viewport?.width === page.width && viewport.height === page.height) return;
           viewport = page;

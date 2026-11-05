@@ -11,6 +11,7 @@ import {
   type PreviewStreamInput,
   type PreviewStreamMouseButton,
   type PreviewStreamPointer,
+  type PreviewStreamSelectMenu,
   type PreviewStreamViewport,
   previewStreamHostSetupMessage,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
@@ -37,6 +38,7 @@ import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
@@ -152,6 +154,8 @@ export function ServerBrowserSurface(props: {
   readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
   readonly pdfUrl?: string | null;
+  /** A select menu offered on an earlier page is not shown after the tab navigates. */
+  readonly pageUrl?: string;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
   const {
@@ -167,6 +171,7 @@ export function ServerBrowserSurface(props: {
     onPopup,
     className,
     pdfUrl = null,
+    pageUrl = "",
     ref,
   } = props;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -182,6 +187,13 @@ export function ServerBrowserSurface(props: {
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectMenu, setSelectMenu] = useState<{
+    readonly menu: PreviewStreamSelectMenu;
+    readonly pageUrl: string;
+  } | null>(null);
+  const selectMenuOffered = useEffectEvent((menu: PreviewStreamSelectMenu | null) =>
+    setSelectMenu(menu && { menu, pageUrl }),
+  );
   const answerFileChooser = (files: ReadonlyArray<File>) => {
     const chooser = fileChooser;
     if (!chooser) return;
@@ -400,6 +412,7 @@ export function ServerBrowserSurface(props: {
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,
+        onSelectMenu: selectMenuOffered,
         onViewport: (viewport) => {
           viewportRef.current = viewport;
           viewportChanged(viewport);
@@ -415,6 +428,7 @@ export function ServerBrowserSurface(props: {
           )
             setPromptText(next.dialog?.defaultValue ?? "");
           if (next.controller !== "you") {
+            setSelectMenu(null);
             clearInput();
           } else if (previous?.controller !== "you") {
             const size = sizeRef.current;
@@ -822,6 +836,34 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
           }}
         />
+        {selectMenu && selectMenu.pageUrl === pageUrl && control?.controller === "you" ? (
+          <Menu open modal={false} onOpenChange={(open) => !open && setSelectMenu(null)}>
+            <MenuPopup
+              anchor={() =>
+                selectMenuAnchor(selectMenu.menu, canvasRef.current, viewportRef.current)
+              }
+              align="start"
+              sideOffset={0}
+              finalFocus={inputRef}
+              aria-label="Page select options"
+            >
+              <MenuRadioGroup
+                value={selectMenu.menu.selectedIndex}
+                onValueChange={(index: number) => {
+                  setSelectMenu(null);
+                  send({ type: "selectMenu", id: selectMenu.menu.id, index });
+                }}
+              >
+                {selectMenu.menu.options.map((option, index) => (
+                  // oxlint-disable-next-line react/no-array-index-key -- the page answers by option index
+                  <MenuRadioItem key={index} value={index} disabled={option.disabled} closeOnClick>
+                    {option.label}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuPopup>
+          </Menu>
+        ) : null}
         {fileChooser && control?.controller === "you" ? (
           <div
             className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
@@ -929,6 +971,28 @@ export function ServerBrowserSurface(props: {
       ) : null}
     </div>
   );
+}
+
+function selectMenuAnchor(
+  menu: PreviewStreamSelectMenu,
+  canvas: HTMLCanvasElement | null,
+  viewport: PreviewStreamViewport | null,
+) {
+  if (!canvas || !viewport || canvas.width < 1 || canvas.height < 1) return null;
+  return {
+    getBoundingClientRect: () => {
+      const rect = canvas.getBoundingClientRect();
+      const fit = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+      const scaleX = (canvas.width * fit) / viewport.width;
+      const scaleY = (canvas.height * fit) / viewport.height;
+      return DOMRect.fromRect({
+        x: rect.left + (rect.width - canvas.width * fit) / 2 + menu.x * scaleX,
+        y: rect.top + (rect.height - canvas.height * fit) / 2 + menu.y * scaleY,
+        width: menu.width * scaleX,
+        height: menu.height * scaleY,
+      });
+    },
+  };
 }
 
 interface AgentCursorPlacement {

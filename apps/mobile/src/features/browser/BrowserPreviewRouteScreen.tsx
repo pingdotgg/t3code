@@ -178,6 +178,7 @@ function BrowserPreviewScreen({
               threadId={threadId}
               tabId={tab.tabId}
               pdfUri={pdfUri}
+              pageUrl={browserTabUrl(tab)}
               ref={streamRef}
               interactive
               background={themeVariables["--color-sheet-solid"]}

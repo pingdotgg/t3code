@@ -9,6 +9,7 @@ import {
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   type PreviewStreamInput,
+  type PreviewStreamSelectMenu,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
 import {
@@ -24,6 +25,10 @@ import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
 import { AppText } from "../../components/ui/AppText";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { ListSection } from "../../components/ui/ListSection";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { Sheet } from "../../components/ui/Sheet";
 import { PdfPreview } from "../../components/PdfPreview";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
@@ -60,6 +65,8 @@ type NativeStreamBridge = {
   readonly onStreamingChange?: (streaming: boolean) => void;
   readonly compact?: boolean;
   readonly pdfUri?: string | null;
+  /** A select menu offered on an earlier page is not shown after the tab navigates. */
+  readonly pageUrl?: string;
 };
 
 async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean) {
@@ -216,6 +223,7 @@ function PreviewStreamDocumentView({
   background,
   compact,
   pdfUri,
+  pageUrl = "",
   onUnauthorized,
   onGone,
   onViewport,
@@ -256,6 +264,10 @@ function PreviewStreamDocumentView({
       ),
     );
   };
+  const [selectMenu, setSelectMenu] = useState<{
+    readonly menu: PreviewStreamSelectMenu;
+    readonly pageUrl: string;
+  } | null>(null);
   const command = (input: PreviewStreamInput) =>
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
@@ -282,6 +294,7 @@ function PreviewStreamDocumentView({
     onStreamingChange?.(false);
     setControl(null);
     setFileChooser(null);
+    setSelectMenu(null);
     onControl?.(null);
     setError(message);
     setStatus("error");
@@ -369,6 +382,7 @@ function PreviewStreamDocumentView({
             switch (message.type) {
               case "control": {
                 setControl(message);
+                if (message.controller !== "you") setSelectMenu(null);
                 const previousDialog = dialogRef.current;
                 dialogRef.current = message.dialog;
                 setPromptText((draft) => previewPromptText(previousDialog, message.dialog, draft));
@@ -400,6 +414,9 @@ function PreviewStreamDocumentView({
                 return;
               case "fileChooser":
                 setFileChooser(message.chooser);
+                return;
+              case "selectMenu":
+                setSelectMenu(message.menu && { menu: message.menu, pageUrl });
                 return;
               case "pictureInPicture":
                 onPictureInPicture?.(message, message.detail);
@@ -442,6 +459,37 @@ function PreviewStreamDocumentView({
             />
           </View>
         </View>
+      ) : null}
+      {!compact && selectMenu && selectMenu.pageUrl === pageUrl && control?.controller === "you" ? (
+        <Sheet
+          key={selectMenu.menu.id}
+          title="Choose an option"
+          onClose={() =>
+            setSelectMenu((current) => (current?.menu.id === selectMenu.menu.id ? null : current))
+          }
+        >
+          <ScreenScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerClassName="p-4"
+          >
+            <ListSection>
+              {selectMenu.menu.options.map((option, index) => (
+                <ListChoiceRow
+                  // oxlint-disable-next-line react/no-array-index-key -- the page answers by option index
+                  key={index}
+                  label={option.label}
+                  selected={index === selectMenu.menu.selectedIndex}
+                  separated={index > 0}
+                  disabled={option.disabled}
+                  onPress={() => {
+                    setSelectMenu(null);
+                    command({ type: "selectMenu", id: selectMenu.menu.id, index });
+                  }}
+                />
+              ))}
+            </ListSection>
+          </ScreenScrollView>
+        </Sheet>
       ) : null}
       {!compact && control?.dialog ? (
         <View className="absolute inset-x-3 top-16 gap-3 rounded-xl border border-secondary-border bg-secondary p-4">
