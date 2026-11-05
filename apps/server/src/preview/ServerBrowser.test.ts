@@ -28,7 +28,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import type { BrowserContext, Page } from "playwright-core";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -51,6 +51,11 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
       if (contextFailure) throw contextFailure;
       await contextGate?.promise;
+      if (realContextNext) {
+        const real = realContextNext;
+        realContextNext = null;
+        return real;
+      }
       const context = makeContext(this.onClose);
       const setupFailure = pageSetupFailure;
       if (setupFailure) {
@@ -300,6 +305,8 @@ const contexts: ReturnType<typeof makeContext>[] = [];
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+/** A real Chromium context for the next tab, for behaviour only a real page shows. */
+let realContextNext: BrowserContext | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -451,6 +458,7 @@ beforeEach(() => {
   encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  realContextNext = null;
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
@@ -1539,6 +1547,71 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
       while (closed._tag !== "fileChooserClosed") closed = yield* Queue.take(viewer.output);
       expect(closed.id).toBe(offered.id);
       expect(yield* answer(offered.id)).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a click on a native select offers its options to the viewer and takes its choice", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // Chromium draws the select popup outside the page, so the screencast never shows it.
+      const chromiumBrowser = yield* Effect.acquireRelease(
+        Effect.promise(() => chromium.launch({ headless: true })),
+        (launched) => Effect.promise(() => launched.close()),
+      );
+      const context = yield* Effect.promise(() => chromiumBrowser.newContext());
+      realContextNext = context;
+      const { browser, tabId } = yield* ready;
+      const page = context.pages()[0]!;
+      yield* Effect.promise(() =>
+        page.setContent(
+          `<select style="position: absolute; left: 40px; top: 60px; width: 200px; height: 30px">
+            <option>One</option><option disabled>Two</option><option selected>Three</option>
+          </select>
+          <script>
+            for (const type of ["input", "change"])
+              document.querySelector("select").addEventListener(type, () => {
+                document.body.dataset.events = (document.body.dataset.events ?? "") + type + " ";
+              });
+          </script>`,
+        ),
+      );
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* Queue.clear(viewer.output);
+      const click = { type: "mouse", button: "left", x: 140, y: 75, clickCount: 1 };
+      yield* viewer.input({ ...click, action: "down", buttons: 1 });
+      yield* viewer.input({ ...click, action: "up", buttons: 0 });
+      const offers = (yield* Queue.clear(viewer.output)).filter(
+        (item) => (item as { _tag: string })._tag === "selectMenu",
+      );
+      expect(offers, "the viewer is offered the select's options").toEqual([
+        {
+          _tag: "selectMenu",
+          id: expect.any(String),
+          options: [
+            { label: "One", disabled: false },
+            { label: "Two", disabled: true },
+            { label: "Three", disabled: false },
+          ],
+          selectedIndex: 2,
+          x: 40,
+          y: 60,
+          width: 200,
+          height: 30,
+        },
+      ]);
+      const offerId = (offers[0] as unknown as { id: string }).id;
+      const chosen = () =>
+        Effect.promise(() =>
+          page.evaluate(
+            `({ value: document.querySelector("select").value, events: document.body.dataset.events ?? "" })`,
+          ),
+        );
+      yield* viewer.input({ type: "selectMenu", id: "unknown", index: 0 });
+      expect(yield* chosen()).toEqual({ value: "Three", events: "" });
+      yield* viewer.input({ type: "selectMenu", id: offerId, index: 0 });
+      expect(yield* chosen()).toEqual({ value: "One", events: "input change " });
     }),
   ).pipe(Effect.provide(layer)),
 );
