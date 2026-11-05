@@ -28,6 +28,7 @@ vi.mock("../../state/server", () => ({
 import {
   environmentIdsKey,
   limitsRefreshFailuresAtom,
+  limitsAutoRefreshSetAtom,
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 
@@ -90,15 +91,34 @@ it("does not let an older refresh clear a newer failure for the same environment
   expect(failures([a, b])).toEqual([a]);
 });
 
-it("skips an automatic refresh inside the throttle window without touching the outcome", async () => {
+it("skips fresh automatic reads and resumes at the existing deadline", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
   const a = EnvironmentId.make("mobile-limits-throttle");
   const { registry, failures } = setup(() => Promise.resolve(failure));
-  failures([a]);
-  await refreshEnvironmentLimits(registry, a);
-  expect(failures([a])).toEqual([a]);
-  state.refresh = () => Promise.resolve(success);
-  await refreshEnvironmentLimits(registry, a, { automatic: true });
-  expect(failures([a])).toEqual([a]);
-  await refreshEnvironmentLimits(registry, a);
-  expect(failures([a])).toEqual([]);
+  let unmount: (() => void) | undefined;
+  try {
+    failures([a]);
+    await refreshEnvironmentLimits(registry, a);
+    expect(failures([a])).toEqual([a]);
+    state.refresh = () => Promise.resolve(success);
+    await refreshEnvironmentLimits(registry, a, { automatic: true });
+    expect(failures([a])).toEqual([a]);
+    await refreshEnvironmentLimits(registry, a);
+    expect(failures([a])).toEqual([]);
+
+    const automatic = vi.fn(() => Promise.resolve(success));
+    state.refresh = automatic;
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    unmount = registry.mount(limitsAutoRefreshSetAtom(environmentIdsKey([a])));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(automatic).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(automatic).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(automatic).toHaveBeenCalledTimes(2);
+  } finally {
+    unmount?.();
+    registry.dispose();
+    vi.useRealTimers();
+  }
 });

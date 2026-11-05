@@ -2,7 +2,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { useEffect } from "react";
 import type { EnvironmentId, ProviderInstanceId, ProviderDriverKind } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
+import { refreshUsageLimits, usageLimitsRefreshDelay } from "@t3tools/client-runtime/state/usage";
 import type { AtomRegistry } from "effect/reactivity";
 import { isAppActive, subscribeAppState } from "../../lib/appState";
 import { serverEnvironment } from "../../state/server";
@@ -18,6 +18,7 @@ export function useInstanceLimitsRefresh(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- quota demand follows the native panel and app lifecycle
   useEffect(() => {
     if (!visible || !focused) return;
+    const selectionKey = JSON.stringify([instanceId, driver]);
     let disposed = false;
     let pending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -27,7 +28,8 @@ export function useInstanceLimitsRefresh(
       clearTimeout(timer);
       const completed = () => {
         pending = false;
-        if (!disposed) timer = setTimeout(refresh, 5 * 60_000);
+        if (!disposed)
+          timer = setTimeout(refresh, usageLimitsRefreshDelay(environmentId, selectionKey));
       };
       void refreshUsageLimits(
         environmentId,
@@ -45,7 +47,7 @@ export function useInstanceLimitsRefresh(
           ),
         true,
         false,
-        JSON.stringify([instanceId, driver]),
+        selectionKey,
       ).then(completed, completed);
     };
     void refresh();

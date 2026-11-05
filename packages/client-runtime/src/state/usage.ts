@@ -55,6 +55,12 @@ export function usageSummaryInput(
 const limitsRefreshAfter = new Map<string, number>();
 const limitsRefreshes = new Map<string, Promise<unknown>>();
 
+export function usageLimitsRefreshDelay(environmentId: EnvironmentId, selectionKey = ""): number {
+  const refreshAfter = limitsRefreshAfter.get(JSON.stringify([environmentId, selectionKey])) ?? 0;
+  // @effect-diagnostics-next-line globalDate:off
+  return Math.max(0, refreshAfter - Date.now());
+}
+
 export async function refreshUsageLimits<A>(
   environmentId: EnvironmentId,
   refresh: () => Promise<A>,
@@ -73,9 +79,7 @@ export async function refreshUsageLimits<A>(
     }
     return (await pending) as A;
   }
-  const refreshAfter = limitsRefreshAfter.get(key) ?? 0;
-  // @effect-diagnostics-next-line globalDate:off
-  if (automatic && Date.now() < refreshAfter) return;
+  if (automatic && usageLimitsRefreshDelay(environmentId, selectionKey) > 0) return;
   const current = Promise.resolve()
     .then(refresh)
     .finally(() => {

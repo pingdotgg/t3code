@@ -1,7 +1,7 @@
 import { isAppActive, subscribeAppState } from "../../lib/appState";
 import { EnvironmentId } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
+import { refreshUsageLimits, usageLimitsRefreshDelay } from "@t3tools/client-runtime/state/usage";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { serverEnvironment } from "../../state/server";
@@ -56,7 +56,7 @@ const limitsAutoRefreshAtom = Atom.family((environmentId: EnvironmentId) =>
         if (!disposed)
           timer = setTimeout(() => {
             void refresh();
-          }, 5 * 60_000);
+          }, usageLimitsRefreshDelay(environmentId));
       }
     };
     void refresh();
