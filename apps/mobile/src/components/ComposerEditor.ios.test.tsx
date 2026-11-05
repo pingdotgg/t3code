@@ -20,6 +20,7 @@ const native = vi.hoisted(() => ({
   text: "",
   eventCount: 0,
   resetGeneration: 0,
+  mounts: 0,
   props: null as NativeProps | null,
   deliver: null as ((event: NativeEvent) => void) | null,
 }));
@@ -28,6 +29,7 @@ function NativeView(props: NativeProps) {
   const propsRef = useRef(props);
   useLayoutEffect(() => {
     Object.assign(native, { text: "", eventCount: 0, resetGeneration: 0 });
+    native.mounts += 1;
   }, []);
   useLayoutEffect(() => {
     propsRef.current = props;
@@ -173,13 +175,16 @@ it("keeps a pending event from the previous native editor out of the selected dr
     );
   await act(async () => renderDraft(first));
   const deliverPendingEvent = native.deliver!;
+  const pending = { eventCount: native.eventCount + 1, resetGeneration: native.resetGeneration };
+  const mounts = native.mounts;
   await act(async () => renderDraft(second));
+  // Remounting the native view would drop the keyboard mid-edit.
+  expect(native.mounts).toBe(mounts);
   await act(async () =>
     deliverPendingEvent({
       value: "Draft A corrected",
       selection: { start: 17, end: 17 },
-      eventCount: 1,
-      resetGeneration: 0,
+      ...pending,
     }),
   );
   expect(getComposerDraftSnapshot(second).text).toBe("Draft B");
