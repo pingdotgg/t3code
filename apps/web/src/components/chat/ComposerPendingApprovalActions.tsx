@@ -11,7 +11,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
-  presentation?: "composer" | "inline";
+  presentation?: "buttons" | "inline";
   requestId: RuntimeRequestId;
   isResponding: boolean;
   canRespond: boolean;
@@ -31,7 +31,7 @@ const DEFAULT_APPROVAL_OPTIONS = [
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
-  presentation = "composer",
+  presentation = "buttons",
   requestId,
   isResponding,
   canRespond,
@@ -46,8 +46,53 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
     (option) => option.decision !== "decline" && option.decision !== "accept",
   );
 
+  const moreMenu =
+    moreOptions.length > 0 ? (
+      <Menu>
+        <MenuTrigger
+          disabled={disabled || isResponding || !canRespond}
+          render={
+            presentation === "inline" ? (
+              <InlineButton tone="muted" aria-label="More approval options" />
+            ) : (
+              <Button size="icon-xs" variant="ghost-muted" aria-label="More approval options" />
+            )
+          }
+        >
+          {presentation === "inline" ? "More" : <EllipsisIcon />}
+        </MenuTrigger>
+        <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
+          {moreOptions.map((option) => {
+            const item = (
+              <MenuItem
+                key={option.decision}
+                disabled={disabled || isResponding || !canRespond}
+                aria-description={option.warning}
+                onClick={() => {
+                  if (!disabled && !isResponding && canRespond)
+                    void onRespondToApproval(requestId, option.decision);
+                }}
+              >
+                {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
+                <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
+              </MenuItem>
+            );
+            return option.warning ? (
+              <Tooltip key={option.decision}>
+                <TooltipTrigger render={item} />
+                <TooltipPopup side="top">{option.warning}</TooltipPopup>
+              </Tooltip>
+            ) : (
+              item
+            );
+          })}
+        </MenuPopup>
+      </Menu>
+    ) : null;
+
   return (
     <>
+      {presentation === "buttons" ? moreMenu : null}
       {primaryOptions.map((option) => {
         const buttonProps = {
           disabled: disabled || isResponding || !canRespond,
@@ -80,7 +125,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
               key={option.decision}
               {...buttonProps}
               size="xs"
-              variant={option.decision === "accept" ? "default" : "outline"}
+              variant={option.decision === "accept" ? "default" : "ghost-muted"}
             >
               {content}
             </Button>
@@ -94,48 +139,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           button
         );
       })}
-      {moreOptions.length > 0 ? (
-        <Menu>
-          <MenuTrigger
-            disabled={disabled || isResponding || !canRespond}
-            render={
-              presentation === "inline" ? (
-                <InlineButton tone="muted" aria-label="More approval options" />
-              ) : (
-                <Button size="icon-xs" variant="outline" aria-label="More approval options" />
-              )
-            }
-          >
-            {presentation === "inline" ? "More" : <EllipsisIcon />}
-          </MenuTrigger>
-          <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
-            {moreOptions.map((option) => {
-              const item = (
-                <MenuItem
-                  key={option.decision}
-                  disabled={disabled || isResponding || !canRespond}
-                  aria-description={option.warning}
-                  onClick={() => {
-                    if (!disabled && !isResponding && canRespond)
-                      void onRespondToApproval(requestId, option.decision);
-                  }}
-                >
-                  {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
-                  <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
-                </MenuItem>
-              );
-              return option.warning ? (
-                <Tooltip key={option.decision}>
-                  <TooltipTrigger render={item} />
-                  <TooltipPopup side="top">{option.warning}</TooltipPopup>
-                </Tooltip>
-              ) : (
-                item
-              );
-            })}
-          </MenuPopup>
-        </Menu>
-      ) : null}
+      {presentation === "inline" ? moreMenu : null}
     </>
   );
 });

@@ -39,6 +39,7 @@ import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
+import { TimelineRequestCard } from "./TimelineRequestCard";
 import { WorkLogRow } from "./WorkLog";
 
 const accessLabel = (access: AuthMcpClientAccess) => accessConfig[access].label;
@@ -111,10 +112,7 @@ function PendingLinkRequest(props: {
   };
 
   return (
-    <div
-      data-v2-item-type={item.type}
-      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
-    >
+    <TimelineRequestCard data-v2-item-type={item.type}>
       <div className="flex min-w-0 flex-col gap-1">
         <p className="text-sm font-medium text-foreground">
           {picksMachine(item)
@@ -157,7 +155,7 @@ function PendingLinkRequest(props: {
         open={open}
         onOpenChange={setOpen}
       />
-    </div>
+    </TimelineRequestCard>
   );
 }
 

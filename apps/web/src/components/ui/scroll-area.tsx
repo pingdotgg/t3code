@@ -29,6 +29,7 @@ function ScrollArea({
   chainVerticalScroll = false,
   radius = "inherit",
   viewportTabIndex,
+  viewportProps,
   ...props
 }: ScrollAreaPrimitive.Root.Props & {
   scrollFade?: boolean;
@@ -38,6 +39,7 @@ function ScrollArea({
   chainVerticalScroll?: boolean;
   radius?: "inherit" | "none";
   viewportTabIndex?: number;
+  viewportProps?: Omit<ScrollAreaPrimitive.Viewport.Props, "className" | "tabIndex">;
 }) {
   return (
     <ScrollAreaPrimitive.Root
@@ -49,6 +51,7 @@ function ScrollArea({
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        {...viewportProps}
         {...(viewportTabIndex === undefined ? {} : { tabIndex: viewportTabIndex })}
         className={cn(
           "h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain",
