@@ -1632,7 +1632,7 @@ it.live("a click on a native select offers its options to the viewer and takes i
 it.live("a relayed select press reaches page handlers, and a page can keep its own press", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { click, output, evaluate } = yield* realSelectPage(
+      const { viewer, click, output, evaluate } = yield* realSelectPage(
         `<style>
           select { position: absolute; left: 40px; width: 200px; height: 30px }
           #custom, #custom::picker(select) { appearance: base-select }
@@ -1648,6 +1648,10 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
         <select id="half" style="top: 200px"><option>One</option><option>Two</option></select>
         <select id="shift" style="top: 260px" onmousedown="if (event.shiftKey) event.preventDefault()">
           <option>One</option><option>Two</option>
+        </select>
+        <select id="lazy" style="top: 320px"
+          onclick="if (!this.dataset.loaded) { this.dataset.loaded = 1; this.innerHTML = '<option>Loaded</option><option>Later</option>'; }">
+          <option>Loading</option>
         </select>
         <iframe srcdoc="<select style='position: absolute; left: 0; top: 0; width: 200px; height: 30px'><option>One</option></select>"></iframe>
         <script>
@@ -1697,6 +1701,15 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
 
       yield* click(140, 275, 8);
       expect(yield* output("selectMenu"), "the page sees the press's modifier keys").toEqual([]);
+
+      yield* click(140, 335);
+      const [lazy] = yield* output("selectMenu");
+      expect(lazy?.options, "options the page's click handler loads are offered").toEqual([
+        { label: "Loaded", disabled: false },
+        { label: "Later", disabled: false },
+      ]);
+      yield* viewer.input({ type: "selectMenu", id: lazy!.id, index: 1 });
+      expect(yield* evaluate(`document.getElementById("lazy").value`)).toBe("Later");
 
       yield* click(650, 205);
       expect(

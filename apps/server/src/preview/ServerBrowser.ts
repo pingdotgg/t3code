@@ -2571,7 +2571,11 @@ const make = Effect.gen(function* () {
     const objectId = result.objectId;
     if (!objectId) return false;
     viewer.selectPress = objectId;
-    // The page already saw this press, so a failure here must not send the real one too.
+    return true;
+  };
+
+  // Offered after the release, so options a page adds or replaces on mousedown or click count.
+  const offerSelectMenu = async (session: CDPSession, viewer: ViewerState, objectId: string) => {
     const described = await session
       .send("Runtime.callFunctionOn", {
         objectId,
@@ -2584,12 +2588,11 @@ const make = Effect.gen(function* () {
       Extract<ServerBrowserViewerOutput, { _tag: "selectMenu" }>,
       "_tag" | "id"
     > | null;
-    if (!menu) return true;
+    if (!menu) return;
     const previous = viewer.selectMenu;
     viewer.selectMenu = { id: NodeCrypto.randomUUID(), objectId, session };
     if (previous) releaseSelectHandle(viewer, previous.session, previous.objectId);
     viewer.push({ _tag: "selectMenu", id: viewer.selectMenu.id, ...menu });
-    return true;
   };
 
   const dispatchViewerInput = async (
@@ -2614,6 +2617,7 @@ const make = Effect.gen(function* () {
                 functionDeclaration: RELEASE_SELECT_PRESS_SCRIPT,
               })
               .catch(constVoid);
+            await offerSelectMenu(session, viewer, press);
           }
           releaseSelectHandle(viewer, session, press);
           if (action === "up") return;
