@@ -43,7 +43,8 @@ import {
   createPullRequestEnvironmentAtoms,
 } from "./pullRequests.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
-import { executeAtomQuery } from "./runtime.ts";
+import { executeAtomQuery, queryPersistenceKey } from "./runtime.ts";
+import { EnvironmentQueryStore } from "./queryPersistence.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
 import { PullRequestRoutingPermissions } from "../connection/pullRequestRoutingPermissions.ts";
 
@@ -524,6 +525,7 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   localClient?: WsRpcProtocolClient,
   localOrigin = false,
   onAnswer: Parameters<typeof createPullRequestEnvironmentAtoms>[1] = {},
+  queryStore: typeof EnvironmentQueryStore.Service = null,
 ) {
   const originTarget = localOrigin
     ? new PrimaryConnectionTarget({
@@ -589,12 +591,13 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
       Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
   } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
   const runtime = Atom.runtime(
-    Layer.merge(
+    Layer.mergeAll(
       Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
       Layer.succeed(
         PullRequestDiffLoader.PullRequestDiffLoader,
         PullRequestDiffLoader.PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
       ),
+      Layer.succeed(EnvironmentQueryStore, queryStore),
     ),
   );
   const atoms = createPullRequestEnvironmentAtoms(runtime, onAnswer);
@@ -1157,10 +1160,20 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
             };
           }),
       });
-      const { atoms, registry, runtime } = yield* makeTestRuntime(client, undefined, false, {
-        actionReply: (target, reply) => Effect.sync(() => replies.push({ target, reply })),
-        list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
-      });
+      const saved = new Map<string, string>();
+      const { atoms, registry, runtime } = yield* makeTestRuntime(
+        client,
+        undefined,
+        false,
+        {
+          actionReply: (target, reply) => Effect.sync(() => replies.push({ target, reply })),
+          list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
+        },
+        {
+          load: (_environmentId, key) => Effect.sync(() => Option.fromUndefinedOr(saved.get(key))),
+          save: (_environmentId, key, payload) => Effect.sync(() => void saved.set(key, payload)),
+        },
+      );
       const target = { environmentId: TARGET.environmentId, input: actionReference };
       const list = (input: PullRequestListInput) =>
         atoms.list({ environmentId: target.environmentId, input });
@@ -1196,6 +1209,12 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
       ]);
       expect(Option.getOrThrow(AsyncResult.value(registry.get(openDrafts))).entries).toEqual([]);
       expect(replies).toEqual([{ target, reply: actionReply }]);
+      // A cold start paints the saved copy, so the patch must replace the saved answer.
+      const summaryKey = queryPersistenceKey(
+        "environment-data:pull-requests:linked-summary",
+        actionReference,
+      );
+      expect(JSON.parse(saved.get(summaryKey) ?? "null")).toMatchObject({ state: "merged" });
       // Snapshot writers see the patched rows the way they see an answer.
       expect(listAnswers).toContainEqual([expect.objectContaining({ state: "merged" })]);
       // Only a read can place a row the listing did not hold.
