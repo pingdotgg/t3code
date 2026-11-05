@@ -110,16 +110,20 @@ export function resolveVariantRow(input: {
       <span className="text-xs">{input.time}</span>
     );
 
+  const attention = detailed ? rowAttention(status, input.isUnread) : undefined;
+
   return {
     rowClassName: cn(
       "sidebar-variant-tokens ps-9",
       detailed ? "sidebar-row-detailed py-1.5 pe-2.5" : "flex h-9 items-center gap-2.5 pe-2.5",
       input.nested && "ps-13",
     ),
-    rootClassName: input.nested
-      ? "relative before:absolute before:inset-y-0 before:left-[1.0625rem] before:w-px before:bg-border"
-      : undefined,
-    attention: detailed ? rowAttention(status, input.isUnread) : undefined,
+    // A tinted row carries its own bar, so the guide stops at its edge and resumes after it.
+    rootClassName:
+      input.nested && attention === undefined
+        ? "relative before:absolute before:inset-y-0 before:left-[1.0625rem] before:w-px before:bg-border"
+        : undefined,
+    attention,
     labelSuffix:
       input.workerCount > 0 ? `, ${workerLabel(input.workerCount, input.workerNeedsYou)}` : "",
     decor: (
