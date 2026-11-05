@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./externalHistory": {
+      "types": "./src/externalHistory/index.ts",
+      "default": "./src/externalHistory/index.ts"
+    },
     "./projectCode": {
       "types": "./src/projectCode/index.ts",
       "default": "./src/projectCode/index.ts"

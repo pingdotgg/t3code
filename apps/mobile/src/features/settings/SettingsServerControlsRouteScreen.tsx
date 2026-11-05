@@ -442,6 +442,31 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableConversationSummaries: value })}
                     />
                   </SettingsSection>
+                  {!projectSelected &&
+                  selectedTargets.some(
+                    (target) => target.serverConfig.environment.capabilities.externalHistory === 1,
+                  ) ? (
+                    <SettingsSection title="External history">
+                      {selectedTargets
+                        .filter(
+                          (target) =>
+                            target.serverConfig.environment.capabilities.externalHistory === 1,
+                        )
+                        .map((target) => (
+                          <SettingsRow
+                            key={target.environmentId}
+                            icon="magnifyingglass"
+                            label={target.label}
+                            value="Search Codex and ChatGPT exports"
+                            onPress={() =>
+                              navigation.navigate("SettingsExternalHistory", {
+                                environmentId: target.environmentId,
+                              })
+                            }
+                          />
+                        ))}
+                    </SettingsSection>
+                  ) : null}
                   <SettingsSection title="Skills">
                     <SettingsSwitchRow
                       icon="square.grid.2x2"

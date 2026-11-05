@@ -57,4 +57,46 @@ describe("transcript JSON projection", () => {
       TranscriptJsonLimitError,
     );
   });
+
+  it("streams top-level array records without retaining prior records", () => {
+    const records: Array<unknown> = [];
+    const reader = createTranscriptJsonReader(
+      () => {},
+      () => true,
+      {
+        onArrayItem: (index, value) => {
+          records.push({ index, value });
+          return true;
+        },
+      },
+    );
+    for (const char of '[{"nested":[1,2]},null,{"text":"😀"}]') reader.write(char);
+    expect(reader.finish()).toEqual([]);
+    expect(records).toEqual([
+      { index: 0, value: { nested: [1, 2] } },
+      { index: 1, value: null },
+      { index: 2, value: { text: "😀" } },
+    ]);
+  });
+
+  it("stops at a complete requested record and keeps original indices when skipping", () => {
+    const records: Array<unknown> = [];
+    const reader = createTranscriptJsonReader(
+      () => {},
+      (path) => path[0] !== 0,
+      {
+        onArrayItem: (index, value) => {
+          records.push({ index, value });
+          return index < 1;
+        },
+      },
+    );
+    reader.write('[{"skip":"first"},{"keep":2},{"later":3}]');
+    expect(reader.stopped).toBe(true);
+    reader.write("ignored");
+    expect(records).toEqual([
+      { index: 0, value: undefined },
+      { index: 1, value: { keep: 2 } },
+    ]);
+  });
 });

@@ -2,24 +2,34 @@ import { assert, it } from "@effect/vitest";
 import {
   ContextTransferId,
   MessageId,
+  OrchestrationV2ContextHandoffJson,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { historyCost } from "@t3tools/provider-core/server/handoffBudget";
+import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2ContextHandoffJson));
+const decodeHandoff = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ContextHandoffJson),
+);
 
 function importedItem(
   input:
@@ -35,7 +45,7 @@ function importedItem(
         readonly text: string;
         readonly ordinal: number;
       },
-): OrchestrationV2TurnItem {
+): Extract<OrchestrationV2TurnItem, { readonly type: "user_message" | "assistant_message" }> {
   const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
   const base = {
     id: TurnItemId.make(`turn-item:${input.id}`),
@@ -158,6 +168,133 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       assert.include(handoff.summaryText, "LATEST_SINGLE_TOKEN");
       assert.notInclude(handoff.summaryText, "\ufffd");
     }),
+  );
+});
+
+it.layer(layerTest)("ContextHandoffService provider handoff", (it) => {
+  it.effect.each([true, false])(
+    "stores selected evidence once and delivers it intact after recovery (native=%s)",
+    (native) =>
+      Effect.gen(function* () {
+        const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+        const user = importedItem({
+          role: "user",
+          id: "tool-history-user",
+          text: "Check the failing tests and preserve the exact diagnostics.",
+          ordinal: 1,
+        });
+        const commandOutput = `COMMAND_EVIDENCE_SENTINEL\n${"Assertion failed: expected 日本語 🧪\n".repeat(60)}`;
+        const toolOutput = `TOOL_EVIDENCE_SENTINEL\n${"  preserve this diagnostic indentation\n".repeat(60)}`;
+        const command: OrchestrationV2TurnItem = {
+          ...user,
+          id: TurnItemId.make("item:handoff-command"),
+          type: "command_execution",
+          ordinal: 2,
+          status: "failed",
+          input: "vp test",
+          output: commandOutput,
+          exitCode: 1,
+        };
+        const tool: OrchestrationV2TurnItem = {
+          ...user,
+          id: TurnItemId.make("item:handoff-tool"),
+          type: "dynamic_tool",
+          ordinal: 3,
+          toolName: "diagnostics",
+          input: { path: "src/example.ts" },
+          output: { result: toolOutput },
+        };
+        const oversized: OrchestrationV2TurnItem = {
+          ...command,
+          id: TurnItemId.make("item:handoff-oversized"),
+          ordinal: 4,
+          output: `OMITTED_EVIDENCE_SENTINEL${"x".repeat(80_000)}`,
+        };
+        const target: OrchestrationV2ProviderThread = {
+          id: ProviderThreadId.make("provider-thread:compact-receipt"),
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: null,
+          appThreadId: user.threadId,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: ProviderDriverKind.make("codex"),
+            strength: "strong",
+            nativeId: "native:compact-receipt",
+          },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: user.updatedAt,
+          updatedAt: user.updatedAt,
+        };
+        const handoff = yield* service.prepareProviderHandoff({
+          threadId: user.threadId,
+          targetRunId: RunId.make("run:compact-receipt"),
+          transferId: null,
+          fromProviderThreadIds: [],
+          toProviderThreadId: target.id,
+          fromProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
+          toProviderInstanceId: target.providerInstanceId,
+          coveredRunOrdinals: { from: 1, to: 3 },
+          strategy: native ? "delta_since_target_last_seen" : "full_thread_summary",
+          items: [user, command, tool, oversized],
+          createdAt: user.updatedAt,
+        });
+        const encoded = yield* encodeHandoff(handoff);
+        assert.lengthOf(encoded.match(/COMMAND_EVIDENCE_SENTINEL/g) ?? [], 1);
+        assert.lengthOf(encoded.match(/TOOL_EVIDENCE_SENTINEL/g) ?? [], 1);
+        assert.notInclude(encoded, "OMITTED_EVIDENCE_SENTINEL");
+        assert.include(handoff.summaryText, "t3_thread_read");
+        assert.include(handoff.summaryText, user.threadId);
+        assert.include(handoff.summaryText, "Selected 3 intact items; omitted 1 items.");
+        assert.isBelow(Buffer.byteLength(handoff.summaryText), 2_000);
+        assert.deepEqual(handoff.history?.omittedItemIds, [oversized.id]);
+        const selected = handoff.history!.messages;
+        assert.include(
+          selected.find((message) => message.itemId === command.id)!.text,
+          commandOutput,
+        );
+        assert.include(
+          selected.find((message) => message.itemId === tool.id)!.text,
+          JSON.stringify(toolOutput),
+        );
+
+        let durable = yield* decodeHandoff(encoded);
+        const delivery = yield* deliverContextHandoffs({
+          handoffs: [durable],
+          providerThread: target,
+          budget: 16_000,
+          alreadyDeliveredItemIds: new Set(),
+          inject: (history) => {
+            assert.deepEqual(history.messages, selected);
+            assert.isAtMost(historyCost(history.messages, history.context), 16_000);
+            return Effect.succeed(native);
+          },
+          persist: (value) =>
+            Effect.sync(() => {
+              durable = value;
+            }),
+        });
+        yield* delivery.delivered;
+        if (native) assert.equal(delivery.context, "");
+        else {
+          assert.include(delivery.context, commandOutput);
+          assert.include(delivery.context, JSON.stringify(toolOutput));
+        }
+        assert.deepEqual(
+          durable.delivery?.itemIds,
+          selected.map((message) => message.itemId),
+        );
+        assert.include(durable.delivery?.omittedItemIds ?? [], oversized.id);
+        assert.equal(durable.delivery?.status, native ? "injected" : "inline");
+        const delivered = yield* encodeHandoff(durable);
+        assert.lengthOf(delivered.match(/COMMAND_EVIDENCE_SENTINEL/g) ?? [], 1);
+        assert.lengthOf(delivered.match(/TOOL_EVIDENCE_SENTINEL/g) ?? [], 1);
+      }),
   );
 });
 

@@ -30,6 +30,7 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { ExternalHistoryButton } from "../externalHistory/ExternalHistoryDialog";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -481,6 +482,27 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               />
             }
           />
+          {!isProjectScope &&
+          connectedEnvironments.some(
+            (environment) =>
+              environment.serverConfig?.environment.capabilities.externalHistory === 1,
+          ) ? (
+            <SettingsRow
+              {...searchableSetting("external-history")}
+              description="Search provider-native conversations and ChatGPT export files on an environment. Sources are read in place without importing them as T3 threads."
+              control={
+                <div className="flex flex-wrap gap-2">
+                  {connectedEnvironments.map((environment) => (
+                    <ExternalHistoryButton
+                      key={environment.environmentId}
+                      environmentId={environment.environmentId}
+                      label={environment.label}
+                    />
+                  ))}
+                </div>
+              }
+            />
+          ) : null}
         </>
       ) : (
         <>

@@ -1,5 +1,7 @@
 import { ConversationSummariesToolkit } from "./toolkits/conversationSummaries/tools.ts";
 import * as ConversationSummariesHandlers from "./toolkits/conversationSummaries/handlers.ts";
+import { ExternalHistoryToolkit } from "./toolkits/externalHistory/tools.ts";
+import * as ExternalHistoryHandlers from "./toolkits/externalHistory/handlers.ts";
 import { KnowledgeToolkit } from "./toolkits/knowledge/tools.ts";
 import * as KnowledgeHandlers from "./toolkits/knowledge/handlers.ts";
 import { ProjectCodeToolkit } from "./toolkits/projectCode/tools.ts";
@@ -1143,6 +1145,10 @@ const layerConversationSummariesRegistration = toolkitRegistration(
   ConversationSummariesToolkit,
   ConversationSummariesHandlers.layer,
 );
+const layerExternalHistoryRegistration = toolkitRegistration(
+  ExternalHistoryToolkit,
+  ExternalHistoryHandlers.layer,
+);
 export const layerProjectCodeToolkit = toolkitRegistration(
   ProjectCodeToolkit,
   ProjectCodeHandlers.layer,
@@ -1213,6 +1219,7 @@ export const layerTools = Layer.mergeAll(
   layerProjectRegistration,
   layerKnowledgeRegistration,
   layerConversationSummariesRegistration,
+  layerExternalHistoryRegistration,
   layerProjectCodeToolkit,
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,

@@ -1,15 +1,21 @@
-import { ThreadId } from "@t3tools/contracts";
+import {
+  OrchestrationV2ContextHandoffJson,
+  OrchestrationV2TurnItemJson,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { compactProviderHandoffSummary } from "./providerHandoffSummary.ts";
 
 export interface ProjectionVerificationV2 {
   readonly valid: boolean;
@@ -55,6 +61,91 @@ type ProjectionMetadataRow = {
 const encodeEntityKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.NullOr(Schema.String)])),
 );
+
+const decodeHandoff = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OrchestrationV2ContextHandoffJson),
+);
+const decodeTurnItem = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OrchestrationV2TurnItemJson),
+);
+
+type SummaryRewrite = {
+  readonly sequence: number;
+  readonly threadId: string;
+  readonly payloadJson: string;
+  readonly id: string;
+  readonly summary: string;
+  readonly receipt: string;
+  readonly strategy: string;
+} & (
+  | { readonly kind: "context" }
+  | {
+      readonly kind: "activity";
+      readonly handoffId: string;
+      readonly handoffPayloadJson: string;
+    }
+);
+
+function summaryRewrite(row: {
+  readonly sequence: number;
+  readonly stream_id: string;
+  readonly event_type: string;
+  readonly compactable_payload_json: string | null;
+  readonly handoff_payload_json: string | null;
+}): SummaryRewrite | null {
+  if (row.compactable_payload_json === null) return null;
+  const common = {
+    sequence: row.sequence,
+    threadId: row.stream_id,
+    payloadJson: row.compactable_payload_json,
+  };
+  if (row.event_type === "context-handoff.updated") {
+    const decoded = decodeHandoff(row.compactable_payload_json);
+    if (Option.isNone(decoded) || decoded.value.threadId !== row.stream_id) return null;
+    const handoff = decoded.value;
+    const receipt = compactProviderHandoffSummary(handoff, handoff.summaryText);
+    return receipt === null
+      ? null
+      : {
+          ...common,
+          kind: "context",
+          id: handoff.id,
+          strategy: handoff.strategy,
+          summary: handoff.summaryText,
+          receipt,
+        };
+  }
+  if (row.event_type !== "turn-item.updated" || row.handoff_payload_json === null) return null;
+  const decoded = decodeTurnItem(row.compactable_payload_json);
+  const decodedHandoff = decodeHandoff(row.handoff_payload_json);
+  if (Option.isNone(decoded) || Option.isNone(decodedHandoff)) return null;
+  const item = decoded.value;
+  const handoff = decodedHandoff.value;
+  if (
+    item.type !== "handoff" ||
+    item.summary === undefined ||
+    item.threadId !== row.stream_id ||
+    handoff.threadId !== item.threadId ||
+    handoff.id !== item.contextHandoffId ||
+    handoff.strategy !== item.strategy ||
+    handoff.toProviderThreadId !== item.toProviderThreadId
+  ) {
+    return null;
+  }
+  const receipt = compactProviderHandoffSummary(handoff, item.summary);
+  return receipt === null
+    ? null
+    : {
+        ...common,
+        kind: "activity",
+        id: item.id,
+        strategy: item.strategy,
+        summary: item.summary,
+        receipt,
+        handoffId: handoff.id,
+        handoffPayloadJson: row.handoff_payload_json,
+      };
+}
 
 export const layer: Layer.Layer<
   ProjectionMaintenanceV2,
@@ -260,6 +351,8 @@ export const layer: Layer.Layer<
           readonly event_type: string;
           readonly entity_id: string | null;
           readonly imported_legacy_thread: number;
+          readonly compactable_payload_json: string | null;
+          readonly handoff_payload_json: string | null;
         }>`
           SELECT
             event.sequence,
@@ -291,8 +384,32 @@ export const layer: Layer.Layer<
                   AND legacy_import.transcript_imported_at IS NOT NULL
               )
               ELSE 0
-            END AS imported_legacy_thread
+            END AS imported_legacy_thread,
+            CASE
+              WHEN event.application_event_version = 2
+                AND event.aggregate_kind = 'thread'
+                AND json_extract(event.payload_json, '$.strategy')
+                  IN ('delta_since_target_last_seen', 'full_thread_summary')
+                AND (
+                  (event.event_type = 'context-handoff.updated'
+                    AND json_type(event.payload_json, '$.history.messages') = 'array')
+                  OR (event.event_type = 'turn-item.updated'
+                    AND json_extract(event.payload_json, '$.type') = 'handoff'
+                    AND json_type(event.payload_json, '$.summary') = 'text')
+                )
+              THEN event.payload_json
+              ELSE NULL
+            END AS compactable_payload_json,
+            handoff.payload_json AS handoff_payload_json
           FROM orchestration_events AS event
+          LEFT JOIN orchestration_v2_projection_context_handoffs AS handoff
+            ON event.application_event_version = 2
+            AND event.event_type = 'turn-item.updated'
+            AND json_extract(event.payload_json, '$.type') = 'handoff'
+            AND json_extract(event.payload_json, '$.strategy')
+              IN ('delta_since_target_last_seen', 'full_thread_summary')
+            AND handoff.thread_id = event.stream_id
+            AND handoff.context_handoff_id = json_extract(event.payload_json, '$.contextHandoffId')
           WHERE event.sequence <= ${throughSequence}
           ORDER BY event.sequence DESC
           LIMIT ${COMPACTION_PAGE_SIZE + 1}
@@ -348,11 +465,73 @@ export const layer: Layer.Layer<
             }
           }
         }
+        const obsoleteSequences = new Set(obsolete);
+        const rewrites = page.flatMap((row) => {
+          if (obsoleteSequences.has(row.sequence)) return [];
+          const rewrite = summaryRewrite(row);
+          return rewrite === null ? [] : [rewrite];
+        });
         // Never hold a transaction or the reader lock across a yield or a rest.
         yield* Effect.yieldNow;
-        if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
-          deletedEventCount += obsolete.length;
+        if (obsolete.length > 0 || rewrites.length > 0) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              if (obsolete.length > 0) {
+                yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
+                deletedEventCount += obsolete.length;
+              }
+              for (const rewrite of rewrites) {
+                const changed = yield* sql<{ readonly sequence: number }>`
+                  UPDATE orchestration_events
+                  SET payload_json = json_set(payload_json,
+                    ${rewrite.kind === "context" ? "$.summaryText" : "$.summary"}, ${rewrite.receipt})
+                  WHERE sequence = ${rewrite.sequence}
+                    AND application_event_version = 2
+                    AND aggregate_kind = 'thread'
+                    AND stream_id = ${rewrite.threadId}
+                    AND event_type = ${rewrite.kind === "context" ? "context-handoff.updated" : "turn-item.updated"}
+                    AND payload_json = ${rewrite.payloadJson}
+                    ${
+                      rewrite.kind === "activity"
+                        ? sql`AND EXISTS (
+                            SELECT 1 FROM orchestration_v2_projection_context_handoffs AS source
+                            WHERE source.context_handoff_id = ${rewrite.handoffId}
+                              AND source.thread_id = ${rewrite.threadId}
+                              AND source.strategy = ${rewrite.strategy}
+                              AND json_extract(source.payload_json, '$.history') =
+                                json_extract(${rewrite.handoffPayloadJson}, '$.history')
+                          )`
+                        : sql``
+                    }
+                  RETURNING sequence
+                `;
+                if (changed.length === 0) continue;
+                if (rewrite.kind === "context") {
+                  yield* sql`
+                    UPDATE orchestration_v2_projection_context_handoffs
+                    SET payload_json = json_set(payload_json, '$.summaryText', ${rewrite.receipt})
+                    WHERE context_handoff_id = ${rewrite.id}
+                      AND thread_id = ${rewrite.threadId}
+                      AND strategy = ${rewrite.strategy}
+                      AND json_extract(payload_json, '$.summaryText') = ${rewrite.summary}
+                      AND json_extract(payload_json, '$.history') =
+                        json_extract(${rewrite.payloadJson}, '$.history')
+                  `;
+                } else {
+                  yield* sql`
+                    UPDATE orchestration_v2_projection_turn_items
+                    SET payload_json = json_set(payload_json, '$.summary', ${rewrite.receipt})
+                    WHERE turn_item_id = ${rewrite.id}
+                      AND thread_id = ${rewrite.threadId}
+                      AND type = 'handoff'
+                      AND json_extract(payload_json, '$.contextHandoffId') = ${rewrite.handoffId}
+                      AND json_extract(payload_json, '$.strategy') = ${rewrite.strategy}
+                      AND json_extract(payload_json, '$.summary') = ${rewrite.summary}
+                  `;
+                }
+              }
+            }),
+          );
           yield* Effect.yieldNow;
         }
         throughSequence =

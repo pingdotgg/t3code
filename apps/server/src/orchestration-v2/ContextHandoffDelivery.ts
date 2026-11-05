@@ -177,7 +177,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       return {
         summaryIds: chosen
           .filter((summary) => summary.coveredItemIds.some((id) => own.has(id)))
-          .map((summary) => summary.id),
+          .flatMap((summary) => summary.summaryIds ?? [summary.id]),
         summarizedItemIds,
       };
     };

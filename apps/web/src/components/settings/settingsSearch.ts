@@ -674,6 +674,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["conversation summaries history context handoff fork provider switch model"],
   },
   {
+    id: "external-history",
+    title: "External history",
+    to: "/settings/threads",
+    scope: "environment",
+    searchTerms: ["codex native cli app vscode chatgpt export conversation search history"],
+  },
+  {
     id: "start-from-origin",
     title: "Start from remote",
     to: "/settings/worktrees",

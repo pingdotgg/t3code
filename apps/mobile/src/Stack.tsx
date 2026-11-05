@@ -66,6 +66,7 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
 import { ConversationSummariesRouteScreen } from "./features/conversation-summaries/ConversationSummariesRouteScreen";
+import { ExternalHistoryRouteScreen } from "./features/external-history/ExternalHistoryRouteScreen";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
@@ -303,6 +304,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsThreadsRouteScreen,
     linking: "settings/thread-preferences",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Threads" },
+  }),
+  SettingsExternalHistory: createNativeStackScreen({
+    screen: ExternalHistoryRouteScreen,
+    linking: "settings/environments/:environmentId/external-history",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "External history" },
   }),
   SettingsAbout: createNativeStackScreen({
     screen: SettingsAboutRouteScreen,

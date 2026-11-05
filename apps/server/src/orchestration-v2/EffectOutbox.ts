@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  NonNegativeInt,
   ProjectId,
   NodeId,
   ProviderSessionId,
@@ -134,6 +135,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("conversation-summary.generate"),
     runId: RunId,
+    pass: Schema.optional(NonNegativeInt),
   }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;

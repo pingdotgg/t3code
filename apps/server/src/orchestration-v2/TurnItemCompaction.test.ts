@@ -2,18 +2,24 @@ import { applyOrchestrationV2ProjectionEvent } from "../../../../packages/client
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  ContextHandoffId,
   EventId,
   NodeId,
   PlanId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { renderHistory, selectHistory } from "@t3tools/provider-core/server/handoffBudget";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -78,6 +84,110 @@ function threadCreated(thread: OrchestrationV2AppThread, now: DateTime.Utc) {
     providerInstanceId,
     occurredAt: now,
     payload: thread,
+  } satisfies OrchestrationV2DomainEvent;
+}
+
+type HandoffItem = Extract<OrchestrationV2TurnItem, { readonly type: "handoff" }>;
+
+function legacyHandoff(
+  threadId: ThreadId,
+  now: DateTime.Utc,
+  key: string,
+  strategy: OrchestrationV2ContextHandoff["strategy"] = "full_thread_summary",
+) {
+  const sourceProviderThreadId = ProviderThreadId.make(`provider-thread:${key}:source`);
+  const targetProviderThreadId = ProviderThreadId.make(`provider-thread:${key}:target`);
+  const messages: ReadonlyArray<OrchestrationV2HistoricalMessage> = [
+    {
+      role: "user",
+      text: 'Inspect the tool result without changing "original" history.',
+      threadId,
+      runId: RunId.make(`run:${key}:source`),
+      itemId: TurnItemId.make(`item:${key}:request`),
+      providerThreadId: sourceProviderThreadId,
+      status: "completed",
+      kind: "user_message",
+    },
+    {
+      role: "assistant",
+      text: "Tool output α🙂\n".repeat(256),
+      threadId,
+      runId: RunId.make(`run:${key}:source`),
+      runStatus: "completed",
+      itemId: TurnItemId.make(`item:${key}:result`),
+      providerThreadId: sourceProviderThreadId,
+      status: "completed",
+      kind: "command_execution",
+    },
+  ];
+  const coverage = `Provider context handoff. Thread: ${threadId}. Covered app runs: 1-2.`;
+  const selected = selectHistory({ messages, coverage, budget: 32_000 });
+  const summary = renderHistory(selected.messages, selected.context);
+  const handoff: OrchestrationV2ContextHandoff = {
+    id: ContextHandoffId.make(`handoff:${key}`),
+    threadId,
+    targetRunId: RunId.make(`run:${key}:target`),
+    fromProviderThreadIds: [sourceProviderThreadId],
+    toProviderThreadId: targetProviderThreadId,
+    coveredRunOrdinals: { from: 1, to: 2 },
+    strategy,
+    status: "ready",
+    summaryMessageId: null,
+    summaryText: summary,
+    history: {
+      messages: selected.messages,
+      coverage,
+      omittedItems: selected.omittedItems,
+      omittedItemIds: selected.omittedItemIds,
+    },
+    createdByProviderInstanceId: providerInstanceId,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const item: HandoffItem = {
+    id: TurnItemId.make(`item:${key}:handoff`),
+    threadId,
+    runId: handoff.targetRunId,
+    nodeId: null,
+    providerThreadId: targetProviderThreadId,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: "Provider context handoff",
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+    type: "handoff",
+    contextHandoffId: handoff.id,
+    fromProviderThreadIds: handoff.fromProviderThreadIds,
+    toProviderThreadId: targetProviderThreadId,
+    fromProviderInstanceIds: [providerInstanceId],
+    toProviderInstanceId: providerInstanceId,
+    strategy,
+    summary,
+  };
+  return { handoff, item, receipt: selected.context };
+}
+
+function handoffEvent(handoff: OrchestrationV2ContextHandoff, eventId = `event:${handoff.id}`) {
+  return {
+    id: EventId.make(eventId),
+    type: "context-handoff.updated",
+    threadId: handoff.threadId,
+    occurredAt: handoff.updatedAt,
+    payload: handoff,
+  } satisfies OrchestrationV2DomainEvent;
+}
+
+function handoffItemEvent(item: HandoffItem) {
+  return {
+    id: EventId.make(`event:${item.id}`),
+    type: "turn-item.updated",
+    threadId: item.threadId,
+    occurredAt: item.updatedAt,
+    payload: item,
   } satisfies OrchestrationV2DomainEvent;
 }
 
@@ -485,4 +595,281 @@ it.effect("keeps post-bound appends visible during compaction", () =>
       );
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([2, 1_000])("compacts %s handoffs without losing history", (count) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-compaction");
+    const fixtures = Array.from({ length: count }, (_, index) =>
+      legacyHandoff(
+        threadId,
+        now,
+        String(index),
+        index % 2 === 0 ? "full_thread_summary" : "delta_since_target_last_seen",
+      ),
+    );
+    const writes = yield* sink.write({
+      events: [
+        threadCreated(makeThread(threadId, now), now),
+        ...fixtures.flatMap(({ handoff, item }) => [handoffEvent(handoff), handoffItemEvent(item)]),
+      ],
+    });
+    const copies = () => sql<{
+      readonly source: string;
+      readonly id: string;
+      readonly payload_json: string;
+      readonly summary: string;
+      readonly history: string | null;
+    }>`
+      SELECT 'event' AS source, event_id AS id, payload_json,
+        COALESCE(json_extract(payload_json, '$.summaryText'),
+          json_extract(payload_json, '$.summary')) AS summary,
+        json_extract(payload_json, '$.history') AS history
+      FROM orchestration_events
+      WHERE stream_id = ${threadId}
+        AND event_type IN ('context-handoff.updated', 'turn-item.updated')
+      UNION ALL
+      SELECT 'context', context_handoff_id, payload_json,
+        json_extract(payload_json, '$.summaryText'), json_extract(payload_json, '$.history')
+      FROM orchestration_v2_projection_context_handoffs WHERE thread_id = ${threadId}
+      UNION ALL
+      SELECT 'activity', turn_item_id, payload_json,
+        json_extract(payload_json, '$.summary'), NULL
+      FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}
+      ORDER BY source, id
+    `;
+    const before = yield* copies();
+    const highWater = yield* eventStore.latestSequence();
+    const result = yield* maintenance.compactEventStore();
+    assert.equal(result.deletedEventCount, 0);
+    assert.equal(result.deletedReceiptCount, 0);
+    assert.equal(yield* eventStore.latestSequence(), highWater);
+    const expected = writes.map((stored) => {
+      const { event } = stored;
+      if (event.type === "context-handoff.updated") {
+        const fixture = fixtures.find(({ handoff }) => handoff.id === event.payload.id)!;
+        return {
+          ...stored,
+          event: { ...event, payload: { ...event.payload, summaryText: fixture.receipt } },
+        };
+      }
+      if (event.type === "turn-item.updated" && event.payload.type === "handoff") {
+        const fixture = fixtures.find(({ item }) => item.id === event.payload.id)!;
+        return {
+          ...stored,
+          event: { ...event, payload: { ...event.payload, summary: fixture.receipt } },
+        };
+      }
+      return stored;
+    });
+    assert.deepEqual(yield* eventStore.read({ threadId }).pipe(Stream.runCollect), expected);
+    const after = yield* copies();
+    assert.lengthOf(after, count * 4);
+    assert.isTrue(after.every((row) => fixtures.some(({ receipt }) => row.summary === receipt)));
+    assert.deepEqual(
+      after.map(({ source, id, history }) => ({ source, id, history })),
+      before.map(({ source, id, history }) => ({ source, id, history })),
+    );
+    assert.isBelow(
+      after.reduce((size, row) => size + Buffer.byteLength(row.payload_json), 0),
+      before.reduce((size, row) => size + Buffer.byteLength(row.payload_json), 0) / 2,
+    );
+    yield* maintenance.compactEventStore();
+    assert.deepEqual(yield* copies(), after);
+    const projection = yield* projections.getThreadProjection(threadId);
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepEqual(yield* copies(), after);
+    assert.deepEqual(yield* projections.getThreadProjection(threadId), projection);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps custom, unprovable, and non-provider handoff summaries intact", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-compaction-skips");
+    const manual = legacyHandoff(threadId, now, "manual", "manual_context");
+    const fork = legacyHandoff(threadId, now, "fork", "fork_delta_summary");
+    const checkpoint = legacyHandoff(threadId, now, "checkpoint", "checkpoint_summary");
+    const missing = legacyHandoff(threadId, now, "missing-history");
+    const missingHandoff = { ...missing.handoff };
+    delete missingHandoff.history;
+    const empty = legacyHandoff(threadId, now, "empty-history");
+    const custom = legacyHandoff(threadId, now, "custom-summary");
+    const changed = legacyHandoff(threadId, now, "changed-history");
+    const target = legacyHandoff(threadId, now, "different-target");
+    const strategy = legacyHandoff(threadId, now, "different-strategy");
+    const orphan = legacyHandoff(threadId, now, "missing-handoff");
+    const foreignThreadId = ThreadId.make("thread:handoff-compaction-foreign");
+    const foreign = legacyHandoff(foreignThreadId, now, "foreign-handoff");
+    const fixtures = [
+      manual,
+      fork,
+      checkpoint,
+      { ...missing, handoff: missingHandoff },
+      {
+        ...empty,
+        handoff: { ...empty.handoff, history: { ...empty.handoff.history!, messages: [] } },
+      },
+      {
+        ...custom,
+        handoff: {
+          ...custom.handoff,
+          summaryText: `Custom introduction\n${custom.handoff.summaryText}`,
+        },
+        item: { ...custom.item, summary: `Custom introduction\n${custom.item.summary}` },
+      },
+      {
+        ...changed,
+        handoff: {
+          ...changed.handoff,
+          history: {
+            ...changed.handoff.history!,
+            messages: changed.handoff.history!.messages.map((message) => ({
+              ...message,
+              text: `${message.text} changed`,
+            })),
+          },
+        },
+      },
+      {
+        ...target,
+        handoff: { ...target.handoff, summaryText: target.receipt },
+        item: {
+          ...target.item,
+          toProviderThreadId: ProviderThreadId.make("provider-thread:other"),
+        },
+      },
+      {
+        ...strategy,
+        handoff: { ...strategy.handoff, summaryText: strategy.receipt },
+        item: { ...strategy.item, strategy: "delta_since_target_last_seen" as const },
+      },
+      {
+        ...foreign,
+        handoff: { ...foreign.handoff, summaryText: foreign.receipt },
+        item: { ...foreign.item, threadId },
+      },
+    ];
+    const writes = yield* sink.write({
+      events: [
+        threadCreated(makeThread(threadId, now), now),
+        {
+          ...threadCreated(makeThread(foreignThreadId, now), now),
+          id: EventId.make("event:handoff-compaction-foreign:thread"),
+        },
+        ...fixtures.flatMap(({ handoff, item }) => [handoffEvent(handoff), handoffItemEvent(item)]),
+        handoffItemEvent(orphan.item),
+      ],
+    });
+    assert.equal((yield* maintenance.compactEventStore()).deletedEventCount, 0);
+    assert.deepEqual(yield* eventStore.read({}).pipe(Stream.runCollect), writes);
+    yield* maintenance.compactEventStore();
+    assert.deepEqual(yield* eventStore.read({}).pipe(Stream.runCollect), writes);
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepEqual(yield* eventStore.read({}).pipe(Stream.runCollect), writes);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("preserves newer handoff projections when cleaning older event history", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-compaction-newer");
+    const fixture = legacyHandoff(threadId, now, "newer");
+    const newerHandoff = {
+      ...fixture.handoff,
+      summaryText: "A newer custom summary",
+      history: {
+        ...fixture.handoff.history!,
+        messages: fixture.handoff.history!.messages.map((message) => ({
+          ...message,
+          text: `${message.text} newly selected`,
+        })),
+      },
+    };
+    const writes = yield* sink.write({
+      events: [
+        threadCreated(makeThread(threadId, now), now),
+        handoffEvent(fixture.handoff),
+        handoffItemEvent(fixture.item),
+        handoffEvent(newerHandoff, "event:handoff-newer:latest"),
+        {
+          ...handoffItemEvent({ ...fixture.item, summary: newerHandoff.summaryText }),
+          id: EventId.make("event:handoff-item-newer:latest"),
+        },
+      ],
+    });
+    const projection = yield* projections.getThreadProjection(threadId);
+    yield* maintenance.compactEventStore();
+    const replay = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+    assert.deepEqual(
+      replay,
+      writes.map((stored) =>
+        stored.event.type === "context-handoff.updated" &&
+        stored.event.id === `event:${fixture.handoff.id}`
+          ? {
+              ...stored,
+              event: {
+                ...stored.event,
+                payload: { ...stored.event.payload, summaryText: fixture.receipt },
+              },
+            }
+          : stored,
+      ),
+    );
+    assert.deepEqual(yield* projections.getThreadProjection(threadId), projection);
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepEqual(yield* projections.getThreadProjection(threadId), projection);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("rolls back handoff event cleanup when its projection rewrite fails", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-compaction-rollback");
+    const fixture = legacyHandoff(threadId, now, "rollback");
+    const writes = yield* sink.write({
+      events: [
+        threadCreated(makeThread(threadId, now), now),
+        handoffEvent(fixture.handoff),
+        handoffItemEvent(fixture.item),
+      ],
+    });
+    const projection = yield* projections.getThreadProjection(threadId);
+    yield* sql`
+      CREATE TRIGGER reject_handoff_compaction
+      BEFORE UPDATE OF payload_json ON orchestration_v2_projection_context_handoffs
+      BEGIN SELECT RAISE(ABORT, 'test projection rewrite rejected'); END
+    `;
+    const failure = yield* maintenance.compactEventStore().pipe(Effect.exit);
+    assert.equal(failure._tag, "Failure");
+    assert.deepEqual(yield* eventStore.read({ threadId }).pipe(Stream.runCollect), writes);
+    assert.deepEqual(yield* projections.getThreadProjection(threadId), projection);
+    yield* sql`DROP TRIGGER reject_handoff_compaction`;
+    yield* maintenance.compactEventStore();
+    const replay = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+    assert.isTrue(
+      replay.some(
+        ({ event }) =>
+          event.type === "context-handoff.updated" && event.payload.summaryText === fixture.receipt,
+      ),
+    );
+  }).pipe(Effect.provide(layerTest)),
 );

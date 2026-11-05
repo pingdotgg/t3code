@@ -33,6 +33,7 @@ import { CodeIntelligence } from "../project/knowledge/CodeIntelligence.ts";
 import { FileHistory } from "../project/knowledge/FileHistory.ts";
 import { ProjectKnowledge } from "../project/knowledge/ProjectKnowledge.ts";
 import { ConversationSummaries } from "../project/conversationSummaries/ConversationSummaries.ts";
+import { ExternalHistory } from "../project/externalHistory/ExternalHistory.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
 import { ProjectService } from "../project/ProjectService.ts";
@@ -56,6 +57,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(FileHistory)({}),
   Layer.mock(ProjectKnowledge)({}),
   Layer.mock(ConversationSummaries)({}),
+  Layer.mock(ExternalHistory)({}),
   Layer.mock(PeerForwarding)({}),
   Layer.mock(PeerLinkRequests)({}),
   Layer.mock(PeerLinks)({}),

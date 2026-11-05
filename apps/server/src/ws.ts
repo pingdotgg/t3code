@@ -3,6 +3,8 @@ import * as PstackPack from "./pstack/PstackPack.ts";
 import * as SkillsLibrary from "./skills/SkillsLibrary.ts";
 import * as ProjectKnowledge from "./project/knowledge/ProjectKnowledge.ts";
 import * as ConversationSummaries from "./project/conversationSummaries/ConversationSummaries.ts";
+import * as ExternalHistory from "./project/externalHistory/ExternalHistory.ts";
+import { conversationSummariesRpcHandlers } from "./conversationSummariesRpc.ts";
 import * as ProjectLoom from "./project/loom/ProjectLoom.ts";
 import * as CodeIntelligence from "./project/knowledge/CodeIntelligence.ts";
 import * as FileHistory from "./project/knowledge/FileHistory.ts";
@@ -117,6 +119,7 @@ import {
   WsRpcGroup,
   WsProjectKnowledgeRpcGroup,
   WsConversationSummariesRpcGroup,
+  WsExternalHistoryRpcGroup,
   WsProjectLoomRpcGroup,
   WsProjectCodeRpcGroup,
 } from "@t3tools/contracts";
@@ -670,6 +673,7 @@ const ServerCoreWsRpcGroup = ServerWsRpcGroup.omit(
   WS_METHODS.conversationSummariesList,
   WS_METHODS.conversationSummariesDescribe,
   WS_METHODS.conversationSummariesExpand,
+  WS_METHODS.externalHistoryQuery,
   WS_METHODS.projectReadLoomWindow,
 );
 const layerProjectLoomRpc = WsProjectLoomRpcGroup.middleware(RpcInstrumentation).toLayer(
@@ -683,11 +687,13 @@ const layerConversationSummariesRpc = WsConversationSummariesRpcGroup.middleware
 ).toLayer(
   Effect.gen(function* () {
     const summaries = yield* ConversationSummaries.ConversationSummaries;
-    return {
-      [WS_METHODS.conversationSummariesList]: (input) => summaries.list(input),
-      [WS_METHODS.conversationSummariesDescribe]: (input) => summaries.describe(input),
-      [WS_METHODS.conversationSummariesExpand]: (input) => summaries.expand(input),
-    };
+    return conversationSummariesRpcHandlers(summaries);
+  }),
+);
+const layerExternalHistoryRpc = WsExternalHistoryRpcGroup.middleware(RpcInstrumentation).toLayer(
+  Effect.gen(function* () {
+    const history = yield* ExternalHistory.ExternalHistory;
+    return { [WS_METHODS.externalHistoryQuery]: (input) => history.query(input) };
   }),
 );
 const layerKnowledgeRpc = WsProjectKnowledgeRpcGroup.middleware(RpcInstrumentation).toLayer(
@@ -3562,6 +3568,7 @@ export const layerWsRpc = (
   ).pipe(
     Layer.merge(layerKnowledgeRpc),
     Layer.merge(layerConversationSummariesRpc),
+    Layer.merge(layerExternalHistoryRpc),
     Layer.merge(layerProjectLoomRpc),
     Layer.merge(layerProjectCodeRpc),
   );

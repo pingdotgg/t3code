@@ -33,7 +33,10 @@ import {
   deliveryScrubEffect,
 } from "../project/knowledge/deliveryScrubSchedule.ts";
 import { AssistedLearningRunner } from "../project/knowledge/assistedLearningSchedule.ts";
-import { ConversationSummaryRuntime } from "../project/conversationSummaries/conversationSummarySchedule.ts";
+import {
+  ConversationSummaryRuntime,
+  conversationSummaryEffect,
+} from "../project/conversationSummaries/conversationSummarySchedule.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -596,6 +599,7 @@ export const layerExecutor: Layer.Layer<
             return conversationSummaries
               .summarizeThread({ threadId: effect.threadId, runId: effect.request.runId })
               .pipe(
+                Effect.asVoid,
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -698,6 +702,7 @@ export const layerWithOptions = (
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
       const deliveryScrubber = yield* DeliveryScrubRunner;
+      const conversationSummaries = yield* ConversationSummaryRuntime;
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
       const wasCancelled = (effectId: string) =>
@@ -865,7 +870,35 @@ export const layerWithOptions = (
                       }),
                   ),
                 )
-              : executor.execute(effect, { willRetry: effect.attemptCount < maxAttempts })
+              : effect.request.type === "conversation-summary.generate"
+                ? Effect.gen(function* () {
+                    const request = effect.request;
+                    if (request.type !== "conversation-summary.generate") return;
+                    const result = yield* conversationSummaries.summarizeThread({
+                      threadId: effect.threadId,
+                      runId: request.runId,
+                    });
+                    if (result.hasMore) {
+                      yield* outbox.enqueue([
+                        conversationSummaryEffect({
+                          threadId: effect.threadId,
+                          runId: request.runId,
+                          pass: (request.pass ?? 0) + 1,
+                        }),
+                      ]);
+                      yield* outbox.notifyAvailable();
+                    }
+                  }).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationEffectExecutionError({
+                          effectId: effect.id,
+                          effectType: effect.request.type,
+                          cause,
+                        }),
+                    ),
+                  )
+                : executor.execute(effect, { willRetry: effect.attemptCount < maxAttempts })
           ).pipe(boundExecution(effect), Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),

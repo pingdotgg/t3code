@@ -5,6 +5,7 @@ import * as HolographicMemory from "./project/knowledge/HolographicMemory.ts";
 import * as ProjectKnowledge from "./project/knowledge/ProjectKnowledge.ts";
 import * as AssistedLearning from "./project/knowledge/AssistedLearning.ts";
 import * as ConversationSummaries from "./project/conversationSummaries/ConversationSummaries.ts";
+import * as ExternalHistory from "./project/externalHistory/ExternalHistory.ts";
 import * as ProjectLoom from "./project/loom/ProjectLoom.ts";
 import * as CodeIntelligence from "./project/knowledge/CodeIntelligence.ts";
 import * as FileHistory from "./project/knowledge/FileHistory.ts";
@@ -705,7 +706,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, TextGeneration.layer)),
     ),
   ),
-  Layer.provideMerge(ProjectLoom.layer),
+  Layer.provideMerge(Layer.merge(ProjectLoom.layer, ExternalHistory.layer)),
   Layer.provideMerge(
     ProjectKnowledge.layer.pipe(
       Layer.provide(ProjectionStoreV2.layer),

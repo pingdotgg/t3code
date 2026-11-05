@@ -20,7 +20,9 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
+  withCodexAppServerClient,
 } from "../CodexProvider.ts";
+import { makeCodexNativeHistory } from "../CodexHistory.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
@@ -294,6 +296,51 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     generateConversationSummary: (value) =>
       protect("generateConversationSummary", nativeGeneration.generateConversationSummary(value)),
   };
+  const nativeHistory = yield* makeCodexNativeHistory({
+    enabled,
+    homePath: runtime.homeLayout.sharedHomePath,
+    identity: continuationIdentity,
+    withClient: (cwd, use) =>
+      runtime.auth.controller.withAccess!(
+        runtime.resolve.pipe(
+          Effect.flatMap((effective) =>
+            withCodexAppServerClient({
+              binaryPath: effective.config.binaryPath,
+              homePath: runtime.homeLayout.sharedHomePath,
+              launchArgs: effective.config.launchArgs,
+              environment: {
+                ...effective.environment,
+                CODEX_HOME: runtime.homeLayout.sharedHomePath,
+              },
+              cwd,
+            }),
+          ),
+          Effect.flatMap(({ client, initialize }) =>
+            use({
+              homePath: initialize.codexHome,
+              list: (params) => client.request("thread/list", params),
+              read: (params) => client.request("thread/read", params),
+              items: (params) => client.request("thread/items/list", params),
+            }),
+          ),
+        ),
+      ).pipe(
+        Effect.scoped,
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProviderDriverError({
+          driver: DRIVER,
+          instanceId,
+          detail: "Could not prepare Codex history.",
+          cause,
+        }),
+    ),
+  );
   return {
     instanceId,
     driverKind: DRIVER,
@@ -311,6 +358,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     },
     orchestrationAdapter,
     textGeneration,
+    nativeHistory,
     auth: runtime.auth.controller,
     snapshotForCwd: (cwd: string) =>
       enabled

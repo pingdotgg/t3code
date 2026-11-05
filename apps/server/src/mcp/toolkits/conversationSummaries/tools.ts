@@ -28,7 +28,7 @@ export const ConversationSummariesToolkit = Toolkit.make(
   Tool.make("t3_conversation_summary_list", {
     ...shared,
     description:
-      "List the generated summaries of a thread's older messages, oldest first, with whether summarizing is on for the project and what the latest background pass did. Use when a handoff mentions a conversation summary or you need the gist of a long thread before reading it with t3_thread_read. A summary whose source messages changed or were removed is stale and returns no text. Paginate with cursor=nextCursor. Does not generate summaries.",
+      "List stored thread summaries (messages/tool evidence), oldest first, for long-thread recall or handoffs. Includes enabled status and last pass. query matches statement text as a literal case-insensitive substring. Follow cursor=nextCursor with the same query. Stale summaries expose no text; this never generates summaries.",
     parameters: Schema.Struct({
       ...ConversationSummaryListInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -40,7 +40,7 @@ export const ConversationSummariesToolkit = Toolkit.make(
   Tool.make("t3_conversation_summary_describe", {
     ...shared,
     description:
-      "Read one conversation summary: its statements, the message ids each statement cites, and its exact source messages (ids and digests). The text is a model-written summary, not the conversation; check anything you rely on with t3_conversation_summary_expand. Stale summaries return no text.",
+      "Read a generated summary's statements, citation keys and canonical message/tool source refs with digests and optional UTF-16 ranges (end exclusive). Verify claims with t3_conversation_summary_expand. Stale summaries expose no text.",
     parameters: Schema.Struct({
       ...ConversationSummaryDescribeInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -52,7 +52,7 @@ export const ConversationSummariesToolkit = Toolkit.make(
   Tool.make("t3_conversation_summary_expand", {
     ...shared,
     description:
-      "Return the exact original messages a conversation summary was written from, in order, as they are now. A message that changed, was removed, or sits in a deleted or archived thread returns a typed unavailable reason instead of text. Paginate with offset=nextOffset.",
+      "Read canonical source ranges; changed, removed, archived or unfinished sources are unavailable. maxChars bounds page text (default 12000, max 48000 UTF-16 units); limit bounds source count. Continue with offset=nextOffset AND textOffset=nextTextOffset even when offset repeats. null nextOffset ends paging.",
     parameters: Schema.Struct({
       ...ConversationSummaryExpandInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
