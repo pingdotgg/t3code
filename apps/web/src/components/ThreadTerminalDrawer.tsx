@@ -1901,7 +1901,12 @@ export default function ThreadTerminalDrawer({
         </div>
       )}
 
-      <div className="min-h-0 w-full flex-1">
+      <div
+        className={cn(
+          "min-h-0 w-full flex-1",
+          !hasTerminalSidebar && "bg-(--terminal-background) pt-8",
+        )}
+      >
         <div
           className={cn(
             "flex h-full min-h-0 bg-(--terminal-background)",
