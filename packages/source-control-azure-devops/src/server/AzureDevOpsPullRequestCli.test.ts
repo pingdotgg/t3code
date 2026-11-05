@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
+import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -345,6 +346,103 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         expect(yield* Fiber.join(shared)).toEqual([]);
         expect(started).toBe(5);
       }),
+  );
+
+  it.effect("answers a list before dating its rows, then dates each once", () =>
+    Effect.gen(function* () {
+      const fourStarted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const commentedAt = (number: number) => `2026-07-1${number}T09:00:00.000Z`;
+      const threads = (number: number) =>
+        json({
+          value: [
+            {
+              id: 1,
+              publishedDate: commentedAt(number),
+              lastUpdatedDate: commentedAt(number),
+              comments: [{ id: 1, content: "Looks good.", commentType: "text" }],
+            },
+          ],
+        });
+      const threadReads: number[] = [];
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.gen(function* () {
+          if (!args.includes("pullRequestThreads")) {
+            if (args.includes("list")) return output(pullRequests(6, 1));
+            return output(json(pullRequestRows(1, Number(args[args.indexOf("--id") + 1]))[0]!));
+          }
+          const number = Number(/pullRequestId=(\d+)/u.exec(args.join(" "))?.[1]);
+          threadReads.push(number);
+          if (threadReads.length === 4) yield* Deferred.succeed(fourStarted, undefined);
+          if (number !== 6) yield* Deferred.await(release);
+          return output(number === 3 ? "not json" : threads(number));
+        }),
+      );
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      const list = provider.listChangeRequests({
+        cwd: "/listed",
+        repository: "platform/web",
+        host: "dev.azure.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal@acme.dev",
+        limit: 6,
+      });
+      const rows = (page: { readonly items: ReadonlyArray<ProviderChangeRequest> }) =>
+        page.items.map(({ number, updatedAt, updatedAtState }) => ({
+          number,
+          updatedAt,
+          ...(updatedAtState === undefined ? {} : { updatedAtState }),
+        }));
+
+      const first = yield* Effect.raceFirst(
+        Effect.asSome(list),
+        Deferred.await(fourStarted).pipe(Effect.as(Option.none())),
+      );
+      assert.isTrue(Option.isSome(first), "the list waited for its rows' activity");
+      const page = Option.getOrThrow(first);
+      expect(threadReads).toEqual([]);
+      expect(rows(page)).toEqual(
+        [1, 2, 3, 4, 5, 6].map((number) => ({
+          number,
+          updatedAt: "2026-07-01T00:00:00.000Z",
+          updatedAtState: "pending",
+        })),
+      );
+
+      const settling = yield* Effect.forkChild(page.settleUpdatedAt!);
+      yield* Deferred.await(fourStarted);
+      expect(threadReads).toEqual([1, 2, 3, 4]);
+      // Opening a pull request still queued behind the list reads it at once.
+      const summary = yield* provider.getChangeRequestSummary!({
+        cwd: "/listed",
+        repository: "platform/web",
+        host: "dev.azure.com",
+        number: 6,
+      });
+      expect(summary.updatedAt).toBe(commentedAt(6));
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(settling)).toBe(true);
+      expect(threadReads.toSorted()).toEqual([1, 2, 3, 4, 5, 6]);
+
+      const dated = yield* list;
+      expect(rows(dated)).toEqual(
+        [1, 2, 3, 4, 5, 6].map((number) =>
+          number === 3
+            ? { number, updatedAt: "2026-07-01T00:00:00.000Z", updatedAtState: "unavailable" }
+            : { number, updatedAt: commentedAt(number) },
+        ),
+      );
+      expect(dated.settleUpdatedAt).toBeUndefined();
+      expect(threadReads).toHaveLength(6);
+
+      // Old dates are shown while they are read again, which needs no refresh when none moved.
+      yield* TestClock.adjust("301 seconds");
+      const stale = yield* list;
+      expect(rows(stale)).toEqual(rows(dated));
+      expect(yield* stale.settleUpdatedAt!).toBe(false);
+      expect(threadReads).toHaveLength(12);
+    }),
   );
 
   it.effect("reports the latest pushed source commit even while the trial merge is stale", () =>

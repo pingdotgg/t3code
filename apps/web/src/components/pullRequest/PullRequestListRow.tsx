@@ -2,6 +2,7 @@ import type {
   PullRequestActor,
   PullRequestMergeability,
   PullRequestState,
+  PullRequestUpdatedAtState,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
@@ -65,6 +66,7 @@ export function PullRequestRowLines({
   meta,
   metaClassName,
   updatedAt,
+  updatedAtState,
 }: {
   number: ReactNode;
   title: ReactNode;
@@ -73,7 +75,14 @@ export function PullRequestRowLines({
   meta?: ReactNode;
   metaClassName?: string;
   updatedAt?: string | null | undefined;
+  updatedAtState?: PullRequestUpdatedAtState | undefined;
 }) {
+  const unknownUpdate =
+    updatedAtState === "pending"
+      ? { mark: "…", label: "Checking for recent activity" }
+      : updatedAtState === "unavailable"
+        ? { mark: "?", label: "Recent activity could not be read" }
+        : null;
   return (
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-center gap-1.5">
@@ -95,7 +104,16 @@ export function PullRequestRowLines({
         {meta}
         {updatedAt ? (
           <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums">
-            <RelativeTime timestamp={updatedAt} />
+            {unknownUpdate === null ? (
+              <RelativeTime timestamp={updatedAt} />
+            ) : (
+              <Tooltip>
+                <TooltipTrigger render={<span aria-label={unknownUpdate.label} />}>
+                  {unknownUpdate.mark}
+                </TooltipTrigger>
+                <TooltipPopup side="top">{unknownUpdate.label}</TooltipPopup>
+              </Tooltip>
+            )}
           </span>
         ) : null}
       </span>

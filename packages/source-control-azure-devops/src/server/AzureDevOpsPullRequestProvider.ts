@@ -142,8 +142,9 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
+  // Someone is looking at this pull request, so its read skips the queue listed rows wait in.
   const dated = (cwd: string, maxAge: Duration.Duration) => (pullRequest: AzureDevOpsPullRequest) =>
-    cli.activityAt({ cwd, pullRequest, maxAge }).pipe(
+    cli.activityAt({ cwd, pullRequest, maxAge, immediate: true }).pipe(
       Effect.map((updatedAt) => ({
         ...pullRequest,
         updatedAt: updatedAt ?? pullRequest.updatedAt,
@@ -275,19 +276,47 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
           Effect.flatMap((batch) =>
-            // Only the rows handed over are dated; the CLI bounds how many reads run at once.
-            Effect.forEach(
-              batch.items,
-              dated(input.cwd, AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE),
-              { concurrency: "unbounded" },
+            // Each row's date is a process of its own, so the page is answered before they run.
+            Effect.forEach(batch.items, (pullRequest) =>
+              cli
+                .listedActivity({
+                  cwd: input.cwd,
+                  pullRequest,
+                  maxAge: AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE,
+                })
+                .pipe(
+                  Effect.map((activity) => ({
+                    item: {
+                      ...toChangeRequest({
+                        ...pullRequest,
+                        updatedAt: activity.at ?? pullRequest.updatedAt,
+                      }),
+                      ...(activity.state === undefined ? {} : { updatedAtState: activity.state }),
+                    },
+                    settle: activity.settle,
+                  })),
+                ),
             ).pipe(
-              Effect.map((items) => ({
-                items: items.map(toChangeRequest),
-                truncated: batch.truncated,
-                cursorAdvance: batch.cursorAdvance,
-                // Azure's ordering is stable across offset-based pages.
-                continues: true,
-              })),
+              Effect.map((rows) => {
+                const settling = rows.flatMap(({ settle }) =>
+                  settle === undefined ? [] : [settle],
+                );
+                return {
+                  items: rows.map(({ item }) => item),
+                  truncated: batch.truncated,
+                  cursorAdvance: batch.cursorAdvance,
+                  // Azure's ordering is stable across offset-based pages.
+                  continues: true,
+                  ...(settling.length === 0
+                    ? {}
+                    : {
+                        // The CLI bounds how many of these reads run at once.
+                        settleUpdatedAt: Effect.all(settling, { concurrency: "unbounded" }).pipe(
+                          Effect.map((changed) => changed.includes(true)),
+                        ),
+                      }),
+                };
+              }),
             ),
           ),
         ),

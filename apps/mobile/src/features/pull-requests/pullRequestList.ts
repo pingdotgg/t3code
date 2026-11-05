@@ -191,6 +191,7 @@ export function pullRequestListRowsAreEqual(
       previous.mergeability === next.mergeability &&
       previous.baseBranch === next.baseBranch &&
       previous.updatedAt === next.updatedAt &&
+      previous.updatedAtState === next.updatedAtState &&
       previous.additions === next.additions &&
       previous.deletions === next.deletions &&
       previous.checksState === next.checksState &&

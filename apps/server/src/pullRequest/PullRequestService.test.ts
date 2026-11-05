@@ -15,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
   ProjectId,
+  PullRequestListResult,
   PullRequestReviewCapabilities,
   PullRequestReviewerCapabilities,
 } from "@t3tools/contracts";
@@ -2176,6 +2177,76 @@ it.effect("a listing narrowed to some projects is its own cache entry", () =>
     yield* service.list({ state: "open", projectIds: ["p2" as ProjectId] });
     assert.strictEqual(asked.length, 2);
   }),
+);
+
+it.effect("answers rows still being dated, then lists again once, after they are", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      let hostCalls = 0;
+      let dated = false;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: () => {
+              hostCalls += 1;
+              const quiet = changeRequest(2, "2026-07-03T00:00:00.000Z");
+              if (dated) {
+                return Effect.succeed({
+                  items: [changeRequest(1, "2026-07-05T00:00:00.000Z"), quiet],
+                  truncated: false,
+                  continues: true,
+                });
+              }
+              return Effect.succeed({
+                items: [
+                  {
+                    ...changeRequest(1, "2026-07-01T00:00:00.000Z"),
+                    updatedAtState: "pending" as const,
+                  },
+                  quiet,
+                ],
+                truncated: false,
+                continues: true,
+                settleUpdatedAt: Deferred.await(release).pipe(
+                  Effect.map(() => {
+                    dated = true;
+                    return true;
+                  }),
+                ),
+              });
+            },
+          }),
+        ],
+      });
+      const shown = (result: PullRequestListResult) =>
+        result.entries.map(({ number, updatedAtState }) => [number, updatedAtState ?? "dated"]);
+
+      const refreshed = yield* service.subscribeRefreshes.pipe(
+        Stream.take(1),
+        Stream.mapEffect(() => service.list({ state: "open" })),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      assert.deepStrictEqual(shown(yield* service.list({ state: "open" })), [
+        [2, "dated"],
+        [1, "pending"],
+      ]);
+      yield* service.list({ state: "open" });
+      assert.strictEqual(hostCalls, 1);
+
+      yield* Deferred.succeed(release, undefined);
+      assert.deepStrictEqual(shown(Option.getOrThrow(yield* Fiber.join(refreshed))), [
+        [1, "dated"],
+        [2, "dated"],
+      ]);
+      yield* service.list({ state: "open" });
+      assert.strictEqual(hostCalls, 2);
+    }),
+  ),
 );
 
 it.effect(

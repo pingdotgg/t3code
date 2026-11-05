@@ -16,6 +16,7 @@ import type {
   PullRequestListState,
   PullRequestMergeMethod,
   PullRequestState,
+  PullRequestUpdatedAtState,
 } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -155,7 +156,17 @@ interface ActivityRecord {
   readAt: number | null;
   /** The revision the last finished read dated. */
   revision: string | null;
+  /** Whether the last finished read failed. */
+  failed: boolean;
   reading: ActivityRead | null;
+}
+
+export interface AzureDevOpsListedActivity {
+  /** The latest time known so far. */
+  readonly at: string | null;
+  readonly state?: PullRequestUpdatedAtState;
+  /** Present when a read is due; it succeeds with whether `at` or `state` would now differ. */
+  readonly settle?: Effect.Effect<boolean>;
 }
 
 export interface AzureDevOpsIterationChanges {
@@ -213,7 +224,16 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly pullRequest: AzureDevOpsActivitySubject;
       readonly maxAge: Duration.Duration;
+      /** Skip the queue background reads share, for a pull request someone has open. */
+      readonly immediate?: boolean;
     }) => Effect.Effect<string | null>;
+
+    /** What `activityAt` would answer without waiting: a due read is handed back to run later. */
+    readonly listedActivity: (input: {
+      readonly cwd: string;
+      readonly pullRequest: AzureDevOpsActivitySubject;
+      readonly maxAge: Duration.Duration;
+    }) => Effect.Effect<AzureDevOpsListedActivity>;
 
     readonly listIterations: (input: {
       readonly cwd: string;
@@ -425,7 +445,13 @@ export const make = Effect.gen(function* () {
       const oldest = activity.keys().next().value;
       if (oldest !== undefined) activity.delete(oldest);
     }
-    const record: ActivityRecord = { at: null, readAt: null, revision: null, reading: null };
+    const record: ActivityRecord = {
+      at: null,
+      readAt: null,
+      revision: null,
+      failed: false,
+      reading: null,
+    };
     activity.set(key, record);
     return record;
   };
@@ -475,6 +501,7 @@ export const make = Effect.gen(function* () {
           // A read nobody saw finish must not count as one; a failed read still does.
           if (Exit.hasInterrupts(exit)) return;
           record.readAt = startedAt;
+          record.failed = Exit.isFailure(exit);
           if (read.revision !== null) record.revision = read.revision;
         }).pipe(Effect.andThen(Deferred.done(read.done, exit))),
       ),
@@ -483,7 +510,8 @@ export const make = Effect.gen(function* () {
 
   /**
    * Concurrent readers of one pull request share a single process. A null revision asks for
-   * the conversation itself, which runs at once instead of waiting behind background reads.
+   * the conversation itself, which, like any read not `queued`, runs at once instead of waiting
+   * behind background reads.
    */
   const readThreads = Effect.fn("AzureDevOpsPullRequestCli.readThreads")(function (
     input: {
@@ -492,28 +520,30 @@ export const make = Effect.gen(function* () {
       readonly number: number;
     },
     revision: string | null,
+    queued: boolean,
   ): Effect.Effect<AzureDevOpsThreads, AzureDevOpsPullRequestCliError> {
     return Effect.uninterruptibleMask((restore) =>
       Effect.suspend(() => {
         const record = activityRecord(activityKey(input));
-        const again = () => readThreads(input, revision);
+        const now = revision === null || !queued;
+        const again = () => readThreads(input, revision, queued);
         // The reader that started it was interrupted; this one still wants the answer.
         const join = (read: ActivityRead) =>
           Deferred.await(read.done).pipe(Effect.catchCauseIf(Cause.hasInterruptsOnly, again));
         const current = record.reading;
         if (current !== null) {
-          if (revision === null && claim(current)) return runRead(input, record, current, restore);
           if (revision !== null && current.revision !== revision) {
             // A read already out may predate this revision; one still waiting will not.
             if (current.started)
               return restore(Deferred.await(current.done).pipe(Effect.exit, Effect.andThen(again)));
             current.revision = revision;
           }
+          if (now && claim(current)) return runRead(input, record, current, restore);
           return restore(join(current));
         }
         const read: ActivityRead = { done: Deferred.makeUnsafe(), revision, started: false };
         record.reading = read;
-        if (revision === null) {
+        if (now) {
           read.started = true;
           return runRead(input, record, read, restore);
         }
@@ -541,6 +571,36 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
+
+  const isFresh = (key: string, revision: string, maxAge: Duration.Duration) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.map((now) => {
+        const record = activityRecord(key);
+        return (
+          record.reading === null &&
+          record.readAt !== null &&
+          record.revision === revision &&
+          now - record.readAt < Duration.toMillis(maxAge)
+        );
+      }),
+    );
+
+  /** Reads an open pull request's threads unless a fresh enough read already dated `revision`. */
+  const dateActivity = (
+    subject: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    },
+    revision: string,
+    maxAge: Duration.Duration,
+    queued: boolean,
+  ) =>
+    isFresh(activityKey(subject), revision, maxAge).pipe(
+      Effect.flatMap((fresh) =>
+        fresh ? Effect.void : Effect.ignore(readThreads(subject, revision, queued)),
+      ),
+    );
 
   /** Decoding can shorten a non-final page; advance by raw rows. */
   const listPullRequestPage = (input: {
@@ -736,26 +796,49 @@ export const make = Effect.gen(function* () {
     }),
 
     listThreads: Effect.fn("AzureDevOpsPullRequestCli.listThreads")(function (input) {
-      return readThreads(input, null).pipe(Effect.map((threads) => threads.comments));
+      return readThreads(input, null, false).pipe(Effect.map((threads) => threads.comments));
     }),
 
     activityAt: Effect.fn("AzureDevOpsPullRequestCli.activityAt")(function* (input) {
       const { location, ...pullRequest } = input.pullRequest;
       if (location === null) return pullRequest.updatedAt;
       const subject = { cwd: input.cwd, location, number: pullRequest.number };
-      const key = activityKey(subject);
       // Closed and merged rows are not read for activity; their closing time stands.
       if (pullRequest.state === "open") {
-        const record = activityRecord(key);
-        const now = yield* Clock.currentTimeMillis;
-        const fresh =
-          record.reading === null &&
-          record.readAt !== null &&
-          record.revision === pullRequest.revision &&
-          now - record.readAt < Duration.toMillis(input.maxAge);
-        if (!fresh) yield* Effect.ignore(readThreads(subject, pullRequest.revision));
+        yield* dateActivity(subject, pullRequest.revision, input.maxAge, input.immediate !== true);
       }
-      return latestAzureDevOpsTime([pullRequest.updatedAt, activity.get(key)?.at]);
+      return latestAzureDevOpsTime([pullRequest.updatedAt, activity.get(activityKey(subject))?.at]);
+    }),
+
+    listedActivity: Effect.fn("AzureDevOpsPullRequestCli.listedActivity")(function* (input) {
+      const { location, ...pullRequest } = input.pullRequest;
+      if (location === null || pullRequest.state !== "open") return { at: pullRequest.updatedAt };
+      const subject = { cwd: input.cwd, location, number: pullRequest.number };
+      const key = activityKey(subject);
+      const known = () => {
+        const record = activityRecord(key);
+        return {
+          at: latestAzureDevOpsTime([pullRequest.updatedAt, record.at]),
+          state:
+            record.readAt === null || record.revision !== pullRequest.revision
+              ? ("pending" as const)
+              : record.failed
+                ? ("unavailable" as const)
+                : undefined,
+        };
+      };
+      const shown = known();
+      const answer = { at: shown.at, ...(shown.state === undefined ? {} : { state: shown.state }) };
+      if (yield* isFresh(key, pullRequest.revision, input.maxAge)) return answer;
+      return {
+        ...answer,
+        settle: dateActivity(subject, pullRequest.revision, input.maxAge, true).pipe(
+          Effect.map(() => {
+            const settled = known();
+            return settled.at !== shown.at || settled.state !== shown.state;
+          }),
+        ),
+      };
     }),
 
     listIterations: Effect.fn("AzureDevOpsPullRequestCli.listIterations")(function (input) {

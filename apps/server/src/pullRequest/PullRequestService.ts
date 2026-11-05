@@ -350,6 +350,8 @@ interface RepositoryBatch {
   readonly errors: ReadonlyArray<PullRequestListProjectError>;
   readonly truncated: boolean;
   readonly nextCursor: string | null;
+  /** The providers' reads of dates their rows were listed without. */
+  readonly settling: ReadonlyArray<Effect.Effect<boolean>>;
 }
 
 interface ListCursor extends ProviderListCursor {
@@ -1244,6 +1246,9 @@ export const make = Effect.gen(function* () {
       deletions: input.item.deletions,
       createdAt: input.item.createdAt,
       updatedAt: input.item.updatedAt,
+      ...(input.item.updatedAtState === undefined
+        ? {}
+        : { updatedAtState: input.item.updatedAtState }),
       observedAt: input.observedAt,
       ...(input.item.checksState === undefined || input.item.checksState === null
         ? {}
@@ -1258,9 +1263,11 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const listUncached: PullRequestService["Service"]["list"] = Effect.fn(
-    "PullRequestService.listUncached",
-  )(function* (input) {
+  const listUncached = Effect.fn("PullRequestService.listUncached")(function* (
+    input: PullRequestListInput,
+    /** Runs once the rows listed without a date are read, when a new read would differ. */
+    onUpdatedAtSettled: Effect.Effect<void>,
+  ) {
     const involvement = input.involvement ?? "all";
     const continuation = yield* decodeCursors(input.cursors);
     const { supported: projects, unimplemented, viewerRoots } = yield* listWorkspaceProjects(input);
@@ -1397,6 +1404,7 @@ export const make = Effect.gen(function* () {
                         page.resumeAfter,
                       )
                     : null,
+                settling: page.settleUpdatedAt === undefined ? [] : [page.settleUpdatedAt],
               };
             }),
             Effect.catch((error): Effect.Effect<RepositoryBatch> =>
@@ -1415,6 +1423,7 @@ export const make = Effect.gen(function* () {
                 ],
                 truncated: false,
                 nextCursor: null,
+                settling: [],
               }),
             ),
           );
@@ -1440,7 +1449,14 @@ export const make = Effect.gen(function* () {
             // A slice that failed keeps the cursor before it, so the reader can try again.
             next.errors.length > 0
               ? Effect.succeed(batch)
-              : fill({ ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
+              : fill(
+                  {
+                    ...next,
+                    entries: [...batch.entries, ...next.entries],
+                    settling: [...batch.settling, ...next.settling],
+                  },
+                  reads + 1,
+                ),
           ),
         );
       };
@@ -1514,6 +1530,7 @@ export const make = Effect.gen(function* () {
                   page.truncated && boundary !== null
                     ? listCursorAt(cursorHere, boundary, fetched, items.length)
                     : null,
+                settling: [],
               });
             },
             { concurrency: REPOSITORY_CONCURRENCY },
@@ -1548,6 +1565,15 @@ export const make = Effect.gen(function* () {
     const nextCursors: Record<string, string> = {};
     for (const batch of batches) {
       if (batch.nextCursor !== null) nextCursors[batch.key] = batch.nextCursor;
+    }
+    const settling = batches.flatMap((batch) => batch.settling);
+    if (settling.length > 0) {
+      // The answer goes out first; one refresh follows once every row it left undated is read.
+      yield* revalidate(
+        Effect.all(settling, { concurrency: "unbounded" }).pipe(
+          Effect.flatMap((changed) => (changed.includes(true) ? onUpdatedAtSettled : Effect.void)),
+        ),
+      );
     }
 
     return {
@@ -2954,9 +2980,29 @@ export const make = Effect.gen(function* () {
       stackUncached(input, options),
     );
 
+  // A list answered before its rows were dated is read again, under a new key, once they are.
+  const settledLists = new Map<string, number>();
+  let settledListFloor = 0;
+  const settledList = (scope: string) =>
+    Effect.suspend(() => {
+      settledLists.delete(scope);
+      if (settledLists.size >= LIST_CACHE_CAPACITY) {
+        const oldest = settledLists.entries().next().value;
+        if (oldest !== undefined) {
+          settledListFloor = Math.max(settledListFloor, oldest[1]);
+          settledLists.delete(oldest[0]);
+        }
+      }
+      const epoch = ++epochCounter;
+      settledLists.set(scope, epoch);
+      return SubscriptionRef.set(pullRequestRefreshes, epoch);
+    });
+
   const listCache = yield* Cache.makeWith(
     (key: string) => {
+      const parsed = JSON.parse(key) as ReadonlyArray<unknown>;
       const [
+        ,
         ,
         state,
         involvement,
@@ -2967,7 +3013,8 @@ export const make = Effect.gen(function* () {
         limit,
         query,
         cursorEntries,
-      ] = JSON.parse(key) as [
+      ] = parsed as [
+        number,
         number,
         string,
         string | null,
@@ -2979,17 +3026,20 @@ export const make = Effect.gen(function* () {
         string | null,
         ReadonlyArray<[string, string]> | null,
       ];
-      return listUncached({
-        state,
-        ...(involvement === null ? {} : { involvement }),
-        ...(filters === null ? {} : { filters: filtersOfKey(filters) }),
-        ...(projectId === null ? {} : { projectId }),
-        ...(projectIds === null ? {} : { projectIds }),
-        ...(host === null ? {} : { host }),
-        ...(limit === null ? {} : { limit }),
-        ...(query === null ? {} : { query }),
-        ...(cursorEntries === null ? {} : { cursors: Object.fromEntries(cursorEntries) }),
-      } as PullRequestListInput);
+      return listUncached(
+        {
+          state,
+          ...(involvement === null ? {} : { involvement }),
+          ...(filters === null ? {} : { filters: filtersOfKey(filters) }),
+          ...(projectId === null ? {} : { projectId }),
+          ...(projectIds === null ? {} : { projectIds }),
+          ...(host === null ? {} : { host }),
+          ...(limit === null ? {} : { limit }),
+          ...(query === null ? {} : { query }),
+          ...(cursorEntries === null ? {} : { cursors: Object.fromEntries(cursorEntries) }),
+        } as PullRequestListInput,
+        settledList(JSON.stringify(parsed.slice(2))),
+      );
     },
     {
       capacity: LIST_CACHE_CAPACITY,
@@ -2997,8 +3047,7 @@ export const make = Effect.gen(function* () {
     },
   );
   const list: PullRequestService["Service"]["list"] = (input) => {
-    const key = JSON.stringify([
-      listingsEpoch,
+    const scope = [
       input.state,
       input.involvement ?? null,
       input.filters === undefined
@@ -3019,7 +3068,9 @@ export const make = Effect.gen(function* () {
       input.cursors === undefined
         ? null
         : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
-    ]);
+    ];
+    const settled = settledLists.get(JSON.stringify(scope)) ?? settledListFloor;
+    const key = JSON.stringify([listingsEpoch, settled, ...scope]);
     // A replacement reader can join a lookup still finishing its previous reader's cancellation.
     return Cache.get(listCache, key).pipe(
       Effect.catchCauseIf(
