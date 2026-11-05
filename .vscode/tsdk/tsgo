@@ -1,0 +1,11 @@
+#!/bin/sh
+# VS Code's TypeScript 7 extension starts `<tsdk>/tsgo --lsp --stdio`. Exec Effect's patched tsrs
+# directly: through the effect-tsgo Node launcher, the LSP's stdin read intermittently fails (EAGAIN).
+exec "$(cd "$(dirname "$0")/../.." && node -e '
+const { createRequire } = require("node:module");
+const fs = require("node:fs");
+const path = require("node:path");
+const platform = `@effect/tsgo-${process.platform}-${process.arch}/package.json`;
+const dir = path.join(path.dirname(createRequire(require.resolve("@effect/tsgo/package.json")).resolve(platform)), "artifacts/tsrs");
+process.stdout.write(path.join(dir, fs.readdirSync(dir).sort().at(-1), "tsrs"));
+')" "$@"

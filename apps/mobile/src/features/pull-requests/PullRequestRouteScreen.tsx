@@ -33,6 +33,7 @@ import { Button } from "../../components/ui/Button";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { usePullRequestDescription } from "./usePullRequestDescription";
 import { usePullRequestAction } from "./usePullRequestAction";
 import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
@@ -46,7 +47,11 @@ import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-na
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
-import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
+import {
+  type PullRequestDetail,
+  type PullRequestListEntry,
+  type PullRequestSummary,
+} from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
@@ -179,11 +184,11 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
 }
 
 function PullRequestIdentity(props: {
-  readonly pr: PullRequestDetail | PullRequestListEntry;
+  readonly pr: PullRequestDetail | PullRequestListEntry | PullRequestSummary;
   readonly params: PullRequestParams;
 }) {
   const { pr } = props;
-  const status = pullRequestStatus(pr);
+  const status = pullRequestStatus({ state: pr.state, isDraft: pr.isDraft === true });
   return (
     <View className="gap-3">
       <View className="flex-row flex-wrap items-center gap-2">
@@ -195,8 +200,8 @@ function PullRequestIdentity(props: {
             <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
           </View>
         )}
-        <PullRequestDiffStats additions={pr.additions} deletions={pr.deletions} compact />
-        {"changedFiles" in pr ? (
+        <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
+        {"changedFiles" in pr && pr.changedFiles !== undefined ? (
           <Text className="text-2xs text-foreground-muted">
             {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}
           </Text>
@@ -208,7 +213,7 @@ function PullRequestIdentity(props: {
         {pr.title}
       </Text>
       <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={pr.author} size={20} />
+        <PullRequestAvatar actor={pr.author ?? null} size={20} />
         <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
           {pr.author?.login ?? "Unknown author"}
         </Text>
@@ -293,6 +298,7 @@ function PullRequestLabels(props: {
 
 function PullRequestOverview(props: {
   readonly pr: PullRequestDetail;
+  readonly description: ReturnType<typeof usePullRequestDescription>;
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
   readonly onDescriptionLayout: (y: number) => void;
@@ -320,7 +326,8 @@ function PullRequestOverview(props: {
         onLayout={(event) => props.onDescriptionLayout(event.nativeEvent.layout.y)}
       >
         <PullRequestDescription
-          markdown={pr.body}
+          markdown={props.description.body}
+          onTaskListChange={props.description.toggleTask}
           onCollapse={props.onDescriptionCollapse}
           expanded={props.descriptionExpanded}
           onExpandedChange={props.onDescriptionExpandedChange}
@@ -416,6 +423,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const identity = pr ?? summary;
   const terminology = sourceControlClients.get(identity?.provider).changeRequest;
   const permissions = usePullRequestPermissions(params, pr);
+  const description = usePullRequestDescription(params, pr, permissions.canEditChangeRequest);
   const action = usePullRequestAction(params, pr);
   const maintainerEdits = usePullRequestMaintainerEdits(
     params,
@@ -524,6 +532,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     {
                       accessibilityLabel: "Edit description",
                       icon: "doc.text" as const,
+                      disabled: description.pending,
+                      subtitle: description.pending ? "Saving…" : undefined,
                       overflowOnly: true,
                       onPress: () =>
                         navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
@@ -629,6 +639,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             {permissions.canEditChangeRequest ? (
               <Toolbar.MenuAction
                 icon="doc.text"
+                disabled={description.pending}
+                subtitle={description.pending ? "Saving…" : undefined}
                 onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "body" })}
               >
                 <Toolbar.Label>Edit description</Toolbar.Label>
@@ -779,6 +791,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               {pr ? (
                                 <PullRequestOverview
                                   pr={pr}
+                                  description={description}
                                   params={params}
                                   stack={stack}
                                   descriptionExpanded={descriptionExpanded}
