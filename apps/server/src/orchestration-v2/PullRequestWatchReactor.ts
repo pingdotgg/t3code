@@ -35,6 +35,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
+  agentMergeMessagePrefix,
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
@@ -287,7 +288,16 @@ export const make = Effect.gen(function* () {
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
         ? {}
-        : { wake: { ...wake, messageId: MessageId.make(`message:pr-watch:${uuid}`) } }),
+        : {
+            wake: {
+              ...wake,
+              messageId: MessageId.make(
+                target.watch.agentMerge === undefined
+                  ? `message:pr-watch:${uuid}`
+                  : `${agentMergeMessagePrefix(threadPullRequestKeyOf(target.link))}${uuid}`,
+              ),
+            },
+          }),
     });
   });
 

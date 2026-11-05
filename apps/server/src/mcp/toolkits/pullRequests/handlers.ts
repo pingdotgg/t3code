@@ -287,7 +287,9 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
-        ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
+        ...(watching
+          ? { link: { url: target.url, source: "agent" as const } }
+          : { keepActiveRun: true }),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
     const after = yield* requireThread(PullRequestWatchFailedError, thread.id);
@@ -460,6 +462,7 @@ const make = Effect.gen(function* () {
         const wasLinked = yield* engine
           .dispatch({
             type: "thread.pull-request.unlink",
+            keepActiveRun: true,
             commandId: yield* commandId("mcp-pr-unlink", thread.id),
             threadId: thread.id,
             host: target.host,
@@ -493,6 +496,7 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* engine.dispatch({
               type: "thread.pull-request.unlink",
+              keepActiveRun: true,
               commandId: yield* commandId("mcp-pr-unlink", thread.id),
               threadId: thread.id,
               host,

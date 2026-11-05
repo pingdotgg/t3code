@@ -3094,7 +3094,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       const briefs = Effect.map(
         orchestrator.getThreadRecords(threadId, ["messages"]),
-        ({ messages }) => messages.map((message) => message.text),
+        ({ messages }) =>
+          messages
+            .map((message) => message.text)
+            .filter((text) => text.startsWith("The user started agent merge")),
       );
 
       yield* start("agent-merge-start", "checks");
@@ -3129,6 +3132,46 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(stale._tag, "OrchestratorDispatchError");
       assert.equal((yield* watchOf)?.agentMerge, "merge");
 
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.succeed({
+              ...watchedPullRequestDetail({ projectId, number: 7, at: "2026-10-02T12:00:00.000Z" }),
+              checks: [
+                {
+                  name: "test",
+                  status: "success" as const,
+                  description: null,
+                  url: null,
+                  required: true,
+                },
+              ],
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      const wakeRun = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages", "runs"]),
+        ({ messages, runs }) => {
+          const wake = messages.find(
+            (message) => message.notification?.summary === "#7: checks passed",
+          );
+          return runs.find((run) => run.id === wake?.runId)?.status;
+        },
+      );
+      assert.equal(yield* wakeRun, "queued");
+
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("agent-merge-stop"),
@@ -3136,6 +3179,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         watching: false,
       });
+      assert.equal(yield* wakeRun, "cancelled");
       yield* start("agent-merge-plain-watch", undefined);
       assert.isUndefined((yield* watchOf)?.agentMerge);
       assert.lengthOf(yield* briefs, 2);

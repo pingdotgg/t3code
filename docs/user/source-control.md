@@ -325,7 +325,10 @@ panel; on mobile, long-press a linked review. Pick how far the agent may go:
   host's own tools, so your merge method setting does not apply.
 
 Agent merge starts right away, even if the agent is idle: it first reviews where the pull request
-stands. Pick another option to change it, or stop it the same way you stop a watch. All the limits
+stands. Pick another option to change it, or stop it the same way you stop a watch. Stopping,
+changing, or unlinking cancels anything the agent has not started yet and interrupts a turn already
+working on agent merge. Permission to merge lasts one turn at a time, so a later message that does
+not repeat it cannot merge. All the limits
 above apply. Starting it needs an active thread whose agent can push to the pull request's branch.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
