@@ -1313,10 +1313,11 @@ export const layer: Layer.Layer<
             }),
           );
           // Non-truncating providers clear the native ref on rollback; hand the new session the kept turns.
+          // Cursor ensureThread may mint a new row id from the new native agent; match kept turns by the stored id.
           if (
             created !== undefined &&
             !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
-            nativeSessionMissesKeptTurns(projection, created, run)
+            nativeSessionMissesKeptTurns(projection, { ...created, id: providerThread.id }, run)
           ) {
             const { handoff, transferId, createdAt } = yield* recoveryHandoff;
             effectiveHandoffs = withRecoveryHandoff(handoff);

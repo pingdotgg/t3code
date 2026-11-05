@@ -2620,7 +2620,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 runtimePolicy: threadInput.runtimePolicy,
               });
               const now = yield* DateTime.now;
-              return makeProviderThread({
+              const created = makeProviderThread({
                 idAllocator,
                 providerInstanceId: adapterOptions.instanceId,
                 appThreadId: threadInput.threadId,
@@ -2628,6 +2628,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 nativeThreadId: opened.nativeThreadId,
                 now,
               });
+              // Adoption after rollback clears the native ref; keep the stored row id.
+              return threadInput.existingProviderThread === undefined
+                ? created
+                : { ...created, id: threadInput.existingProviderThread.id };
             },
             (effect, threadInput) =>
               effect.pipe(

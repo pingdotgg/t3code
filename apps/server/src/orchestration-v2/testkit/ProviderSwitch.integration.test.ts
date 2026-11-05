@@ -122,7 +122,8 @@ function makeTestAdapter(input: {
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
   // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
-  readonly rollback?: "truncates" | "replaces_native_thread";
+  // Cursor clears the native ref so the next turn's ensureThread opens a new agent.
+  readonly rollback?: "truncates" | "replaces_native_thread" | "clears_native_thread";
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -399,16 +400,22 @@ function makeTestAdapter(input: {
               ? unimplemented(input.driver, "rollbackThread unused in provider switch test")
               : Effect.succeed({
                   providerThread:
-                    input.rollback === "truncates" || providerThread.nativeThreadRef === null
-                      ? providerThread
-                      : {
+                    input.rollback === "clears_native_thread"
+                      ? {
                           ...providerThread,
-                          nativeThreadRef: {
-                            ...providerThread.nativeThreadRef,
-                            nativeId: `${providerThread.nativeThreadRef.nativeId}:after-rollback`,
-                          },
+                          nativeThreadRef: null,
                           nativeConversationHeadRef: null,
-                        },
+                        }
+                      : input.rollback === "truncates" || providerThread.nativeThreadRef === null
+                        ? providerThread
+                        : {
+                            ...providerThread,
+                            nativeThreadRef: {
+                              ...providerThread.nativeThreadRef,
+                              nativeId: `${providerThread.nativeThreadRef.nativeId}:after-rollback`,
+                            },
+                            nativeConversationHeadRef: null,
+                          },
                   providerTurns: [],
                   messages: [],
                   runtimeRequests: [],
@@ -1504,6 +1511,19 @@ describe("orchestration v2 provider switching", () => {
       capabilities: AcpProviderCapabilitiesV2,
       modelSelection: GROK_MODEL_SELECTION,
       rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "plain",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      // Cursor-shaped: rollback clears nativeThreadRef; ensureThread mints a new row id.
+      name: "a rollback that clears the native agent then ensureThread mints a new id",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "clears_native_thread",
       failResumeAfterRollback: false,
       history: "plain",
       delivers: ["favourite colour is teal"],

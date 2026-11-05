@@ -1677,6 +1677,16 @@ describe("CursorAdapterV2", () => {
       assert.deepEqual(snapshot.messages, []);
       assert.equal(createCount, 1);
       assert.deepEqual(closedAgents, ["native-cursor-rollback-1"]);
+
+      const recovered = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        existingProviderThread: snapshot.providerThread,
+      });
+      assert.equal(recovered.id, providerThread.id);
+      assert.equal(recovered.nativeThreadRef?.nativeId, "native-cursor-rollback-2");
+      assert.equal(createCount, 2);
     }).pipe(
       Effect.scoped,
       Effect.provide(
