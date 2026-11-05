@@ -241,6 +241,34 @@ it("pastes arithmetic stars verbatim and still styles pasted markdown", async ()
   expect(editor.state.doc.textContent).toBe("a bold and soft word");
 });
 
+it("parses markdown dropped from outside and keeps dropped arithmetic verbatim", async () => {
+  await using screen = await mountEditor("", true, []);
+  const { editor } = screen;
+  const drop = async (text: string) => {
+    await act(async () => {
+      editor.commands.clearContent();
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData("text/plain", text);
+      const { left, top } = editor.view.coordsAtPos(1);
+      editor.view.dom.dispatchEvent(
+        new DragEvent("drop", {
+          dataTransfer,
+          clientX: left,
+          clientY: top + 1,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+  };
+  await drop("a **bold** and *soft* word");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("a **bold** and *soft* word");
+  expect(editor.state.doc.textContent).toBe("a bold and soft word");
+  const code = "signal = (7 * 2**3 * 5)**4";
+  await drop(code);
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(code);
+});
+
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
   await using screen = await mountEditor(value);
