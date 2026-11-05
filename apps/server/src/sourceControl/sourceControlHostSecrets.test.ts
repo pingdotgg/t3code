@@ -32,6 +32,7 @@ const hosts = {
 function countingResolver() {
   const reads: Array<string> = [];
   const resolver = SecretResolver.SecretResolver.of({
+    label: (provider) => Effect.succeed(provider),
     read: (references) =>
       Effect.sync(() =>
         references.map((reference) => {
@@ -109,6 +110,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     let current = "stale";
     const cache = new Map<string, string>();
     const resolver = SecretResolver.SecretResolver.of({
+      label: (provider) => Effect.succeed(provider),
       read: (references) =>
         Effect.sync(() =>
           references.map((reference) => {
