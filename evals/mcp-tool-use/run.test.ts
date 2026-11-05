@@ -125,6 +125,18 @@ it.each([
   [
     "triage-authenticated-read-template",
     ["gh api --hostname github.com graphql --input /tmp/request.json"],
+    "Created https://github.com/pingdotgg/t3code/issues/999999, but via-triage is missing.",
+    false,
+  ],
+  [
+    "triage-authenticated-read-template",
+    ["gh api --hostname github.com graphql --input /tmp/request.json"],
+    "Created https://github.com/pingdotgg/t3code/issues/999999; via-triage is unverified.",
+    false,
+  ],
+  [
+    "triage-authenticated-read-template",
+    ["gh api --hostname github.com graphql --input /tmp/request.json"],
     "Created https://github.com/pingdotgg/t3code/issues/999999 with via-triage.",
     true,
   ],
@@ -158,6 +170,37 @@ it.each([
     pass,
   );
 });
+
+it.effect("returns a failed tool result for the unauthenticated triage fixture", () =>
+  Effect.gen(function* () {
+    const testCase = NodeFS.readFileSync(new URL("./cases/triage.ndjson", import.meta.url), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => decodeTriageCase(line))
+      .find((entry) => entry.id === "triage-unauthenticated-browser-control")!;
+    const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+    const sample = makeSample(testCase, base);
+    sample.tools.push({ name: "Bash" });
+    const result = yield* answerToolCall(
+      sample,
+      {
+        apiKey: "",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        maxSteps: 6,
+        shellModel: "gpt-6-luna",
+      },
+      {
+        type: "tool_use",
+        id: "auth",
+        name: "Bash",
+        input: { command: "gh auth status --hostname github.com" },
+      },
+    );
+    assert.isTrue(result.is_error);
+    assert.include(String(result.content), "You are not logged into any GitHub hosts.");
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
 
 it("counts the new threads an agent asks for, one brief per thread, over both creation tools", () => {
   const expect = { newThreads: ["~reconnect", "~csv", "~admin"] };
