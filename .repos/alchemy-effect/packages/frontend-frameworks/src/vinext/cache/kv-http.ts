@@ -8,7 +8,6 @@
  * through one function.
  */
 import * as kv from "@distilled.cloud/cloudflare/kv";
-import * as Effect from "effect/Effect";
 import { vinextCacheNamespaceFromEnv } from "../PrerenderCache.ts";
 import type { SeedSink } from "./seed.ts";
 

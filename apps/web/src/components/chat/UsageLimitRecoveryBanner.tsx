@@ -1,5 +1,4 @@
-import { getUiLocale, useT } from "../../hooks/useI18n";
-import { createTranslator } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import {
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
@@ -7,16 +6,25 @@ import {
 } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
+import {
+  CHATGPT_USAGE_LIMIT_CODE,
+  CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
+} from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
 import { useState } from "react";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
+import { OpenAI } from "../Icons";
+import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { Button } from "../ui/button";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { copyAdminRequest } from "./ThreadErrorBanner";
+import { translateNow } from "../media/translateNow";
 
 type RecoveryProps = {
   runId: RunId;
+  errorCode: string | null;
   resetAt: string | null;
   stoppedAt: string;
   snoozedUntil: string | null;
@@ -26,18 +34,49 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const t = createTranslator(getUiLocale());
-  const { runId, resetAt, stoppedAt, timestampFormat } = props;
+  const { runId, errorCode, resetAt, stoppedAt, timestampFormat } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
+  const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
+  const recoveryActions = canSchedule ? (
+    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
+  ) : null;
+  const resetDescription = resetAt
+    ? translateNow("chat.recovery.resets", {
+        time: formatUpcomingTimestamp(resetAt, timestampFormat),
+      })
+    : translateNow("chat.recovery.resetUnavailable");
+  if (!chatGptLimit) {
+    return {
+      id: `usage-limit-recovery:${runId}`,
+      variant: "warning",
+      icon: <GaugeIcon />,
+      title: translateNow("chat.recovery.usageLimitReached"),
+      description: resetDescription,
+      actions: recoveryActions,
+    };
+  }
+  // OpenAI's partner guidelines specify this ChatGPT notice and its actions.
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
-    icon: <GaugeIcon />,
-    title: t("chat.recovery.title"),
-    description: resetAt
-      ? t("chat.recovery.resets", { time: formatUpcomingTimestamp(resetAt, timestampFormat) })
-      : t("chat.recovery.resetUnavailable"),
-    actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
+    icon: <OpenAI aria-hidden="true" />,
+    title: translateNow("chat.recovery.chatgptLimitReached"),
+    description: workspaceLimit
+      ? translateNow("chat.recovery.workspaceLimitShort")
+      : resetDescription,
+    actions: (
+      <>
+        {recoveryActions}
+        {workspaceLimit ? (
+          <Button size="xs" variant="ghost" onClick={copyAdminRequest}>
+            {translateNow("chat.recovery.copyAdminRequest")}
+          </Button>
+        ) : (
+          <ChatGptUsageButton size="xs" variant="ghost" />
+        )}
+      </>
+    ),
   };
 }
 

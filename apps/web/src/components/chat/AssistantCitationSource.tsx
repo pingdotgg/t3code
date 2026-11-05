@@ -194,8 +194,8 @@ function observeAssistantCitationSource({
             request.onComplete();
             toastManager.add({
               type: "warning",
-              title: "Could not open the cited response",
-              description: "Click the citation to try again.",
+              title: t("chat.citation.openFailedTitle"),
+              description: t("chat.citation.openFailedDesc"),
             });
           },
         );
@@ -207,8 +207,8 @@ function observeAssistantCitationSource({
       if (!range) {
         toastManager.add({
           type: "warning",
-          title: "The quoted text has changed",
-          description: "Showing the source response. The saved quote is unchanged.",
+          title: t("chat.citation.changedTitle"),
+          description: t("chat.citation.changedDesc"),
         });
       }
     }

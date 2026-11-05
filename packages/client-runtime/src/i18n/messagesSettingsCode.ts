@@ -939,6 +939,10 @@ export const enMessages = {
   "settings.code.iconColor.fuchsia": "Fuchsia",
   "settings.code.iconColor.pink": "Pink",
   "settings.code.iconColor.rose": "Rose",
+  "settings.code.tasks.modeNewThread": "New thread each run",
+  "settings.code.tasks.modeContinue": "One thread, continuing the conversation",
+  "settings.code.tasks.modeFreshSession": "One thread, fresh session each run",
+  "settings.code.tasks.deleteWithThread": "Deleting the thread also deletes this task.",
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
@@ -1827,4 +1831,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.iconColor.fuchsia": "洋红色",
   "settings.code.iconColor.pink": "粉色",
   "settings.code.iconColor.rose": "玫瑰色",
+  "settings.code.tasks.modeNewThread": "每次运行新建会话",
+  "settings.code.tasks.modeContinue": "同一会话，继续对话",
+  "settings.code.tasks.modeFreshSession": "同一会话，每次运行新会话",
+  "settings.code.tasks.deleteWithThread": "删除会话也会删除此任务。",
 };

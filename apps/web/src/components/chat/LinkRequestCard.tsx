@@ -406,7 +406,7 @@ function LinkRequestDialog(props: {
                         <Input
                           value={pairingCode}
                           onChange={(event) => setPairingCode(event.target.value)}
-                          placeholder="Paste the code"
+                          placeholder={t("chat.linkRequest.pasteCode")}
                           disabled={busy}
                           autoComplete="one-time-code"
                           nativeInput

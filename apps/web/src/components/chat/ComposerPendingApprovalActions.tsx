@@ -33,10 +33,10 @@ const DEFAULT_APPROVAL_LABEL_KEYS: Partial<Record<ProviderApprovalDecision, Mess
 };
 
 const DEFAULT_APPROVAL_OPTIONS = [
-  { decision: "cancel", label: "Cancel" },
-  { decision: "decline", label: "Decline" },
-  { decision: "acceptForSession", label: "Always allow this session" },
-  { decision: "accept", label: "Approve" },
+  { decision: "cancel", label: t("chat.approval.cancel") },
+  { decision: "decline", label: t("chat.approval.decline") },
+  { decision: "acceptForSession", label: t("chat.approval.allowSession") },
+  { decision: "accept", label: t("chat.approval.approve") },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({

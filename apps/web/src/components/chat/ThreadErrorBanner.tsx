@@ -1,5 +1,3 @@
-import { getUiLocale } from "../../hooks/useI18n";
-import { createTranslator } from "@t3tools/client-runtime/i18n";
 import { useT } from "../../hooks/useI18n";
 import type { OrchestrationV2ProviderFailureClass } from "@t3tools/contracts";
 import {
@@ -16,9 +14,9 @@ import { CircleAlertIcon, XIcon } from "lucide-react";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { ExpandableText } from "../settings/ExpandableText";
+import { translateNow } from "../media/translateNow";
 
-function copyAdminRequest() {
-  const t = createTranslator(getUiLocale());
+export function copyAdminRequest() {
   void writeTextToClipboard(CHATGPT_WORKSPACE_ADMIN_REQUEST, "admin request").then(
     () =>
       toastManager.add({
@@ -100,12 +98,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         <AlertDescription>
           {chatGptLimit ? (
             <div className="space-y-1">
-              <p className="font-medium">{t("chat.errorBanner.chatgptLimit")}</p>
-              <p>
-                {workspaceLimit
-                  ? t("chat.errorBanner.workspaceLimit")
-                  : t("chat.errorBanner.reviewUsage")}
-              </p>
+              <p className="font-medium">{translateNow("chat.errorBanner.chatgptLimit")}</p>
+              {workspaceLimit ? <p>{translateNow("chat.errorBanner.workspaceLimit")}</p> : null}
             </div>
           ) : (
             <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />

@@ -6,6 +6,8 @@
   "ignoreBinaries": ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
   "workspaces": {
     ".": {
+      // The Effect type-checking plugin is loaded by the build tool, not imported directly.
+      "ignoreDependencies": ["@effect/tsgo"],
       // Keep vendored reference repositories outside the root project.
       "project": ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
       "entry": [

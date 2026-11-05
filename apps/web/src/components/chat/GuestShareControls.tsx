@@ -121,7 +121,7 @@ function GuestShareDialog({
             <div className="flex items-center gap-2">
               <Input
                 readOnly
-                aria-label="Guest link"
+                aria-label={t("chat.guestLink")}
                 value={state.url}
                 onFocus={(event) => event.currentTarget.select()}
               />

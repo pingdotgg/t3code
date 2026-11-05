@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { observeResize } from "~/lib/observeResize";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -35,6 +36,8 @@ import { externalUrl } from "./links";
 
 import { translateNow } from "~/components/media/translateNow";
 import { useT } from "~/hooks/useI18n";
+
+const isSupersededError = Schema.is(SupersededError);
 type Client = ReturnType<typeof createWorkerClient<SheetMethods>>;
 type Opened = {
   engine: Client;
@@ -270,9 +273,8 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch((cause: unknown) => {
-            const t = translateNow;
-            if (!(cause instanceof SupersededError) && !controller.signal.aborted)
-              setNotice(t("review.extra.these.cells.could.not.be.drawn"));
+            if (!isSupersededError(cause) && !controller.signal.aborted)
+              setNotice(translateNow("review.extra.these.cells.could.not.be.drawn"));
           });
       }
       if (

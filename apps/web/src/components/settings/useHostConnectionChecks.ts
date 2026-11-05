@@ -1,7 +1,7 @@
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import { useRef, useState } from "react";
-import * as Cause from "effect/Cause";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { SshDeviceHostConfig } from "@t3tools/contracts";
 import { useT } from "../../hooks/useI18n";
 import { deviceEnvironment } from "../../state/device";
@@ -32,7 +32,7 @@ export function useHostConnectionChecks(targets: ReadonlyArray<DeviceHostCheckTa
           throw new Error(t("settings.code.deviceHost.cannotTest"));
         }
         const result = await test({ environmentId, input });
-        if (result._tag === "Failure") throw new Error(Cause.pretty(result.cause));
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         return result.value;
       },
       (environmentId, result) => {

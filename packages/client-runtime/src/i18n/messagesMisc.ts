@@ -529,6 +529,10 @@ export const enMessages = {
   "misc.promptLinks.model": "Model {value}",
   "misc.promptLinks.noProject": "No project",
   "misc.promptLinks.notesJoin": "{a} {b}",
+  "misc.promptLinks.openThreadTitle": "Open this thread",
+  "misc.promptLinks.openThreadDescription":
+    "It opens in T3 Code if you're connected to the machine it runs on.",
+  "misc.promptLinks.opensOneThread": "Opens one of your threads.",
   "misc.promptLinks.opensThread": "Opens one of your threads.",
   "misc.promptLinks.pullRequest": "Pull request {owner}/{name}#{number}",
   "misc.promptLinks.readBeforeSend": "Read it before you send.",
@@ -1433,4 +1437,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "misc.sourceControl.preparingPr": "正在准备 Pull Request 会话",
   "misc.sourceControl.noPermission": "此连接无法更改源代码管理。",
   "misc.sourceControl.noThreadPermission": "此连接无法更改会话。",
+  "misc.promptLinks.openThreadTitle": "打开此会话",
+  "misc.promptLinks.openThreadDescription": "如果你已连接到运行它的机器，它会在 T3 Code 中打开。",
+  "misc.promptLinks.opensOneThread": "打开你的一个会话。",
 };
