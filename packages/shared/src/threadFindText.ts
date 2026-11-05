@@ -24,6 +24,7 @@ import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 import {
   isAttachmentOnlyBootstrapPrompt,
   parseComposerContextHref,
+  parseExternalComposerContextHref,
 } from "./composerContextReferences.ts";
 import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
@@ -134,7 +135,11 @@ function markdownThreadFindText(
   };
   const visit = (node: TextTree, inPre = false, inlineSkills = false) => {
     const href = node.properties?.href ?? node.properties?.src;
-    if (userMessage && typeof href === "string" && parseComposerContextHref(href)) {
+    if (
+      userMessage &&
+      typeof href === "string" &&
+      (parseComposerContextHref(href) ?? parseExternalComposerContextHref(href))
+    ) {
       flush();
       return;
     }

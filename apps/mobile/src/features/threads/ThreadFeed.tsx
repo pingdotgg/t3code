@@ -65,6 +65,7 @@ import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLin
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
+  parseExternalComposerContextHref,
   collectComposerContextReferences,
   replaceComposerContextReferences,
   formatComposerContextReference,
@@ -2381,8 +2382,10 @@ function UserMessageContent(props: UserMessageContentProps) {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
+  const parseContextHref = (href: string) =>
+    parseComposerContextHref(href) ?? parseExternalComposerContextHref(href);
   const onLinkPress = (href: string) => {
-    const reference = parseComposerContextHref(href);
+    const reference = parseContextHref(href);
     if (!reference) return props.linkHandlers.onLinkPress?.(href);
     const record = props.context?.records.find(
       (record) => record.contextId === reference.contextId,
@@ -2421,7 +2424,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           ...props.linkHandlers,
           onLinkPress,
           fileContextMenu: (href) => {
-            const reference = parseComposerContextHref(href);
+            const reference = parseContextHref(href);
             if (!reference) return props.linkHandlers.fileContextMenu(href);
             const record = props.context?.records.find(
               (item) => item.contextId === reference.contextId,
@@ -2435,7 +2438,7 @@ function UserMessageContent(props: UserMessageContentProps) {
             };
           },
           onFileContextMenuAction: (href, actionId) => {
-            const reference = parseComposerContextHref(href);
+            const reference = parseContextHref(href);
             if (!reference) return props.linkHandlers.onFileContextMenuAction(href, actionId);
             if (actionId === "open-context") return onLinkPress(href);
             const record = props.context?.records.find(
@@ -2446,6 +2449,7 @@ function UserMessageContent(props: UserMessageContentProps) {
                 formatComposerContextReference({
                   ...reference,
                   label: record.label,
+                  ...("url" in record ? { url: record.url } : {}),
                 }),
                 {
                   version: 1,

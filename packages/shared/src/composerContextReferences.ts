@@ -10,6 +10,13 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
+import {
+  isSafeComposerContextMarkdownHref,
+  parseFigmaDesignUrl,
+  parseGitHubIssueUrl,
+  parseGitHubPullRequestUrl,
+  parseJiraBrowseUrl,
+} from "./composerContextExternalUrls.ts";
 import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
@@ -21,6 +28,21 @@ const CONTEXT_LINK = new RegExp(
   String.raw`(!?)\[([^\]\n]{0,${MAX_LINK_LABEL_LENGTH}})\]\((${COMPOSER_CONTEXT_HREF_PREFIX}[^\s)]{1,200})\)`,
   "g",
 );
+const EXTERNAL_MARKDOWN_LINK = new RegExp(
+  String.raw`(!?)\[([^\]\n]{0,${MAX_LINK_LABEL_LENGTH}})\]\((https?:\/\/[^\s)]{1,2000})\)`,
+  "g",
+);
+
+const COMPOSER_CONTEXT_EXTERNAL_URL_KINDS = new Set<ComposerContextKind>([
+  "jira",
+  "figma",
+  "issue",
+  "pull-request",
+]);
+
+function composerContextKindUsesExternalUrl(kind: ComposerContextKind): boolean {
+  return COMPOSER_CONTEXT_EXTERNAL_URL_KINDS.has(kind);
+}
 
 // The digest alone distinguishes producer ids sharing the truncated 48-character slug.
 function fnv1a64(value: string): string {
@@ -66,6 +88,66 @@ export function parseComposerContextHref(
   const [kind, contextId] = parts as [string, string];
   if (!CONTEXT_KIND_PATTERN.test(kind) || !CONTEXT_ID_PATTERN.test(contextId)) return null;
   return { kind, contextId: contextId as ComposerContextId };
+}
+
+/** Resolve a real http(s) href to a URL-backed composer context identity. */
+export function parseExternalComposerContextHref(
+  href: string,
+): { kind: ComposerContextKind; contextId: ComposerContextId } | null {
+  const trimmed = href.trim();
+  if (!isSafeComposerContextMarkdownHref(trimmed)) return null;
+
+  const jira = parseJiraBrowseUrl(trimmed);
+  if (jira) {
+    let host = "atlassian.net";
+    try {
+      host = new URL(jira.url).host.toLowerCase() || host;
+    } catch {
+      // Keep a stable fallback when the URL is malformed.
+    }
+    return {
+      kind: "jira",
+      contextId: toKindScopedComposerContextId("jira", `${host}:${jira.key}`),
+    };
+  }
+
+  const figma = parseFigmaDesignUrl(trimmed);
+  if (figma) {
+    return {
+      kind: "figma",
+      contextId: toKindScopedComposerContextId(
+        "figma",
+        figma.nodeId === undefined ? figma.fileKey : `${figma.fileKey}:${figma.nodeId}`,
+      ),
+    };
+  }
+
+  const issue = parseGitHubIssueUrl(trimmed);
+  if (issue) {
+    let host = "github.com";
+    try {
+      host = new URL(issue.url).host.toLowerCase() || host;
+    } catch {
+      // Keep a stable fallback when the URL is malformed.
+    }
+    return {
+      kind: "issue",
+      contextId: toKindScopedComposerContextId(
+        "issue",
+        `${host}:${issue.repository.toLowerCase()}#${issue.number}`,
+      ),
+    };
+  }
+
+  const pullRequest = parseGitHubPullRequestUrl(trimmed);
+  if (pullRequest) {
+    return {
+      kind: "pull-request",
+      contextId: toKindScopedComposerContextId("pull-request", `pr-reference:${pullRequest.url}`),
+    };
+  }
+
+  return null;
 }
 
 export function sanitizeComposerContextLabel(label: string, kind: ComposerContextKind): string {
@@ -138,9 +220,17 @@ export function formatComposerContextReference(reference: {
   kind: ComposerContextKind;
   contextId: ComposerContextId;
   label: string;
+  url?: string;
 }): string {
   const label = sanitizeComposerContextLabel(reference.label, reference.kind);
-  const href = formatComposerContextHref(reference.kind, reference.contextId);
+  const externalUrl =
+    composerContextKindUsesExternalUrl(reference.kind) && reference.url !== undefined
+      ? reference.url.trim()
+      : "";
+  const href =
+    externalUrl.length > 0 && isSafeComposerContextMarkdownHref(externalUrl)
+      ? externalUrl
+      : formatComposerContextHref(reference.kind, reference.contextId);
   return `${reference.kind === "image" ? "!" : ""}[${label}](${href})`;
 }
 
@@ -152,26 +242,62 @@ export interface ComposerContextReferenceOccurrence {
   source: string;
   start: number;
   end: number;
+  /** Present when the draft link used a real http(s) href. */
+  url?: string;
 }
 
 export function collectComposerContextReferences(
   text: string,
 ): ComposerContextReferenceOccurrence[] {
+  const hasContext = text.includes("](t3-context:");
+  const hasHttp = text.includes("](http");
+  if (!hasContext && !hasHttp) return [];
+
   const occurrences: ComposerContextReferenceOccurrence[] = [];
-  if (!text.includes("](t3-context:")) return occurrences;
-  for (const match of text.matchAll(CONTEXT_LINK)) {
-    const parsed = parseComposerContextHref(match[3]!);
-    if (!parsed) continue;
-    occurrences.push({
-      ...parsed,
-      label: sanitizeComposerContextLabel(match[2]!, parsed.kind),
-      image: match[1] === "!",
-      source: match[0],
-      start: match.index,
-      end: match.index + match[0].length,
-    });
+  if (hasContext) {
+    for (const match of text.matchAll(CONTEXT_LINK)) {
+      const parsed = parseComposerContextHref(match[3]!);
+      if (!parsed) continue;
+      occurrences.push({
+        ...parsed,
+        label: sanitizeComposerContextLabel(match[2]!, parsed.kind),
+        image: match[1] === "!",
+        source: match[0],
+        start: match.index,
+        end: match.index + match[0].length,
+      });
+    }
   }
-  return occurrences;
+  if (hasHttp) {
+    for (const match of text.matchAll(EXTERNAL_MARKDOWN_LINK)) {
+      const href = match[3]!;
+      if (href.startsWith(COMPOSER_CONTEXT_HREF_PREFIX)) continue;
+      const parsed = parseExternalComposerContextHref(href);
+      if (!parsed) continue;
+      occurrences.push({
+        ...parsed,
+        label: sanitizeComposerContextLabel(match[2]!, parsed.kind),
+        image: match[1] === "!",
+        source: match[0],
+        start: match.index,
+        end: match.index + match[0].length,
+        url: href,
+      });
+    }
+  }
+  // Prefer opaque t3-context links when two matches share a start (stable aside from that).
+  occurrences.sort(
+    (left, right) =>
+      left.start - right.start ||
+      (left.url === undefined ? 0 : 1) - (right.url === undefined ? 0 : 1),
+  );
+  const merged: ComposerContextReferenceOccurrence[] = [];
+  for (const occurrence of occurrences) {
+    const previous = merged.at(-1);
+    if (previous && occurrence.start < previous.end) continue;
+    merged.push(occurrence);
+  }
+  return merged;
 }
 
 export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
@@ -234,7 +360,7 @@ function composerContextExternalUrl(record: ComposerContextRecord | undefined): 
   if (!record || !("url" in record)) return null;
   const url = record.url.trim();
   // Keep opaque markers when the URL would break a markdown link.
-  return url.length > 0 && !/[\s)]/.test(url) ? url : null;
+  return isSafeComposerContextMarkdownHref(url) ? url : null;
 }
 
 function formatComposerContextProviderMarker(
@@ -426,11 +552,23 @@ export function projectComposerContextForProvider(input: {
   const occurrences = collectComposerContextReferences(input.text);
   if (occurrences.length === 0) return input.text;
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
+  const recordsByUrl = new Map<string, ComposerContextRecord>();
   for (const record of input.records) {
     recordsById.set(record.contextId, recordsById.has(record.contextId) ? undefined : record);
+    if ("url" in record) {
+      const url = record.url.trim();
+      if (url.length > 0 && !recordsByUrl.has(url)) recordsByUrl.set(url, record);
+    }
   }
+  const lookupRecord = (occurrence: ComposerContextReferenceOccurrence) => {
+    if (recordsById.has(occurrence.contextId)) return recordsById.get(occurrence.contextId);
+    if (occurrence.url !== undefined) return recordsByUrl.get(occurrence.url.trim());
+    return undefined;
+  };
   const body = replaceComposerContextReferences(input.text, (occurrence) => {
-    const record = recordsById.get(occurrence.contextId);
+    const record = lookupRecord(occurrence);
+    // Draft already stores a real URL, or the record can supply one — keep/re-emit the link.
+    if (occurrence.url !== undefined) return occurrence.source;
     return formatComposerContextProviderMarker(
       record?.kind ?? occurrence.kind,
       occurrence.label,
@@ -443,7 +581,7 @@ export function projectComposerContextForProvider(input: {
   for (const occurrence of occurrences) {
     if (seen.has(occurrence.contextId)) continue;
     seen.add(occurrence.contextId);
-    const record = recordsById.get(occurrence.contextId);
+    const record = lookupRecord(occurrence);
     const entry = formatEnvelopeEntry(
       record?.kind ?? occurrence.kind,
       occurrence.contextId,

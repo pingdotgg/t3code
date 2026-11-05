@@ -92,7 +92,10 @@ import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import type { Pluggable, PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
-import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import {
+  parseComposerContextHref,
+  parseExternalComposerContextHref,
+} from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
@@ -392,9 +395,13 @@ const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
   rehypeChipPunctuation,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
+function parseContextHref(href: string) {
+  return parseComposerContextHref(href) ?? parseExternalComposerContextHref(href);
+}
+
 function markdownUrlTransform(href: string) {
   if (parseAssistantCitationHref(href)) return href;
-  if (parseComposerContextHref(href)) return href;
+  if (parseContextHref(href)) return href;
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
@@ -444,7 +451,7 @@ function fileLinkSourcesKey(
   imageBaseDir: string | undefined,
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
-    .filter((href) => !parseComposerContextHref(href))
+    .filter((href) => !parseContextHref(href))
     .map(normalizeMarkdownLinkHrefKey)
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>
@@ -1084,7 +1091,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label ?? "Thread"}</span>
       );
     }
-    const contextReference = href ? parseComposerContextHref(href) : null;
+    const contextReference = href ? parseContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;
       return renderContextReference ? (
@@ -1373,7 +1380,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       resolvedTheme,
     } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
-    const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
+    const contextReference = typeof src === "string" ? parseContextHref(src) : null;
     if (contextReference) {
       const label = alt || contextReference.contextId;
       return renderContextReference ? (

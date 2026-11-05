@@ -171,6 +171,7 @@ function pullRequestContextReference(
     kind: "pull-request",
     contextId: pullRequestContextId(producerId),
     label: pullRequestContextLabel(pullRequest),
+    url: pullRequest.url,
   };
 }
 
@@ -236,19 +237,19 @@ export function environmentContextReference(
 export function jiraContextReference(
   record: import("@t3tools/contracts").JiraContextRecord,
 ): ComposerContextReference {
-  return { kind: "jira", contextId: record.contextId, label: record.label };
+  return { kind: "jira", contextId: record.contextId, label: record.label, url: record.url };
 }
 
 export function figmaContextReference(
   record: import("@t3tools/contracts").FigmaContextRecord,
 ): ComposerContextReference {
-  return { kind: "figma", contextId: record.contextId, label: record.label };
+  return { kind: "figma", contextId: record.contextId, label: record.label, url: record.url };
 }
 
 export function issueContextReference(
   record: import("@t3tools/contracts").IssueContextRecord,
 ): ComposerContextReference {
-  return { kind: "issue", contextId: record.contextId, label: record.label };
+  return { kind: "issue", contextId: record.contextId, label: record.label, url: record.url };
 }
 
 export function environmentContextRecord(

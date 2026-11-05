@@ -11,14 +11,19 @@ import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.t
 import {
   formatComposerContextHref,
   parseComposerContextHref,
+  parseExternalComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
 import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+
+function parseContextHref(href: string) {
+  return parseComposerContextHref(href) ?? parseExternalComposerContextHref(href);
+}
 
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
 ): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
-  const reference = parseComposerContextHref(href);
+  const reference = parseContextHref(href);
   if (!reference) return undefined;
   const record = records?.find((candidate) => candidate.contextId === reference.contextId);
   const presentation =

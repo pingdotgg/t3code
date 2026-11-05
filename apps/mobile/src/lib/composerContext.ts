@@ -23,6 +23,7 @@ import {
   isImageReferencesOnly,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
+  toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import {
   externalLinkContextReferences,
@@ -166,7 +167,7 @@ export function pullRequestComposerContext(
     return {
       version: 1,
       kind: "pull-request",
-      contextId: ComposerContextId.make(id),
+      contextId: toKindScopedComposerContextId("pull-request", `pr-reference:${metadata.url}`),
       label: sanitizeComposerContextLabel(`#${metadata.number}`, "pull-request"),
       number: metadata.number,
       title: metadata.title,

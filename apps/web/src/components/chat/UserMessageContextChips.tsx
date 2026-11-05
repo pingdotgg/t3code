@@ -602,6 +602,9 @@ export function UserMessageContextReferenceChip(props: {
     kind: props.reference.kind,
     contextId: props.reference.contextId as ComposerContextId,
     label: props.reference.label,
+    ...("url" in (props.record ?? {}) && typeof props.record?.url === "string"
+      ? { url: props.record.url }
+      : {}),
   });
   return userMessageContextPresentationRegistry.render(props.reference.kind, props.record, {
     environmentId: activeThreadEnvironmentId,

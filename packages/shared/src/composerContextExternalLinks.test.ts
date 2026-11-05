@@ -101,8 +101,9 @@ describe("composerContextExternalLinks", () => {
       "See https://acme.atlassian.net/browse/T3-42 and https://www.figma.com/design/AbCdEf123/Flow and https://github.com/acme/app/issues/7",
     );
     expect(rewritten.records.map((record) => record.kind)).toEqual(["jira", "figma", "issue"]);
-    expect(rewritten.text).toContain("](t3-context://v1/jira/");
-    expect(rewritten.text).toContain("](t3-context://v1/figma/");
-    expect(rewritten.text).toContain("](t3-context://v1/issue/");
+    expect(rewritten.text).toContain("](https://acme.atlassian.net/browse/T3-42)");
+    expect(rewritten.text).toContain("](https://www.figma.com/design/AbCdEf123)");
+    expect(rewritten.text).toContain("](https://github.com/acme/app/issues/7)");
+    expect(rewritten.text).not.toContain("t3-context://");
   });
 });

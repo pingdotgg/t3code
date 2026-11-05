@@ -115,7 +115,7 @@ describe("queued message file edits", () => {
     ).toBe("kept");
     const recovered = store.getComposerDraft(threadTarget);
     expect(recovered?.jiraContexts).toEqual([issue]);
-    expect(recovered?.prompt).toContain(issue.contextId);
+    expect(recovered?.prompt).toContain(issue.url);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 });
