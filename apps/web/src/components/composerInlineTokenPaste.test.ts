@@ -30,6 +30,7 @@ const importAll =
 describe("importPastedComposerText", () => {
   it("pastes a copied thread link back as the chip it was copied from", () => {
     const target = threadChipCopyTarget(thread, "Fix the login flow");
+    expect(target.value).toMatch(/^\[Fix the login flow\]\(t3-thread:\/\/v2\//);
     const imported: Array<ComposerContextClipboardFragment> = [];
     const text = importPastedComposerText(
       clipboard({
