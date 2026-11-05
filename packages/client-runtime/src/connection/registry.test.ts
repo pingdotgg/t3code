@@ -2200,6 +2200,7 @@ describe("EnvironmentRegistry routes", () => {
     Effect.gen(function* () {
       const environmentId = LAN_TARGET.environmentId;
       const learnedId = `learned:${environmentId}:http://100.64.0.9:3773@${LAN_TARGET.connectionId}`;
+      const connectedProfileLabels: Array<string> = [];
       const harness = yield* makeHarness(
         [
           new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId }),
@@ -2211,6 +2212,13 @@ describe("EnvironmentRegistry routes", () => {
           LAN_PROFILE,
         ],
         [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+        {
+          checkRoute: (route) => {
+            if (Option.isSome(route.profile))
+              connectedProfileLabels.push(route.profile.value.label);
+            return "unchecked";
+          },
+        },
       );
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
@@ -2242,6 +2250,24 @@ describe("EnvironmentRegistry routes", () => {
         );
         const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
         expect(entry?.target.label).toBe("Studio");
+
+        // A retained supervisor must reconnect with the new label: the SSH broker saves the
+        // profile it is handed, so a stale one would write the old label back.
+        connectedProfileLabels.length = 0;
+        yield* registry.setEnabled(environmentId, false);
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase !== "connected",
+        );
+        yield* registry.setEnabled(environmentId, true);
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase === "connected",
+        );
+        expect(connectedProfileLabels).not.toHaveLength(0);
+        expect(new Set(connectedProfileLabels)).toEqual(new Set(["Studio"]));
 
         const error = yield* registry.setLabel(environmentId, "   ").pipe(Effect.flip);
         expect(error._tag).toBe("ConnectionBlockedError");

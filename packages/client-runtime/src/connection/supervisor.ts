@@ -38,6 +38,7 @@ import {
   entryWithRoutes,
   insertRoute,
   type ReportedEndpoint,
+  routeWithLabel,
 } from "./routes.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
@@ -265,11 +266,16 @@ export class EnvironmentSupervisor extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/supervisor/EnvironmentSupervisor") {}
 
+/** What the registry holds. Sessions only ever see the service. */
+export type ManagedEnvironmentSupervisor = EnvironmentSupervisor["Service"] & {
+  readonly setLabel: (label: string) => Effect.Effect<void>;
+};
+
 export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   entry: ConnectionCatalogEntry,
   options?: EnvironmentSupervisorOptions,
 ): Effect.fn.Return<
-  EnvironmentSupervisor["Service"],
+  ManagedEnvironmentSupervisor,
   never,
   | Connectivity.Connectivity
   | ConnectionDriver.ConnectionDriver
@@ -1240,13 +1246,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
 
-  return EnvironmentSupervisor.of({
-    target,
-    state,
-    session,
-    prepared,
-    connect,
-    disconnect,
-    retryNow,
-  });
+  const setLabel = (label: string) =>
+    Ref.update(currentEntry, (current) =>
+      entryWithRoutes(
+        current,
+        connectionRoutes(current).map((route) => routeWithLabel(route, label)),
+      ),
+    );
+
+  return {
+    ...EnvironmentSupervisor.of({
+      target,
+      state,
+      session,
+      prepared,
+      connect,
+      disconnect,
+      retryNow,
+    }),
+    setLabel,
+  };
 });

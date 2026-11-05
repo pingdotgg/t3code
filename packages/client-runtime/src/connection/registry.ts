@@ -213,7 +213,7 @@ export class EnvironmentRegistry extends Context.Service<
 
 interface EnvironmentServiceScope {
   readonly entry: ConnectionCatalogEntry;
-  readonly supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"];
+  readonly supervisor: EnvironmentSupervisor.ManagedEnvironmentSupervisor;
   readonly scope: Scope.Closeable;
 }
 
@@ -1060,10 +1060,11 @@ export const make = Effect.gen(function* () {
         }
         const next = entryWithRoutes(entry, renamed);
         yield* registrations.setRoutes(environmentId, persistedRoutes(next));
-        // A label changes no address, so the supervisor keeps its session. It reads the old label
-        // for its own messages until it is next recreated.
+        // A label changes no address, so the supervisor keeps its session. Its next connect uses
+        // the new label; its own messages keep the old one until it is next recreated.
         const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
         if (lease !== undefined) {
+          yield* lease.supervisor.setLabel(trimmed);
           yield* SubscriptionRef.update(serviceScopes, (current) =>
             new Map(current).set(environmentId, { ...lease, entry: next }),
           );
