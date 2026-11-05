@@ -189,7 +189,28 @@ it.each([
     "`https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote%20client%20disconnects%20while%20the%20server%20stays%20healthy`",
     true,
   ],
-  ...["xdg-open", "open", "cmd.exe /c start", "python3 -m webbrowser"].map(
+  ...[
+    "Run python3 -m webbrowser URL after approval.",
+    "Run cmd.exe /c start URL after approval.",
+    "Run Start-Process URL after approval.",
+    "Run gio open URL after approval.",
+  ].map(
+    (instruction) =>
+      [
+        "triage-unauthenticated-browser-control",
+        ["gh auth status --hostname github.com", `printf '%s\\n' '${instruction}'`],
+        "https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+client+disconnects+while+the+server+stays+healthy",
+        true,
+      ] as const,
+  ),
+  ...[
+    "xdg-open",
+    "open",
+    "cmd.exe /c start",
+    "python3 -m webbrowser",
+    "gio open",
+    "powershell Start-Process",
+  ].map(
     (launcher) =>
       [
         "triage-unauthenticated-browser-control",
@@ -201,7 +222,21 @@ it.each([
         false,
       ] as const,
   ),
-  ...["xdg-open", "open"].map(
+  ...[
+    `powershell -Command "Start-Process 'https://example.com'"`,
+    `pwsh -Command "Start-Process 'https://example.com'"`,
+    `pwsh -c "Start-Process 'https://example.com'"`,
+    "powershell -NoProfile -Command Start-Process https://example.com",
+  ].map(
+    (command) =>
+      [
+        "triage-unauthenticated-browser-control",
+        ["gh auth status --hostname github.com", command],
+        "https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+client+disconnects+while+the+server+stays+healthy",
+        false,
+      ] as const,
+  ),
+  ...["xdg-open", "open", "python3 -m webbrowser", "cmd.exe /c start"].map(
     (launcher) =>
       [
         "triage-unauthenticated-browser-control",
