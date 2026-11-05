@@ -38,6 +38,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
+import {
+  cancelledRosterTaskWork,
+  latestStartedRun,
+  mergeRestartCancelledBackgroundWork,
+} from "./RestartBackgroundNote.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
@@ -456,6 +461,42 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    // The run records what an unexpected process exit took, as a server restart would.
+    const lostBackgroundWorkEvents = Effect.fn("ProviderEventIngestor.lostBackgroundWorkEvents")(
+      function* (
+        input: ProviderEventIngestInput,
+        event: Extract<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { readonly type: "background_work.lost" }
+        >,
+      ) {
+        const threadId = event.threadId;
+        const run = latestStartedRun(
+          (yield* projections.getThreadRecords(threadId, ["runs"])).runs,
+          event.providerThreadId,
+        );
+        if (run === undefined) return [];
+        const work = event.tasks.map((task) => ({
+          ...cancelledRosterTaskWork(task),
+          cause: "provider_exit" as const,
+        }));
+        return [
+          yield* makeDomainEvent(input, {
+            type: "run.background-work-cancelled",
+            threadId,
+            runId: run.id,
+            payload: {
+              runId: run.id,
+              restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
+                run.restartCancelledBackgroundWork ?? [],
+                work,
+              ),
+            },
+          }),
+        ];
+      },
+    );
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -618,6 +659,8 @@ export const layer: Layer.Layer<
             }
             case "background_work.updated":
               return [];
+            case "background_work.lost":
+              return yield* lostBackgroundWorkEvents(input, input.event);
             case "command_output.delta":
               // Live output is routed to the command output hub before ingestion.
               return [];
