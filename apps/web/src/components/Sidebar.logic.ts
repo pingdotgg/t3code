@@ -967,7 +967,6 @@ export type SidebarV2TopStatusKind =
   | "limited"
   | "input"
   | "request"
-  | "merged"
   | "preparing"
   | "waiting"
   | "woke"
@@ -977,8 +976,6 @@ export function resolveSidebarV2TopStatus(input: {
   readonly status: SidebarThreadStatus;
   readonly isUnread: boolean;
   readonly isWoke: boolean;
-  /** The row still sits in the active list while its PR merged. */
-  readonly isMerged?: boolean;
 }): SidebarV2TopStatusKind | null {
   if (input.status === "preparing") {
     return "preparing";
@@ -1000,10 +997,6 @@ export function resolveSidebarV2TopStatus(input: {
   }
   if (input.isWoke) {
     return "woke";
-  }
-  // Merged outranks Done: once the PR landed, "finished" is the less useful fact.
-  if (input.isMerged === true) {
-    return "merged";
   }
   return input.isUnread ? "done" : null;
 }
