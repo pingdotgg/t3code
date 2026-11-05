@@ -165,30 +165,32 @@ export function LayoutStripHint() {
   // Any workspace switch (keys, sidebar, overview, wheel) names the workspace
   // it landed on for a second (pen qnrAZ), unless a move hint already says so.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to imperative workspace changes that should display a navigation hint.
-  useEffect(
-    () =>
-      !scrollingWorkspaces
-        ? undefined
-        : useLayoutStore.subscribe((state, previous) => {
-            if (state.layout.focusedWorkspaceId === previous.layout.focusedWorkspaceId) return;
-            if (state.overviewOpen) return;
-            if (state.hint?.kind === "workspace" && state.hint.id !== previous.hint?.id) return;
-            const workspaces = countedLayoutWorkspaces(state.layout);
-            const workspace = selectFocusedWorkspace(state.layout);
-            // One workspace has nothing to tell apart.
-            if (workspaces.length < 2) {
-              if (state.hint?.kind === "workspace-name") state.clearHint(state.hint.id);
-              return;
-            }
-            state.showHint({
-              kind: "workspace-name",
-              workspaceId: workspace.id,
-              index: workspaces.indexOf(workspace),
-              count: workspaces.length,
-            });
-          }),
-    [scrollingWorkspaces],
-  );
+  useEffect(() => {
+    if (!scrollingWorkspaces) return;
+    let overviewOpenedOn: string | null = null;
+    return useLayoutStore.subscribe((state, previous) => {
+      if (state.overviewOpen) {
+        if (!previous.overviewOpen) overviewOpenedOn = previous.layout.focusedWorkspaceId;
+        return;
+      }
+      const left = previous.overviewOpen ? overviewOpenedOn : previous.layout.focusedWorkspaceId;
+      if (state.layout.focusedWorkspaceId === left) return;
+      if (state.hint?.kind === "workspace" && state.hint.id !== previous.hint?.id) return;
+      const workspaces = countedLayoutWorkspaces(state.layout);
+      const workspace = selectFocusedWorkspace(state.layout);
+      // One workspace has nothing to tell apart.
+      if (workspaces.length < 2) {
+        if (state.hint?.kind === "workspace-name") state.clearHint(state.hint.id);
+        return;
+      }
+      state.showHint({
+        kind: "workspace-name",
+        workspaceId: workspace.id,
+        index: workspaces.indexOf(workspace),
+        count: workspaces.length,
+      });
+    });
+  }, [scrollingWorkspaces]);
 
   if (!hint) return null;
   if (hint.kind === "terminal") {
