@@ -92,10 +92,8 @@ export const make = Effect.gen(function* () {
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
     // Electron strips spaces but keeps parentheses in its User-Agent token, breaking Turnstile in preview sessions.
-    // The name also keys the macOS Keychain and libsecret entries, which stay apart from T3 Code's.
-    yield* electronApp.setName(
-      `${environment.branding.baseName} ${environment.branding.stageLabel}`,
-    );
+    // The name also keys the macOS Keychain and libsecret entries, so it keeps the pre-OminaX name; renaming orphans saved secrets.
+    yield* electronApp.setName(`T3 Learn ${environment.branding.stageLabel}`);
     yield* electronApp.setAboutPanelOptions({
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,
