@@ -6,6 +6,7 @@ import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import { IconButton } from "./IconButton";
 import { Toolbar } from "./Toolbar";
+import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { useControlTheme } from "./useControlTheme";
 import type { SheetCloseButtonProps, SheetHeaderProps } from "./SheetHeader.types";
 
@@ -65,7 +66,7 @@ function NativeSheetHeader(props: SheetHeaderProps) {
           disabled={props.dismissDisabled}
         />
       </Toolbar>
-      {confirmation || props.trailing || props.actions?.length ? (
+      {confirmation || props.trailing || props.actions?.length || props.menus?.length ? (
         <Toolbar placement="right">
           {props.actions?.map((action) => (
             <Toolbar.Button
@@ -77,6 +78,7 @@ function NativeSheetHeader(props: SheetHeaderProps) {
               onPress={action.onPress}
             />
           ))}
+          {props.menus?.map(createNativeHeaderMenu)}
           {props.trailing ? (
             <Toolbar.Custom>
               <View>{props.trailing}</View>

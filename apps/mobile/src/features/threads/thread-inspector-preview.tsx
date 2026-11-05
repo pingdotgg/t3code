@@ -1,34 +1,10 @@
-import {
-  createNavigatorFactory,
-  NavigationContainer,
-  NavigationIndependentTree,
-  StackRouter,
-  useIsFocused,
-  useNavigation,
-  useNavigationBuilder,
-  type NavigatorTypeBagBase,
-  type ParamListBase,
-  type StackActionHelpers,
-  type StackNavigationState,
-  type StackRouterOptions,
-  type StaticConfig,
-  type StaticScreenProps,
-  type TypedNavigator,
-} from "@react-navigation/native";
-import type {
-  NativeStackNavigationEventMap,
-  NativeStackNavigationOptions,
-  NativeStackNavigatorProps,
-  NativeStackTypeBag,
-} from "@react-navigation/native-stack";
+import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type ReactNode } from "react";
 import { View } from "react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
 import { SheetHeader } from "../../components/ui/SheetHeader";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 import { DevicePreviewScreen } from "../devices/DevicePreviewRouteScreen";
 import {
   WorkspaceContentWidthContext,
@@ -38,6 +14,7 @@ import {
   ThreadInspectorNavigationContext,
   type ThreadInspectorTarget,
 } from "./thread-inspector-navigation";
+import { ThreadPreviewRoute } from "./thread-preview-route";
 
 /** A thread shown outside its route: in the inspector pane, or presented full screen with a close. */
 export type ThreadInspectorPresentation =
@@ -62,64 +39,9 @@ export function ThreadInspectorHeader(
     );
   }
   return (
-    <>
-      <NativeStackScreenOptions options={{ headerShown: true, headerTransparent: true }} />
-      <SheetHeader title={props.title} onClose={props.onClose} accessibilityLabel="Close thread" />
-    </>
+    <SheetHeader title={props.title} onClose={props.onClose} accessibilityLabel="Close thread" />
   );
 }
-
-/**
- * Gives the previewed thread a route of its own, so its route hooks and actions never reach the
- * host thread. It draws nothing: the thread's AppBar writes into the pane's bar.
- */
-function PreviewRouteNavigator({
-  id,
-  initialRouteName,
-  UNSTABLE_routeNamesChangeBehavior,
-  children,
-  layout,
-  screenListeners,
-  screenOptions,
-  screenLayout,
-  UNSTABLE_router,
-}: NativeStackNavigatorProps) {
-  const { state, descriptors, NavigationContent } = useNavigationBuilder<
-    StackNavigationState<ParamListBase>,
-    StackRouterOptions,
-    StackActionHelpers<ParamListBase>,
-    NativeStackNavigationOptions,
-    NativeStackNavigationEventMap
-  >(StackRouter, {
-    id,
-    initialRouteName,
-    UNSTABLE_routeNamesChangeBehavior,
-    children,
-    layout,
-    screenListeners,
-    screenOptions,
-    screenLayout,
-    UNSTABLE_router,
-  });
-  const route = state.routes[state.index];
-  return <NavigationContent>{route ? descriptors[route.key]?.render() : null}</NavigationContent>;
-}
-
-type PreviewTypeBag<ParamList extends ParamListBase> = Omit<
-  NativeStackTypeBag<ParamList, undefined>,
-  "Navigator"
-> & { Navigator: typeof PreviewRouteNavigator };
-function createPreviewRouteNavigator<
-  const ParamList extends ParamListBase,
-  const TypeBag extends NavigatorTypeBagBase = PreviewTypeBag<ParamList>,
-  const Config extends StaticConfig<TypeBag> = StaticConfig<TypeBag>,
->(config?: Config): TypedNavigator<TypeBag, Config> {
-  return createNavigatorFactory(PreviewRouteNavigator)(config);
-}
-
-const PreviewStack = createPreviewRouteNavigator<{
-  Thread: { readonly environmentId: string; readonly threadId: string };
-}>();
 
 /** A thread shown beside or over the workspace does not take the workspace's content width. */
 export function InspectorContentScope({ children }: { readonly children: ReactNode }) {
@@ -144,7 +66,6 @@ export function ThreadInspectorPreview(props: {
 }) {
   const navigation = useNavigation();
   const focused = useIsFocused();
-  const theme = useMobileNavigationTheme();
   const { target } = props;
   const maximizeDevice = (deviceKey: string | null) => {
     props.onOpen({ ...target, deviceKey: deviceKey ?? undefined });
@@ -169,26 +90,20 @@ export function ThreadInspectorPreview(props: {
           />
         ) : (
           <View className="flex-1 bg-screen">
-            <NavigationIndependentTree>
-              <NavigationContainer theme={theme} onUnhandledAction={navigation.dispatch}>
-                <PreviewStack.Navigator key={`${target.environmentId}:${target.threadId}`}>
-                  <PreviewStack.Screen name="Thread" initialParams={target}>
-                    {(screen) =>
-                      props.renderThread({
-                        route: screen.route,
-                        inspectorPresentation: {
-                          onMaximize: () =>
-                            navigation.navigate("ThreadInspectorFullscreen", {
-                              environmentId: screen.route.params.environmentId,
-                              threadId: screen.route.params.threadId,
-                            }),
-                        },
-                      })
-                    }
-                  </PreviewStack.Screen>
-                </PreviewStack.Navigator>
-              </NavigationContainer>
-            </NavigationIndependentTree>
+            <ThreadPreviewRoute environmentId={target.environmentId} threadId={target.threadId}>
+              {(route) =>
+                props.renderThread({
+                  route,
+                  inspectorPresentation: {
+                    onMaximize: () =>
+                      navigation.navigate("ThreadInspectorFullscreen", {
+                        environmentId: route.params.environmentId,
+                        threadId: route.params.threadId,
+                      }),
+                  },
+                })
+              }
+            </ThreadPreviewRoute>
           </View>
         )}
       </InspectorContentScope>
