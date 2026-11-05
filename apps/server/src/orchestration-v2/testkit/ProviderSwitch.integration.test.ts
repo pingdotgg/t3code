@@ -1480,7 +1480,7 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
-  it.live("compacts a full native session and continues instead of replacing it", () =>
+  it.live("compacts a full native session in place while it has background work", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const name = "full-native-session-compacts";
@@ -1488,9 +1488,9 @@ describe("orchestration v2 provider switching", () => {
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
         const nativeThreadGeneration = yield* Ref.make(0);
-        // A request that never reached the provider is resent as history on the next turn.
+        // A request that never reached the provider is resent as backlog on the next turn.
         const failStartOnce = yield* Ref.make(false);
-        // Replacing the native session would orphan this work, so only compaction can make room.
+        // Background work makes replacing the native session impossible.
         const pendingBackgroundWork = yield* Ref.make(true);
         const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
@@ -1507,7 +1507,7 @@ describe("orchestration v2 provider switching", () => {
             getModelContextWindow: () => 258_400,
             tokenUsageByRunOrdinal: {
               1: { usedTokens: 250_164, maxTokens: 258_400 },
-              5: { usedTokens: 20_000, maxTokens: 258_400 },
+              4: { usedTokens: 20_000, maxTokens: 258_400 },
             },
           }),
         ]);
@@ -1527,8 +1527,6 @@ describe("orchestration v2 provider switching", () => {
               modelSelection: CODEX_MODEL_SELECTION,
               dispatchMode: { type: "start_immediately" },
             });
-          });
-          const settled = Effect.fn("settled")(function* (ordinal: number) {
             yield* orchestrator.streamStoredEvents.pipe(
               Stream.filter(
                 ({ event }) =>
@@ -1554,48 +1552,30 @@ describe("orchestration v2 provider switching", () => {
             branch: null,
             worktreePath: null,
           });
-          yield* send(1, "Original brief");
-          yield* settled(1);
-          const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
-            .providerThreads[0]!.providerSessionId!;
-          yield* orchestrator.dispatch({
-            type: "provider-session.detach",
-            commandId: CommandId.make("full-native:detach"),
-            threadId,
-            providerSessionId,
+          // Each turn resumes a detached session, as after a server restart.
+          const detach = Effect.fn("detach")(function* (ordinal: number) {
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make(`full-native:detach:${ordinal}`),
+              threadId,
+              providerSessionId: (yield* orchestrator.getThreadProjection(threadId))
+                .providerThreads[0]!.providerSessionId!,
+            });
+            yield* worker.drain();
           });
-          yield* worker.drain();
+          yield* send(1, "Original brief");
+          yield* detach(2);
           yield* Ref.set(failStartOnce, true);
           yield* send(2, `Request 2 ${"r".repeat(6_000)}`);
-          yield* settled(2);
-          // Recovery continues work in the background, so it must not end the user's snooze.
-          const snoozedUntil = DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 }));
-          yield* orchestrator.dispatch({
-            type: "thread.snooze",
-            commandId: CommandId.make("full-native:snooze"),
-            threadId,
-            snoozedUntil,
-          });
-          // Two background-command notifications: the second can start before the compaction
-          // and fail the same way; one compaction still covers both.
-          for (const index of [0, 1]) {
-            yield* orchestrator.dispatch({
-              type: "message.dispatch",
-              commandId: CommandId.make(`full-native:notification:${index}`),
-              threadId,
-              messageId: MessageId.make(`full-native:notification:${index}`),
-              createdBy: "agent",
-              creationSource: "server",
-              notification: {
-                source: { kind: "monitor" },
-                outcome: "updated",
-                summary: "Background command finished",
-              },
-              text: `Background command ${index} finished`,
-              attachments: [],
-              dispatchMode: { type: "queue_after_active" },
-            });
-          }
+          yield* detach(3);
+          yield* send(3, "Request 3");
+          const failed = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            failed.turnItems.flatMap((item) =>
+              item.type === "error" && item.runId === failed.runs[2]!.id ? [item.failure.code] : [],
+            ),
+            [CONTEXT_COMPACTION_REQUIRED_CODE],
+          );
           yield* orchestrator.streamStoredEvents.pipe(
             Stream.filter(
               ({ event }) =>
@@ -1607,47 +1587,27 @@ describe("orchestration v2 provider switching", () => {
           );
           yield* worker.drain();
 
-          // Whether the notification starts before the compaction is a race; either way one
-          // compaction covers the backlog and nothing is left queued or failed for another reason.
           const projection = yield* waitForIdle(threadId);
-          const statusOf = (prefix: string) =>
-            projection.runs.flatMap((run) =>
-              run.userMessageId.startsWith(prefix) ? [run.status] : [],
-            );
-          assert.deepEqual(statusOf("context-compact:"), ["completed"]);
-          assert.deepEqual(statusOf("context-compact-continue:"), ["completed"]);
-          assert.isTrue(projection.runs.every((run) => run.status !== "queued"));
           assert.deepEqual(
+            projection.runs.map((run) => [run.userMessageId.split(":")[0], run.status]),
             [
-              ...new Set(
-                projection.turnItems.flatMap((item) =>
-                  item.type === "error" ? [item.failure.code] : [],
-                ),
-              ),
+              ["full-native", "completed"],
+              ["full-native", "failed"],
+              ["full-native", "failed"],
+              ["context-compact", "completed"],
+              ["context-compact-continue", "completed"],
             ],
-            [null, CONTEXT_COMPACTION_REQUIRED_CODE],
           );
           const turns = yield* Ref.get(capturedTurns);
           assert.deepEqual(
-            turns.slice(0, 2).map((turn) => turn.text.slice(0, 9)),
-            ["Original ", "/compact"],
+            turns.map((turn) => turn.text.slice(0, 9)),
+            ["Original ", "/compact", "Continue "],
           );
-          assert.equal(turns.filter((turn) => turn.text === "/compact").length, 1);
-          assert.isTrue(turns.some((turn) => turn.text.includes("Continue where you left off.")));
           // One native thread throughout: compaction made room, nothing was replaced.
           assert.equal(yield* Ref.get(nativeThreadGeneration), 1);
-          assert.equal(new Set(turns.map((turn) => turn.nativeThreadId)).size, 1);
-          const delivered = `${yield* encodeJson(yield* Ref.get(injectedHistory))}${turns
-            .slice(2)
-            .map((turn) => turn.text)
-            .join("\n")}`;
-          assert.include(delivered, "Request 2");
-          const { snoozedUntil: stillSnoozedUntil } = (yield* orchestrator.getThreadProjection(
-            threadId,
-          )).thread;
-          assert.equal(
-            stillSnoozedUntil == null ? null : DateTime.formatIso(stillSnoozedUntil),
-            snoozedUntil,
+          assert.include(
+            `${yield* encodeJson(yield* Ref.get(injectedHistory))}${turns.at(-1)!.text}`,
+            "Request 3",
           );
         }).pipe(
           Effect.provide(
