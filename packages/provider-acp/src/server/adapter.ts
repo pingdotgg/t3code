@@ -1391,6 +1391,7 @@ function readElicitationForm(properties: Record<string, unknown>, message: strin
       question: nonEmptyText(record?.description, message),
       options,
       ...(multiSelect ? { multiSelect } : {}),
+      ...(options.length > 0 && !companions.has(id) ? { allowCustomAnswer: false } : {}),
     }));
   const content = (answers: ProviderUserInputAnswers) => {
     const routed: Record<string, unknown> = { ...answers };

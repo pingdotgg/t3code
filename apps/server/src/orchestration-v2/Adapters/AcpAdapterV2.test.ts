@@ -1824,6 +1824,24 @@ describe("AcpAdapterV2", () => {
         content: { q0__other: "Friday", q1: ["Codex"], q1__other: "Pi" },
       },
     },
+    {
+      scenario: "allows only listed values without a text companion",
+      schema: { type: "object", properties: { q0: titledChoiceSchema.properties.q0 } },
+      questions: [
+        {
+          id: "q0",
+          header: "Deploy the rule now?",
+          question: "Global rule",
+          options: [
+            { label: "Deploy now", description: "Goes live after a restart.", value: "Deploy now" },
+            { label: "Not yet", description: "Not yet", value: "Not yet" },
+          ],
+          allowCustomAnswer: false,
+        },
+      ],
+      answers: { q0: "Deploy now" },
+      result: { action: "accept", content: { q0: "Deploy now" } },
+    },
   ])("form elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
