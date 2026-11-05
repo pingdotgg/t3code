@@ -362,7 +362,7 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
     assert.strictEqual(urls.length, 2);
     assert.strictEqual(
       error.detail,
-      "Git could not authenticate with the remote. Cloning over HTTPS instead also failed: Git could not authenticate with the remote. Clones use the Git credentials of the environment running them (a credential helper or SSH keys), not the token saved in Settings.",
+      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled Clones use the Git credentials of the environment running them (a credential helper or SSH keys), not the token saved in Settings.",
     );
   }),
 );
@@ -372,6 +372,14 @@ it.effect.each([
     "Git has no credentials for the remote",
     "authentication_failed",
     ["fatal: could not read Username for 'https://github.com': terminal prompts disabled"],
+  ],
+  [
+    "the host rejects the stored credentials",
+    "authentication_failed",
+    [
+      "remote: HTTP Basic: Access denied. The provided password or token is incorrect.",
+      "fatal: Authentication failed for 'https://gitlab.com/group/repo.git/'",
+    ],
   ],
   [
     "the remote hides the repository",
@@ -407,6 +415,7 @@ it.effect.each([
         ),
       );
 
+      for (const line of stderrLines) assert.include(error.detail, line);
       assert.match(error.detail, /credential/i);
       assert.match(error.detail, /Settings/);
     }),

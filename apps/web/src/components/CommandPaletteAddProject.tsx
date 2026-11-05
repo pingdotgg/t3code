@@ -164,10 +164,12 @@ export function RemoteRepositorySummary(props: {
         </CommandPaletteTitleIcon>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-foreground text-sm">{props.title}</span>
-          <span className="truncate text-muted-foreground/85 text-xs">
-            {props.description}
-            {props.environmentLabel === null ? null : ` on ${props.environmentLabel}`}
-          </span>
+          <span className="truncate text-muted-foreground/85 text-xs">{props.description}</span>
+          {props.environmentLabel === null ? null : (
+            <span className="truncate text-muted-foreground/85 text-xs">
+              Clones on {props.environmentLabel}
+            </span>
+          )}
         </span>
       </div>
     </div>

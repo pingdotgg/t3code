@@ -170,17 +170,19 @@ const CLONE_CREDENTIALS_NOTE =
 // Hosts report private repositories the credentials cannot see as not found.
 const REPOSITORY_NOT_FOUND_LINE = /^fatal: repository '.+' not found$/i;
 
+// Keep Git's lines, since hosts explain rejected credentials there, and add where credentials come from.
 function cloneFailureDetail(
   reason: GitCommandFailureReason | undefined,
   stderrTail: ReadonlyArray<string>,
 ): string {
+  const output = stderrTail.join(" ");
   if (reason === "authentication_failed") {
-    return `Git could not authenticate with the remote. ${CLONE_CREDENTIALS_NOTE}`;
+    return `${output.length > 0 ? output : "Git could not authenticate with the remote."} ${CLONE_CREDENTIALS_NOTE}`;
   }
   if (stderrTail.some((line) => REPOSITORY_NOT_FOUND_LINE.test(line))) {
-    return `The remote reported the repository as not found, which also happens when it is private and the credentials Git used cannot see it. ${CLONE_CREDENTIALS_NOTE}`;
+    return `${output} Hosts also report a private repository as not found when the credentials Git used cannot see it. ${CLONE_CREDENTIALS_NOTE}`;
   }
-  return stderrTail.length > 0 ? stderrTail.join(" ") : "The repository could not be cloned.";
+  return output.length > 0 ? output : "The repository could not be cloned.";
 }
 
 /**
