@@ -1080,6 +1080,38 @@ describe("environment query lifecycle", () => {
       }),
     ),
   );
+
+  it.effect("re-reads the archived snapshot when a thread leaves the shell", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let requests = 0;
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+                Effect.sync(() => (requests += 1)),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+          removedAt: new Map(),
+        }).pipe(Atom.keepAlive);
+        // The archived snapshot never uses the HTTP client.
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        }).archivedShellSnapshot({ environmentId: QUERY_ENVIRONMENT.environmentId, input: {} });
+        const registry = yield* mountEnvironmentQuery(atom);
+        expect(yield* readEnvironmentQuery(registry, atom)).toBe(1);
+
+        // An agent or another client archives a thread, which this client sees as a removal.
+        registry.set(shellState, { removedAt: new Map([[ThreadId.make("archived"), 4]]) });
+        expect(yield* readEnvironmentQuery(registry, atom)).toBe(2);
+      }),
+    ),
+  );
 });
 
 describe("executeAtomQuery", () => {
