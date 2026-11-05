@@ -105,6 +105,26 @@ describe("Esc in a shortcut recorder", () => {
   });
 });
 
+it("records Esc for the stop command, and a second Esc cancels", async () => {
+  await using screen = await render(
+    <RegistryProvider>
+      <KeybindingsSettingsPanel />
+    </RegistryProvider>,
+  );
+  await screen.getByRole("button", { name: "Add keybinding" }).click();
+  await screen.getByRole("combobox").last().click();
+  await page.getByRole("option", { name: "Thread: Stop" }).click();
+  const field = screen.getByRole("textbox", { name: "Keybinding for Thread: Stop" });
+  await field.click();
+  await expect.element(field).toHaveAttribute("placeholder", "Press shortcut");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(field).toHaveValue("escape");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(field).toHaveValue("");
+});
+
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
   await using screen = await render(
     <RegistryProvider>

@@ -3525,6 +3525,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         },
                       },
                     )}
+                    stopShortcutLabel={shortcutLabelForCommand(keybindings, "thread.stop", {
+                      context: { composerFocus: true },
+                    })}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }

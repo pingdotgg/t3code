@@ -90,6 +90,8 @@ export function useAssistantCitationTarget({
       };
       const onKeyDown = (event: KeyboardEvent) => {
         if (event.key === "Escape") {
+          // A live citation owns this Escape; the chat would otherwise also stop the agent.
+          if (!activationRef.current.dismissed) event.preventDefault();
           dismiss(false);
         } else if (
           CITATION_SCROLL_KEYS.has(event.key) &&

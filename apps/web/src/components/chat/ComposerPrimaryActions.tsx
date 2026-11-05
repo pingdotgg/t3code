@@ -34,6 +34,7 @@ interface ComposerPrimaryActionsProps {
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
+  stopShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -88,6 +89,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   followUpBehavior = "steer",
   canSteer = true,
   alternateShortcutLabel = null,
+  stopShortcutLabel = null,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -125,7 +127,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
-    <Tooltip key="interrupt">
+    <Tooltip
+      key="interrupt"
+      onOpenChange={(_open, eventDetails) => {
+        // Bound to Escape, this tooltip advertises the key and must not swallow it.
+        if (stopShortcutLabel !== "Esc" || eventDetails.reason !== "escape-key") return;
+        eventDetails.cancel();
+        eventDetails.allowPropagation();
+      }}
+    >
       <TooltipTrigger
         render={
           <button
@@ -147,7 +157,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>Interrupt</TooltipPopup>
+      <TooltipPopup>Interrupt{stopShortcutLabel ? ` (${stopShortcutLabel})` : ""}</TooltipPopup>
     </Tooltip>
   );
 
