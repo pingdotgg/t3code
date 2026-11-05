@@ -820,6 +820,74 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
+  it.effect("reads commit stats alongside later activity pages", () =>
+    Effect.gen(function* () {
+      const laterPageStarted = yield* Deferred.make<void>();
+      const statsStarted = yield* Deferred.make<void>();
+      const activityPage = (head: boolean) => ({
+        data: {
+          repository: {
+            pullRequest: {
+              ...(head
+                ? {
+                    author: null,
+                    commits: {
+                      nodes: [
+                        {
+                          commit: {
+                            id: "node-regular",
+                            oid: "regular",
+                            messageHeadline: "regular",
+                            committedDate: "2026-07-05T00:00:00Z",
+                            parents: { totalCount: 1 },
+                            authors: { nodes: [] },
+                          },
+                        },
+                      ],
+                    },
+                  }
+                : {}),
+              comments: {
+                nodes: [],
+                pageInfo: head ? { hasNextPage: true, endCursor: "c1" } : lastPage,
+              },
+              reviews: { nodes: [], pageInfo: lastPage },
+            },
+          },
+        },
+      });
+      mockedExecute.mockImplementation((call) => {
+        if (matches(call, "PullRequestCommitStats")) {
+          return Deferred.succeed(statsStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(laterPageStarted)),
+            Effect.as(
+              output(
+                encodeJson({
+                  data: {
+                    nodes: [{ __typename: "Commit", oid: "regular", additions: 3, deletions: 1 }],
+                  },
+                }),
+              ),
+            ),
+          );
+        }
+        const head = call.kind === "graphql" && call.variables?.["head"] === true;
+        return head
+          ? Effect.succeed(output(encodeJson(activityPage(true))))
+          : Deferred.succeed(laterPageStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(statsStarted)),
+              Effect.as(output(encodeJson(activityPage(false)))),
+            );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const activity = yield* cli.getPullRequestActivity(pullRequestInput);
+
+      expect(activity.commits[0]).toMatchObject({ additions: 3, deletions: 1 });
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+    }),
+  );
+
   it.effect("loads the complete hover card with one GraphQL request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -3299,7 +3367,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
           Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const read = cli.listReviewThreadComments(pullRequestInput);
+        const read = cli.listReviewThreadComments({
+          ...pullRequestInput,
+          repository: `acme/refused-threads-${later}`,
+        });
         const conversation = yield* read;
         expect(
           variablesOf("ReviewThreads").map((v) => [v["after"], v["requestedReviewers"]]),
@@ -3327,7 +3398,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         yield* read;
         expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({
           after: null,
-          requestedReviewers: 50,
+          requestedReviewers: 0,
         });
       }),
   );
@@ -3460,7 +3531,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
           ),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const read = cli.getPullRequestDetail(pullRequestInput);
+        const read = cli.getPullRequestDetail({
+          ...pullRequestInput,
+          repository: `acme/refused-checks-${refused}`,
+        });
         const detail = yield* read;
         expect(detail.reviewRequestLogins).toEqual([]);
         expect(detail.reviewRequestTeams).toEqual([]);
@@ -3480,7 +3554,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         if (refused) {
           mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
           yield* read;
-          expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ requestedReviewers: 100 });
+          expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ requestedReviewers: 0 });
+          expect(mockedExecute).toHaveBeenCalledTimes(4);
         }
       }),
   );
@@ -3514,7 +3589,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         const error = yield* Effect.flip(
           cli.getPullRequestDetail({
             cwd: "/w",
-            repository: "acme/web",
+            repository: `acme/head-changed-${refused}`,
             host: "github.com",
             number: 7,
           }),

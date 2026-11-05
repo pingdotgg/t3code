@@ -150,6 +150,26 @@ const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
     },
   ],
 });
+const ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: [
+    {
+      slug: "claude-custom-tuned",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "ultracode", label: "Ultracode" },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+});
 const CLAUDE_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
   model: "claude-sonnet-4-6",
@@ -2056,7 +2076,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             yield* deliver;
             const retried = offeredMessages.at(-1)!.message.content;
             assert.notInclude(JSON.stringify(retried), '"type":"document"');
-            assert.include(JSON.stringify(retried), documentPath);
+            assert.include(JSON.stringify(retried), JSON.stringify(documentPath).slice(1, -1));
             assert.isBelow(Buffer.byteLength(JSON.stringify(offeredMessages)), 32_000_000);
             return;
           }
@@ -2105,7 +2125,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 typeof sent === "string" ? [] : sent.filter((block) => block.type === "image"),
                 budget === "partial-images" ? 1 : 0,
               );
-              assert.include(JSON.stringify(sent), imagePath);
+              assert.include(JSON.stringify(sent), JSON.stringify(imagePath).slice(1, -1));
               yield* runtime.steerTurn({
                 threadId,
                 runId: RunId.make("run-claude-attachments"),
@@ -2124,7 +2144,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                   : steered.filter((block) => block.type === "image"),
                 0,
               );
-              assert.include(JSON.stringify(steered), imagePath);
+              assert.include(JSON.stringify(steered), JSON.stringify(imagePath).slice(1, -1));
               assert.isBelow(
                 Buffer.byteLength(
                   JSON.stringify(offeredMessages.map((message) => message.message)),
@@ -2186,7 +2206,7 @@ describe("ClaudeAdapterV2 attachments", () => {
               0,
               budget,
             );
-            assert.include(JSON.stringify(sent), documentPath);
+            assert.include(JSON.stringify(sent), JSON.stringify(documentPath).slice(1, -1));
             return;
           }
           if (!resumed) {
@@ -2399,7 +2419,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             );
             if (scenario === "text-only")
               assert.equal(sent, ultrathink ? "Ultrathink:\nContinue." : "Continue.");
-            else assert.include(JSON.stringify(sent), documentPath);
+            else assert.include(JSON.stringify(sent), JSON.stringify(documentPath).slice(1, -1));
           }
         }).pipe(
           Effect.provide(
@@ -4459,8 +4479,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "false",
         );
 
-        // Claude Code keeps the local file at the repository root, the main checkout's root in a
-        // worktree, and that file beats the user's settings.
+        // POSIX resolves local settings at the repository root; Windows uses cwd.
+        // Local settings beat user settings wherever they are found.
         const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-repo-" });
         const worktree = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-wt-" });
         const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
@@ -4478,11 +4498,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             `{"env":{"ENABLE_TOOL_SEARCH":"${value}"}}`,
           );
         const userAuto = '{"env":{"ENABLE_TOOL_SEARCH":"auto"}}';
+        const platform = yield* HostProcess.Platform;
         yield* rootLocal("auto");
-        assert.equal(yield* openedToolSearch("{}", worktree), "true");
+        assert.equal(yield* openedToolSearch("{}", repo), "true");
+        assert.equal(
+          yield* openedToolSearch("{}", worktree),
+          platform === "win32" ? undefined : "true",
+        );
         yield* rootLocal("false");
-        assert.isUndefined(yield* openedToolSearch(userAuto, worktree));
-        assert.isUndefined(yield* openedToolSearch(userAuto, path.join(repo, "packages", "app")));
+        assert.isUndefined(yield* openedToolSearch(userAuto, repo));
+        assert.equal(
+          yield* openedToolSearch(userAuto, worktree),
+          platform === "win32" ? "true" : undefined,
+        );
+        assert.equal(
+          yield* openedToolSearch(userAuto, path.join(repo, "packages", "app")),
+          platform === "win32" ? "true" : undefined,
+        );
 
         // Project settings beat user settings, and the process env applies only when no file sets it.
         const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-project-" });
@@ -5824,7 +5856,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             turn(3, {
               ...normal,
               options: [
-                { id: "effort", value: "ultracode" },
+                { id: "effort", value: "high" },
+                { id: "ultracode", value: true },
                 { id: "fastMode", value: true },
               ],
             }),
@@ -5833,7 +5866,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.runtime.startTurn(turn(4, { ...normal, model: "claude-sonnet-4-6" }));
           yield* settle;
           assert.deepEqual(harness.liveSelectionChanges, [
-            { effortLevel: "xhigh", fastMode: true, ultracode: true },
+            { effortLevel: "high", fastMode: true, ultracode: true },
             { model: "claude-sonnet-4-6" },
             { effortLevel: "high", fastMode: null, ultracode: null },
           ]);
@@ -14857,6 +14890,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("sends Ultracode with any effort on a custom model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-custom-ultracode"),
+            text: "Plan the work.",
+            attachments: [],
+            modelSelection: {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              model: "claude-custom-tuned",
+              options: [
+                { id: "effort", value: "high" },
+                { id: "ultracode", value: true },
+              ],
+            },
+          }),
+        );
+        const options = harness.getOpenedOptions()!;
+        assert.equal(options.effort, "high");
+        assert.equal((options.settings as { ultracode?: boolean }).ultracode, true);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
   );
 
   it.effect("resolves a subagent's model and effort against the instance's custom models", () =>
