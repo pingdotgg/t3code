@@ -81,16 +81,26 @@ export function resolveEarlyLinuxPasswordStorePreference(
   }
 }
 
+const normalizeSwitchValue = (value: string | null | undefined): string | null => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && normalized.length > 0 ? normalized : null;
+};
+
 const isWaylandPlatform = (
   env: NodeJS.ProcessEnv,
   ozonePlatform: string | null,
+  ozonePlatformHint: string | null,
   hasLiveWaylandSocket: () => boolean,
 ): boolean => {
-  const explicit = (ozonePlatform ?? "").toLowerCase();
-  if (explicit === "wayland") return true;
-  if (explicit) return false;
-  if ((trimNonEmpty(env.XDG_SESSION_TYPE) ?? "").toLowerCase() === "wayland") return true;
-  if (trimNonEmpty(env.WAYLAND_DISPLAY) !== null) return true;
+  // --ozone-platform selects the backend directly; --ozone-platform-hint only
+  // breaks the default/auto tie, so an explicit platform always wins.
+  const explicit = normalizeSwitchValue(ozonePlatform);
+  if (explicit !== null) return explicit === "wayland";
+  const hint = normalizeSwitchValue(ozonePlatformHint);
+  if (hint === "wayland") return true;
+  if (hint === "x11") return false;
+  if (normalizeSwitchValue(env.XDG_SESSION_TYPE) === "wayland") return true;
+  if (normalizeSwitchValue(env.WAYLAND_DISPLAY) !== null) return true;
   return hasLiveWaylandSocket();
 };
 
@@ -142,6 +152,7 @@ export const makeHasLiveWaylandSocket =
 export function shouldDisableGpuOnNvidiaWayland(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly ozonePlatform: string | null;
+  readonly ozonePlatformHint: string | null;
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
   readonly existsSync: (path: string) => boolean;
@@ -150,7 +161,12 @@ export function shouldDisableGpuOnNvidiaWayland(input: {
   readonly hasLiveWaylandSocket?: () => boolean;
 }): boolean {
   if (
-    !isWaylandPlatform(input.env, input.ozonePlatform, input.hasLiveWaylandSocket ?? (() => false))
+    !isWaylandPlatform(
+      input.env,
+      input.ozonePlatform,
+      input.ozonePlatformHint,
+      input.hasLiveWaylandSocket ?? (() => false),
+    )
   )
     return false;
   if (input.hasSwitch("disable-gpu") || input.hasSwitch("enable-gpu")) return false;

@@ -113,6 +113,33 @@ describe("DesktopPreReadyPlatform", () => {
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
+  it.effect("pre-ready GPU switch: honors an X11 ozone platform hint on a Wayland login", () => {
+    vi.stubEnv("T3CODE_HOME", "/isolated");
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
+    existsSyncMock.mockReturnValue(true);
+    readFileSyncMock.mockReturnValue("{}");
+    getSwitchValueMock.mockImplementation((name: string) =>
+      name === "ozone-platform-hint" ? "x11" : "",
+    );
+    hasSwitchMock.mockImplementation((name: string) => name === "ozone-platform-hint");
+    readdirSyncMock.mockReturnValue([]);
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          DesktopPreReadyPlatform.layer.pipe(
+            Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+          ),
+        );
+        const appended = appendSwitchMock.mock.calls.some(([name]) => name === "disable-gpu");
+        assert.isFalse(appended);
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
     vi.stubEnv("T3CODE_HOME", "/isolated");
     vi.stubEnv("VITE_DEV_SERVER_URL", "");

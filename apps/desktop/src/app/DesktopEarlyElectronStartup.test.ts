@@ -201,6 +201,7 @@ describe("Linux device scale persistence failures", () => {
   describe("shouldDisableGpuOnNvidiaWayland", () => {
     const base = {
       ozonePlatform: null,
+      ozonePlatformHint: null,
       homeDirectory: "/home/user",
       joinPath: NodePath.posix.join,
       existsSync: (path: string) => path === "/dev/nvidiactl",
@@ -234,6 +235,58 @@ describe("Linux device scale persistence failures", () => {
       assert.isTrue(
         shouldDisableGpuOnNvidiaWayland({ ...base, env: {}, ozonePlatform: "wayland" }),
       );
+    });
+
+    it("respects --ozone-platform-hint=x11 on a Wayland login", () => {
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" },
+          ozonePlatformHint: "x11",
+          hasLiveWaylandSocket: () => true,
+        }),
+      );
+    });
+
+    it("honors --ozone-platform-hint=wayland when the session variables are absent", () => {
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: {},
+          ozonePlatformHint: "wayland",
+        }),
+      );
+    });
+
+    it("prefers the explicit --ozone-platform over --ozone-platform-hint", () => {
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland" },
+          ozonePlatform: "x11",
+          ozonePlatformHint: "wayland",
+        }),
+      );
+    });
+
+    it("falls back to the session environment for hint=auto or hint=default", () => {
+      for (const ozonePlatformHint of ["auto", "default"]) {
+        assert.isTrue(
+          shouldDisableGpuOnNvidiaWayland({
+            ...base,
+            env: { XDG_SESSION_TYPE: "wayland" },
+            ozonePlatformHint,
+          }),
+        );
+        assert.isFalse(
+          shouldDisableGpuOnNvidiaWayland({
+            ...base,
+            env: {},
+            ozonePlatformHint,
+            hasLiveWaylandSocket: () => false,
+          }),
+        );
+      }
     });
 
     it("detects Wayland via WAYLAND_DISPLAY when session variables are absent", () => {
