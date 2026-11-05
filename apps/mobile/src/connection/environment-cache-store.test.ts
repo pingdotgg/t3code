@@ -252,7 +252,7 @@ function makeDatabase() {
       }),
     clearAllCaches: Effect.sync(() => values.clear()),
     inspectCaches: Effect.succeed([]),
-    loadPreferencesJson: Effect.succeed(Option.none()),
+    loadPreferencesJson: Effect.succeedNone,
     savePreferencesJson: () => Effect.void,
   });
   return { database, removed, schemaVersions, values };

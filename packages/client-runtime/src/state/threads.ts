@@ -188,6 +188,20 @@ function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadStat
   };
 }
 
+function hasMissingPendingQuestionCard(projection: OrchestrationV2ThreadProjection): boolean {
+  const pending = new Set(
+    projection.runtimeRequests
+      .filter((request) => request.kind === "user_input" && request.status === "pending")
+      .map((request) => request.id),
+  );
+  if (pending.size === 0) return false;
+  for (const item of projection.turnItems) {
+    if (item.type === "user_input_request") pending.delete(item.requestId);
+    if (pending.size === 0) return false;
+  }
+  return true;
+}
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
@@ -205,10 +219,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
-  const retained = resumeCache?.snapshot;
+  const candidate = resumeCache?.snapshot;
+  const retained =
+    candidate &&
+    Option.isSome(candidate.state.data) &&
+    hasMissingPendingQuestionCard(candidate.state.data.value)
+      ? undefined
+      : candidate;
   const owner = {};
   if (resumeCache) resumeCache.owner = owner;
-  const cached =
+  const loaded =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
           Effect.catch((error) =>
@@ -223,6 +243,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ),
         )
       : Option.none<OrchestrationV2ThreadDetailSnapshot>();
+  // Old bounded caches can omit a pending question's card; replay alone cannot restore it.
+  const cached = Option.filter(
+    loaded,
+    (snapshot) => !hasMissingPendingQuestionCard(snapshot.projection),
+  );
   const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
