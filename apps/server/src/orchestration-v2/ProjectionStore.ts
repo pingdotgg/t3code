@@ -23,6 +23,7 @@ import type {
   OrchestrationV2CheckpointScope,
   OrchestrationV2ExecutionNode,
   OrchestrationV2PlanArtifact,
+  OrchestrationV2ThreadArtifact,
   OrchestrationV2PendingRuntimeRequestSummary,
   PlanId,
   OrchestrationV2ConversationMessage,
@@ -57,6 +58,7 @@ import {
   OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessageJsonSchema,
   OrchestrationV2ExecutionNodeJson as OrchestrationV2ExecutionNodeJsonSchema,
   OrchestrationV2PlanArtifact as OrchestrationV2PlanArtifactSchema,
+  OrchestrationV2ThreadArtifactJson as OrchestrationV2ThreadArtifactJsonSchema,
   OrchestrationV2ProviderSessionJson as OrchestrationV2ProviderSessionJsonSchema,
   OrchestrationV2ProviderThreadJson as OrchestrationV2ProviderThreadJsonSchema,
   OrchestrationV2ProviderTurnJson as OrchestrationV2ProviderTurnJsonSchema,
@@ -1124,6 +1126,9 @@ const encodeMessagePayload = Schema.encodeEffect(
 const encodePlanPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2PlanArtifactSchema),
 );
+const encodeArtifactPayload = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2ThreadArtifactJsonSchema),
+);
 const encodeTurnItemPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
@@ -1205,6 +1210,9 @@ const decodeMessagePayload = Schema.decodeUnknownEffect(
 );
 const decodePlanJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2PlanArtifactSchema),
+);
+const decodeArtifactPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ThreadArtifactJsonSchema),
 );
 const decodeTurnItemPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
@@ -2602,6 +2610,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               break;
             }
+            case "artifact.updated": {
+              const payloadJson = yield* encodeArtifactPayload(event.payload);
+              yield* sql`
+              INSERT INTO orchestration_v2_projection_artifacts (
+                artifact_id,
+                thread_id,
+                run_id,
+                message_id,
+                kind,
+                created_at,
+                updated_at,
+                payload_json
+              )
+              VALUES (
+                ${event.payload.id},
+                ${event.payload.threadId},
+                ${event.payload.runId},
+                ${event.payload.messageId},
+                ${event.payload.kind},
+                ${yield* encodePayloadTimestamp(event.payload.createdAt)},
+                ${yield* encodePayloadTimestamp(event.payload.updatedAt)},
+                ${payloadJson}
+              )
+              ON CONFLICT(artifact_id)
+              DO UPDATE SET
+                thread_id = excluded.thread_id,
+                run_id = excluded.run_id,
+                message_id = excluded.message_id,
+                kind = excluded.kind,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                payload_json = excluded.payload_json
+            `;
+              break;
+            }
             case "turn-item.updated": {
               const payloadJson = yield* encodeTurnItemPayload(event.payload);
               const updatedAt = yield* encodePayloadTimestamp(event.payload.updatedAt);
@@ -3316,6 +3359,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           runtimeRequestRows,
           messageRows,
           planRows,
+          artifactRows,
           checkpointScopeRows,
           checkpointRows,
           contextHandoffRows,
@@ -3611,6 +3655,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   THEN ${latestTodoList?.last_plan_id ?? null} ELSE plan_id END ASC,
                   plan_id = ${latestTodoList?.plan_id ?? null} ASC
               `,
+          fields !== undefined && !fields.includes("artifacts")
+            ? Effect.succeed([])
+            : sql<PayloadRow>`
+              SELECT payload_json FROM orchestration_v2_projection_artifacts
+              WHERE thread_id = ${threadId}
+              ORDER BY created_at ASC, artifact_id ASC
+            `,
           fields !== undefined && !fields.includes("checkpointScopes")
             ? Effect.succeed([])
             : window === undefined
@@ -3712,6 +3763,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeRuntimeRequestPayload, threadId)(runtimeRequestRows),
           decodeRows(decodeMessagePayload, threadId)(messageRows),
           decodeRows(decodePlanJson, threadId)(planRows),
+          decodeRows(decodeArtifactPayload, threadId)(artifactRows),
           decodeRows(decodeCheckpointScopePayload, threadId)(checkpointScopeRows),
           decodeRows(decodeCheckpointPayload, threadId)(checkpointRows),
           decodeRows(decodeContextHandoffPayload, threadId)(contextHandoffRows),
@@ -3749,6 +3801,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           runtimeRequests,
           messages: orderedMessages,
           plans,
+          artifacts,
           turnItems,
           checkpointScopes,
           checkpoints,
