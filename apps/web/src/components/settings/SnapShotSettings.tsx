@@ -1,6 +1,7 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   isModifierPairShortcut,
+  managedCapabilityDenial,
   type ClientSettingsPatch,
   type DesktopSnapShotShortcutAvailability,
   type DesktopSnapShotSetupAction,
@@ -27,6 +28,7 @@ import {
   type SnapShotSetupError,
 } from "../../state/desktopSnapShot";
 import { toastManager } from "../ui/toast";
+import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import {
@@ -88,6 +90,8 @@ export function SnapShotSettings() {
     snapShotShortcut: current.snapShotShortcut,
     snapShotSound: current.snapShotSound,
   }));
+  const policyDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "snapShot");
+  const enabled = settings.snapShotEnabled && policyDenial === undefined;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const bridge = getDesktopSnapShotBridge();
   const registry = useContext(RegistryContext);
@@ -357,17 +361,18 @@ export function SnapShotSettings() {
             description={snapShotDescription(state)}
             status={
               bridge
-                ? setupBusy && !wizard
-                  ? "Updating capture settings…"
-                  : refreshError
-                    ? `${refreshError.title}. ${refreshError.message}`
-                    : snapShotStatus(state, settings.snapShotEnabled)
+                ? policyDenial !== undefined
+                  ? policyDenial
+                  : setupBusy && !wizard
+                    ? "Updating capture settings…"
+                    : refreshError
+                      ? `${refreshError.title}. ${refreshError.message}`
+                      : snapShotStatus(state, enabled)
                 : undefined
             }
             control={
               <>
-                {settings.snapShotEnabled &&
-                !snapShotSetupComplete(state, settings.snapShotIncludeAccessibility) ? (
+                {enabled && !snapShotSetupComplete(state, settings.snapShotIncludeAccessibility) ? (
                   <Button
                     size="xs"
                     variant="outline"
@@ -378,8 +383,8 @@ export function SnapShotSettings() {
                   </Button>
                 ) : null}
                 <Switch
-                  checked={settings.snapShotEnabled || Boolean(wizard)}
-                  disabled={!captureAvailable || setupBusy}
+                  checked={enabled || Boolean(wizard)}
+                  disabled={!captureAvailable || setupBusy || policyDenial !== undefined}
                   aria-label="Enable snapshots"
                   onCheckedChange={(checked) => {
                     if (!checked) void save({ snapShotEnabled: false });
@@ -390,7 +395,7 @@ export function SnapShotSettings() {
               </>
             }
           />
-          {settings.snapShotEnabled && captureAvailable ? (
+          {enabled && captureAvailable ? (
             <>
               <SettingsRow
                 {...searchableSetting("snap-shot-accessibility")}

@@ -39,6 +39,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Electron from "electron";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { startGlobalShiftShortcutProcess } from "./GlobalShiftShortcutProcess.ts";
@@ -764,6 +765,10 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
+  const snapShotAllowed = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+    Effect.map((found) => found?.document.limits?.snapShot !== false),
+    Effect.orElseSucceed(() => false),
+  );
   const settingsRef = yield* Ref.make(DEFAULT_CLIENT_SETTINGS);
   const stateRef = yield* Ref.make<DesktopSnapShotState>({
     mode: captureMode(environment.platform),
@@ -1129,10 +1134,12 @@ export const make = Effect.gen(function* () {
   });
 
   const applySettings = Effect.fn("desktop.snapShot.applySettings")(function* (
-    settings: ClientSettings,
+    saved: ClientSettings,
     requestedPermissionMessage: string | null,
     forceShortcut = false,
   ) {
+    // The saved choice stays for when the policy allows it.
+    const settings = snapShotAllowed ? saved : { ...saved, snapShotEnabled: false };
     const previousSettings = yield* Ref.get(settingsRef);
     yield* Ref.set(settingsRef, settings);
 

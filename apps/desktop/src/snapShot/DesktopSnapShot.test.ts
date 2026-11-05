@@ -5,6 +5,7 @@ import {
   DesktopPendingSnapShot,
   type ClientSettings,
   type DesktopSnapShotEvent,
+  type ManagedPolicyDocument,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -423,6 +424,7 @@ vi.mock("electron", () => {
 });
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "./DesktopSnapShot.ts";
@@ -485,10 +487,12 @@ const layerTest = (
     Option.Option<ClientSettings>,
     DesktopClientSettings.DesktopClientSettingsReadError
   > = Effect.succeed(initialSettings),
+  policy?: ManagedPolicyDocument,
 ) =>
   MacPermissions.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
+        DesktopManagedPolicy.layerTest(policy),
         Layer.succeed(
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
@@ -976,6 +980,27 @@ it.effect.each(["succeeds", "fails"] as const)(
       }).pipe(Effect.ensuring(Effect.sync(fixture.releaseAll))),
     ).pipe(Effect.provide(fixture.layer), Effect.ensuring(Effect.sync(fixture.reset)));
   },
+);
+
+it.effect("a policy without SnapShots keeps capture off whatever the user saved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      registerShortcutMock.mockClear();
+      yield* service.configure(enabledSettings());
+      const refused = yield* service.capture.pipe(Effect.flip);
+      assert.equal(refused.operation, "disabled");
+      assert.equal(registerShortcutMock.mock.calls.length, 0);
+    }),
+  ).pipe(
+    Effect.provide(
+      layerTest("darwin", {}, Option.none(), undefined, {
+        schemaVersion: 1,
+        organization: "Example Corp",
+        limits: { snapShot: false },
+      }),
+    ),
+  ),
 );
 
 it.effect("matches Windows accessibility windows on a scaled display", () => {
