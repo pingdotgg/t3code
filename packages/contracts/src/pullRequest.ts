@@ -475,6 +475,8 @@ export const PullRequestSummary = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
+  /** Set when the summary is a listed row whose `updatedAt` was not read yet. */
+  updatedAtState: Schema.optional(PullRequestUpdatedAtState),
   observedAt: Schema.optional(Schema.Finite),
   author: Schema.optional(Schema.NullOr(PullRequestActor)),
   additions: Schema.optional(NonNegativeInt),

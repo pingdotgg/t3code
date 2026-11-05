@@ -18,9 +18,11 @@ import {
   nextPullRequestListInput,
   patchPullRequestListEntry,
   pullRequestListHead,
+  pullRequestListRevalidations,
   shownPullRequestListPages,
   pullRequestStatKey as statKey,
   scopedPullRequestListKey,
+  withRevalidatedPullRequestListPage,
   withShownPullRequestStats,
   type EnvironmentPullRequestListEntry,
   type PullRequestListPages,
@@ -129,6 +131,34 @@ async function refreshHeads(
   return requestErrors(responses);
 }
 
+/** Errors are left to the next refresh: nothing waits on these reads. */
+async function revalidatePages(
+  registry: AtomRegistry.AtomRegistry,
+  targets: readonly ListTarget[],
+  signal: AbortSignal,
+) {
+  const read: Read = (atom) => registry.get(atom);
+  await Promise.allSettled(
+    targets.flatMap((target) => {
+      const pages = currentPages(read, target);
+      return (pages ? pullRequestListRevalidations(pages) : []).map(async (input) => {
+        const response = await executeAtomQuery(
+          registry,
+          composerPullRequests.list({ ...target, input }),
+          { signal, refresh: true, reportFailure: false },
+        );
+        if (signal.aborted || response._tag === "Failure") return;
+        const current = currentPages(read, target);
+        if (current)
+          registry.set(
+            pullRequestListPagesFamily(pullRequestListPagesKey(target)),
+            withRevalidatedPullRequestListPage(current, input, response.value),
+          );
+      });
+    }),
+  );
+}
+
 // One load of each kind per list scope. The atoms are not kept alive, so leaving a scope (a
 // filter change, unmount) interrupts its load and aborts the requests.
 const pageLoadFamily = Atom.family((scopeKey: string) => {
@@ -143,6 +173,27 @@ const refreshLoadFamily = Atom.family((scopeKey: string) => {
     Effect.promise((signal) => refreshHeads(get.registry, targets, signal)),
   );
 });
+
+const revalidateLoadFamily = Atom.family((scopeKey: string) => {
+  const targets: readonly ListTarget[] = JSON.parse(scopeKey);
+  return Atom.fn((_: void, get) =>
+    Effect.promise((signal) => revalidatePages(get.registry, targets, signal)),
+  );
+});
+
+// Changes when any of the scope's environments announces a refresh.
+const refreshEpochsFamily = Atom.family((scopeKey: string) =>
+  Atom.make((get) =>
+    (JSON.parse(scopeKey) as readonly ListTarget[])
+      .map(({ environmentId }) =>
+        AsyncResult.getOrElse(
+          get(composerPullRequests.refreshes({ environmentId, input: {} })),
+          () => null,
+        ),
+      )
+      .join(),
+  ),
+);
 
 // Changes when any of the scope's environments brings up a new session.
 const sessionsFamily = Atom.family((scopeKey: string) =>
@@ -178,6 +229,12 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     else if (settledError(pageResult) !== null && !refreshResult.waiting)
       registry.set(pageAtom, true);
   });
+
+  // A refresh re-reads only each list's head; the pages loaded past it follow here.
+  const revalidateAtom = revalidateLoadFamily(scopeKey);
+  useAtomMount(revalidateAtom);
+  useAtomMount(refreshEpochsFamily(scopeKey));
+  useAtomSubscribe(refreshEpochsFamily(scopeKey), () => registry.set(revalidateAtom, undefined));
 
   // Read from the registry, not the render: a second onEndReached before React re-renders must
   // see the load the first one started.

@@ -212,8 +212,7 @@ export function PullRequestDetailGhost({
                 )
               }
               updated={
-                // A listed row's date can still be unread; a summary's never is.
-                seed && (summary || entry?.updatedAtState === undefined) ? (
+                seed && (summary ?? entry)?.updatedAtState === undefined ? (
                   <span>
                     updated <RelativeTime timestamp={seed.updatedAt} />
                   </span>

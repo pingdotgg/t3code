@@ -143,13 +143,23 @@ export const make = Effect.gen(function* () {
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
   // Someone is looking at this pull request, so its read skips the queue listed rows wait in.
-  const dated = (cwd: string, maxAge: Duration.Duration) => (pullRequest: AzureDevOpsPullRequest) =>
-    cli.activityAt({ cwd, pullRequest, maxAge, immediate: true }).pipe(
-      Effect.map((updatedAt) => ({
-        ...pullRequest,
-        updatedAt: updatedAt ?? pullRequest.updatedAt,
-      })),
-    );
+  const dated =
+    (input: { readonly cwd: string; readonly repository: string }, maxAge: Duration.Duration) =>
+    (pullRequest: AzureDevOpsPullRequest) =>
+      cli
+        .activityAt({
+          cwd: input.cwd,
+          repository: input.repository,
+          pullRequest,
+          maxAge,
+          immediate: true,
+        })
+        .pipe(
+          Effect.map((updatedAt) => ({
+            ...pullRequest,
+            updatedAt: updatedAt ?? pullRequest.updatedAt,
+          })),
+        );
 
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
@@ -281,6 +291,7 @@ export const make = Effect.gen(function* () {
               cli
                 .listedActivity({
                   cwd: input.cwd,
+                  repository: input.repository,
                   pullRequest,
                   maxAge: AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE,
                 })
@@ -338,7 +349,7 @@ export const make = Effect.gen(function* () {
     getChangeRequestSummary: (input) =>
       cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),
-        Effect.flatMap(dated(input.cwd, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)),
+        Effect.flatMap(dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)),
         Effect.map((pullRequest): ProviderChangeRequestSummary => ({
           number: pullRequest.number,
           title: pullRequest.title,
@@ -376,13 +387,10 @@ export const make = Effect.gen(function* () {
           return { iterations, changedFiles };
         });
         const [{ iterations, changedFiles }] = yield* Effect.all(
-          [pushes, dated(input.cwd, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read)],
+          [pushes, dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read)],
           { concurrency: "unbounded" },
         );
-        const pullRequest = yield* dated(
-          input.cwd,
-          AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
-        )(read);
+        const pullRequest = yield* dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read);
         // The trial merge's lastMergeSourceCommit can lag behind a new source push.
         const headSha = iterations.at(-1)?.headCommit;
         const detail: ProviderChangeRequestDetail = {
@@ -435,6 +443,8 @@ export const make = Effect.gen(function* () {
       ),
 
     getViewerPermissions: () => Effect.succeed(AZURE_DEVOPS_VIEWER_PERMISSIONS),
+
+    forgetChangeRequestReads: (scope) => cli.forgetActivity(scope),
 
     // `input.commit` is deliberately dropped: Azure states no commit list on a pull request, so
     // the Code tab has nothing to scope itself to and always asks for the whole change.

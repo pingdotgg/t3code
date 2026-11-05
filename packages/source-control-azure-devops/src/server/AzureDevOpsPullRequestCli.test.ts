@@ -265,6 +265,38 @@ it.effect(
       expect(threadReads()).toBe(7);
       expect(yield* datedAt("after push")).toBe("2026-07-10T11:20:00.000Z");
       expect(threadReads()).toBe(7);
+
+      // A refresh reaches a new comment at once, but only on the pull requests it names.
+      threads = json({
+        value: [refUpdate("2026-07-10T11:20:00Z"), comment("2026-07-10T11:30:00Z")],
+      });
+      yield* provider.forgetChangeRequestReads!({ repository: "acme/other" });
+      yield* provider.forgetChangeRequestReads!({ repository: "platform/web", number: 43 });
+      expect(yield* datedAt("after push")).toBe("2026-07-10T11:20:00.000Z");
+      expect(threadReads()).toBe(7);
+      yield* provider.forgetChangeRequestReads!({ repository: "Platform/Web", number: 42 });
+      expect(yield* datedAt("after push")).toBe("2026-07-10T11:30:00.000Z");
+      expect(threadReads()).toBe(8);
+
+      // A read already out when a refresh comes cannot answer for it.
+      yield* provider.forgetChangeRequestReads!({ repository: "platform/web" });
+      threadsAsked = yield* Deferred.make<void>();
+      threadsAnswer = yield* Deferred.make<void>();
+      const beforeRefresh = yield* Effect.forkChild(datedAt("after push"));
+      yield* Deferred.await(threadsAsked);
+      threads = json({
+        value: [refUpdate("2026-07-10T11:20:00Z"), comment("2026-07-10T11:40:00Z")],
+      });
+      yield* provider.forgetChangeRequestReads!();
+      const afterRefresh = yield* Effect.forkChild(datedAt("after push"), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(threadsAnswer, undefined);
+      yield* Fiber.join(beforeRefresh);
+      expect(yield* Fiber.join(afterRefresh)).toBe("2026-07-10T11:40:00.000Z");
+      expect(threadReads()).toBe(10);
+      expect(yield* datedAt("after push")).toBe("2026-07-10T11:40:00.000Z");
+      expect(threadReads()).toBe(10);
     }).pipe(Effect.provide(driverServices)),
 );
 
@@ -437,11 +469,59 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(threadReads).toHaveLength(6);
 
       // Old dates are shown while they are read again, which needs no refresh when none moved.
+      yield* provider.forgetChangeRequestReads!();
+      const forgotten = yield* list;
+      expect(rows(forgotten)).toEqual(rows(dated));
+      expect(yield* forgotten.settleUpdatedAt!).toBe(false);
+      expect(threadReads).toHaveLength(12);
       yield* TestClock.adjust("301 seconds");
       const stale = yield* list;
       expect(rows(stale)).toEqual(rows(dated));
       expect(yield* stale.settleUpdatedAt!).toBe(false);
-      expect(threadReads).toHaveLength(12);
+      expect(threadReads).toHaveLength(18);
+    }),
+  );
+
+  it.effect("keeps the dates of a list larger than its cache, so it settles once", () =>
+    Effect.gen(function* () {
+      const count = AzureDevOpsPullRequestCli.ACTIVITY_CACHE_CAPACITY + 1;
+      let threadReads = 0;
+      mockedExecute.mockImplementation(({ args }) => {
+        if (!args.includes("pullRequestThreads")) {
+          return Effect.succeed(output(pullRequests(count, 1)));
+        }
+        threadReads += 1;
+        return Effect.succeed(
+          output(
+            json({
+              value: [{ id: 1, publishedDate: "2026-07-20T00:00:00Z", comments: [{ id: 1 }] }],
+            }),
+          ),
+        );
+      });
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      const list = provider.listChangeRequests({
+        cwd: "/crowded",
+        repository: "platform/web",
+        host: "dev.azure.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal@acme.dev",
+        limit: count,
+      });
+
+      const cold = yield* list;
+      expect(cold.items.filter((row) => row.updatedAtState === "pending")).toHaveLength(count);
+      expect(yield* cold.settleUpdatedAt!).toBe(true);
+      expect(threadReads).toBe(count);
+
+      const settled = yield* list;
+      expect(settled.settleUpdatedAt).toBeUndefined();
+      expect(settled.items.filter((row) => row.updatedAtState !== undefined)).toEqual([]);
+      expect(new Set(settled.items.map((row) => row.updatedAt))).toEqual(
+        new Set(["2026-07-20T00:00:00.000Z"]),
+      );
+      expect(threadReads).toBe(count);
     }),
   );
 

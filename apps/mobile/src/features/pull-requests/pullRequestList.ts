@@ -253,6 +253,8 @@ export interface PullRequestListPages {
   readonly truncated: boolean;
   readonly limit: number;
   readonly continued: boolean;
+  /** The reads that loaded the rows past the head, which no refresh re-reads on its own. */
+  readonly continuations: readonly PullRequestListInput[];
 }
 
 export function pullRequestListHead(
@@ -269,6 +271,7 @@ export function pullRequestListHead(
         truncated: head.truncated,
         limit: PR_LIST_PAGE_SIZE,
         continued: false,
+        continuations: [],
       };
 }
 
@@ -338,7 +341,29 @@ export function appendPullRequestListPage(
     truncated: page.truncated,
     limit: input.limit ?? PR_LIST_PAGE_SIZE,
     continued: true,
+    continuations: [...previous.continuations, input],
   };
+}
+
+/** The continuations to read again: a row they loaded can still be waiting for its date. */
+export function pullRequestListRevalidations(
+  pages: PullRequestListPages,
+): readonly PullRequestListInput[] {
+  return pages.entries.some((entry) => entry.updatedAtState !== undefined)
+    ? pages.continuations
+    : [];
+}
+
+/** Takes a continuation's newer rows, keeping the cursors and breadth already loaded. */
+export function withRevalidatedPullRequestListPage(
+  pages: PullRequestListPages,
+  input: PullRequestListInput,
+  page: PullRequestListResult,
+): PullRequestListPages {
+  // A refresh since the read went out dropped the pages it loaded.
+  const key = JSON.stringify(input);
+  if (!pages.continuations.some((loaded) => JSON.stringify(loaded) === key)) return pages;
+  return { ...pages, entries: mergePullRequestListEntries(pages.entries, page.entries) };
 }
 
 /**

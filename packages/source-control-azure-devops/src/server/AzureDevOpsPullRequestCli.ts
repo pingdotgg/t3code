@@ -131,7 +131,8 @@ const MAX_CHANGE_ENTRIES = 10_000;
 export const ACTIVITY_MAX_AGE = Duration.minutes(1);
 /** Listed rows tolerate older comment times; a push, vote or state change still rereads. */
 export const LISTED_ACTIVITY_MAX_AGE = Duration.minutes(5);
-const ACTIVITY_CACHE_CAPACITY = 1024;
+/** Records still fresh for some reader are kept past this; see `trimActivity`. */
+export const ACTIVITY_CACHE_CAPACITY = 1024;
 /** Each read is a Python startup; every reader shares this budget. */
 const ACTIVITY_READ_CONCURRENCY = 4;
 
@@ -149,9 +150,14 @@ interface ActivityRead {
   revision: string | null;
   /** False while a background read waits for its turn. */
   started: boolean;
+  /** The record's generation when the read started. */
+  generation: number;
 }
 
 interface ActivityRecord {
+  readonly number: number;
+  /** The repository its readers name it by, lowercased; null until one does. */
+  repository: string | null;
   at: string | null;
   readAt: number | null;
   /** The revision the last finished read dated. */
@@ -159,6 +165,9 @@ interface ActivityRecord {
   /** Whether the last finished read failed. */
   failed: boolean;
   reading: ActivityRead | null;
+  /** Moved by each forget; only a read started since then is fresh. */
+  generation: number;
+  readGeneration: number;
 }
 
 export interface AzureDevOpsListedActivity {
@@ -226,6 +235,8 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly maxAge: Duration.Duration;
       /** Skip the queue background reads share, for a pull request someone has open. */
       readonly immediate?: boolean;
+      /** The name `forgetActivity` scopes this pull request by. */
+      readonly repository?: string;
     }) => Effect.Effect<string | null>;
 
     /** What `activityAt` would answer without waiting: a due read is handed back to run later. */
@@ -233,7 +244,17 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly pullRequest: AzureDevOpsActivitySubject;
       readonly maxAge: Duration.Duration;
+      readonly repository?: string;
     }) => Effect.Effect<AzureDevOpsListedActivity>;
+
+    /**
+     * Makes every matching date due for a read, as if it had aged out; a read already out when
+     * this runs counts as none. A pull request no reader has named by repository matches any.
+     */
+    readonly forgetActivity: (scope?: {
+      readonly repository: string;
+      readonly number?: number;
+    }) => Effect.Effect<void>;
 
     readonly listIterations: (input: {
       readonly cwd: string;
@@ -427,38 +448,74 @@ export const make = Effect.gen(function* () {
   const activityReads = yield* Semaphore.make(ACTIVITY_READ_CONCURRENCY);
   const activity = new Map<string, ActivityRecord>();
 
-  const activityKey = (input: {
+  type ActivitySubject = {
     readonly cwd: string;
     readonly location: AzureDevOpsRepositoryLocation;
     readonly number: number;
-  }) =>
+  };
+
+  const activityKey = (input: ActivitySubject) =>
     JSON.stringify([input.cwd, input.location.project, input.location.repository, input.number]);
 
-  const activityRecord = (key: string): ActivityRecord => {
-    const held = activity.get(key);
-    if (held !== undefined) {
+  const activityRecord = (input: ActivitySubject, repository?: string): ActivityRecord => {
+    const key = activityKey(input);
+    let record = activity.get(key);
+    if (record === undefined) {
+      record = {
+        number: input.number,
+        repository: null,
+        at: null,
+        readAt: null,
+        revision: null,
+        failed: false,
+        reading: null,
+        generation: 0,
+        readGeneration: 0,
+      };
+    } else {
       activity.delete(key);
-      activity.set(key, held);
-      return held;
     }
-    if (activity.size >= ACTIVITY_CACHE_CAPACITY) {
-      const oldest = activity.keys().next().value;
-      if (oldest !== undefined) activity.delete(oldest);
-    }
-    const record: ActivityRecord = {
-      at: null,
-      readAt: null,
-      revision: null,
-      failed: false,
-      reading: null,
-    };
     activity.set(key, record);
+    if (repository !== undefined) record.repository = repository.toLowerCase();
     return record;
   };
 
-  const remember = (key: string, at: string | null) =>
+  const isFreshAt = (
+    record: ActivityRecord,
+    revision: string,
+    maxAge: Duration.Duration,
+    now: number,
+  ) =>
+    record.reading === null &&
+    record.readAt !== null &&
+    record.revision === revision &&
+    record.readGeneration === record.generation &&
+    now - record.readAt < Duration.toMillis(maxAge);
+
+  /**
+   * Least recently used first, but never a record being read or one some reader would still take
+   * as fresh: a list larger than the capacity would otherwise evict its own dates and read them
+   * all again. What stays past the capacity is bounded by the reads of the last few minutes.
+   */
+  const trimActivity = (now: number) => {
+    for (let visits = activity.size; activity.size > ACTIVITY_CACHE_CAPACITY && visits > 0;) {
+      visits -= 1;
+      const oldest = activity.entries().next().value;
+      if (oldest === undefined) return;
+      const [key, record] = oldest;
+      activity.delete(key);
+      const kept =
+        record.reading !== null ||
+        (record.readAt !== null &&
+          record.readGeneration === record.generation &&
+          now - record.readAt < Duration.toMillis(LISTED_ACTIVITY_MAX_AGE));
+      if (kept) activity.set(key, record);
+    }
+  };
+
+  const remember = (input: ActivitySubject, at: string | null) =>
     Effect.sync(() => {
-      const record = activityRecord(key);
+      const record = activityRecord(input);
       record.at = latestAzureDevOpsTime([record.at, at]);
     });
 
@@ -480,6 +537,7 @@ export const make = Effect.gen(function* () {
     restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
   ) {
     let startedAt: number | null = null;
+    read.generation = record.generation;
     return yield* restore(
       Effect.gen(function* () {
         startedAt = yield* Clock.currentTimeMillis;
@@ -491,7 +549,7 @@ export const make = Effect.gen(function* () {
           maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
           decode: decodeThreadsJson,
         });
-        yield* remember(activityKey(input), threads.activityAt);
+        record.at = latestAzureDevOpsTime([record.at, threads.activityAt]);
         return threads;
       }),
     ).pipe(
@@ -501,6 +559,7 @@ export const make = Effect.gen(function* () {
           // A read nobody saw finish must not count as one; a failed read still does.
           if (Exit.hasInterrupts(exit)) return;
           record.readAt = startedAt;
+          record.readGeneration = read.generation;
           record.failed = Exit.isFailure(exit);
           if (read.revision !== null) record.revision = read.revision;
         }).pipe(Effect.andThen(Deferred.done(read.done, exit))),
@@ -524,7 +583,7 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<AzureDevOpsThreads, AzureDevOpsPullRequestCliError> {
     return Effect.uninterruptibleMask((restore) =>
       Effect.suspend(() => {
-        const record = activityRecord(activityKey(input));
+        const record = activityRecord(input);
         const now = revision === null || !queued;
         const again = () => readThreads(input, revision, queued);
         // The reader that started it was interrupted; this one still wants the answer.
@@ -532,16 +591,25 @@ export const make = Effect.gen(function* () {
           Deferred.await(read.done).pipe(Effect.catchCauseIf(Cause.hasInterruptsOnly, again));
         const current = record.reading;
         if (current !== null) {
+          // A read already out may predate this revision or a forget; one still waiting will not.
+          const outdated =
+            current.started &&
+            (current.generation !== record.generation ||
+              (revision !== null && current.revision !== revision));
+          if (outdated)
+            return restore(Deferred.await(current.done).pipe(Effect.exit, Effect.andThen(again)));
           if (revision !== null && current.revision !== revision) {
-            // A read already out may predate this revision; one still waiting will not.
-            if (current.started)
-              return restore(Deferred.await(current.done).pipe(Effect.exit, Effect.andThen(again)));
             current.revision = revision;
           }
           if (now && claim(current)) return runRead(input, record, current, restore);
           return restore(join(current));
         }
-        const read: ActivityRead = { done: Deferred.makeUnsafe(), revision, started: false };
+        const read: ActivityRead = {
+          done: Deferred.makeUnsafe(),
+          revision,
+          started: false,
+          generation: record.generation,
+        };
         record.reading = read;
         if (now) {
           read.started = true;
@@ -572,31 +640,28 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const isFresh = (key: string, revision: string, maxAge: Duration.Duration) =>
+  const isFresh = (
+    subject: ActivitySubject,
+    revision: string,
+    maxAge: Duration.Duration,
+    repository?: string,
+  ) =>
     Clock.currentTimeMillis.pipe(
       Effect.map((now) => {
-        const record = activityRecord(key);
-        return (
-          record.reading === null &&
-          record.readAt !== null &&
-          record.revision === revision &&
-          now - record.readAt < Duration.toMillis(maxAge)
-        );
+        trimActivity(now);
+        return isFreshAt(activityRecord(subject, repository), revision, maxAge, now);
       }),
     );
 
   /** Reads an open pull request's threads unless a fresh enough read already dated `revision`. */
   const dateActivity = (
-    subject: {
-      readonly cwd: string;
-      readonly location: AzureDevOpsRepositoryLocation;
-      readonly number: number;
-    },
+    subject: ActivitySubject,
     revision: string,
     maxAge: Duration.Duration,
     queued: boolean,
+    repository?: string,
   ) =>
-    isFresh(activityKey(subject), revision, maxAge).pipe(
+    isFresh(subject, revision, maxAge, repository).pipe(
       Effect.flatMap((fresh) =>
         fresh ? Effect.void : Effect.ignore(readThreads(subject, revision, queued)),
       ),
@@ -805,7 +870,13 @@ export const make = Effect.gen(function* () {
       const subject = { cwd: input.cwd, location, number: pullRequest.number };
       // Closed and merged rows are not read for activity; their closing time stands.
       if (pullRequest.state === "open") {
-        yield* dateActivity(subject, pullRequest.revision, input.maxAge, input.immediate !== true);
+        yield* dateActivity(
+          subject,
+          pullRequest.revision,
+          input.maxAge,
+          input.immediate !== true,
+          input.repository,
+        );
       }
       return latestAzureDevOpsTime([pullRequest.updatedAt, activity.get(activityKey(subject))?.at]);
     }),
@@ -814,9 +885,8 @@ export const make = Effect.gen(function* () {
       const { location, ...pullRequest } = input.pullRequest;
       if (location === null || pullRequest.state !== "open") return { at: pullRequest.updatedAt };
       const subject = { cwd: input.cwd, location, number: pullRequest.number };
-      const key = activityKey(subject);
       const known = () => {
-        const record = activityRecord(key);
+        const record = activityRecord(subject);
         return {
           at: latestAzureDevOpsTime([pullRequest.updatedAt, record.at]),
           state:
@@ -829,16 +899,39 @@ export const make = Effect.gen(function* () {
       };
       const shown = known();
       const answer = { at: shown.at, ...(shown.state === undefined ? {} : { state: shown.state }) };
-      if (yield* isFresh(key, pullRequest.revision, input.maxAge)) return answer;
+      if (yield* isFresh(subject, pullRequest.revision, input.maxAge, input.repository)) {
+        return answer;
+      }
       return {
         ...answer,
-        settle: dateActivity(subject, pullRequest.revision, input.maxAge, true).pipe(
+        settle: dateActivity(
+          subject,
+          pullRequest.revision,
+          input.maxAge,
+          true,
+          input.repository,
+        ).pipe(
           Effect.map(() => {
             const settled = known();
             return settled.at !== shown.at || settled.state !== shown.state;
           }),
         ),
       };
+    }),
+
+    forgetActivity: Effect.fn("AzureDevOpsPullRequestCli.forgetActivity")(function (scope) {
+      return Effect.sync(() => {
+        const repository = scope?.repository.toLowerCase();
+        for (const record of activity.values()) {
+          if (
+            scope === undefined ||
+            ((record.repository === null || record.repository === repository) &&
+              (scope.number === undefined || record.number === scope.number))
+          ) {
+            record.generation += 1;
+          }
+        }
+      });
     }),
 
     listIterations: Effect.fn("AzureDevOpsPullRequestCli.listIterations")(function (input) {
@@ -850,7 +943,7 @@ export const make = Effect.gen(function* () {
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeIterationsJson,
       }).pipe(
-        Effect.tap((pushes) => remember(activityKey(input), pushes.activityAt)),
+        Effect.tap((pushes) => remember(input, pushes.activityAt)),
         Effect.map((pushes) => pushes.iterations),
       );
     }),
