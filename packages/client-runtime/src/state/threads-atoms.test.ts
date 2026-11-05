@@ -973,11 +973,18 @@ describe("left threads", () => {
   it.effect("releases a left thread only after its final save finished", () =>
     Effect.gen(function* () {
       const released: ThreadId[] = [];
+      const releases = yield* Queue.unbounded<void>();
       const saving = yield* Deferred.make<void>();
       const gate = yield* Deferred.make<void>();
       const h = yield* makeHarness({
         projectionFor: projectionFor(),
-        leftThreads: budget(released, 0),
+        leftThreads: {
+          maxBytes: 0,
+          onRelease: (thread) => {
+            released.push(thread.threadId);
+            Queue.offerUnsafe(releases, undefined);
+          },
+        },
         beforeSave: (threadId) =>
           threadId === LEFT[0]
             ? Deferred.succeed(saving, undefined).pipe(Effect.andThen(Deferred.await(gate)))
@@ -992,7 +999,9 @@ describe("left threads", () => {
       // left-0 is still saving, so it is not in the budget yet.
       expect(released).toEqual([LEFT[1]]);
       yield* Deferred.succeed(gate, undefined);
-      yield* Effect.yieldNow.pipe(Effect.repeat({ until: () => released.length === 2 }));
+      // left-1's release is already queued; the finished save causes the next one.
+      yield* Queue.take(releases);
+      yield* Queue.take(releases);
       expect(released).toEqual([LEFT[1], LEFT[2]]);
       yield* visit(h, LEFT[3]!);
       expect(released).toEqual([LEFT[1], LEFT[2], LEFT[0]]);
