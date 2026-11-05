@@ -2,10 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
-  EnvironmentId,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   type EnvironmentCloudLinkStateResult,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
@@ -24,11 +24,11 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { CloudEnvironmentLinkError } from "./linkEnvironment";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
-  linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
-  unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
-  updatePrimaryEnvironmentPreferences as updatePrimaryEnvironmentPreferencesAtom,
+  linkEnvironment as linkEnvironmentAtom,
+  unlinkEnvironment as unlinkEnvironmentAtom,
+  updateEnvironmentPreferences as updateEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
-import { readCachedPrimaryCloudLinkState, usePrimaryCloudLinkState } from "./primaryCloudLinkState";
+import { readCachedCloudLinkState, useCloudLinkState } from "./cloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 export interface CloudLinkDesiredState {
@@ -62,26 +62,24 @@ function tunnelLimitFromLinkFailure(cause: unknown): number | null {
     : null;
 }
 
-export function useCloudLinkController() {
+export function useCloudLinkController(environmentId: EnvironmentId | null) {
   const { getToken, isSignedIn } = useAuth();
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
-  const linkPrimaryEnvironment = useAtomCommand(linkPrimaryEnvironmentAtom, {
+  const linkEnvironment = useAtomCommand(linkEnvironmentAtom, {
     reportFailure: false,
   });
-  const unlinkPrimaryEnvironment = useAtomCommand(unlinkPrimaryEnvironmentAtom, {
+  const unlinkEnvironment = useAtomCommand(unlinkEnvironmentAtom, {
     reportFailure: false,
   });
-  const updatePrimaryEnvironmentPreferences = useAtomCommand(
-    updatePrimaryEnvironmentPreferencesAtom,
-    { reportFailure: false },
-  );
-  const primaryCloudLinkState = usePrimaryCloudLinkState();
+  const updateEnvironmentPreferences = useAtomCommand(updateEnvironmentPreferencesAtom, {
+    reportFailure: false,
+  });
+  const cloudLinkState = useCloudLinkState(environmentId);
   const relayEnvironments = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).environments;
-  const primaryEnvironmentId = primaryCloudLinkState.target?.environmentId;
-  const relayProviderKind = primaryEnvironmentId
-    ? relayEnvironments.get(primaryEnvironmentId)?.environment.endpoint.providerKind
+  const relayProviderKind = environmentId
+    ? relayEnvironments.get(environmentId)?.environment.endpoint.providerKind
     : undefined;
   const [operationError, setOperationError] = useState<string | null>(null);
   const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
@@ -106,24 +104,24 @@ export function useCloudLinkController() {
     });
   };
 
-  const linkData = primaryCloudLinkState.data;
+  const linkData = cloudLinkState.data;
   const linkRevoked = linkData?.linkRevoked ?? false;
   const managedTunnelActive = linkData ? isManagedTunnelActive(linkData, relayProviderKind) : false;
   const managedTunnelOutOfSync =
     linkData !== null && !managedTunnelActive && isManagedTunnelActive(linkData, undefined);
-  const publishAgentActivity = primaryCloudLinkState.data?.publishAgentActivity ?? false;
-  const holdWebhooksWhileOffline = primaryCloudLinkState.data?.holdWebhooksWhileOffline ?? false;
-  const linked = !linkRevoked && (primaryCloudLinkState.data?.linked ?? false);
+  const publishAgentActivity = cloudLinkState.data?.publishAgentActivity ?? false;
+  const holdWebhooksWhileOffline = cloudLinkState.data?.holdWebhooksWhileOffline ?? false;
+  const linked = !linkRevoked && (cloudLinkState.data?.linked ?? false);
 
   const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
     setOperationError(null);
     setTunnelLimit(null);
-    const target = primaryCloudLinkState.target;
+    const target = cloudLinkState.target;
     if (!target) {
-      reportUpdateFailure(new Error("Local environment is not ready yet."));
+      reportUpdateFailure(new Error("Choose an environment first."));
       return false;
     }
-    const environmentId = EnvironmentId.make(target.environmentId);
+    const environmentId = target.environmentId;
     const canManageLink = () => {
       if (
         !readEnvironmentScope(environmentId, AuthRelayReadScope) ||
@@ -137,7 +135,7 @@ export function useCloudLinkController() {
       return true;
     };
     const readLinkState = () => {
-      const state = readCachedPrimaryCloudLinkState(target);
+      const state = readCachedCloudLinkState(target);
       if (state === null) {
         reportUpdateFailure(new Error("Wait until the current T3 Connect settings can be read."));
       }
@@ -152,7 +150,7 @@ export function useCloudLinkController() {
     // A failed mutation may have partially applied, so refresh server state on every exit.
     if (!wantsLink) {
       // Unlink needs no relay token; failed token reads must still allow it.
-      const unlinkResult = await unlinkPrimaryEnvironment({
+      const unlinkResult = await unlinkEnvironment({
         target,
         clerkToken: tokenResult._tag === "Success" ? (tokenResult.value ?? null) : null,
       });
@@ -161,7 +159,7 @@ export function useCloudLinkController() {
         if (!isAtomCommandInterrupted(unlinkResult)) {
           reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
         }
-        primaryCloudLinkState.refresh();
+        cloudLinkState.refresh();
         return false;
       }
     } else {
@@ -182,7 +180,7 @@ export function useCloudLinkController() {
         currentLinkState.linkRevoked === true ||
         currentManagedTunnel !== desired.managedTunnel
       ) {
-        const linkResult = await linkPrimaryEnvironment({
+        const linkResult = await linkEnvironment({
           target,
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
@@ -197,15 +195,15 @@ export function useCloudLinkController() {
             if (limit === null) reportUpdateFailure(cause);
             else setTunnelLimit(limit);
           }
-          primaryCloudLinkState.refresh();
+          cloudLinkState.refresh();
           return false;
         }
       }
       if (!canManageLink() || readLinkState() === null) {
-        primaryCloudLinkState.refresh();
+        cloudLinkState.refresh();
         return false;
       }
-      const prefResult = await updatePrimaryEnvironmentPreferences({
+      const prefResult = await updateEnvironmentPreferences({
         target,
         publishAgentActivity: desired.publish,
         ...(desired.holdWebhooksWhileOffline === undefined
@@ -216,12 +214,12 @@ export function useCloudLinkController() {
         if (!isAtomCommandInterrupted(prefResult)) {
           reportUpdateFailure(squashAtomCommandFailure(prefResult));
         }
-        primaryCloudLinkState.refresh();
+        cloudLinkState.refresh();
         return false;
       }
     }
 
-    primaryCloudLinkState.refresh();
+    cloudLinkState.refresh();
     const refreshResult = await refreshRelayEnvironments();
     if (refreshResult._tag === "Failure" && !isAtomCommandInterrupted(refreshResult)) {
       reportUpdateFailure(squashAtomCommandFailure(refreshResult));
@@ -232,7 +230,7 @@ export function useCloudLinkController() {
 
   return {
     isSignedIn,
-    linkState: primaryCloudLinkState,
+    linkState: cloudLinkState,
     linked,
     linkRevoked,
     managedTunnelActive,
