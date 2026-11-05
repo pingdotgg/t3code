@@ -231,6 +231,7 @@ export function startThreadNotifications(
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
     for (const rawThread of threads) {
       if (
+        rawThread.lineage.sideChat !== true &&
         isShownUnderParent(
           { environmentId, threadId: rawThread.id },
           rawThread.lineage,
@@ -252,10 +253,10 @@ export function startThreadNotifications(
       const thread = presentThreadShell(environmentId, rawThread, subagentRequest);
       let status = resolveSidebarThreadStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
+      // Side chat input and approval requests already notify through their parent.
       const attention =
-        status === "input" ||
-        status === "request" ||
-        status === "approval" ||
+        (rawThread.lineage.sideChat !== true &&
+          (status === "input" || status === "request" || status === "approval")) ||
         status === "failed" ||
         status === "limited"
           ? `${thread.latestRun?.runId ?? ""}:${status}`

@@ -1,5 +1,5 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -103,6 +103,7 @@ class TestNotification extends EventTarget {
 const thread = {
   id: "thread",
   title: "Test thread",
+  lineage: undefined as OrchestrationV2ThreadShell["lineage"] | undefined,
   archivedAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
@@ -127,7 +128,7 @@ function toV2ThreadShell(input: typeof thread) {
     branch: null,
     worktreePath: null,
     activeProviderThreadId: null,
-    lineage: {
+    lineage: input.lineage ?? {
       rootThreadId: input.id,
       parentThreadId: null,
       relationshipToParent: null,
@@ -240,19 +241,81 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   },
 );
 
-it("presents completion notifications and sound as soon as the shell completes", async () => {
-  await using app = setup();
-  state.mode = "notifications-and-sound";
-  app.start();
-  state.shells.set(
-    "one",
-    shell({
-      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
-    }),
-  );
-  expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
-  expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
-});
+it.each(["thread", "side chat", "subagent"] as const)(
+  "presents completion notifications and sound for a %s",
+  async (kind) => {
+    await using app = setup();
+    state.mode = "notifications-and-sound";
+    const lineage: OrchestrationV2ThreadShell["lineage"] = {
+      rootThreadId: ThreadId.make("parent"),
+      parentThreadId: kind === "thread" ? null : ThreadId.make("parent"),
+      relationshipToParent: kind === "thread" ? null : kind === "side chat" ? "fork" : "subagent",
+      ...(kind === "side chat" ? { sideChat: true } : {}),
+    };
+    state.shells.set("one", shell({ lineage }));
+    app.start();
+    if (kind === "side chat") {
+      state.shells.set("one", shell({ lineage, hasPendingUserInput: true }));
+      expect(TestNotification.sent).toEqual([]);
+      expect(state.sound).not.toHaveBeenCalled();
+    }
+    state.shells.set(
+      "one",
+      shell({
+        lineage,
+        latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+      }),
+    );
+    const expectedCount = kind === "subagent" ? 0 : 1;
+    expect(TestNotification.sent.map((sent) => sent.title)).toEqual(
+      expectedCount ? ["Thread completed"] : [],
+    );
+    expect(state.sound).toHaveBeenCalledTimes(expectedCount);
+    focused = true;
+    state.inApp = true;
+    state.shells.set("one", shell({ lineage }));
+    state.shells.set(
+      "one",
+      shell({
+        lineage,
+        latestTurn: {
+          turnId: "next-turn",
+          state: "completed",
+          completedAt: "2026-09-13T07:00:02.000Z",
+        },
+      }),
+    );
+    expect(state.toast).toHaveBeenCalledTimes(expectedCount);
+    if (expectedCount) {
+      expect(state.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Thread completed" }),
+      );
+      state.toast.mock.calls[0]![0].actionProps.onClick();
+      expect(state.navigate).toHaveBeenCalledWith({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: "one", threadId: thread.id },
+      });
+    }
+    if (kind === "side chat") {
+      state.shells.set("one", shell({ lineage, hasPendingApprovals: true }));
+      expect(state.toast).toHaveBeenCalledTimes(1);
+      state.shells.set(
+        "one",
+        shell({
+          lineage,
+          latestTurn: {
+            turnId: "failed-turn",
+            state: "error",
+            completedAt: "2026-09-13T07:00:03.000Z",
+          },
+        }),
+      );
+      expect(state.toast).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "Thread failed", type: "error" }),
+      );
+    }
+  },
+);
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies for offline completion and %s once across reconnects",
