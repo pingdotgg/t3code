@@ -50,10 +50,9 @@ export const materializedPreviewAtom = Atom.family(({ attachment }: Materialized
   Atom.make(
     Effect.tryPromise(() => materializeDataUrlPreview(attachment.id, attachment.previewUri)).pipe(
       Effect.catch((error) =>
-        Effect.sync(() => {
-          console.warn("[composer-attachments] could not cache an image preview", error);
-          return null;
-        }),
+        Effect.logWarning("[composer-attachments] could not cache an image preview", error).pipe(
+          Effect.as(null),
+        ),
       ),
     ),
   ).pipe(Atom.withLabel(`composer-image-preview:${attachment.id}`)),
