@@ -1392,6 +1392,15 @@ export const OrchestrationV2ThreadArtifact = Schema.Struct({
 });
 export type OrchestrationV2ThreadArtifact = typeof OrchestrationV2ThreadArtifact.Type;
 
+export const OrchestrationV2ThreadArtifactJson = OrchestrationV2ThreadArtifact.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ThreadArtifactJson = typeof OrchestrationV2ThreadArtifactJson.Type;
+
 export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: TrimmedNonEmptyString,
@@ -2697,7 +2706,7 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequestJson),
     messages: Schema.Array(OrchestrationV2ConversationMessageJson),
     plans: Schema.Array(OrchestrationV2PlanArtifact),
-    artifacts: Schema.Array(OrchestrationV2ThreadArtifact).pipe(
+    artifacts: Schema.Array(OrchestrationV2ThreadArtifactJson).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
     ),
     turnItems: turnItemArray(OrchestrationV2TurnItemJson),
@@ -2896,7 +2905,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("artifact.updated"),
-    payload: OrchestrationV2ThreadArtifact,
+    payload: OrchestrationV2ThreadArtifactJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
