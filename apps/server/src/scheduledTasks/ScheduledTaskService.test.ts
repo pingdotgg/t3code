@@ -844,19 +844,13 @@ it.effect("checks a task's destination thread only when the destination changes"
       assert.equal(moved.task.id, created.task.id);
       assert.equal(moved.task.threadId, destination);
 
-      // A task whose thread was archived later stays editable, but its project cannot move.
+      // A task whose thread was archived later stays editable; moving its project leaves the thread.
       yield* Ref.update(shells, (all) =>
         new Map(all).set(destination, threadShell(project, { archivedAt })),
       );
       yield* save(destination);
-      const projectChange = yield* save(destination, otherProject).pipe(Effect.flip);
-      assert.equal(
-        projectChange.message,
-        "That thread is archived. Unarchive it or pick another destination.",
-      );
-
-      const unbound = yield* save(null);
-      assert.isNull(unbound.task.threadId);
+      const projectChange = yield* save(destination, otherProject);
+      assert.isNull(projectChange.task.threadId);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
