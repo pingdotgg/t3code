@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodePath from "node:path";
 import * as ProcessRunner from "../processRunner.ts";
@@ -106,5 +106,20 @@ describe("course ingestion parsers", () => {
       );
       expect(course.units[0]?.text).toBe("[00:00] Tiny caption");
     }),
+  );
+
+  it.effect("refuses an OCW download page that points the zip off OCW", () =>
+    Effect.gen(function* () {
+      using _fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response('<a href="https://evil.example/course.zip">zip</a>'));
+      const error = yield* ingestCourse("https://ocw.mit.edu/courses/tiny/", {
+        ytDlp: false,
+        workDir: "/tmp",
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("is not MIT OpenCourseWare");
+    }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.die("not used") }),
+    ),
   );
 });
