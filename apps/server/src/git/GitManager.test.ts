@@ -287,6 +287,7 @@ function createTextGeneration(
       }),
     generateKnowledgeCandidates: () => Effect.succeed({ candidates: [] }),
     generateConversationSummary: () => Effect.succeed({ statements: [] }),
+    generateModelEvaluation: () => Effect.die("Unused evaluation fixture"),
     generateThreadTitle: () =>
       Effect.succeed({
         title: "Update workflow",
@@ -343,6 +344,7 @@ function createTextGeneration(
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
     generateKnowledgeCandidates: (input) => implementation.generateKnowledgeCandidates(input),
     generateConversationSummary: (input) => implementation.generateConversationSummary(input),
+    generateModelEvaluation: (input) => implementation.generateModelEvaluation(input),
   };
 }
 

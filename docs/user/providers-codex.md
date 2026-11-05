@@ -66,7 +66,7 @@ from the thread's model picker. Compatible accounts can continue the same thread
 Connecting accounts through T3 Code leaves your CLI login unchanged.
 
 To show your accounts as one entry in the model picker, pool them in **Settings >
-Account pools**. Pooled ChatGPT accounts that share a Codex home resume the same
+Labs > Zack > Account pools**. Pooled ChatGPT accounts that share a Codex home resume the same
 thread natively when a turn moves between them. An account with its own Codex home,
 such as Traex, continues from a summary of the conversation instead.
 

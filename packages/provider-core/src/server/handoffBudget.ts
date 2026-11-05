@@ -11,6 +11,8 @@ import type {
 
 import * as Config from "effect/Config";
 
+import { summaryToolText } from "./conversationEvidence.ts";
+
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
 export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP").pipe(
@@ -256,13 +258,18 @@ export function historicalMessage(
       text = item.message;
       break;
     case "file_change":
-      text = `File change: ${item.changes?.map((change) => change.path).join(", ") ?? item.fileName}`;
+      text =
+        summaryToolText(item) ??
+        `File change: ${item.changes?.map((change) => change.path).join(", ") ?? item.fileName}`;
       break;
     case "proposed_plan":
       text = item.markdown;
       break;
-    default:
-      return null;
+    default: {
+      const evidence = summaryToolText(item);
+      if (evidence === null) return null;
+      text = evidence;
+    }
   }
   return {
     role: item.type === "user_message" ? "user" : "assistant",
@@ -270,7 +277,7 @@ export function historicalMessage(
     threadId: item.threadId,
     runId: item.runId,
     itemId: item.id,
-    providerThreadId: item.providerThreadId,
+    providerThreadId: item.providerThreadId ?? null,
     status: item.status,
     kind: item.type,
   };

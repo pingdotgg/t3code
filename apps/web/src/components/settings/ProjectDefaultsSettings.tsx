@@ -33,7 +33,6 @@ import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { scopedAssistedLearningUnavailableReason } from "./scopedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -107,19 +106,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
-  const mixedAssistedLearning = useScopedSettingsMixed(["enableAssistedLearning"]);
-  const mixedConversationSummaries = useScopedSettingsMixed(["enableConversationSummaries"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-  const targetEnvironmentIds = new Set(target ? [target.environmentId] : []);
-  const assistedLearningUnavailableReason = scopedAssistedLearningUnavailableReason(
-    connectedEnvironments.filter((environment) =>
-      targetEnvironmentIds.has(environment.environmentId),
-    ),
-  );
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
@@ -421,66 +412,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             }
           />
           {workspaceRow}
-          <SettingsRow
-            serverScoped
-            settingKeys={["enableAssistedLearning"]}
-            mixed={mixedAssistedLearning}
-            {...searchableSetting("assisted-learning")}
-            description={
-              assistedLearningUnavailableReason ??
-              (isProjectScope
-                ? "After each run in this project, your text generation model proposes up to three cited facts for review in Project memory. Each run costs one model call."
-                : "After each run, your text generation model proposes up to three cited facts for review in Project memory. Each run costs one model call. Projects can override it.")
-            }
-            resetAction={
-              assistedLearningUnavailableReason === null && settings.enableAssistedLearning ? (
-                <SettingResetButton
-                  label="assisted learning"
-                  tooltip="Reset assisted learning to off"
-                  onClick={() => updateSettings({ enableAssistedLearning: false })}
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                aria-label="Suggest facts from finished runs"
-                disabled={assistedLearningUnavailableReason !== null}
-                mixed={mixedAssistedLearning}
-                checked={mixedAssistedLearning ? false : settings.enableAssistedLearning}
-                onCheckedChange={(enabled) => updateSettings({ enableAssistedLearning: enabled })}
-              />
-            }
-          />
-          <SettingsRow
-            serverScoped
-            settingKeys={["enableConversationSummaries"]}
-            mixed={mixedConversationSummaries}
-            {...searchableSetting("conversation-summaries")}
-            description={
-              isProjectScope
-                ? "After turns complete in this project, your text generation model summarizes older messages so provider switches and forks keep the gist of history that no longer fits. Each summary costs one model call."
-                : "After turns complete, your text generation model summarizes older messages so provider switches and forks keep the gist of history that no longer fits. Each summary costs one model call. Projects can override it."
-            }
-            resetAction={
-              settings.enableConversationSummaries ? (
-                <SettingResetButton
-                  label="conversation summaries"
-                  tooltip="Reset conversation summaries to off"
-                  onClick={() => updateSettings({ enableConversationSummaries: false })}
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                aria-label="Summarize older messages"
-                mixed={mixedConversationSummaries}
-                checked={mixedConversationSummaries ? false : settings.enableConversationSummaries}
-                onCheckedChange={(enabled) =>
-                  updateSettings({ enableConversationSummaries: enabled })
-                }
-              />
-            }
-          />
         </>
       ) : (
         <>

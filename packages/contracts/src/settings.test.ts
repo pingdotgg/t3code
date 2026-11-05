@@ -46,13 +46,14 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
-describe("skills library setting", () => {
-  it("stays off for existing installations and patches like any server setting", () => {
-    expect(decodeServerSettings({}).skillsLibraryEnabled).toBe(false);
-    expect(decodeServerSettingsPatch({ skillsLibraryEnabled: true })).toEqual({
-      skillsLibraryEnabled: true,
-    });
-  });
+describe("opt-in experimental settings", () => {
+  it.each(["skillsLibraryEnabled", "enableModelEvaluations"] as const)(
+    "%s stays off for existing installations and accepts explicit opt-in",
+    (setting) => {
+      expect(decodeServerSettings({})[setting]).toBe(false);
+      expect(decodeServerSettingsPatch({ [setting]: true })).toEqual({ [setting]: true });
+    },
+  );
 });
 
 describe("storage cleanup settings", () => {

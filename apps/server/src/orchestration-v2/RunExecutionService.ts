@@ -1,6 +1,7 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { assistedLearningEffects } from "../project/knowledge/assistedLearningSchedule.ts";
 import { conversationSummaryEffects } from "../project/conversationSummaries/conversationSummarySchedule.ts";
+import { modelEvaluationEffects } from "../modelEvaluations/modelEvaluationSchedule.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -789,6 +790,14 @@ export const layer: Layer.Layer<
               : []),
             ...assistedLearning,
             ...conversationSummaries,
+            ...(settings === null || input.terminal.status !== "failed"
+              ? []
+              : modelEvaluationEffects({
+                  settings,
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  runOutcome: input.terminal.status,
+                })),
           ],
           events: [
             ...cascadedSubagentEvents,

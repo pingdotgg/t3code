@@ -1,4 +1,5 @@
 export * from "./baseSchemas.ts";
+export * from "./externalHistory.ts";
 export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
 export * from "./composerContextClipboard.ts";
@@ -25,6 +26,7 @@ export * from "./providerUsageLimits.ts";
 export * from "./usageLimitSourceId.ts";
 export * from "./providerPolicy.ts";
 export * from "./modelSelection.ts";
+export * from "./modelEvaluation.ts";
 export * from "./chatAttachment.ts";
 export * from "./checkpointDiff.ts";
 export * from "./model.ts";

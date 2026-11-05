@@ -45,7 +45,10 @@ export class TranscriptJsonLimitError extends Error {}
 export function createTranscriptJsonReader(
   reserve: (bytes: number) => void,
   selectPath: (path: JsonPath) => boolean,
-  options?: { readonly maxDepth?: number },
+  options?: {
+    readonly maxDepth?: number;
+    readonly onArrayItem?: (index: number, value: unknown) => boolean;
+  },
 ) {
   // 3.6.0 omits the synchronous tokenizer from types; parser() adds an unnecessary async generator.
   const { jsonParser } = StreamJson as typeof StreamJson & {
@@ -60,6 +63,7 @@ export function createTranscriptJsonReader(
   let depth = 0;
   let complete = false;
   let malformed = false;
+  let stopped = false;
 
   const assemble = (token: Token) => {
     reserve(
@@ -100,6 +104,14 @@ export function createTranscriptJsonReader(
   };
   const endValue = () => {
     const parent = stack.at(-1);
+    if (
+      options?.onArrayItem &&
+      stack.length === 1 &&
+      typeof parent?.key === "number" &&
+      Array.isArray(assembler.current)
+    ) {
+      stopped = !options.onArrayItem(parent.key, assembler.current.pop());
+    }
     if (parent && typeof parent.key === "number") parent.key++;
   };
   const selectToken = (token: Token | typeof none) => {
@@ -143,11 +155,12 @@ export function createTranscriptJsonReader(
     }
   };
   const consume = (input: string | typeof none) => {
-    if (malformed) return;
+    if (malformed || stopped) return;
     try {
       const tokens = tokenize(input);
       if (tokens === none) return;
       for (const token of tokens.values) {
+        if (stopped) break;
         if (token.name === "startObject" || token.name === "startArray") {
           if (++depth > (options?.maxDepth ?? 128))
             throw new TranscriptJsonLimitError("Transcript JSON nesting exceeds the depth limit");
@@ -175,6 +188,9 @@ export function createTranscriptJsonReader(
     }
   };
   return {
+    get stopped() {
+      return stopped;
+    },
     write: (chunk: string) => consume(chunk),
     finish: (): unknown => {
       consume(none);

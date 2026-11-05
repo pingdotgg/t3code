@@ -36,7 +36,6 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { ProviderAccountSync } from "./ProviderAccountSync";
-import { SkillsLibrarySettings } from "./SkillsLibrarySettings";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
@@ -60,7 +59,6 @@ export function SettingsProviderAccountsRouteScreen() {
           ) : (
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
-                <SkillsLibrarySettings environment={environment} />
                 {!permittedEnvironments.has(environment.environmentId) ? (
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Limited permissions</Text>

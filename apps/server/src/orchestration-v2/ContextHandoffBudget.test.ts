@@ -2,6 +2,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
+  NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -111,7 +112,7 @@ describe("handoff budget", () => {
     assert.equal(decodeHandoff(projected).id, handoff.id);
     assert.deepEqual(handoff.history?.messages, messages);
   });
-  it("carries command outcomes as attributed activity and excludes reasoning", () => {
+  it("carries complete tool evidence as attributed activity and excludes reasoning", () => {
     const base = {
       id: TurnItemId.make("item:command"),
       threadId,
@@ -139,19 +140,88 @@ describe("handoff budget", () => {
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
+    const fileChange = {
+      ...base,
+      type: "file_change",
+      fileName: "src/a.ts",
+      changes: [
+        { operation: "update", path: "src/a.ts" },
+        { operation: "add", path: "src/b.ts" },
+        { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+      ],
+    } satisfies OrchestrationV2TurnItem;
+    for (const path of ["src/a.ts", "src/b.ts", "src/new.ts"]) {
+      assert.include(historicalMessage(fileChange)!.text, path);
+    }
     assert.equal(
-      historicalMessage({
-        ...base,
-        type: "file_change",
-        fileName: "src/a.ts",
-        changes: [
-          { operation: "update", path: "src/a.ts" },
-          { operation: "add", path: "src/b.ts" },
-          { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
-        ],
-      })?.text,
+      historicalMessage({ ...fileChange, status: "running" })?.text,
       "File change: src/a.ts, src/b.ts, src/new.ts",
     );
+    const evidence = [
+      {
+        item: {
+          ...base,
+          type: "dynamic_tool",
+          toolName: "verify_health",
+          input: { endpoint: "/health" },
+          output: { failure: "Expected HTTP 200, received 503" },
+        },
+        text: "Expected HTTP 200, received 503",
+      },
+      {
+        item: {
+          ...base,
+          type: "file_change",
+          fileName: "src/health.ts",
+          diffStr: "-return 503;\n+return 200;",
+        },
+        text: "+return 200;",
+      },
+      {
+        item: {
+          ...base,
+          type: "file_search",
+          pattern: "health",
+          results: [{ fileName: "src/health.ts", line: 7, preview: "export const health = 200" }],
+        },
+        text: "export const health = 200",
+      },
+      {
+        item: {
+          ...base,
+          type: "web_search",
+          patterns: ["HTTP 503"],
+          results: [{ url: "https://example.com/status/503", title: "Service unavailable" }],
+        },
+        text: "Service unavailable",
+      },
+      {
+        item: {
+          ...base,
+          type: "subagent",
+          subagentId: NodeId.make("node:health-check"),
+          origin: "app_owned",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          childThreadId: null,
+          prompt: "Check the health endpoint",
+          result: "The upstream service is unavailable",
+        },
+        text: "The upstream service is unavailable",
+      },
+    ] satisfies ReadonlyArray<{ item: OrchestrationV2TurnItem; text: string }>;
+    for (const { item, text } of evidence) {
+      const historical = historicalMessage(item);
+      assert.isNotNull(
+        historical,
+        `${item.type} must be eligible for handoff and summary coverage`,
+      );
+      assert.include(historical!.text, text);
+      assert.equal(historical!.kind, item.type);
+      assert.equal(historical!.itemId, item.id);
+      if (item.type === "dynamic_tool")
+        assert.isNull(historicalMessage({ ...item, outputOmitted: true }));
+    }
     assert.isNull(
       historicalMessage({
         ...base,

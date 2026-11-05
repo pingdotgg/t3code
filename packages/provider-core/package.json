@@ -27,6 +27,10 @@
       "types": "./src/server/collectStreamText.ts",
       "import": "./src/server/collectStreamText.ts"
     },
+    "./server/conversationEvidence": {
+      "types": "./src/server/conversationEvidence.ts",
+      "import": "./src/server/conversationEvidence.ts"
+    },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
@@ -87,9 +91,17 @@
       "types": "./src/server/ModelCatalog.ts",
       "import": "./src/server/ModelCatalog.ts"
     },
+    "./server/modelEvaluation": {
+      "types": "./src/server/modelEvaluation.ts",
+      "import": "./src/server/modelEvaluation.ts"
+    },
     "./server/nativeProtocolLogging": {
       "types": "./src/server/nativeProtocolLogging.ts",
       "import": "./src/server/nativeProtocolLogging.ts"
+    },
+    "./server/nativeHistory": {
+      "types": "./src/server/nativeHistory.ts",
+      "import": "./src/server/nativeHistory.ts"
     },
     "./server/notification": {
       "types": "./src/server/notification.ts",

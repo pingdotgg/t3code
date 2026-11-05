@@ -163,6 +163,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const launches: Array<
           Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
         > = [];
+        const processLaunches: Array<ChildProcess.Command> = [];
 
         let interruptedChecks = 0;
         let failAcquire = false;
@@ -212,8 +213,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
           ),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() =>
+            ChildProcessSpawner.make((command) =>
               Effect.gen(function* () {
+                processLaunches.push(command);
                 if (replacementTiming === "during-probe") {
                   yield* Deferred.succeed(probeEntered, undefined);
                   yield* Deferred.await(resumeProbe);
@@ -269,6 +271,20 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(Exit.isFailure(runtimeScan)).toBe(true);
         yield* Deferred.await(observedAccount);
 
+        const history = instance.nativeHistory!;
+        const historyRead = yield* history.list({ cwd: serverConfig.stateDir }).pipe(Effect.flip);
+        expect(historyRead.reason).toBe("unavailable");
+        const historyLaunch = processLaunches.at(-1)!;
+        expect(ChildProcess.isStandardCommand(historyLaunch)).toBe(true);
+        if (!ChildProcess.isStandardCommand(historyLaunch))
+          return yield* Effect.die("Expected a single Codex app-server process");
+        expect(historyLaunch.options.cwd).toBe(serverConfig.stateDir);
+        expect(historyLaunch.options.env?.CODEX_HOME).toBe(sharedHome);
+        expect(historyLaunch.options.env?.OPENAI_API_KEY).toBeUndefined();
+        expect(historyLaunch.args).toContain("app-server");
+        expect(historyLaunch.args.join(" ")).toContain("__managed-chatgpt-token");
+        expect(instance.continuationIdentity.continuationKey).toBe(`codex:home:${sharedHome}`);
+
         const threadId = ThreadId.make("managed-account-thread");
         yield* instance.orchestrationAdapter
           .openSession({
@@ -302,6 +318,11 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(Option.isNone(yield* store.get)).toBe(true);
         const signedOutScan = yield* instance.snapshotForCwd!(serverConfig.stateDir);
         expect(signedOutScan.skills).toEqual([]);
+        const launchesBeforeSignedOutRead = processLaunches.length;
+        expect((yield* history.list({ cwd: serverConfig.stateDir }).pipe(Effect.flip)).reason).toBe(
+          "unavailable",
+        );
+        expect(processLaunches).toHaveLength(launchesBeforeSignedOutRead);
       }).pipe(
         Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
         Effect.provideService(

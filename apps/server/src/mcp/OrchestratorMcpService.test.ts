@@ -10,9 +10,10 @@ import {
   EnvironmentId,
   GitCommandError,
   MessageId,
+  ModelEvaluationGuidance,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
-  type OrchestratorMcpCapabilitiesResult,
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
@@ -65,6 +66,7 @@ import { buildUnavailableProviderSnapshot } from "../provider/unavailableProvide
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -75,10 +77,15 @@ import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
+const decodeModelGuidance = Schema.decodeUnknownSync(ModelEvaluationGuidance);
+const decodeCapabilitiesResult = Schema.decodeUnknownSync(OrchestratorMcpCapabilitiesResult);
 
-const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+const layerOrchestratorWithEvaluations = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
+const layerOrchestratorService = layerOrchestratorWithEvaluations.pipe(
+  Layer.provide(Layer.mock(ModelEvaluations.ModelEvaluations)({})),
 );
 
 describe("OrchestratorMcpService", () => {
@@ -1649,16 +1656,26 @@ describe("OrchestratorMcpService provider resolution", () => {
       },
     ];
 
-    const capabilitiesWith = (search?: string, allModels?: boolean) =>
+    const capabilitiesWith = (
+      search?: string,
+      allModels?: boolean,
+      evaluations?: {
+        readonly enabled: boolean;
+        readonly entries: ReadonlyArray<ModelEvaluationGuidance>;
+        readonly requests: ProjectId[];
+        readonly unbound?: boolean;
+      },
+    ) =>
       Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* service.capabilities(scope, {
+        const unboundScope = { ...scope, thread: undefined };
+        return yield* service.capabilities(evaluations?.unbound ? unboundScope : scope, {
           ...(search === undefined ? {} : { search }),
           ...(allModels === undefined ? {} : { allModels }),
         });
       }).pipe(
         Effect.provide(
-          layerOrchestratorService.pipe(
+          layerOrchestratorWithEvaluations.pipe(
             Layer.provide(
               Layer.mergeAll(
                 NodeServices.layer,
@@ -1670,6 +1687,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     ),
                 }),
                 ServerSettings.layerTest({
+                  enableModelEvaluations: evaluations?.enabled ?? false,
                   providerInstances: {
                     [opencodeInstanceId]: {
                       driver: "opencode",
@@ -1686,6 +1704,14 @@ describe("OrchestratorMcpService provider resolution", () => {
                   },
                 }),
                 providerRegistryLayer(catalog),
+                Layer.mock(ModelEvaluations.ModelEvaluations)({
+                  guidance: ({ projectId, models }) =>
+                    Effect.sync(() => {
+                      assert.isDefined(models);
+                      evaluations?.requests.push(projectId);
+                      return evaluations?.entries ?? [];
+                    }),
+                }),
                 adapterRegistryLayer([codexInstanceId, opencodeInstanceId]),
                 Layer.mock(ProjectService.ProjectService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
@@ -1696,6 +1722,261 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         ),
       );
+
+    it.effect(
+      "scopes learned guidance to the caller's project and offered models only while enabled",
+      () =>
+        Effect.gen(function* () {
+          const observed = decodeModelGuidance({
+            modelSelection: { instanceId: opencodeInstanceId, model: "oc/m12" },
+            evaluatorSelection: { instanceId: "judge", model: "judge-model" },
+            rubricVersion: "1",
+            taskCategory: "review",
+            scope: "turn",
+            sampleCount: 1,
+            insufficientEvidenceCount: 0,
+            meanScores: {
+              taskCompletion: 3,
+              correctness: null,
+              instructionFollowing: 3,
+              verification: null,
+            },
+            scoreCounts: {
+              taskCompletion: 1,
+              correctness: 0,
+              instructionFollowing: 1,
+              verification: 0,
+            },
+            confidence: "provisional",
+            promptChars: { min: 100, median: 100, max: 100 },
+            strengths: [
+              "Identified the requested boundary. ".repeat(10),
+              "Kept the review focused.",
+            ],
+            weaknesses: [],
+            promptAdvice: ["Include the relevant acceptance check."],
+            latestAt: "2026-10-01T00:00:00.000Z",
+          });
+          const requests: ProjectId[] = [];
+          const entries = [
+            { ...observed, modelSelection: { ...observed.modelSelection, model: "oc/m02" } },
+            {
+              ...observed,
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("unavailable"),
+                model: "oc/m12",
+              },
+            },
+            ...Array.from({ length: 10 }, (_, index) => ({
+              ...observed,
+              evaluatorSelection: { ...observed.evaluatorSelection, model: `judge-${index}` },
+            })),
+          ];
+          const disabled = yield* capabilitiesWith(undefined, false, {
+            enabled: false,
+            entries,
+            requests,
+          });
+          assert.isUndefined(disabled.modelGuidance);
+          assert.deepEqual(requests, []);
+          const unbound = yield* capabilitiesWith(undefined, false, {
+            enabled: true,
+            entries,
+            requests,
+            unbound: true,
+          });
+          assert.isUndefined(unbound.modelGuidance);
+          assert.deepEqual(requests, []);
+          const enabled = yield* capabilitiesWith(undefined, false, {
+            enabled: true,
+            entries,
+            requests,
+          });
+          assert.deepEqual(requests, [parentProjection([]).thread.projectId]);
+          assert.isAbove(enabled.modelGuidance?.length ?? 0, 0);
+          assert.isAtMost(enabled.modelGuidance?.length ?? 0, 8);
+          assert.isAtMost(
+            JSON.stringify({
+              modelGuidance: enabled.modelGuidance,
+              modelGuidanceUsage: enabled.modelGuidanceUsage,
+            }).length,
+            6_000,
+          );
+          assert.equal(enabled.modelGuidance![0]!.strengths.length, 1);
+          assert.equal(Array.from(enabled.modelGuidance![0]!.strengths[0]!).length, 160);
+          assert.isTrue(
+            enabled.modelGuidance!.every(
+              (entry) =>
+                entry.modelSelection.instanceId === opencodeInstanceId &&
+                entry.modelSelection.model === "oc/m12",
+            ),
+          );
+          assert.equal(enabled.modelGuidance![0]!.confidence, "provisional");
+          assert.isUndefined(enabled.modelGuidance![0]!.routingProviderInstanceId);
+          const otherModel = yield* capabilitiesWith("gpt-6", false, {
+            enabled: true,
+            entries,
+            requests,
+          });
+          assert.isUndefined(otherModel.modelGuidance);
+        }),
+    );
+
+    it.effect("maps pool guidance to eligible actual members without combining their scores", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const poolId = ProviderInstanceId.make("pool_codex");
+        const workId = ProviderInstanceId.make("codex_work");
+        const disabledId = ProviderInstanceId.make("codex_disabled");
+        const projectDisabledId = ProviderInstanceId.make("codex_project_disabled");
+        const unrelatedId = ProviderInstanceId.make("codex_unrelated");
+        const otherModelId = ProviderInstanceId.make("codex_other_model");
+        const noAdapterId = ProviderInstanceId.make("codex_no_adapter");
+        const sharedModel = "gpt-5.4";
+        const memberIds = [
+          codexInstanceId,
+          workId,
+          disabledId,
+          projectDisabledId,
+          otherModelId,
+          noAdapterId,
+        ];
+        const members: ServerProvider[] = [...memberIds, unrelatedId].map((instanceId) => ({
+          ...providerSnapshot({
+            instanceId,
+            driver,
+            model: instanceId === otherModelId ? "other-model" : sharedModel,
+          }),
+          pool: { role: "member", poolInstanceId: poolId },
+          ...(instanceId === disabledId ? { enabled: false, status: "disabled" as const } : {}),
+        }));
+        const observed = decodeModelGuidance({
+          modelSelection: {
+            instanceId: codexInstanceId,
+            model: sharedModel,
+            options: [{ id: "effort", value: "high" }],
+          },
+          evaluatorSelection: { instanceId: "judge", model: "judge-model" },
+          rubricVersion: "1",
+          taskCategory: "review",
+          scope: "subagent",
+          sampleCount: 2,
+          insufficientEvidenceCount: 0,
+          meanScores: {
+            taskCompletion: 3,
+            correctness: null,
+            instructionFollowing: 3,
+            verification: null,
+          },
+          scoreCounts: {
+            taskCompletion: 2,
+            correctness: 0,
+            instructionFollowing: 2,
+            verification: 0,
+          },
+          confidence: "provisional",
+          promptChars: { min: 100, median: 100, max: 100 },
+          strengths: ["Kept the review focused."],
+          weaknesses: [],
+          promptAdvice: ["Include the relevant acceptance check."],
+          latestAt: "2026-10-01T00:00:00.000Z",
+        });
+        const workObservation = {
+          ...observed,
+          sampleCount: 7,
+          modelSelection: { ...observed.modelSelection, instanceId: workId },
+        };
+        const ordinaryObservation = {
+          ...observed,
+          modelSelection: { instanceId: opencodeInstanceId, model: "oc-model" },
+        };
+        const entries = [
+          observed,
+          workObservation,
+          ordinaryObservation,
+          ...[disabledId, projectDisabledId, unrelatedId, otherModelId, noAdapterId, poolId].map(
+            (instanceId) => ({
+              ...observed,
+              modelSelection: { ...observed.modelSelection, instanceId },
+            }),
+          ),
+          {
+            ...observed,
+            modelSelection: { ...observed.modelSelection, model: "other-model" },
+          },
+        ];
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(parentProjection([])),
+          }),
+          ServerSettings.layerTest({
+            enableModelEvaluations: true,
+            providerInstances: {
+              ...Object.fromEntries(
+                [...memberIds, unrelatedId].map((instanceId) => [
+                  instanceId,
+                  { driver, config: {}, enabled: instanceId !== disabledId },
+                ]),
+              ),
+              [opencodeInstanceId]: { driver: "opencode", config: {}, enabled: true },
+            },
+            providerPools: { [driver]: { enabled: true, memberInstanceIds: memberIds } },
+            projectSettingsOverrides: {
+              [projectId]: { providerInstances: { [projectDisabledId]: { enabled: false } } },
+            },
+          }),
+          providerRegistryLayer([
+            ...members,
+            {
+              ...providerSnapshot({ instanceId: poolId, driver, model: sharedModel }),
+              pool: {
+                role: "pool",
+                memberInstanceIds: [...memberIds, unrelatedId],
+                droppedModels: [],
+              },
+            },
+            providerSnapshot({
+              instanceId: opencodeInstanceId,
+              driver: ProviderDriverKind.make("opencode"),
+              model: "oc-model",
+            }),
+          ]),
+          adapterRegistryLayer([
+            ...memberIds.filter((id) => id !== noAdapterId),
+            unrelatedId,
+            opencodeInstanceId,
+          ]),
+          Layer.mock(ModelEvaluations.ModelEvaluations)({
+            guidance: (input) =>
+              Effect.sync(() => {
+                assert.equal(input.projectId, projectId);
+                assert.deepEqual(input.models, [
+                  { instanceId: codexInstanceId, model: sharedModel },
+                  { instanceId: workId, model: sharedModel },
+                  { instanceId: opencodeInstanceId, model: "oc-model" },
+                ]);
+                return entries;
+              }),
+          }),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const result = decodeCapabilitiesResult(yield* service.capabilities(scope));
+          assert.deepEqual(result.modelGuidance, [
+            { ...observed, routingProviderInstanceId: poolId },
+            { ...workObservation, routingProviderInstanceId: poolId },
+            ordinaryObservation,
+          ]);
+          assert.isTrue(result.modelGuidanceUsage?.includes("Preserve the user's model choices"));
+        }).pipe(Effect.provide(layerOrchestratorWithEvaluations.pipe(Layer.provide(dependencies))));
+      }),
+    );
 
     const listing = (capabilities: OrchestratorMcpCapabilitiesResult) =>
       capabilities.providers.map((provider) => ({
@@ -3251,6 +3532,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
+        Layer.provide(Layer.mock(ModelEvaluations.ModelEvaluations)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,

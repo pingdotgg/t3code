@@ -14,6 +14,7 @@ import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -34,6 +35,7 @@ import { CodeIntelligence } from "../project/knowledge/CodeIntelligence.ts";
 import { FileHistory } from "../project/knowledge/FileHistory.ts";
 import { ProjectKnowledge } from "../project/knowledge/ProjectKnowledge.ts";
 import { ConversationSummaries } from "../project/conversationSummaries/ConversationSummaries.ts";
+import { ExternalHistory } from "../project/externalHistory/ExternalHistory.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
 import { ProjectService } from "../project/ProjectService.ts";
@@ -53,10 +55,12 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
+  Layer.mock(ModelEvaluations.ModelEvaluations)({}),
   Layer.mock(CodeIntelligence)({}),
   Layer.mock(FileHistory)({}),
   Layer.mock(ProjectKnowledge)({}),
   Layer.mock(ConversationSummaries)({}),
+  Layer.mock(ExternalHistory)({}),
   Layer.mock(PeerForwarding)({}),
   Layer.mock(PeerLinkRequests)({}),
   Layer.mock(PeerLinks)({}),

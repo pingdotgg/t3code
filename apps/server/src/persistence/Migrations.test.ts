@@ -19,7 +19,8 @@ const subagentDeliveryMigration = [84, "SubagentDeliveryState"] as const;
 const projectPinArchiveMigration = [85, "ProjectionProjectsPinArchive"] as const;
 const settledOverrideMigration = [86, "RepairBooleanSettledOverride"] as const;
 const correlationIndexMigration = [87, "DropOrchestrationEventCorrelationIndex"] as const;
-const delegatedRecoveryMigration = [88, "DelegatedRecoveryIndexes"] as const;
+const modelEvaluationMigration = [88, "ModelEvaluations"] as const;
+const delegatedRecoveryMigration = [89, "DelegatedRecoveryIndexes"] as const;
 
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
   Effect.gen(function* () {
@@ -42,6 +43,7 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
       projectPinArchiveMigration,
       settledOverrideMigration,
       correlationIndexMigration,
+      modelEvaluationMigration,
       delegatedRecoveryMigration,
     ]);
     assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_deliveries`, before);
@@ -286,6 +288,7 @@ describe("runMigrations", () => {
         projectPinArchiveMigration,
         settledOverrideMigration,
         correlationIndexMigration,
+        modelEvaluationMigration,
         delegatedRecoveryMigration,
       ]);
       assert.deepStrictEqual((yield* history).slice(0, before.length), before);
@@ -359,6 +362,7 @@ describe("runMigrations", () => {
             projectPinArchiveMigration,
             settledOverrideMigration,
             correlationIndexMigration,
+            modelEvaluationMigration,
             delegatedRecoveryMigration,
           ],
         );
@@ -398,6 +402,7 @@ describe("runMigrations", () => {
           projectPinArchiveMigration,
           settledOverrideMigration,
           correlationIndexMigration,
+          modelEvaluationMigration,
           delegatedRecoveryMigration,
         ],
       );
@@ -410,6 +415,7 @@ describe("runMigrations", () => {
         projectPinArchiveMigration,
         settledOverrideMigration,
         correlationIndexMigration,
+        modelEvaluationMigration,
         delegatedRecoveryMigration,
       ]);
       yield* assertConsolidatedSchema;
@@ -444,6 +450,7 @@ describe("runMigrations", () => {
           projectPinArchiveMigration,
           settledOverrideMigration,
           correlationIndexMigration,
+          modelEvaluationMigration,
           delegatedRecoveryMigration,
         ]);
 
@@ -548,6 +555,7 @@ describe("runMigrations", () => {
         projectPinArchiveMigration,
         settledOverrideMigration,
         correlationIndexMigration,
+        modelEvaluationMigration,
         delegatedRecoveryMigration,
       ]);
       yield* assertConsolidatedSchema;
@@ -601,6 +609,7 @@ describe("runMigrations", () => {
           projectPinArchiveMigration,
           settledOverrideMigration,
           correlationIndexMigration,
+          modelEvaluationMigration,
           delegatedRecoveryMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
@@ -659,6 +668,7 @@ describe("runMigrations", () => {
           projectPinArchiveMigration,
           settledOverrideMigration,
           correlationIndexMigration,
+          modelEvaluationMigration,
           delegatedRecoveryMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);

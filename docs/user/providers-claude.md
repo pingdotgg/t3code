@@ -37,7 +37,7 @@ T3 Code uses the Claude configuration on the connected server.
 ## Account pools
 
 With two or more Claude accounts, you can offer them as one. In **Settings >
-Account pools**, tick the Claude accounts to share and turn on **Pool these
+Labs > Zack > Account pools**, tick the Claude accounts to share and turn on **Pool these
 accounts**. The model picker then shows a single Claude entry in place of the
 ticked accounts. Each turn runs on an account that still has usage left. If an
 account reaches its usage limit mid-turn, the turn continues on another account,

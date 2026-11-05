@@ -1,9 +1,11 @@
+import { OrchestrationV2ContextHandoffJson, OrchestrationV2TurnItemJson } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -12,6 +14,7 @@ import {
   EVENT_LOG_PRUNED_THROUGH,
 } from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { compactProviderHandoffSummary } from "./providerHandoffSummary.ts";
 
 export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMaintenanceError>()(
   "ProjectionMaintenanceError",
@@ -49,6 +52,16 @@ type MetadataRow = {
   readonly last_sequence: number;
   readonly updated_at: string;
 };
+
+// Every rendered transcript message starts with this, and receipts never contain a message.
+const RENDERED_TRANSCRIPT_MARKER = "[Historical ";
+
+const decodeHandoff = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OrchestrationV2ContextHandoffJson),
+);
+const decodeTurnItem = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OrchestrationV2TurnItemJson),
+);
 
 export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionMaintenanceV2,
@@ -252,6 +265,119 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       return { deletedEventCount, deletedReceiptCount };
     });
 
+    // Older provider handoffs stored the rendered transcript beside the history it repeats. This
+    // walks projections, not events: pruning removes the events long before the rows stop mattering.
+    const rewriteHandoffSummaries = Effect.fnUntraced(function* (
+      betweenPages: Effect.Effect<void>,
+    ) {
+      for (let cursor = ""; ;) {
+        const rows = yield* sql<{
+          readonly id: string;
+          readonly stale_payload_json: string | null;
+        }>`
+          SELECT
+            handoff.context_handoff_id AS id,
+            CASE
+              WHEN handoff.strategy IN ('delta_since_target_last_seen', 'full_thread_summary')
+                AND (
+                  instr(json_extract(handoff.payload_json, '$.summaryText'), ${RENDERED_TRANSCRIPT_MARKER}) > 0
+                  OR EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_turn_items AS item
+                    WHERE item.run_id = handoff.target_run_id
+                      AND item.type = 'handoff'
+                      AND instr(json_extract(item.payload_json, '$.summary'), ${RENDERED_TRANSCRIPT_MARKER}) > 0
+                  )
+                )
+              THEN handoff.payload_json
+            END AS stale_payload_json
+          FROM orchestration_v2_projection_context_handoffs AS handoff
+          WHERE handoff.context_handoff_id > ${cursor}
+          ORDER BY handoff.context_handoff_id ASC
+          LIMIT ${PAGE_SIZE}
+        `.pipe(NodeSqliteClient.readOnly);
+        const sources = rows.flatMap((row) => {
+          if (row.stale_payload_json === null) return [];
+          const handoff = decodeHandoff(row.stale_payload_json);
+          return Option.isSome(handoff)
+            ? [{ handoff: handoff.value, payloadJson: row.stale_payload_json }]
+            : [];
+        });
+        const itemRows =
+          sources.length === 0
+            ? []
+            : yield* sql<{ readonly payload_json: string }>`
+                SELECT payload_json FROM orchestration_v2_projection_turn_items
+                WHERE run_id IN ${sql.in(sources.map(({ handoff }) => handoff.targetRunId))}
+                  AND type = 'handoff'
+                  AND instr(json_extract(payload_json, '$.summary'), ${RENDERED_TRANSCRIPT_MARKER}) > 0
+              `.pipe(NodeSqliteClient.readOnly);
+        const handoffRewrites = sources.flatMap(({ handoff, payloadJson }) => {
+          const receipt = compactProviderHandoffSummary(handoff, handoff.summaryText);
+          return receipt === null ? [] : [{ id: handoff.id, payloadJson, receipt }];
+        });
+        const itemRewrites = itemRows.flatMap(({ payload_json: payloadJson }) => {
+          const decoded = decodeTurnItem(payloadJson);
+          if (Option.isNone(decoded)) return [];
+          const item = decoded.value;
+          if (item.type !== "handoff" || item.summary === undefined) return [];
+          const source = sources.find(({ handoff }) => handoff.id === item.contextHandoffId);
+          if (
+            source === undefined ||
+            source.handoff.threadId !== item.threadId ||
+            source.handoff.strategy !== item.strategy ||
+            source.handoff.toProviderThreadId !== item.toProviderThreadId
+          ) {
+            return [];
+          }
+          const receipt = compactProviderHandoffSummary(source.handoff, item.summary);
+          return receipt === null
+            ? []
+            : [
+                {
+                  id: item.id,
+                  payloadJson,
+                  receipt,
+                  handoffId: source.handoff.id,
+                  handoffPayloadJson: source.payloadJson,
+                },
+              ];
+        });
+        yield* Effect.yieldNow;
+        if (handoffRewrites.length > 0 || itemRewrites.length > 0) {
+          // Matching the whole payload leaves a row alone if a turn changed it after the read.
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              for (const rewrite of itemRewrites) {
+                yield* sql`
+                  UPDATE orchestration_v2_projection_turn_items
+                  SET payload_json = json_set(payload_json, '$.summary', ${rewrite.receipt})
+                  WHERE turn_item_id = ${rewrite.id}
+                    AND payload_json = ${rewrite.payloadJson}
+                    AND EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_context_handoffs
+                      WHERE context_handoff_id = ${rewrite.handoffId}
+                        AND payload_json = ${rewrite.handoffPayloadJson}
+                    )
+                `;
+              }
+              for (const rewrite of handoffRewrites) {
+                yield* sql`
+                  UPDATE orchestration_v2_projection_context_handoffs
+                  SET payload_json = json_set(payload_json, '$.summaryText', ${rewrite.receipt})
+                  WHERE context_handoff_id = ${rewrite.id}
+                    AND payload_json = ${rewrite.payloadJson}
+                `;
+              }
+            }),
+          );
+          yield* Effect.yieldNow;
+        }
+        yield* betweenPages;
+        if (rows.length < PAGE_SIZE) break;
+        cursor = rows.at(-1)?.id ?? cursor;
+      }
+    });
+
     // A pass prunes through the mark the previous pass left once that mark is a day old, so
     // at least RETAINED_EVENT_HISTORY of events always remains. Receipts stay for idempotency.
     const pruneEventStore = Effect.fn("ProjectionMaintenance.pruneEventStore")(
@@ -297,6 +423,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           betweenPages,
         );
         deletedEventCount += legacy.deletedEventCount;
+        yield* rewriteHandoffSummaries(betweenPages);
 
         const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
         const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;

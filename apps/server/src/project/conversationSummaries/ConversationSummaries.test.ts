@@ -5,12 +5,24 @@ import {
   CommandId,
   ComposerContextId,
   ConversationSummary,
+  ConversationSummaryError,
+  ConversationSummaryExpansion,
+  ConversationSummaryId,
+  ConversationSummaryList,
+  ConversationSummaryPass,
+  ConversationSummaryRead,
+  conversationSummarySourceKey,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   EventId,
+  KnowledgeMessageRef,
+  KnowledgeSourceUnavailableReason,
   MessageId,
+  ModelSelection,
+  NodeId,
   ProjectFactId,
   ProjectId,
+  ProjectKnowledgeSource,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
@@ -20,6 +32,7 @@ import {
   TextGenerationError,
   ThreadId,
   TurnItemId,
+  WS_METHODS,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -37,6 +50,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import { conversationSummariesRpcHandlers } from "../../conversationSummariesRpc.ts";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../../mcp/McpToolAccess.testkit.ts";
@@ -57,7 +71,10 @@ import * as HolographicMemory from "../knowledge/HolographicMemory.ts";
 import * as ProjectKnowledge from "../knowledge/ProjectKnowledge.ts";
 import { deliveredKnowledgeForHistory } from "../knowledge/composer.ts";
 import * as ConversationSummaries from "./ConversationSummaries.ts";
-import { conversationSummaryEffects } from "./conversationSummarySchedule.ts";
+import {
+  ConversationSummaryPassError,
+  conversationSummaryEffects,
+} from "./conversationSummarySchedule.ts";
 
 type Generate = TextGeneration.TextGeneration["Service"]["generateConversationSummary"];
 
@@ -72,6 +89,65 @@ const optedIn = {
 };
 const decodeSettings = Schema.decodeUnknownEffect(ServerSettingsSchema);
 const encodeSummary = Schema.encodeEffect(Schema.fromJsonString(ConversationSummary));
+// Freeze the protocol-2 summary codec from before ranged/tool sources. An older client
+// compiles these shapes into RpcClient; merely accepting our current schema proves nothing.
+const LegacySummary = Schema.Struct({
+  id: ConversationSummaryId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  sources: Schema.Array(KnowledgeMessageRef).check(Schema.isMinLength(1), Schema.isMaxLength(24)),
+  statements: Schema.Array(
+    Schema.Struct({
+      text: Schema.Trim.check(Schema.isNonEmpty(), Schema.isMaxLength(600)),
+      citations: Schema.Array(MessageId).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+  modelSelection: ModelSelection,
+  createdAt: Schema.String,
+});
+const LegacySummaryRead = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("available"), summary: LegacySummary }),
+  Schema.Struct({
+    state: Schema.Literal("stale"),
+    id: ConversationSummaryId,
+    sourceCount: Schema.Int,
+    createdAt: Schema.String,
+    reason: KnowledgeSourceUnavailableReason,
+  }),
+]);
+const LegacySummaryList = Schema.Struct({
+  enabled: Schema.Boolean,
+  lastPass: Schema.NullOr(ConversationSummaryPass),
+  summaries: Schema.Array(LegacySummaryRead),
+  nextCursor: Schema.NullOr(ConversationSummaryId),
+});
+const LegacySummaryExpansion = Schema.Struct({
+  summary: LegacySummaryRead,
+  sources: Schema.Array(
+    Schema.Struct({ ref: KnowledgeMessageRef, result: ProjectKnowledgeSource }),
+  ),
+  nextOffset: Schema.NullOr(Schema.Int),
+});
+const LegacySummaryError = Schema.TaggedStruct("ConversationSummaryError", {
+  reason: Schema.Literals(["storage", "missing_project", "missing_summary", "invalid_cursor"]),
+  projectId: ProjectId,
+  cause: Schema.optionalKey(Schema.Defect()),
+});
+const encodeSummaryReadWire = Schema.encodeSync(Schema.toCodecJson(ConversationSummaryRead));
+const encodeSummaryListWire = Schema.encodeSync(Schema.toCodecJson(ConversationSummaryList));
+const encodeSummaryExpansionWire = Schema.encodeSync(
+  Schema.toCodecJson(ConversationSummaryExpansion),
+);
+const decodeLegacyRead = Schema.decodeUnknownSync(Schema.toCodecJson(LegacySummaryRead));
+const decodeLegacyList = Schema.decodeUnknownSync(Schema.toCodecJson(LegacySummaryList));
+const decodeLegacyExpansion = Schema.decodeUnknownSync(Schema.toCodecJson(LegacySummaryExpansion));
+const encodeSummaryErrorWire = Schema.encodeSync(Schema.toCodecJson(ConversationSummaryError));
+const decodeLegacyError = Schema.decodeUnknownSync(Schema.toCodecJson(LegacySummaryError));
+const assertLegacyUpgradeError = (error: ConversationSummaryError) => {
+  const decoded = decodeLegacyError(encodeSummaryErrorWire(error));
+  assert.equal(decoded.reason, "storage");
+  assert.include(String(decoded.cause), "Update this T3 Code client");
+};
 // 8 exchanges: the first 10 messages are settled, the last 6 are the fresh tail.
 const MESSAGE_COUNT = 16;
 
@@ -153,7 +229,9 @@ const messageEvent = (index: number, text: string): OrchestrationV2DomainEvent =
   },
 });
 
-const item = (index: number): OrchestrationV2TurnItem => {
+const item = (
+  index: number,
+): Extract<OrchestrationV2TurnItem, { type: "user_message" | "assistant_message" }> => {
   const base = {
     id: itemId(index),
     threadId,
@@ -299,7 +377,10 @@ const persistSummary = Effect.fn("test.persistSummary")(function* (
   return summary;
 });
 
-const prepareHandoff = Effect.fn("test.prepareSummaryHandoff")(function* (messageCount: number) {
+const prepareHandoff = Effect.fn("test.prepareSummaryHandoff")(function* (
+  messageCount: number,
+  extraItems: ReadonlyArray<OrchestrationV2TurnItem> = [],
+) {
   const handoffs = yield* ContextHandoffService.ContextHandoffServiceV2;
   return yield* handoffs.prepareProviderHandoff({
     threadId,
@@ -311,7 +392,7 @@ const prepareHandoff = Effect.fn("test.prepareSummaryHandoff")(function* (messag
     toProviderInstanceId: instanceId,
     coveredRunOrdinals: { from: 1, to: 1 },
     strategy: "full_thread_summary",
-    items: Array.from({ length: messageCount }, (_, index) => item(index)),
+    items: [...extraItems, ...Array.from({ length: messageCount }, (_, index) => item(index))],
     createdAt: at,
   });
 });
@@ -345,7 +426,7 @@ it.effect(
       );
       const summary = yield* onlySummary;
       assert.deepEqual(
-        summary.sources.map((source) => source.messageId),
+        summary.sources.map((source) => (source.kind === "message" ? source.messageId : null)),
         Array.from({ length: 10 }, (_, index) => messageId(index)),
       );
       // Only cited refs survive, mapped to the exact message ids; the invented ref is dropped.
@@ -363,6 +444,140 @@ it.effect(
       SELECT payload_json FROM conversation_summaries
     `;
       assert.isTrue(rows.every((row) => !row.payload_json.includes("Detail. Detail.")));
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("negotiates ranged summary responses while preserving legacy whole-message reads", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    // Sixteen settled sources exceed the new default text budget but fit one legacy page.
+    yield* seedThread(22);
+    yield* summarize;
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const rpc = conversationSummariesRpcHandlers(service);
+    const ordinary = yield* onlySummary;
+    const oldList = decodeLegacyList(
+      encodeSummaryListWire(yield* rpc[WS_METHODS.conversationSummariesList](scope)),
+    );
+    assert.equal(oldList.summaries.length, 1);
+    const oldRead = decodeLegacyRead(
+      encodeSummaryReadWire(
+        yield* rpc[WS_METHODS.conversationSummariesDescribe]({ ...scope, summaryId: ordinary.id }),
+      ),
+    );
+    assert.equal(oldRead.state, "available");
+    const oldPage = decodeLegacyExpansion(
+      encodeSummaryExpansionWire(
+        yield* rpc[WS_METHODS.conversationSummariesExpand]({ ...scope, summaryId: ordinary.id }),
+      ),
+    );
+    assert.equal(oldPage.sources.length, 16);
+    assert.isNull(oldPage.nextOffset);
+    const modernDecode = Schema.decodeUnknownEffect(
+      Schema.toCodecJson(ConversationSummaryExpansion),
+    );
+    const legacyEncode = Schema.encodeEffect(Schema.toCodecJson(LegacySummaryExpansion));
+    const fromOldServer = yield* modernDecode(yield* legacyEncode(oldPage));
+    assert.deepEqual(fromOldServer, oldPage);
+    assert.equal(fromOldServer.nextTextOffset ?? 0, 0);
+    assert.equal(
+      oldPage.sources[0]?.result.state === "available" ? oldPage.sources[0].result.text : null,
+      rawText(0),
+    );
+    assertLegacyUpgradeError(
+      yield* rpc[WS_METHODS.conversationSummariesExpand]({
+        ...scope,
+        summaryId: ordinary.id,
+        maxChars: 2,
+      }).pipe(Effect.flip),
+    );
+
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* projections.apply(messageEvent(0, `${"Long source. ".repeat(900)}END`));
+    yield* summarize;
+    const ranged = yield* onlySummary;
+    const describe = { ...scope, summaryId: ranged.id };
+    // The old codec accepts a ranged message after stripping its range, but cannot resolve
+    // the new citation key. The transport must prevent this silent misrepresentation too.
+    const unsafe = decodeLegacyRead(encodeSummaryReadWire(yield* service.describe(describe)));
+    if (unsafe.state !== "available") return yield* Effect.die("Expected current ranged evidence");
+    const oldIds = new Set<string>(unsafe.summary.sources.map((source) => source.messageId));
+    assert.isTrue(
+      unsafe.summary.statements.some((statement) =>
+        statement.citations.some((citation) => !oldIds.has(citation)),
+      ),
+    );
+    assertLegacyUpgradeError(
+      yield* rpc[WS_METHODS.conversationSummariesList](scope).pipe(Effect.flip),
+    );
+    assertLegacyUpgradeError(
+      yield* rpc[WS_METHODS.conversationSummariesDescribe](describe).pipe(Effect.flip),
+    );
+    assertLegacyUpgradeError(
+      yield* rpc[WS_METHODS.conversationSummariesExpand](describe).pipe(Effect.flip),
+    );
+    const modern = yield* rpc[WS_METHODS.conversationSummariesExpand]({
+      ...describe,
+      sourceFormat: 2,
+      maxChars: 257,
+    });
+    assert.equal(modern.summary.state, "available");
+    assert.equal(modern.nextOffset, 0);
+    assert.equal(modern.nextTextOffset, 257);
+    assert.isTrue(modern.sources.some((source) => source.ref.range !== undefined));
+    assert.equal(
+      (yield* rpc[WS_METHODS.conversationSummariesList]({ ...scope, sourceFormat: 2 })).summaries
+        .length,
+      1,
+    );
+    assert.equal(
+      (yield* rpc[WS_METHODS.conversationSummariesDescribe]({ ...describe, sourceFormat: 2 }))
+        .state,
+      "available",
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect.each([60_000, 48_000])(
+  "rejects an incomplete legacy expansion page for a %s-character source",
+  (chars) => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seed;
+      const legacy = yield* persistSummary(40, [0, 1]);
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const text = "x".repeat(chars);
+      yield* projections.apply(messageEvent(0, text));
+      const crypto = yield* Digest.Digest;
+      const digest = Hex.encode(
+        yield* crypto.digest(Digest.sha256, new TextEncoder().encode(text)),
+      );
+      const payload = {
+        ...legacy,
+        sources: legacy.sources.map((source, index) =>
+          index === 0 ? { ...source, digest } : source,
+        ),
+      };
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE conversation_summaries SET payload_json = ${yield* encodeSummary(payload)} WHERE summary_id = ${legacy.id}`;
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const rpc = conversationSummariesRpcHandlers(service);
+      const input = { ...scope, summaryId: legacy.id, limit: 2 };
+      const modern = yield* rpc[WS_METHODS.conversationSummariesExpand]({
+        ...input,
+        sourceFormat: 2,
+        maxChars: 48_000,
+      });
+      // At 60K the cursor stays inside the source; at 48K it stops exactly before source 2.
+      // Both decode on an old client, but neither fulfills its requested two-source page.
+      const unsafe = decodeLegacyExpansion(encodeSummaryExpansionWire(modern));
+      assert.equal(unsafe.sources.length, 1);
+      assert.equal(modern.nextOffset, chars === 60_000 ? 0 : 1);
+      assert.equal(modern.nextTextOffset, chars === 60_000 ? 48_000 : 0);
+      assertLegacyUpgradeError(
+        yield* rpc[WS_METHODS.conversationSummariesExpand](input).pipe(Effect.flip),
+      );
     }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
   },
 );
@@ -400,7 +615,7 @@ it.effect("records an unavailable model as a failed pass without publishing a su
   );
   return Effect.gen(function* () {
     yield* seed;
-    yield* summarize;
+    assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
     const result = yield* list;
     assert.deepEqual(result.summaries, []);
     assert.deepInclude(result.lastPass, {
@@ -408,6 +623,459 @@ it.effect("records an unavailable model as a failed pass without publishing a su
       reason: "No model",
       waitingMessages: 10,
     });
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect(
+  "covers every range of a long source and offers it only after all ranges are summarized",
+  () => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seed;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const longText = `${"aaaaaa🧪".repeat(17_000)}TAIL-EXACT-EVIDENCE`;
+      yield* projections.apply(messageEvent(0, longText));
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const first = yield* summarize;
+      const handoff = yield* prepareHandoff(MESSAGE_COUNT);
+      const input = {
+        projectId,
+        handoffs: [handoff],
+        itemIds: new Set(Array.from({ length: 10 }, (_, index) => itemId(index))),
+      };
+      assert.deepEqual(yield* service.forHandoff(input), []);
+      assert.isTrue(first.hasMore);
+      let hasMore: boolean = first.hasMore;
+      for (let pass = 0; pass < 8 && hasMore; pass++) hasMore = (yield* summarize).hasMore;
+      assert.isFalse(hasMore);
+      const ordinary = new Set(Array.from({ length: MESSAGE_COUNT }, (_, index) => rawText(index)));
+      const supplied = model.calls
+        .flatMap((call) => call.messages)
+        .filter((message) => !ordinary.has(message.text));
+      assert.equal(supplied.map((message) => message.text).join(""), longText);
+      assert.isTrue(
+        supplied.every((message) => message.text.length <= 6_000 && message.text.isWellFormed()),
+      );
+      assert.isTrue(
+        model.calls.every(
+          (call) => call.messages.reduce((sum, message) => sum + message.text.length, 0) <= 32_000,
+        ),
+      );
+      const summaries = (yield* list).summaries.flatMap((read) =>
+        read.state === "available" ? [read.summary] : [],
+      );
+      assert.isAbove(summaries.length, 3);
+      const starts = summaries.map((summary) => summary.sources[0]!.range?.start ?? 0);
+      assert.deepEqual(
+        starts,
+        starts.toSorted((a, b) => a - b),
+      );
+      const pagedIds: Array<string> = [];
+      let cursor: string | undefined;
+      do {
+        const page = yield* service.list({
+          ...scope,
+          limit: 2,
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+        pagedIds.push(
+          ...page.summaries.flatMap((read) =>
+            read.state === "available" ? [read.summary.id] : [],
+          ),
+        );
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor !== undefined);
+      assert.deepEqual(
+        pagedIds,
+        summaries.map((summary) => summary.id),
+      );
+      assert.isTrue(
+        summaries.every((summary) =>
+          summary.statements.every((statement) =>
+            statement.citations.every((citation) =>
+              summary.sources.some((source) => conversationSummarySourceKey(source) === citation),
+            ),
+          ),
+        ),
+      );
+      const offers = yield* service.forHandoff(input);
+      assert.equal(offers.length, 1);
+      assert.deepEqual(
+        offers[0]!.summaryIds ?? [],
+        summaries.map((summary) => summary.id),
+      );
+      assert.sameMembers([...offers[0]!.coveredItemIds], [...input.itemIds]);
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect(
+  "keeps scrubbed summaries stale after a source reverts and regenerates their text",
+  () => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seed;
+      yield* summarize;
+      const summary = yield* onlySummary;
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      yield* projections.apply(messageEvent(0, "Changed source"));
+      assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
+      yield* projections.apply(messageEvent(0, rawText(0)));
+      assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
+      yield* summarize;
+      assert.equal(model.calls.length, 2);
+      const regenerated = yield* onlySummary;
+      assert.equal(regenerated.statements[0]!.text, summary.statements[0]!.text);
+      assert.notInclude(regenerated.statements[0]!.text, "Source unavailable");
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("regenerates legacy prefix summaries while keeping their full source recoverable", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seed;
+    yield* summarize;
+    const previous = yield* onlySummary;
+    const text = `${"Legacy text. ".repeat(1_000)}EXACT-TAIL`;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* projections.apply(messageEvent(0, text));
+    const crypto = yield* Digest.Digest;
+    const digest = Hex.encode(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(text)));
+    const legacy = {
+      ...previous,
+      sources: previous.sources.map((source, index) =>
+        index === 0 ? { ...source, digest } : source,
+      ),
+    };
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE conversation_summaries SET payload_json = ${yield* encodeSummary(legacy)} WHERE summary_id = ${legacy.id}`;
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    assert.equal((yield* service.describe({ ...scope, summaryId: legacy.id })).state, "stale");
+    const original = yield* service.expand({
+      ...scope,
+      summaryId: legacy.id,
+      limit: 1,
+      maxChars: 257,
+    });
+    assert.equal(
+      original.sources[0]?.result.state === "available" ? original.sources[0].result.text : null,
+      text.slice(0, 257),
+    );
+    assert.equal(original.nextOffset, 0);
+    assert.equal(original.nextTextOffset, 257);
+    yield* summarize;
+    const replacement = yield* onlySummary;
+    assert.notEqual(replacement.id, legacy.id);
+    assert.isTrue(replacement.sources.some((source) => source.range !== undefined));
+    assert.include(
+      model.calls
+        .at(-1)
+        ?.messages.map((message) => message.text)
+        .join(""),
+      "EXACT-TAIL",
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect(
+  "includes canonical command evidence and invalidates it when command output changes",
+  () => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seed;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const command: Extract<OrchestrationV2TurnItem, { type: "command_execution" }> = {
+        ...item(0),
+        id: TurnItemId.make("test-command"),
+        type: "command_execution",
+        ordinal: 20,
+        input: "vp test run regression.test.ts",
+        output: "3 tests failed: suffix regression",
+        exitCode: 1,
+        completedAt: DateTime.add(at, { minutes: 3, seconds: 30 }),
+      };
+      const event: Extract<OrchestrationV2DomainEvent, { type: "turn-item.updated" }> = {
+        id: EventId.make("test-command-complete"),
+        type: "turn-item.updated",
+        threadId,
+        providerInstanceId: instanceId,
+        occurredAt: at,
+        payload: command,
+      };
+      yield* projections.apply(event);
+      yield* summarize;
+      const supplied = model.calls
+        .flatMap((call) => call.messages)
+        .find((message) => message.role === "tool");
+      assert.include(supplied?.text, "3 tests failed: suffix regression");
+      const summary = yield* onlySummary;
+      const index = summary.sources.findIndex(
+        (source) => source.kind === "turn_item" && source.itemId === command.id,
+      );
+      assert.isAtLeast(index, 0);
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const expansion = yield* service.expand({
+        ...scope,
+        summaryId: summary.id,
+        offset: index,
+        limit: 1,
+      });
+      assert.equal(
+        expansion.sources[0]?.result.state === "available"
+          ? expansion.sources[0].result.text
+          : null,
+        supplied?.text,
+      );
+      yield* projections.apply({
+        ...event,
+        id: EventId.make("test-command-edited"),
+        payload: { ...command, output: "Now different" },
+      });
+      assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
+      assert.deepEqual(
+        (yield* service.expand({ ...scope, summaryId: summary.id, offset: index, limit: 1 }))
+          .sources[0]?.result,
+        { state: "unavailable", reason: "changed" },
+      );
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect(
+  "excludes cancelled queued input from generation and previously generated summaries",
+  () => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seed;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const queued = item(0);
+      if (queued.type !== "user_message") return yield* Effect.die("Expected a user message");
+      yield* projections.apply({
+        id: EventId.make("queued-source-item"),
+        type: "turn-item.updated",
+        threadId,
+        providerInstanceId: instanceId,
+        occurredAt: at,
+        payload: { ...queued, inputIntent: "queued_turn" },
+      });
+      const run: Extract<OrchestrationV2DomainEvent, { type: "run.updated" }> = {
+        id: EventId.make("queued-source-run"),
+        type: "run.updated",
+        threadId,
+        runId,
+        providerInstanceId: instanceId,
+        occurredAt: at,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection: { instanceId, model: "gpt-5" },
+          providerThreadId: null,
+          userMessageId: messageId(0),
+          rootNodeId: NodeId.make("queued-source-root"),
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: at,
+          startedAt: at,
+          completedAt: at,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      };
+      yield* projections.apply(run);
+      yield* summarize;
+      const summary = yield* onlySummary;
+      yield* projections.apply({
+        ...run,
+        id: EventId.make("queued-source-cancelled"),
+        payload: { ...run.payload, status: "cancelled" },
+      });
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
+      assert.deepEqual(
+        (yield* service.expand({ ...scope, summaryId: summary.id, limit: 1 })).sources[0]?.result,
+        { state: "unavailable", reason: "missing" },
+      );
+      yield* summarize;
+      assert.equal(model.calls.length, 2);
+      assert.isTrue(model.calls[1]!.messages.every((message) => message.text !== rawText(0)));
+      const current = (yield* list).summaries.flatMap((read) =>
+        read.state === "available" ? [read.summary] : [],
+      );
+      assert.equal(current.length, 1);
+      assert.equal(current[0]!.sources.length, 9);
+      assert.isFalse(
+        current[0]!.sources.some(
+          (source) => source.kind === "message" && source.messageId === messageId(0),
+        ),
+      );
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("does not offer tool-only evidence from a deleted project", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seedThread(6);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const command: Extract<OrchestrationV2TurnItem, { type: "command_execution" }> = {
+      ...item(0),
+      id: TurnItemId.make("tool-only-command"),
+      type: "command_execution",
+      input: "vp test run",
+      output: "Check output. ".repeat(600),
+      exitCode: 0,
+      completedAt: DateTime.subtract(at, { minutes: 1 }),
+    };
+    yield* projections.apply({
+      id: EventId.make("tool-only-command-completed"),
+      type: "turn-item.updated",
+      threadId,
+      providerInstanceId: instanceId,
+      occurredAt: at,
+      payload: command,
+    });
+    yield* summarize;
+    const summary = yield* onlySummary;
+    assert.isTrue(summary.sources.every((source) => source.kind === "turn_item"));
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const rpc = conversationSummariesRpcHandlers(service);
+    const modern = yield* rpc[WS_METHODS.conversationSummariesList]({ ...scope, sourceFormat: 2 });
+    assert.throws(() => decodeLegacyList(encodeSummaryListWire(modern)));
+    assertLegacyUpgradeError(
+      yield* rpc[WS_METHODS.conversationSummariesList](scope).pipe(Effect.flip),
+    );
+    assertLegacyUpgradeError(
+      yield* rpc[WS_METHODS.conversationSummariesDescribe]({
+        ...scope,
+        summaryId: summary.id,
+      }).pipe(Effect.flip),
+    );
+    assertLegacyUpgradeError(
+      yield* rpc[WS_METHODS.conversationSummariesExpand]({ ...scope, summaryId: summary.id }).pipe(
+        Effect.flip,
+      ),
+    );
+    const evidence = yield* rpc[WS_METHODS.conversationSummariesExpand]({
+      ...scope,
+      summaryId: summary.id,
+      sourceFormat: 2,
+    });
+    assert.isTrue(
+      evidence.sources.every(
+        (source) => source.result.state === "available" && source.result.role === "tool",
+      ),
+    );
+    const input = {
+      projectId,
+      handoffs: [yield* prepareHandoff(6, [command])],
+      itemIds: new Set([command.id]),
+    };
+    assert.equal((yield* service.forHandoff(input)).length, 1);
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    yield* projects.apply({
+      sequence: 1,
+      eventId: EventId.make("summary-project-deleted"),
+      aggregateKind: "project",
+      aggregateId: projectId,
+      occurredAt: DateTime.formatIso(at),
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.deleted",
+      payload: { projectId, deletedAt: DateTime.formatIso(at) },
+    });
+    assert.deepEqual(yield* service.forHandoff(input), []);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect(
+  "searches statements literally and expands source text within a resumable character budget",
+  () => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seed;
+      yield* summarize;
+      const summary = yield* onlySummary;
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      assert.equal((yield* service.list({ ...scope, query: "EXACT TEXT" })).summaries.length, 1);
+      assert.equal((yield* service.list({ ...scope, query: "%" })).summaries.length, 0);
+      assert.equal((yield* service.list({ ...scope, query: "unrelated" })).summaries.length, 0);
+      const emojiOffset = rawText(0).indexOf("🧪");
+      const emoji = yield* service.expand({
+        ...scope,
+        summaryId: summary.id,
+        textOffset: emojiOffset,
+        maxChars: 2,
+      });
+      assert.equal(
+        emoji.sources[0]?.result.state === "available" ? emoji.sources[0].result.text : null,
+        "🧪",
+      );
+      assert.equal(emoji.nextOffset, 0);
+      assert.equal(emoji.nextTextOffset, emojiOffset + 2);
+      const invalid = yield* service
+        .expand({ ...scope, summaryId: summary.id, textOffset: emojiOffset + 1 })
+        .pipe(Effect.flip);
+      assert.equal(invalid.reason, "invalid_cursor");
+      let offset: number | null = 0;
+      let textOffset = 0;
+      const restored = new Map<string, string>();
+      let pages = 0;
+      while (offset !== null && pages < 100) {
+        const page: ConversationSummaryExpansion = yield* service.expand({
+          ...scope,
+          summaryId: summary.id,
+          offset,
+          textOffset,
+          maxChars: 257,
+          limit: 3,
+        });
+        const text = page.sources.flatMap((source) =>
+          source.result.state === "available" ? [source.result.text] : [],
+        );
+        assert.isAtMost(text.join("").length, 257);
+        assert.isTrue(text.every((part) => part.isWellFormed()));
+        for (const source of page.sources)
+          if (source.result.state === "available") {
+            const key = conversationSummarySourceKey(source.ref);
+            restored.set(key, (restored.get(key) ?? "") + source.result.text);
+          }
+        offset = page.nextOffset;
+        textOffset = page.nextTextOffset ?? 0;
+        pages += 1;
+      }
+      assert.isNull(offset);
+      assert.isAbove(pages, 10);
+      for (let index = 0; index < 10; index++)
+        assert.equal(restored.get(messageId(index)), rawText(index));
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("records and retries a source change during model generation", () => {
+  let changeSource: Effect.Effect<void> = Effect.void;
+  const model = scripted(() =>
+    changeSource.pipe(
+      Effect.as({
+        statements: [{ text: "A statement about the prior source.", citations: ["M1"] }],
+      }),
+    ),
+  );
+  return Effect.gen(function* () {
+    yield* seed;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    changeSource = projections
+      .apply(messageEvent(0, "Changed during the model call"))
+      .pipe(Effect.orDie);
+    assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
+    const result = yield* list;
+    assert.deepEqual(result.summaries, []);
+    assert.deepInclude(result.lastPass, { result: "failed", generated: 0, waitingMessages: 10 });
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
@@ -430,6 +1098,28 @@ it.effect("continues coverage and handoff lookup beyond the first 500 summaries"
     assert.deepInclude((yield* list).lastPass, { generated: 0, waitingMessages: 0 });
 
     const service = yield* ConversationSummaries.ConversationSummaries;
+    const sql = yield* SqlClient.SqlClient;
+    const lastId = `summary:${(summaryCount - 1).toString(16).padStart(64, "0")}`;
+    yield* sql`UPDATE conversation_summaries SET payload_json = json_set(payload_json, '$.statements[0].text', 'Summary 500 RÉSUMÉ') WHERE summary_id = ${lastId}`;
+    const unicode = yield* service.list({ ...scope, query: "résumé" });
+    assert.equal(unicode.summaries.length, 1);
+    assert.equal(
+      unicode.summaries[0]?.state === "available" ? unicode.summaries[0].summary.id : null,
+      lastId,
+    );
+    const firstMatch = yield* service.list({ ...scope, query: "SUMMARY 50", limit: 1 });
+    assert.isNotNull(firstMatch.nextCursor);
+    const secondMatch = yield* service.list({
+      ...scope,
+      query: "SUMMARY 50",
+      limit: 1,
+      cursor: firstMatch.nextCursor!,
+    });
+    assert.equal(
+      secondMatch.summaries[0]?.state === "available" ? secondMatch.summaries[0].summary.id : null,
+      lastId,
+    );
+    assert.isNull(secondMatch.nextCursor);
     const handoff = yield* prepareHandoff(messageCount);
     const offered = yield* service.forHandoff({
       projectId,
@@ -817,7 +1507,7 @@ it.effect.each([0, 2])(
       const delivery = yield* deliver(durable);
       yield* delivery.delivered;
       assert.include(delivery.context, `[Conversation summary ${summary.id}`);
-      assert.include(delivery.context, "It is a summary, not the original messages.");
+      assert.include(delivery.context, "It is a summary, not the original evidence.");
       assert.include(delivery.context, "t3_conversation_summary_expand");
       assert.include(delivery.context, fact.content!);
       assert.equal(delivery.context.split("<t3_delivered_knowledge").length - 1, 1);

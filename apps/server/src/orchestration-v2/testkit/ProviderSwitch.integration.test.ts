@@ -1,5 +1,5 @@
 import { vi } from "vite-plus/test";
-import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { historyResponseItems, renderHistory } from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -8,6 +8,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -437,6 +438,12 @@ class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegi
   {},
 ) {}
 
+// Records written before `history` existed carry the rendered transcript in summaryText.
+const legacyHandoffShape = (handoff: OrchestrationV2ContextHandoff) => {
+  const { history, ...legacy } = handoff;
+  return { ...legacy, summaryText: renderHistory(history!.messages, handoff.summaryText) };
+};
+
 describe("orchestration v2 provider switching", () => {
   it.live.each([
     "compact-native",
@@ -819,7 +826,7 @@ describe("orchestration v2 provider switching", () => {
             if (scenario.includes("legacy-replacement")) {
               const recovered = yield* orchestrator.getThreadProjection(threadId);
               const handoff = recovered.contextHandoffs.at(-1)!;
-              const { history: _history, ...legacyHandoff } = handoff;
+              const legacyHandoff = legacyHandoffShape(handoff);
               yield* eventSink.write({
                 events: [
                   {
@@ -979,7 +986,7 @@ describe("orchestration v2 provider switching", () => {
             assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)!.attachments, screenshots);
           }
           if (scenario === "compact-legacy") {
-            const { history: _history, ...legacyHandoff } = handoff;
+            const legacyHandoff = legacyHandoffShape(handoff);
             yield* eventSink.write({
               events: [
                 {
@@ -2516,9 +2523,23 @@ describe("orchestration v2 provider switching", () => {
           (item) => item.type === "user_message" && item.runId === projection.runs[3]?.id,
         );
         assert.isBelow(handoffItem?.ordinal ?? Infinity, queuedUserItem?.ordinal ?? -Infinity);
-        assert.include(
-          handoffItem?.type === "handoff" ? handoffItem.summary : "",
-          "Codex second queued turn complete",
+        const queuedHandoff = projection.contextHandoffs[0]!;
+        assert.equal(
+          handoffItem?.type === "handoff" ? handoffItem.summary : null,
+          queuedHandoff.summaryText,
+        );
+        assert.include(queuedHandoff.summaryText, "Selected 6 intact items; omitted 0 items.");
+        assert.notInclude(queuedHandoff.summaryText, "Codex second queued turn complete");
+        assert.deepEqual(
+          queuedHandoff.history?.messages.map((message) => message.text),
+          [
+            "Prompt 1",
+            "Codex current turn complete",
+            "Prompt 2",
+            "Codex first queued turn complete",
+            "Prompt 3",
+            "Codex second queued turn complete",
+          ],
         );
         assert.include(turns[3]?.text ?? "", "Codex current turn complete");
         assert.include(turns[3]?.text ?? "", "Codex first queued turn complete");
@@ -3475,7 +3496,19 @@ describe("orchestration v2 provider switching", () => {
           (handoff) => handoff.id === projection.runs[1]?.contextHandoffId,
         );
         assert.equal(recoveryHandoff?.strategy, "full_thread_summary");
-        assert.include(recoveryHandoff?.summaryText ?? "", failedPrompt);
+        assert.include(
+          recoveryHandoff?.summaryText ?? "",
+          "Selected 3 intact items; omitted 0 items.",
+        );
+        assert.notInclude(recoveryHandoff?.summaryText ?? "", failedPrompt);
+        assert.deepEqual(
+          recoveryHandoff?.history?.messages.map((message) => [message.kind, message.text]),
+          [
+            ["user_message", failedPrompt],
+            ["assistant_message", "codex response for run 1"],
+            ["error", "Simulated provider failure."],
+          ],
+        );
         if (queueBeforeFailure) {
           const handoffItem = projection.turnItems.find(
             (item) => item.type === "handoff" && item.runId === projection.runs[1]?.id,

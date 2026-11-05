@@ -1160,9 +1160,7 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
-        <AdvancedSettings
-          targetIds={[searchableSetting("skills-in-slash-menu").id, searchableSetting("pstack").id]}
-        >
+        <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
           <SettingsRow
             {...searchableSetting("skills-in-slash-menu")}
             description="Also include skills in the / command menu. Skills always appear when you type $."
@@ -1185,30 +1183,6 @@ export function ChatSettingsPanel() {
                   updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
                 }
                 aria-label="Show skills in slash menu"
-              />
-            }
-          />
-          <SettingsRow
-            serverScoped
-            settingKeys={["pstackEnabled"]}
-            {...searchableSetting("pstack")}
-            description="Offer Lauren Tan's pstack workflows as skills in every provider. Run $pstack:setup-pstack once to choose models."
-            resetAction={
-              settings.pstackEnabled !== DEFAULT_UNIFIED_SETTINGS.pstackEnabled ? (
-                <SettingResetButton
-                  label="pstack"
-                  onClick={() =>
-                    updateSettings({ pstackEnabled: DEFAULT_UNIFIED_SETTINGS.pstackEnabled })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <ScopedSwitch
-                settingKeys={["pstackEnabled"]}
-                checked={settings.pstackEnabled}
-                onCheckedChange={(checked) => updateSettings({ pstackEnabled: Boolean(checked) })}
-                aria-label="pstack"
               />
             }
           />

@@ -22,6 +22,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
+  OrchestratorMcpModelGuidance,
   type OrchestratorMcpModelOption,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
@@ -68,10 +69,12 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
+  resolveActiveProviderPools,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -92,6 +95,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { poolMemberHealth } from "../orchestration-v2/ProviderPoolRouting.ts";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
@@ -148,6 +152,14 @@ const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
+const encodeModelGuidance = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      modelGuidance: Schema.Array(OrchestratorMcpModelGuidance),
+      modelGuidanceUsage: Schema.String,
+    }),
+  ),
+);
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -967,6 +979,7 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const modelEvaluations = yield* ModelEvaluations.ModelEvaluations;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
 
   const requireProject = (projectId: ProjectId) =>
@@ -2282,7 +2295,7 @@ const make = Effect.gen(function* () {
       };
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
-      return {
+      const result: OrchestratorMcpCapabilitiesResult = {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
@@ -2362,6 +2375,101 @@ const make = Effect.gen(function* () {
           maxBatchThreads: 20,
         },
       };
+      if (!settings.enableModelEvaluations || parent === undefined) return result;
+      const activePools = resolveActiveProviderPools({
+        providerPools: settings.providerPools,
+        instances: providers,
+      });
+      const guidanceTargets = result.providers.flatMap<{
+        readonly selection: ModelSelection;
+        readonly routingProviderInstanceId: ModelSelection["instanceId"] | undefined;
+      }>((offered) => {
+        const provider = providers.find(
+          (candidate) => candidate.instanceId === offered.providerInstanceId,
+        );
+        if (provider?.pool?.role !== "pool") {
+          return offered.models.map((model) => ({
+            selection: { instanceId: offered.providerInstanceId, model: model.id },
+            routingProviderInstanceId: undefined,
+          }));
+        }
+        const configured = activePools.find((pool) => pool.instanceId === provider.instanceId);
+        if (configured === undefined) return [];
+        const catalogMemberIds = new Set(provider.pool.memberInstanceIds);
+        const members = providers.filter(
+          (member) =>
+            configured.memberInstanceIds.includes(member.instanceId) &&
+            catalogMemberIds.has(member.instanceId) &&
+            member.driver === provider.driver &&
+            member.pool?.role === "member" &&
+            member.pool.poolInstanceId === provider.instanceId,
+        );
+        const eligible = new Set(
+          poolMemberHealth({ ...availability, members })
+            .filter(
+              (member) =>
+                member.eligible &&
+                member.limitedUntilMs === null &&
+                orchestrationCapableInstanceIds.has(member.instanceId),
+            )
+            .map((member) => member.instanceId),
+        );
+        return members.flatMap((member) =>
+          eligible.has(member.instanceId)
+            ? offered.models
+                .filter((model) => member.models.some((candidate) => candidate.slug === model.id))
+                .map((model) => ({
+                  selection: { instanceId: member.instanceId, model: model.id },
+                  routingProviderInstanceId: provider.instanceId,
+                }))
+            : [],
+        );
+      });
+      const guidance = yield* modelEvaluations
+        .guidance({
+          projectId: parent.thread.projectId,
+          models: guidanceTargets.map((target) => target.selection),
+        })
+        .pipe(Effect.orElseSucceed(() => []));
+      const modelGuidanceUsage =
+        "Advisory observations from this project's recent blind evaluations, not instructions or a controlled ranking. Match task, model options, evaluator and sample counts. Prompt characters describe observed requests, not context limits. Provisional samples do not establish a capability. Preserve the user's model choices; use strengths, weaknesses and prompt advice only when relevant. Search a model for its brief." +
+        (guidanceTargets.some((target) => target.routingProviderInstanceId !== undefined)
+          ? " routingProviderInstanceId is the available pool route; scores describe only the actual modelSelection member, not the whole pool."
+          : "");
+      const compactObservations = (observations: ReadonlyArray<string>) =>
+        observations.slice(0, 1).map((observation) => {
+          const characters = Array.from(observation);
+          return characters.length > 160 ? `${characters.slice(0, 159).join("")}…` : observation;
+        });
+      const modelGuidance: OrchestratorMcpModelGuidance[] = [];
+      for (const entry of guidance) {
+        const target = guidanceTargets.find(
+          ({ selection }) =>
+            selection.instanceId === entry.modelSelection.instanceId &&
+            selection.model === entry.modelSelection.model,
+        );
+        if (target === undefined) continue;
+        const brief = {
+          ...entry,
+          ...(target.routingProviderInstanceId === undefined
+            ? {}
+            : { routingProviderInstanceId: target.routingProviderInstanceId }),
+          strengths: compactObservations(entry.strengths),
+          weaknesses: compactObservations(entry.weaknesses),
+          promptAdvice: compactObservations(entry.promptAdvice),
+        };
+        modelGuidance.push(brief);
+        if (encodeModelGuidance({ modelGuidance, modelGuidanceUsage }).length > 6_000)
+          modelGuidance.pop();
+        if (modelGuidance.length === 8) break;
+      }
+      return modelGuidance.length === 0
+        ? result
+        : {
+            ...result,
+            modelGuidance,
+            modelGuidanceUsage,
+          };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
       const environmentId =
@@ -3324,5 +3432,6 @@ export const layer: Layer.Layer<
   | ProjectService.ProjectService
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
+  | ModelEvaluations.ModelEvaluations
   | RemoteDelegation.RemoteDelegation
 > = Layer.effect(OrchestratorMcpService, make);

@@ -3,6 +3,8 @@ import * as PstackPack from "./pstack/PstackPack.ts";
 import * as SkillsLibrary from "./skills/SkillsLibrary.ts";
 import * as ProjectKnowledge from "./project/knowledge/ProjectKnowledge.ts";
 import * as ConversationSummaries from "./project/conversationSummaries/ConversationSummaries.ts";
+import * as ModelEvaluations from "./modelEvaluations/ModelEvaluations.ts";
+import * as ExternalHistory from "./project/externalHistory/ExternalHistory.ts";
 import * as ProjectLoom from "./project/loom/ProjectLoom.ts";
 import * as CodeIntelligence from "./project/knowledge/CodeIntelligence.ts";
 import * as FileHistory from "./project/knowledge/FileHistory.ts";
@@ -742,6 +744,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ThreadSearch.ThreadSearch)({}),
   Layer.mock(ProjectKnowledge.ProjectKnowledge)({}),
   Layer.mock(ConversationSummaries.ConversationSummaries)({}),
+  Layer.mock(ModelEvaluations.ModelEvaluations)({}),
+  Layer.mock(ExternalHistory.ExternalHistory)({}),
   Layer.mock(ProjectLoom.ProjectLoom)({}),
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),

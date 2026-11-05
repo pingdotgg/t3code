@@ -18,7 +18,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCodeTextGeneration from "./textGeneration.ts";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import type { ProviderTextGenerationRuntime } from "@t3tools/provider-core/server/textGeneration";
 
 const runtimeMock = {
   state: {
@@ -220,7 +220,7 @@ const EXTERNAL_SERVER_WITHOUT_AUTH_OPENCODE_SETTINGS = Schema.decodeSync(OpenCod
 
 function withOpenCodeTextGeneration<A, E, R>(
   settings: OpenCodeSettings,
-  effectFn: (textGeneration: ProviderTextGeneration) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: ProviderTextGenerationRuntime) => Effect.Effect<A, E, R>,
   environment?: NodeJS.ProcessEnv,
 ) {
   return Effect.gen(function* () {
@@ -381,6 +381,34 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         ]);
       }),
     ),
+  );
+
+  it.effect(
+    "rejects blind evaluation before opening a server session with inherited configuration",
+    () =>
+      withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .generateModelEvaluation({
+              cwd: "/isolated-evaluator",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              packet: {
+                scope: "turn",
+                runOutcome: "completed",
+                request: { ref: "U1", text: "Fix the issue." },
+                context: [],
+                evidence: [{ ref: "E1", kind: "assistant", text: "Fixed." }],
+                truncated: false,
+                omittedItems: 0,
+                missingArtifacts: false,
+              },
+            })
+            .pipe(Effect.flip);
+          expect(error.detail).toContain("cannot isolate");
+          expect(textGeneration.supportedOperations).not.toContain("generateModelEvaluation");
+          expect(runtimeMock.state.sessionCreateCalls).toBe(0);
+        }),
+      ),
   );
 
   it.effect("gives up and aborts the session when a prompt never settles", () =>

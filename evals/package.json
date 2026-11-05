@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "model-evaluations": "node --env-file-if-exists=../.env model-evaluations/run.ts",
     "mcp-tool-use": "node --env-file-if-exists=../.env mcp-tool-use/run.ts",
     "mcp-tool-use:trim-capture": "node mcp-tool-use/trim-capture.ts",
     "mcp-tool-use:regrade": "node mcp-tool-use/regrade.ts",

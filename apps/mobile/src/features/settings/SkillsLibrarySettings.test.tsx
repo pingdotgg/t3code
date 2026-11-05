@@ -24,21 +24,8 @@ const { Children, mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("react-native", () => ({
-  View: Children,
-  ScrollView: Children,
-  Linking: {},
-  Pressable: Children,
-  TextInput: () => null,
-  useWindowDimensions: () => ({ fontScale: 1 }),
-}));
-vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
-vi.mock("../../components/ui/Dialog", () => ({}));
-vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
+vi.mock("react-native", () => ({ View: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
-vi.mock("../../components/ui/ControlPill", () => ({ ControlPill: () => null }));
-vi.mock("../../components/ui/Menu", () => ({ Menu: () => null }));
-vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/ListActionRow", () => ({
   ListActionRow: ({
     label,
@@ -55,12 +42,6 @@ vi.mock("../../components/ui/ListActionRow", () => ({
       {label}
     </button>
   ),
-}));
-vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
-vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
-vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
-  useSettingsEnvironmentMenu: () => ({ title: "Filter", items: [] }),
-  SettingsEnvironmentFilterHeader: () => null,
 }));
 vi.mock("./components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: ({
@@ -90,20 +71,8 @@ vi.mock("./components/SettingsSwitchRow", () => ({
     </>
   ),
 }));
-vi.mock("./ProviderAccountSync", () => ({ ProviderAccountSync: () => null }));
-vi.mock("./settings-environment-filter", () => ({
-  useSettingsEnvironmentFilter: () => ({ selectedTargets: mocks.targets }),
-}));
-vi.mock("../../state/presentation", () => ({
-  environmentPresentations: { providersByEnvironmentAtom: { kind: "providers" } },
-}));
-vi.mock("../../state/session", () => ({
-  // Skills management has its own settings permission, independent of provider account access.
-  useEnvironmentsWithScope: () => new Set(),
-}));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: { kind: string; environmentId?: string }) =>
-    atom.kind === "providers" ? new Map() : !mocks.readOnly.has(atom.environmentId!),
+  useAtomValue: (atom: { environmentId: string }) => !mocks.readOnly.has(atom.environmentId),
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
@@ -129,7 +98,17 @@ vi.mock("../../state/query", () => ({
   },
 }));
 
-import { SettingsProviderAccountsRouteScreen } from "./SettingsProviderAccountsRouteScreen";
+import { SkillsLibrarySettings } from "./SkillsLibrarySettings";
+import type { SettingsTarget } from "./settings-environment-filter";
+
+function SkillsLibraries() {
+  return mocks.targets.map((target) => (
+    <SkillsLibrarySettings
+      key={target.environmentId}
+      environment={target as unknown as SettingsTarget}
+    />
+  ));
+}
 
 function environment(environmentId: string, supported = true) {
   return {
@@ -161,14 +140,14 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("mobile skills library", () => {
-  it("can enable and detach the selected environment's library without provider management access, and refresh conflicts", async () => {
+  it("can enable and detach the selected environment's library and refresh conflicts", async () => {
     mocks.status = {
       ...mocks.status,
       conflicts: [
         { name: "review", paths: ["~/.claude/skills/review", "~/.agents/skills/review"] },
       ],
     };
-    act(() => root.render(<SettingsProviderAccountsRouteScreen />));
+    act(() => root.render(<SkillsLibraries />));
     const toggle = container.querySelector<HTMLButtonElement>(
       '[role="switch"][aria-label="Skills library"]',
     );
@@ -190,7 +169,7 @@ describe("mobile skills library", () => {
         settings: { ...target.serverConfig.settings, skillsLibraryEnabled: true },
       },
     }));
-    act(() => root.render(<SettingsProviderAccountsRouteScreen />));
+    act(() => root.render(<SkillsLibraries />));
     const refresh = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "Refresh skills library",
     );
@@ -215,7 +194,7 @@ describe("mobile skills library", () => {
       },
     }));
     mocks.readOnly.add("read-only");
-    act(() => root.render(<SettingsProviderAccountsRouteScreen />));
+    act(() => root.render(<SkillsLibraries />));
     const toggles = container.querySelectorAll<HTMLButtonElement>(
       '[role="switch"][aria-label="Skills library"]',
     );
@@ -243,7 +222,7 @@ describe("mobile skills library", () => {
       },
     }));
     mocks.refresh.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Disk full"))));
-    act(() => root.render(<SettingsProviderAccountsRouteScreen />));
+    act(() => root.render(<SkillsLibraries />));
     const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
     await act(async () => toggle.click());
     mocks.targets = mocks.targets.map((target) => ({
@@ -253,7 +232,7 @@ describe("mobile skills library", () => {
         settings: { ...target.serverConfig.settings, skillsLibraryEnabled: false },
       },
     }));
-    act(() => root.render(<SettingsProviderAccountsRouteScreen />));
+    act(() => root.render(<SkillsLibraries />));
     expect(container.textContent).toContain("Disk full");
     const refresh = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "Refresh skills library",
@@ -269,7 +248,7 @@ describe("mobile skills library", () => {
     "reports an unexpected %s rejection and lets the user retry",
     async (command) => {
       mocks[command].mockRejectedValueOnce(new Error("Connection lost"));
-      act(() => root.render(<SettingsProviderAccountsRouteScreen />));
+      act(() => root.render(<SkillsLibraries />));
       const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
       await act(async () => toggle.click());
       expect(container.textContent).toContain("Connection lost");

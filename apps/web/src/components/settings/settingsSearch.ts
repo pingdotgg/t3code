@@ -134,7 +134,6 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Agents",
     paths: [
       "/settings/providers",
-      "/settings/account-pools",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -463,13 +462,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Suggest new threads",
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: ["split independent topic decision model"],
+    searchTerms: ["zack split independent topic decision model"],
   },
   {
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",
     searchTerms: ["beta folders project tree legacy old classic sidebar"],
+  },
+  {
+    id: "blind-model-evaluations",
+    title: "Blind model evaluations",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [
+      "zack judge score task outcome orchestration learning strengths weaknesses guidance",
+    ],
+  },
+  {
+    id: "model-evaluation-judge",
+    title: "Judge model",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["zack blind evaluation evaluate scorer assessor model provider"],
   },
   {
     id: "boring-sidebar-multiline",
@@ -597,8 +612,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "pstack",
     title: "pstack",
-    to: "/settings/chat",
-    searchTerms: ["lauren tan skills workflows plugin pack architect setup models"],
+    to: "/settings/labs",
+    searchTerms: ["zack lauren tan skills workflows plugin pack architect setup models"],
   },
   {
     id: "composer-rich-text",
@@ -662,16 +677,25 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "assisted-learning",
     title: "Suggest facts from finished runs",
-    to: "/settings/threads",
+    to: "/settings/labs",
     scope: "project-defaults",
-    searchTerms: ["assisted learning project memory knowledge facts extract suggestions model"],
+    searchTerms: [
+      "zack assisted learning project memory knowledge facts extract suggestions model",
+    ],
   },
   {
     id: "conversation-summaries",
     title: "Summarize older messages",
-    to: "/settings/threads",
+    to: "/settings/labs",
     scope: "project-defaults",
-    searchTerms: ["conversation summaries history context handoff fork provider switch model"],
+    searchTerms: ["zack conversation summaries history context handoff fork provider switch model"],
+  },
+  {
+    id: "external-history",
+    title: "External history",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["zack codex native cli app vscode chatgpt export conversation search history"],
   },
   {
     id: "start-from-origin",
@@ -848,7 +872,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Account pools",
     to: "/settings/account-pools",
     searchTerms: [
-      "load balance load balancing failover multiple accounts pool usage limit quota rotate switch claude codex",
+      "zack labs load balance load balancing failover multiple accounts pool usage limit quota rotate switch claude codex",
     ],
     requiresProviderPools: true,
   },
@@ -879,10 +903,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "skills-library",
     title: "Skills library",
-    to: "/settings/providers",
+    to: "/settings/labs",
     scope: "environment-defaults",
     searchTerms: [
-      "shared skills folder agents .agents/skills link claude codex antigravity cursor opencode one set",
+      "zack shared skills folder agents .agents/skills link claude codex antigravity cursor opencode one set",
     ],
   },
   {
@@ -1027,10 +1051,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "agent-github-reads",
     title: "Send agents' GitHub reads through T3",
-    to: "/settings/source-control",
+    to: "/settings/labs",
     scope: "environment-defaults",
     searchTerms: [
-      "gh cli claude codex agents pull request status checks failures feedback rate limit gate block T3_GH_DIRECT",
+      "zack source control gh cli claude codex agents pull request status checks failures feedback rate limit gate block T3_GH_DIRECT",
     ],
   },
   {
@@ -1293,6 +1317,9 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  "/settings/threads",
+  "/settings/chat",
+  "/settings/providers",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.

@@ -25,24 +25,35 @@ summaries turned on, a handoff is a budgeted selection, not a summary.
 
 With conversation summaries on, older history that would not fit in a handoff can arrive as short
 summaries instead of being left out. The newest messages still arrive word for word. Each summary is
-labelled as model-written and names the messages it was written from, so the agent can open the
-exact originals.
+labelled as model-written and names the messages and tool evidence it was written from, so the
+agent can open the exact originals. Long messages and command output are covered in sections,
+including the text at the end.
 
-Turn on **Summarize older messages** in **Settings → Threads**, for one project or every project,
+Turn on **Summarize older messages** in **Settings → Labs → Zack**, for one project or every project,
 or from **Conversation summaries** in a thread's details on web and desktop. It is off by default
 because each summary costs one call to your text generation model. After a turn completes, T3 Code
-summarizes settled stretches of up to 24 older messages, a few per turn, so a long thread catches up
-over several turns.
+summarizes settled older history in small batches and continues in the background until it catches
+up. You do not need to send more messages to finish an existing backlog.
 The most recent messages are never summarized.
 Turning summaries off stops both generation and their use in new handoffs. Existing summaries stay
 available to inspect and can be used again if you turn the setting back on.
 
 **Conversation summaries** in a thread's details (or thread actions on mobile) lists the thread's
-summaries and lets you open the messages behind each one. It also shows what the last pass did,
-including why it wrote nothing or failed and how many older messages are still waiting. If a summarized message is edited or removed,
+summaries and lets you search their statements and open the evidence behind each one. Large sources
+open in bounded pages that can be continued without skipping the rest of the current source. It
+also shows what the last pass did, including why it wrote nothing or failed and how many older
+sources are still waiting. If a summarized source is edited or removed,
 or the thread is deleted or archived, that summary is marked outdated, its text is hidden, and agents
-no longer receive it; the changed stretch is summarized again from the current messages. Summaries
+no longer receive it; the changed stretch is summarized again from the current history. Summaries
 do not replace a provider's own compaction.
+
+For remote connections, update both the client and server to inspect tool evidence and the complete
+text of long sources. Search is available when the server supports it. Older clients can still read compatible
+message summaries, but may report that summaries could not be read when an update is needed.
+
+To search conversations created outside T3, open **External history** from this view or from
+**Settings → Labs → Zack**. [External history](./external-history.md) can read the selected server's
+Codex conversations and configured ChatGPT exports without importing another transcript copy.
 
 ## Context limits
 

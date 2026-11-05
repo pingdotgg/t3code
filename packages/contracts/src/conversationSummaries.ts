@@ -1,17 +1,18 @@
 import * as Schema from "effect/Schema";
 import {
   IsoDateTime,
-  MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   KnowledgeMessageRef,
+  KnowledgeDigest,
   KnowledgeSourceUnavailableReason,
-  ProjectKnowledgeSource,
 } from "./projectKnowledge.ts";
 
 /** Derived from the thread and the exact source identities, so one range has one summary. */
@@ -21,23 +22,78 @@ export const ConversationSummaryId = Schema.String.check(
 export type ConversationSummaryId = typeof ConversationSummaryId.Type;
 
 export const CONVERSATION_SUMMARY_MAX_SOURCES = 24;
+export const CONVERSATION_SUMMARY_MAX_EXPANSION_CHARS = 48_000;
+
+/** UTF-16 offsets into the complete canonical source; end is exclusive. */
+export const ConversationSummarySourceRange = Schema.Struct({
+  start: NonNegativeInt,
+  end: PositiveInt,
+  total: PositiveInt,
+});
+
+export const ConversationSummarySourceRef = Schema.Union([
+  Schema.Struct({
+    ...KnowledgeMessageRef.fields,
+    range: Schema.optionalKey(ConversationSummarySourceRange),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("turn_item"),
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    digest: KnowledgeDigest,
+    range: Schema.optionalKey(ConversationSummarySourceRange),
+  }),
+]);
+export type ConversationSummarySourceRef = typeof ConversationSummarySourceRef.Type;
+
+/** Identity of the complete source, independent of which part a leaf summarizes. */
+export const conversationSummarySourceIdentity = (source: ConversationSummarySourceRef): string =>
+  source.kind === "message" ? `message:${source.messageId}` : `turn_item:${source.itemId}`;
+
+/** Citation key; old whole-message citations retain their original message id. */
+export const conversationSummarySourceKey = (source: ConversationSummarySourceRef): string => {
+  const id = source.kind === "message" ? source.messageId : `turn_item:${source.itemId}`;
+  return source.range === undefined
+    ? id
+    : `range:${JSON.stringify([source.kind, id, source.range.start, source.range.end, source.range.total])}`;
+};
+
+export const ConversationSummarySourceResult = Schema.Union([
+  Schema.Struct({
+    state: Schema.Literal("available"),
+    source: ConversationSummarySourceRef,
+    text: Schema.String,
+    title: Schema.String,
+    role: Schema.Literals(["user", "assistant", "tool"]),
+    createdAt: IsoDateTime,
+    archived: Schema.Boolean,
+    /** Offset and total length within this source's recorded range. */
+    textOffset: Schema.optionalKey(NonNegativeInt),
+    totalChars: Schema.optionalKey(NonNegativeInt),
+  }),
+  Schema.Struct({ state: Schema.Literal("unavailable"), reason: KnowledgeSourceUnavailableReason }),
+]);
+export type ConversationSummarySourceResult = typeof ConversationSummarySourceResult.Type;
 
 export const ConversationSummaryStatement = Schema.Struct({
   text: Schema.Trim.check(Schema.isNonEmpty(), Schema.isMaxLength(600)),
-  /** Message ids from the summary's own sources. */
-  citations: Schema.Array(MessageId).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+  /** conversationSummarySourceKey values from the summary's own sources. */
+  citations: Schema.Array(Schema.String.check(Schema.isNonEmpty())).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(8),
+  ),
 });
 export type ConversationSummaryStatement = typeof ConversationSummaryStatement.Type;
 
 /**
- * An immutable leaf summary of consecutive finalized messages. Its text is only served while
+ * An immutable leaf summary of consecutive finalized source ranges. Its text is only served while
  * every source still matches its digest.
  */
 export const ConversationSummary = Schema.Struct({
   id: ConversationSummaryId,
   projectId: ProjectId,
   threadId: ThreadId,
-  sources: Schema.Array(KnowledgeMessageRef).check(
+  sources: Schema.Array(ConversationSummarySourceRef).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(CONVERSATION_SUMMARY_MAX_SOURCES),
   ),
@@ -47,6 +103,8 @@ export const ConversationSummary = Schema.Struct({
   ),
   modelSelection: ModelSelection,
   createdAt: IsoDateTime,
+  /** Once derived text is scrubbed, a source reverting does not restore that text. */
+  scrubbed: Schema.optionalKey(Schema.Boolean),
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 
@@ -81,6 +139,8 @@ export const ConversationSummaryListInput = Schema.Struct({
   ...Scope,
   cursor: Schema.optionalKey(ConversationSummaryId),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 }))),
+  /** Case-insensitive literal substring search over generated statements. */
+  query: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(256))),
 });
 export type ConversationSummaryListInput = typeof ConversationSummaryListInput.Type;
 
@@ -104,16 +164,25 @@ export const ConversationSummaryExpandInput = Schema.Struct({
   limit: Schema.optionalKey(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: CONVERSATION_SUMMARY_MAX_SOURCES })),
   ),
+  textOffset: Schema.optionalKey(NonNegativeInt),
+  /** Maximum returned source text across the page, measured in UTF-16 code units. */
+  maxChars: Schema.optionalKey(
+    Schema.Int.check(
+      Schema.isBetween({ minimum: 2, maximum: CONVERSATION_SUMMARY_MAX_EXPANSION_CHARS }),
+    ),
+  ),
 });
 export type ConversationSummaryExpandInput = typeof ConversationSummaryExpandInput.Type;
 
 export const ConversationSummaryExpansion = Schema.Struct({
   summary: ConversationSummaryRead,
-  /** The canonical message as it is now, or why it is unavailable; never stored text. */
+  /** Canonical source ranges as they are now, or why unavailable; never stored text. */
   sources: Schema.Array(
-    Schema.Struct({ ref: KnowledgeMessageRef, result: ProjectKnowledgeSource }),
+    Schema.Struct({ ref: ConversationSummarySourceRef, result: ConversationSummarySourceResult }),
   ),
   nextOffset: Schema.NullOr(NonNegativeInt),
+  /** Continue at nextOffset and nextTextOffset together, including within one source. */
+  nextTextOffset: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
 });
 export type ConversationSummaryExpansion = typeof ConversationSummaryExpansion.Type;
 

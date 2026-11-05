@@ -8,6 +8,7 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,6 +20,7 @@ import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -32,6 +34,7 @@ import {
 
 export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
 
   return (
     <SettingsScreen title="Labs">
@@ -42,7 +45,14 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <ThreadSplitSettingsSection />
+        <SettingsSection title="Zack">
+          <SettingsRow
+            icon="sparkles"
+            label="Zack settings"
+            value="Memory, summaries, skills, thread suggestions, evaluations"
+            onPress={() => navigation.navigate("SettingsZack")}
+          />
+        </SettingsSection>
         <BetaSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
@@ -296,7 +306,7 @@ function LegacySettingsSection() {
   );
 }
 
-function ThreadSplitSettingsSection() {
+export function ThreadSplitSettingsSection() {
   const { environments } = useEnvironments();
   const connected = environments.filter(
     (environment) => environment.connection.phase === "connected",

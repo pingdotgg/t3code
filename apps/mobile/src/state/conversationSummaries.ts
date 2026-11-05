@@ -13,3 +13,10 @@ export const conversationSummariesSupportedAtom = Atom.family((environmentId: En
         .conversationSummaries === true,
   ),
 );
+export const conversationSummarySearchSupportedAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+        .conversationSummarySourceFormat === 2,
+  ),
+);

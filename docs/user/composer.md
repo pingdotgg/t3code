@@ -149,7 +149,7 @@ existing facts that look like duplicates or possible contradictions so you can
 compare them; it never merges or replaces them on its own.
 
 To have T3 suggest facts for you, turn on **Suggest facts from finished runs** under
-**Memory health** in Project memory, or in **Settings → Threads** for one project or
+**Memory health** in Project memory, or in **Settings → Labs → Zack** for one project or
 every project.
 It is off by default because each finished run in that project costs one call to
 your text generation model. After a run finishes, fails, or is stopped, T3 reads
@@ -311,7 +311,7 @@ and your next message starts the agent again with the new setup.
 
 ### One skills library for every provider
 
-Turn on **Settings → Providers → Skills library** (under Advanced on web and desktop) to keep one set of
+Turn on **Settings → Labs → Zack → Skills library** to keep one set of
 skills for every provider and account on that environment. T3 Code moves each skill
 folder from `~/.claude/skills`, `~/.codex/skills`, and Antigravity's user skill folders
 into `~/.agents/skills` and links it back, and links every skill there into Claude's
@@ -470,7 +470,7 @@ Android opens a compatible installed file viewer.
 
 ## Suggestions to start a fresh thread
 
-In **Settings → Labs**, enable **Suggest new threads** for an environment
+In **Settings → Labs → Zack**, enable **Suggest new threads** for an environment
 and configure its local decision-model endpoint. Suggestions are off by default.
 When an idle thread has a text-only draft that appears independent of its earlier
 work, T3 can offer to start a new thread with that draft. Nothing is sent until

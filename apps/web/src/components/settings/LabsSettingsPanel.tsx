@@ -5,7 +5,6 @@ import { managedCapabilityDenial } from "@t3tools/contracts";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -14,13 +13,14 @@ import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { ZackSettings } from "./ZackSettings";
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
 export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
+      <ZackSettings />
       <SettingsSection id="beta" title="Beta">
-        <ThreadSplitSuggestionsRow />
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
@@ -203,49 +203,5 @@ function SimlockHostsRow() {
         />
       }
     />
-  );
-}
-
-function ThreadSplitSuggestionsRow() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  return (
-    <>
-      <SettingsRow
-        serverScoped
-        {...searchableSetting("thread-split-suggestions")}
-        settingKeys={["threadSplitSuggestionsEnabled"]}
-        description="Suggest a fresh thread when a draft appears independent of this conversation. Suggestions never send messages or split threads automatically. Requires a local decision model on the connected server."
-        control={
-          <ScopedSwitch
-            settingKeys={["threadSplitSuggestionsEnabled"]}
-            checked={settings.threadSplitSuggestionsEnabled}
-            onCheckedChange={(checked) =>
-              updateSettings({ threadSplitSuggestionsEnabled: Boolean(checked) })
-            }
-            aria-label="Suggest new threads"
-          />
-        }
-      />
-      <SettingsRow
-        serverScoped
-        title="Local decision model endpoint"
-        settingKeys={["threadSplitModelEndpoint"]}
-        description="Loopback HTTP endpoint on this server for a Jev-compatible decision model. Leave empty to disable inference."
-        control={
-          <Input
-            key={settings.threadSplitModelEndpoint}
-            defaultValue={settings.threadSplitModelEndpoint}
-            placeholder="http://127.0.0.1:8080"
-            aria-label="Local decision model endpoint"
-            onBlur={(event) => {
-              const value = event.target.value.trim();
-              if (value !== settings.threadSplitModelEndpoint)
-                updateSettings({ threadSplitModelEndpoint: value });
-            }}
-          />
-        }
-      />
-    </>
   );
 }

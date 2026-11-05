@@ -44,16 +44,19 @@ import {
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
-import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { ModelEvaluationSettings } from "./ModelEvaluationSettings";
+import { SkillsLibrarySettings } from "./SkillsLibrarySettings";
+import { AutoSettleSettingsRows, ThreadSplitSettingsSection } from "./ThreadSettingsSections";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
-type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
+type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance" | "zack";
 
 const PAGE_TITLES: Record<SettingsPage, string> = {
   threads: "Threads",
   "source-control": "Source control",
   worktrees: "Worktrees",
   maintenance: "Maintenance",
+  zack: "Zack",
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
@@ -62,8 +65,6 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "defaultRuntimeMode",
     "responseStreamingMode",
     "enableAgentBrowserAccess",
-    "enableAssistedLearning",
-    "enableConversationSummaries",
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
   ],
@@ -76,6 +77,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNameInstructions",
   ],
   maintenance: ["continueThreadsAfterServerUpdate"],
+  zack: ["enableAssistedLearning", "enableConversationSummaries"],
 };
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
@@ -176,6 +178,10 @@ export function SettingsWorktreesRouteScreen() {
 
 export function SettingsEnvironmentMaintenanceRouteScreen() {
   return <ServerSettingsDetail page="maintenance" />;
+}
+
+export function SettingsZackRouteScreen() {
+  return <ServerSettingsDetail page="zack" />;
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
@@ -414,6 +420,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
                   </SettingsSection>
+                  <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+                </>
+              ) : null}
+
+              {props.page === "zack" ? (
+                <>
                   <SettingsSection title="Project memory">
                     <SettingsSwitchRow
                       icon="brain"
@@ -440,6 +452,31 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableConversationSummaries: value })}
                     />
                   </SettingsSection>
+                  {!projectSelected &&
+                  selectedTargets.some(
+                    (target) => target.serverConfig.environment.capabilities.externalHistory === 1,
+                  ) ? (
+                    <SettingsSection title="External history">
+                      {selectedTargets
+                        .filter(
+                          (target) =>
+                            target.serverConfig.environment.capabilities.externalHistory === 1,
+                        )
+                        .map((target) => (
+                          <SettingsRow
+                            key={target.environmentId}
+                            icon="magnifyingglass"
+                            label={target.label}
+                            value="Search Codex and ChatGPT exports"
+                            onPress={() =>
+                              navigation.navigate("SettingsExternalHistory", {
+                                environmentId: target.environmentId,
+                              })
+                            }
+                          />
+                        ))}
+                    </SettingsSection>
+                  ) : null}
                   <SettingsSection title="Skills">
                     <SettingsSwitchRow
                       icon="square.grid.2x2"
@@ -454,7 +491,18 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ pstackEnabled: value })}
                     />
                   </SettingsSection>
-                  <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+                  {selectedTargets
+                    .filter(
+                      (target) =>
+                        target.serverConfig.environment.capabilities.skillsLibrary === true,
+                    )
+                    .map((target) => (
+                      <SettingsSection key={target.environmentId} title={target.label}>
+                        <SkillsLibrarySettings environment={target} />
+                      </SettingsSection>
+                    ))}
+                  <ThreadSplitSettingsSection />
+                  <ModelEvaluationSettings />
                 </>
               ) : null}
 

@@ -1,5 +1,6 @@
 import { disabledLayer } from "../pstack/PstackPack.testkit.ts";
 import * as ProjectKnowledge from "../project/knowledge/ProjectKnowledge.ts";
+import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
@@ -96,8 +97,10 @@ import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
-const layerPlatformTest = Layer.merge(
-  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+const layerPlatformTest = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  Layer.mock(ModelEvaluations.ModelEvaluations)({ enqueueRun: () => Effect.void }),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),

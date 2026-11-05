@@ -3,6 +3,7 @@ import {
   CheckpointId,
   CheckpointScopeId,
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
   NodeId,
   ProjectId,
   ProviderSessionId,
@@ -38,6 +39,12 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { AssistedLearningRunner } from "../project/knowledge/assistedLearningSchedule.ts";
+import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
+import { modelEvaluationEffects } from "../modelEvaluations/modelEvaluationSchedule.ts";
+import {
+  ConversationSummaryPassError,
+  ConversationSummaryRuntime,
+} from "../project/conversationSummaries/conversationSummarySchedule.ts";
 import {
   DeliveryScrubRunner,
   deliveryScrubEffect,
@@ -88,6 +95,102 @@ it.effect("coalesces delivery scrub roots and resumes bounded pages after proces
 );
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
+
+it.effect(
+  "continues bounded summary passes without a new turn and resumes after process loss",
+  () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const root = {
+        id: "effect:conversation-summary.generate:run:summary-pages",
+        commandId: CommandId.make("command:effect:conversation-summary.generate:run:summary-pages"),
+        threadId,
+        request: {
+          type: "conversation-summary.generate",
+          runId: RunId.make("run:summary-pages"),
+        },
+      } as const;
+      const runner = Layer.succeed(ConversationSummaryRuntime, {
+        summarizeThread: () =>
+          Ref.updateAndGet(calls, (count) => count + 1).pipe(
+            Effect.map((count) => ({ hasMore: count < 3 })),
+          ),
+        forHandoff: () => Effect.succeed([]),
+      });
+      const dependencies = Layer.merge(
+        EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+        Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, { execute: () => Effect.void }),
+      );
+      const layer = EffectWorker.layer.pipe(
+        Layer.provideMerge(dependencies),
+        Layer.provide(runner),
+      );
+      yield* Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* outbox.enqueue([root, root]);
+        assert.isTrue(yield* worker.runMaintenanceOnce);
+        const continuation = yield* outbox.get(`${root.id}:pass:1`);
+        assert.isTrue(Option.isSome(continuation));
+        const claimed = yield* outbox.claimNext({ workerId: "lost-worker", lane: "maintenance" });
+        assert.isTrue(Option.isSome(claimed));
+        assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 1, cancelled: 0 });
+        assert.equal(yield* worker.drain(), 2);
+        assert.equal(yield* Ref.get(calls), 3);
+        assert.isTrue(Option.isNone(yield* outbox.get(`${root.id}:pass:3`)));
+        yield* outbox.enqueue([root]);
+        assert.equal(yield* worker.drain(), 0);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("retries a failed summary pass before scheduling its continuation", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make(0);
+    const root = {
+      id: "effect:conversation-summary.generate:run:summary-retry",
+      commandId: CommandId.make("command:effect:conversation-summary.generate:run:summary-retry"),
+      threadId,
+      request: {
+        type: "conversation-summary.generate",
+        runId: RunId.make("run:summary-retry"),
+      },
+    } as const;
+    const runner = Layer.succeed(ConversationSummaryRuntime, {
+      summarizeThread: ({ runId }) =>
+        Ref.updateAndGet(calls, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 1
+              ? Effect.fail(new ConversationSummaryPassError({ runId, cause: "model unavailable" }))
+              : Effect.succeed({ hasMore: count === 2 }),
+          ),
+        ),
+      forHandoff: () => Effect.succeed([]),
+    });
+    const dependencies = Layer.merge(
+      EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+      Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, { execute: () => Effect.void }),
+    );
+    const layer = EffectWorker.layer.pipe(Layer.provideMerge(dependencies), Layer.provide(runner));
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* outbox.enqueue([root]);
+      assert.isTrue(yield* worker.runMaintenanceOnce);
+      const retrying = yield* outbox.get(root.id);
+      assert.isTrue(Option.isSome(retrying));
+      if (Option.isSome(retrying)) {
+        assert.equal(retrying.value.status, "pending");
+        assert.equal(retrying.value.attemptCount, 1);
+      }
+      assert.isTrue(Option.isNone(yield* outbox.get(`${root.id}:pass:1`)));
+      assert.equal(yield* worker.drain(), 0);
+      yield* TestClock.adjust(100);
+      assert.equal(yield* worker.drain(), 2);
+      assert.equal(yield* Ref.get(calls), 3);
+    }).pipe(Effect.provide(layer));
+  }),
+);
 
 it.effect.each(["turn", "maintenance"] as const)(
   "wakes the %s lane when the other lane is waiting first",
@@ -201,50 +304,123 @@ const providerTurnId = ProviderTurnId.make("provider-turn:effect-worker-restart"
 const attemptId = RunAttemptId.make("run-attempt:effect-worker-restart");
 const runId = RunId.make("run:effect-worker-restart");
 
-it.effect("starts a follow-up turn while assisted learning is held", () =>
-  Effect.gen(function* () {
-    const entered = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<void>();
-    const events = yield* Ref.make<ReadonlyArray<string>>([]);
-    const outboxLayer = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
-    const executorLayer = layerExecutorFor({ events }).pipe(
-      Layer.provide(
-        Layer.succeed(AssistedLearningRunner, {
-          extractRun: () =>
-            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+it.effect(
+  "replays model evaluations once on the maintenance lane without holding a later turn",
+  () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const job = modelEvaluationEffects({
+        threadId,
+        runId,
+        runOutcome: "completed",
+        settings: { ...DEFAULT_SERVER_SETTINGS, enableModelEvaluations: true },
+      })[0]!;
+      const executor = layerExecutorFor({
+        events,
+        modelEvaluations: {
+          evaluateRun: (request) =>
+            Ref.update(events, (value) => [
+              ...value,
+              `judge:${request.runId}:${request.runOutcome}`,
+            ]).pipe(
+              Effect.andThen(Deferred.succeed(entered, undefined)),
+              Effect.andThen(Deferred.await(release)),
+            ),
+        },
+      });
+      const layer = EffectWorker.layer.pipe(
+        Layer.provideMerge(
+          Layer.merge(
+            EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            executor,
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* outbox.enqueue([job]);
+        assert.isTrue(
+          Option.isSome(yield* outbox.claimNext({ workerId: "lost-judge", lane: "maintenance" })),
+        );
+        assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 1, cancelled: 0 });
+        yield* worker.runMaintenanceOnce.pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* outbox.enqueue([
+          {
+            id: "effect:after-judge",
+            commandId: CommandId.make("command:after-judge"),
+            threadId,
+            request: { type: "provider-turn.start", runId },
+          },
+        ]);
+        assert.isTrue(yield* worker.runTurnOnce);
+        assert.isFalse(yield* Deferred.isDone(release));
+        yield* Deferred.succeed(release, undefined);
+        yield* outbox.awaitSettled(job.id);
+        yield* outbox.enqueue([job]);
+        assert.equal(yield* worker.drain(), 0);
+        assert.deepEqual(yield* Ref.get(events), [`judge:${runId}:completed`, "start"]);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect.each(["project-knowledge.extract", "conversation-summary.generate"] as const)(
+  "starts a follow-up turn while %s is held",
+  (maintenance) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const outboxLayer = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
+      const hold = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const runners = Layer.merge(
+        Layer.succeed(AssistedLearningRunner, { extractRun: () => hold }),
+        Layer.succeed(ConversationSummaryRuntime, {
+          summarizeThread: () => hold.pipe(Effect.as({ hasMore: false })),
+          forHandoff: () => Effect.succeed([]),
         }),
-      ),
-    );
-    const dependencies = Layer.merge(outboxLayer, executorLayer);
-    const layer = EffectWorker.layer.pipe(Layer.provideMerge(dependencies));
-    yield* Effect.gen(function* () {
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      yield* outbox.enqueue([
-        {
-          id: "effect:held-learning",
-          commandId: CommandId.make("command:held-learning"),
-          threadId,
-          request: { type: "project-knowledge.extract", runId, runOutcome: "completed" },
-        },
-      ]);
-      yield* worker.runMaintenanceOnce.pipe(Effect.forkScoped);
-      yield* Deferred.await(entered);
-      yield* outbox.enqueue([
-        {
-          id: "effect:follow-up",
-          commandId: CommandId.make("command:follow-up"),
-          threadId,
-          request: { type: "provider-turn.start", runId: RunId.make("run:follow-up") },
-        },
-      ]);
-      assert.isTrue(yield* worker.runTurnOnce);
-      assert.deepEqual(yield* Ref.get(events), ["start"]);
-      assert.isFalse(yield* Deferred.isDone(release));
-      yield* Deferred.succeed(release, undefined);
-      yield* outbox.awaitSettled("effect:held-learning");
-    }).pipe(Effect.provide(layer));
-  }),
+      );
+      const dependencies = Layer.merge(outboxLayer, layerExecutorFor({ events }));
+      const layer = EffectWorker.layer.pipe(
+        Layer.provideMerge(dependencies),
+        Layer.provide(runners),
+      );
+      yield* Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* outbox.enqueue([
+          {
+            id: "effect:held-maintenance",
+            commandId: CommandId.make("command:held-maintenance"),
+            threadId,
+            request:
+              maintenance === "project-knowledge.extract"
+                ? { type: maintenance, runId, runOutcome: "completed" }
+                : { type: maintenance, runId },
+          },
+        ]);
+        yield* worker.runMaintenanceOnce.pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* outbox.enqueue([
+          {
+            id: "effect:follow-up",
+            commandId: CommandId.make("command:follow-up"),
+            threadId,
+            request: { type: "provider-turn.start", runId: RunId.make("run:follow-up") },
+          },
+        ]);
+        assert.isTrue(yield* worker.runTurnOnce);
+        assert.deepEqual(yield* Ref.get(events), ["start"]);
+        assert.isFalse(yield* Deferred.isDone(release));
+        yield* Deferred.succeed(release, undefined);
+        yield* outbox.awaitSettled("effect:held-maintenance");
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 it.effect.each(["provider-turn.start", "thread-title.generate"] as const)(
@@ -345,6 +521,7 @@ function layerExecutorFor(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
+  readonly modelEvaluations?: Partial<ModelEvaluations.ModelEvaluations["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
@@ -425,6 +602,10 @@ function layerExecutorFor(input: {
     Layer.provide(
       Layer.mergeAll(
         layerDependencies,
+        Layer.mock(ModelEvaluations.ModelEvaluations)({
+          enqueueRun: () => Effect.void,
+          ...input.modelEvaluations,
+        }),
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
