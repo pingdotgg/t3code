@@ -104,7 +104,7 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
-  // Streamed windows outlive a failed probe; some setups never get a successful probe.
+  // Probes can fail permanently (org-disabled nonessential traffic); keep streamed windows.
   if (
     probed?.unavailable?.reason === "probeFailed" &&
     published &&

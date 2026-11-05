@@ -298,16 +298,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
-    const nextRank = readRank(next.limits);
-    const previousRank = readRank(previous.limits);
-    const winner =
-      nextRank === previousRank
-        ? fresher
-          ? next
-          : previous
-        : nextRank > previousRank
-          ? next
-          : previous;
+    const byRank = readRank(next.limits) - readRank(previous.limits);
+    const winner = byRank > 0 || (byRank === 0 && fresher) ? next : previous;
     const creditSource = creditSources.get(key);
     // A hub e-mail names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
@@ -633,7 +625,6 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
-/** Clean read (2) beats a failed probe that still holds streamed windows (1) beats no windows (0). */
 function readRank(limits: ServerProviderUsageLimits): number {
   if (limitsNotice(limits) !== null) return 0;
   return limits.unavailable ? 1 : 2;
