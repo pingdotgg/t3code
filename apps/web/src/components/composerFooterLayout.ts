@@ -46,7 +46,6 @@ export function shouldUseCompactComposerPrimaryActions(
 export interface RestingComposerControlsMeasurement {
   gap: number;
   naturalFixedWidth: number;
-  minimumFixedWidth: number;
   blockWidths: readonly number[];
   overflowWidth: number;
   iconOnlyBlockWidths?: readonly number[];
@@ -86,7 +85,7 @@ export function resolveRestingComposerControlsMinimumWidth(
   return restingComposerControlsWidth(
     input,
     input.blockWidths.length,
-    input.iconOnlyFixedWidth ?? input.minimumFixedWidth,
+    input.iconOnlyFixedWidth ?? input.naturalFixedWidth,
   );
 }
 
@@ -107,16 +106,14 @@ function restingComposerControlsSteps(input: RestingComposerControlsMeasurement)
   const traitsStep = iconSteps + traitsSteps;
   const labelSteps = traitsStep + pickerSteps;
   const lastStep = labelSteps + input.blockWidths.length;
-  const traitsSavedWidth = input.naturalFixedWidth - (input.traitsIconOnlyFixedWidth ?? 0);
-  const widthAtStep = (step: number, minimum = false) => {
+  const widthAtStep = (step: number) => {
     const pickerIconOnly = pickerSteps > 0 && step > traitsStep;
     const traitsIconOnly = traitsSteps > 0 && step > iconSteps;
-    const labeledPickerWidth = minimum ? input.minimumFixedWidth : input.naturalFixedWidth;
     const fixedWidth = pickerIconOnly
       ? input.iconOnlyFixedWidth!
       : traitsIconOnly
-        ? labeledPickerWidth - traitsSavedWidth
-        : labeledPickerWidth;
+        ? input.traitsIconOnlyFixedWidth!
+        : input.naturalFixedWidth;
     return restingComposerControlsWidth(
       input,
       Math.max(0, step - labelSteps),
@@ -173,11 +170,11 @@ export function resolveRestingComposerControlsLayout(
   }
   const hiddenCount = Math.max(0, step - labelSteps);
   const iconOnlyCount = Math.min(step, iconSteps);
-  const minimumWidth = widthAtStep(step, true);
+  const width = widthAtStep(step);
   const visible =
     previous && !previous.visible
-      ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
-      : minimumWidth <= hostWidth;
+      ? width <= hostWidth - RESTING_CONTROLS_SLACK_PX
+      : width <= hostWidth;
   return {
     hiddenCount,
     ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}),

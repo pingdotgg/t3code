@@ -73,7 +73,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     const lockedRow = (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-2 font-medium text-muted-foreground text-xs sm:h-5.5",
+          "inline-flex h-7 max-w-full shrink-0 items-center gap-1.5 border border-transparent px-2 font-medium text-muted-foreground text-xs sm:h-5.5",
           unavailableTone && "text-warning-foreground",
         )}
         data-composer-context-control
@@ -113,7 +113,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           render={
             <ComposerSelectControl
               size="xs"
-              className="min-w-0 max-w-full"
+              className="max-w-full shrink-0"
               aria-label="Run on"
               data-composer-shortcut="composer.host"
               data-composer-context-control

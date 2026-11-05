@@ -81,11 +81,6 @@ function providerModelPickerNaturalWidth(picker: HTMLElement, scale: number): nu
   );
 }
 
-function providerModelPickerMinimumWidth(picker: HTMLElement): number {
-  const minWidth = Number.parseFloat(getComputedStyle(picker).minWidth) || 0;
-  return minWidth + elementInlineMarginWidth(picker);
-}
-
 function controlBlockWidths(
   block: HTMLElement,
   scale: number,
@@ -153,12 +148,6 @@ export function measureRestingComposerControls(
   return {
     gap,
     naturalFixedWidth,
-    minimumFixedWidth:
-      (picker
-        ? providerModelPickerMinimumWidth(picker)
-        : elementOuterWidth(leadingControl, scale)) +
-      separatorAndGapWidth +
-      fixedNatural,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow, scale) : 0,

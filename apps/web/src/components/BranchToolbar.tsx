@@ -74,6 +74,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
+import { contextStripGroupWidth } from "./contextStripMeasurement";
 import {
   resolveRestingComposerControlsMinimumWidth,
   resolveRestingComposerControlsNarrowestWidth,
@@ -796,24 +797,6 @@ function useStripCompaction(): readonly [
         stripWidth -
         (Number.parseFloat(stripStyle.paddingInlineStart) || 0) -
         (Number.parseFloat(stripStyle.paddingInlineEnd) || 0);
-      const contentWidth = (parent: Element): number => {
-        const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
-        let width = 0;
-        let counted = 0;
-        for (const child of parent.children) {
-          if (!(child instanceof HTMLElement)) continue;
-          if (child.offsetWidth === 0) continue;
-          const style = getComputedStyle(child);
-          const position = style.position;
-          if (position === "absolute" || position === "fixed") continue;
-          width +=
-            child.offsetWidth +
-            (Number.parseFloat(style.marginInlineStart) || 0) +
-            (Number.parseFloat(style.marginInlineEnd) || 0);
-          counted += 1;
-        }
-        return width + gap * Math.max(0, counted - 1);
-      };
       const stripGap = Number.parseFloat(stripStyle.columnGap) || 0;
       let needed = 0;
       let labelsNeeded = 0;
@@ -832,7 +815,7 @@ function useStripCompaction(): readonly [
           );
           continue;
         }
-        const width = contentWidth(child);
+        const width = contextStripGroupWidth(child);
         if (width <= 1) continue;
         groups += 1;
         needed += width;

@@ -17,7 +17,6 @@ describe("composer footer collapse order", () => {
   const controls = {
     gap: 2,
     naturalFixedWidth: 148,
-    minimumFixedWidth: 110,
     traitsIconOnlyFixedWidth: 118,
     iconOnlyFixedWidth: 56,
     blockWidths: [58],
@@ -84,6 +83,12 @@ describe("composer footer collapse order", () => {
         const items = collapsed(state);
         const step = items.filter(Boolean).length;
         expect(items).toEqual(items.map((_, index) => index < step));
+        if (!state.controls.pickerIconOnly) {
+          const hostWidth = width - chipsWidth(state.strip) - stripGap;
+          expect(
+            resolveRestingComposerControlsLayout({ ...controls, hostWidth }).pickerIconOnly,
+          ).toBe(false);
+        }
         if (steps.at(-1) !== step) steps.push(step);
       }
       return steps;
@@ -106,7 +111,6 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
   const base = {
     gap: 4,
     naturalFixedWidth: 149,
-    minimumFixedWidth: 105,
     blockWidths: [60, 140],
     overflowWidth: 24,
   };
@@ -131,7 +135,6 @@ describe("progressive composer controls", () => {
   const measurement = {
     gap: 4,
     naturalFixedWidth: 140,
-    minimumFixedWidth: 80,
     blockWidths: [80, 140],
     iconOnlyBlockWidths: [40, 60],
     overflowWidth: 24,
@@ -160,7 +163,6 @@ describe("resolveRestingComposerControlsLayout with icon-only controls", () => {
   const tray = {
     gap: 2,
     naturalFixedWidth: 115,
-    minimumFixedWidth: 52,
     iconOnlyFixedWidth: 34,
     blockWidths: [80, 99],
     iconOnlyBlockWidths: [30, 30],
