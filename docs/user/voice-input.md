@@ -24,10 +24,13 @@ substitutes another environment.
 ## Set up a model
 
 The first time you dictate, T3 Code offers to download the recommended English
-model to the chosen environment. **Settings → Voice → Transcription models**
-lists every model with its languages and size, lets you download, switch, or
-delete them, and chooses whether the environment transcribes on its GPU or CPU
-and how long it keeps the model in memory after use. With hardware set to
+model to the chosen environment. In **Settings → Voice → Transcription**, select
+the languages you dictate in to compare models that support all of them.
+Accuracy shows how often the model got words or characters wrong in each
+language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
+**All languages** to browse the full catalog. Filtering does not switch your model.
+
+**Advanced** controls GPU or CPU use and when an idle model is unloaded. With hardware set to
 **Auto**, a recording that fails on the GPU is retried once on that same
 environment's CPU; a GPU you picked yourself reports the error instead. Nothing
 is ever retried on another environment. Models marked **Live preview** show
@@ -97,10 +100,10 @@ the model hears the cue as a dictionary hint.
 
 ## Test and troubleshoot
 
-**Settings → Voice → Test** has two checks that are deliberately different.
-**Test microphone** records up to ten seconds and plays it back in your browser;
+In **Settings → Voice**, **Test microphone** beside the microphone selector
+records up to ten seconds and plays it back in your browser;
 the audio stays on this device and is never transcribed, so silent playback
-points at the microphone. **Test model** dictates into a scratch box through the
+points at the microphone. **Test model** on the selected model shows a transcript using the
 same environment, language, and dictionary as the composer, but skips transcript
 cleanup even when it is on, so you see what the model heard. Browser recording
 needs HTTPS or localhost and microphone permission; for a remote server over

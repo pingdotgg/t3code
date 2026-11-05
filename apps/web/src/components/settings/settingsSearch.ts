@@ -561,7 +561,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "speech-models",
     title: "Transcription models",
     to: "/settings/voice",
-    searchTerms: ["speech voice stt download whisper parakeet canary moonshine gpu unload"],
+    searchTerms: [
+      "speech voice stt download whisper parakeet canary moonshine accuracy speed benchmark languages",
+    ],
+  },
+  {
+    id: "speech-hardware",
+    title: "Transcription hardware and model unloading",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
   },
   {
     id: "microphone-test",

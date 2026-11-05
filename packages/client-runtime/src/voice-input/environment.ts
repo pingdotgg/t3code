@@ -86,14 +86,19 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
   );
 };
 
-export const getEnvironmentSpeechModels = (prepared: PreparedConnection) =>
-  request({
+export const getEnvironmentSpeechModels = (
+  prepared: PreparedConnection,
+  includeBenchmarks = false,
+) => {
+  const query = includeBenchmarks ? { benchmarks: "1" as const } : {};
+  return request({
     group: "voice",
     prepared,
     method: "GET",
-    path: (urls) => urls.models(),
-    run: ({ client, headers }) => client.models({ headers }),
+    path: (urls) => urls.models({ query }),
+    run: ({ client, headers }) => client.models({ headers, query }),
   });
+};
 
 export const downloadEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
