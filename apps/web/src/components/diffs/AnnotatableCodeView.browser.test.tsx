@@ -1,6 +1,11 @@
-import type { CodeViewDiffItem, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
+import type {
+  CodeViewDiffItem,
+  CodeViewLineSelection,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { StrictMode, type ComponentProps } from "react";
+import { StrictMode, useState, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -75,6 +80,28 @@ function file(
   };
 }
 
+function SelectableCodeView(props: {
+  files: ReturnType<typeof file>[];
+  codeViewKey: string;
+  pendingFiles: FileDiffMetadata[];
+}) {
+  const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
+  return (
+    <AnnotatableCodeView
+      {...props}
+      selectedLines={selectedLines}
+      onSelectedLinesChange={setSelectedLines}
+      sectionId="unstaged"
+      sectionTitle="Uncommitted"
+      composerDraftTarget={target}
+      options={{}}
+      renderHeaderFilenameSuffix={() => null}
+      renderHeaderPrefix={() => null}
+      onRevealSearchMatch={() => {}}
+    />
+  );
+}
+
 function view(
   files: ReturnType<typeof file>[],
   codeViewKey = "initial",
@@ -82,18 +109,7 @@ function view(
 ) {
   return (
     <StrictMode>
-      <AnnotatableCodeView
-        codeViewKey={codeViewKey}
-        files={files}
-        pendingFiles={pendingFiles}
-        sectionId="unstaged"
-        sectionTitle="Uncommitted"
-        composerDraftTarget={target}
-        options={{}}
-        renderHeaderFilenameSuffix={() => null}
-        renderHeaderPrefix={() => null}
-        onRevealSearchMatch={() => {}}
-      />
+      <SelectableCodeView codeViewKey={codeViewKey} files={files} pendingFiles={pendingFiles} />
     </StrictMode>
   );
 }

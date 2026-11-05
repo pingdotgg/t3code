@@ -75,6 +75,8 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
   if (isSurfaceLauncherKey(event)) return false;
+  // The Diff panel reads letters as review keys, bound or not.
+  if (eventPathContainsSelector(event, "[data-diff-panel]")) return false;
 
   return true;
 }

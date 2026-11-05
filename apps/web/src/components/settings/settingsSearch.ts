@@ -565,6 +565,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
   },
   {
+    id: "diff-auto-advance-on-viewed",
+    title: "Auto-advance after marking viewed",
+    to: "/settings/diffs",
+    searchTerms: ["viewed review next unviewed file jump keyboard"],
+  },
+  {
     id: "diff-layout",
     title: "Diff layout",
     to: "/settings/diffs",
