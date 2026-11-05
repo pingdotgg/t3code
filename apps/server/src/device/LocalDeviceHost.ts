@@ -168,7 +168,14 @@ const androidSdk = Effect.gen(function* () {
     !explicit && platform === "linux" && (yield* HostProcess.Architecture) === "arm64";
   if (preferPath) {
     const sdk = yield* fromPath;
-    if (sdk) return sdk;
+    if (sdk) {
+      if (sdk.emulator) return sdk;
+      for (const root of candidates) {
+        const candidate = yield* inspect(root);
+        if (candidate?.emulator) return { ...candidate, adb: true, adbPath: sdk.adbPath };
+      }
+      return sdk;
+    }
   }
   for (const root of candidates) {
     const sdk = yield* inspect(root);

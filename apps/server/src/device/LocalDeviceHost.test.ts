@@ -310,10 +310,22 @@ describe("Android SDK availability", () => {
       explicit: undefined,
     },
     { resolved: "/usr/bin/adb", root: null, explicit: undefined },
+    {
+      resolved: "/usr/bin/adb",
+      root: "/test/Android/Sdk",
+      explicit: undefined,
+      standardEmulator: true,
+    },
+    {
+      resolved: "/usr/lib/android-sdk/platform-tools/adb",
+      root: "/test/Android/Sdk",
+      explicit: undefined,
+      standardEmulator: true,
+    },
     { resolved: "/usr/bin/adb", root: "/test/Android/Sdk", explicit: "/test/Android/Sdk" },
   ])(
     "selects ARM Linux adb at $resolved with explicit SDK $explicit",
-    ({ resolved, root, explicit }) =>
+    ({ resolved, root, explicit, standardEmulator }) =>
       Effect.gen(function* () {
         const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
           Effect.provideService(HostProcess.Environment, {
@@ -332,6 +344,7 @@ describe("Android SDK availability", () => {
                     "/usr/bin/adb",
                     "/usr/lib/android-sdk/platform-tools/adb",
                     "/test/Android/Sdk/platform-tools/adb",
+                    ...(standardEmulator ? ["/test/Android/Sdk/emulator/emulator"] : []),
                   ].includes(file),
                 ),
               realPath: () => Effect.succeed(resolved),
@@ -343,6 +356,7 @@ describe("Android SDK availability", () => {
           root,
           adb: true,
           adbPath: explicit ? `${explicit}/platform-tools/adb` : resolved,
+          emulator: standardEmulator ?? false,
         });
       }),
   );
