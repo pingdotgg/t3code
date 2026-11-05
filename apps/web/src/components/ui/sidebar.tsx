@@ -629,6 +629,7 @@ function SidebarInset({
       className={cn(
         "relative flex min-w-0 w-full flex-1 flex-col",
         variant === "pane" && "bg-background surface-grain",
+        "[[data-panel-animations=true]_&]:transition-[margin-inline-start] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
         // The inset pane (pen mSaSF) on the window chrome: 12px from the window
         // and from the sidebar's content, centered on the chrome row at the top.
         // It stretches in the flex wrapper, so the route's own height yields.
