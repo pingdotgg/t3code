@@ -64,6 +64,7 @@ import {
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type {
+  ProviderChangeRequestSummary,
   ProviderFileStats,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -390,7 +391,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly removeAgentCreditsOnMerge?: boolean;
-    }) => Effect.Effect<void, GitLabPullRequestCliError>;
+    }) => Effect.Effect<ProviderChangeRequestSummary | void, GitLabPullRequestCliError>;
 
     readonly updateMergeRequest: (input: {
       readonly cwd: string;
@@ -1655,12 +1656,23 @@ export const make = Effect.gen(function* () {
         // no flag for is asked of GitLab directly through the same `api` passthrough the rest of
         // this module writes with.
         if (input.action === "disable-auto-merge") {
-          return yield* api({
+          const result = yield* api({
             cwd: input.cwd,
             host: input.host,
             path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/cancel_merge_when_pipeline_succeeds`,
             method: "POST",
-          }).pipe(Effect.asVoid);
+          });
+          // The other actions run `glab mr`, which prints prose rather than the merge request.
+          const decoded = decodeMergeRequestDetailJson(result.stdout.trim());
+          if (Result.isFailure(decoded)) return;
+          // The decoder fills absent counts with zeros, which would be guesses here.
+          const {
+            additions: _additions,
+            deletions: _deletions,
+            changedFiles: _changedFiles,
+            ...summary
+          } = decoded.success;
+          return summary;
         }
         const executeMr = (subcommand: string, ...flags: ReadonlyArray<string>) =>
           gitlab.execute({
