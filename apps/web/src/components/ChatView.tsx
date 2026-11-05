@@ -59,7 +59,7 @@ import {
   type AssistantCitation,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
-  isSideChatThread,
+  isAnySideChatThread,
   orchestrationV2WorktreePending,
   type EnvironmentId,
   type MessageId,
@@ -1250,10 +1250,7 @@ export default function ChatView(props: ChatViewProps) {
     serverConfig !== null && supportsLessonSideChats(serverConfig.environment);
   // Neither an upstream side chat (`lineage.sideChat`) nor its embedded view is a lesson.
   const isLessonThread =
-    !embedded &&
-    activeThreadShell !== null &&
-    activeThreadShell.lineage.sideChat !== true &&
-    !isSideChatThread(activeThreadShell);
+    !embedded && activeThreadShell !== null && !isAnySideChatThread(activeThreadShell);
   const lessonSideChatsOffered = lessonSideChatsSupported && isLessonThread;
   const lessonSideChats = useLessonSideChats({
     lessonRef: isLessonThread ? activeThreadRef : null,

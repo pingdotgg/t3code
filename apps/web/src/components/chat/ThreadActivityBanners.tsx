@@ -1,6 +1,6 @@
 import {
   type EnvironmentId,
-  isSideChatThread,
+  isAnySideChatThread,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
   type ThreadId,
@@ -51,9 +51,7 @@ export function childInputNowItem(input: {
       <MessageCircleIcon className="text-info-foreground" />
     ),
     title: childThreadInputsTitle(childThreadInputs),
-    waitingLabel: childThreadInputs.every(
-      (child) => child.lineage.sideChat === true || isSideChatThread(child),
-    )
+    waitingLabel: childThreadInputs.every((child) => isAnySideChatThread(child))
       ? "Side chat waiting"
       : "Subagent waiting",
     description: childThreadInputs.map((child, index) => (

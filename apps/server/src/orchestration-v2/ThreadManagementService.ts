@@ -31,7 +31,7 @@ import {
   type OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
-  isSideChatThread,
+  isAnySideChatThread,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ProviderInstanceId,
@@ -416,7 +416,6 @@ export interface ThreadManagementServiceShape {
     >,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSubagentThreadIds"];
-  readonly listActiveSideChatThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSideChatThreadIds"];
   readonly countThreads: Orchestrator.OrchestratorV2["Service"]["countThreads"];
   readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
   readonly listOlderSettledThreads: Orchestrator.OrchestratorV2["Service"]["listOlderSettledThreads"];
@@ -806,10 +805,8 @@ const make = Effect.gen(function* () {
             // Side chats of either kind are the user's panels; agents never list them.
             .filter(
               (thread) =>
-                !isSideChatThread(thread) &&
-                (input.includeSubagents
-                  ? thread.lineage.sideChat !== true
-                  : isListedThreadLineage(thread.lineage)),
+                !isAnySideChatThread(thread) &&
+                (input.includeSubagents ? true : isListedThreadLineage(thread.lineage)),
             )
             .toSorted(
               (left, right) =>
@@ -1534,7 +1531,6 @@ const make = Effect.gen(function* () {
     getAgentAwarenessSnapshot: orchestrator.getAgentAwarenessSnapshot,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
-    listActiveSideChatThreadIds: orchestrator.listActiveSideChatThreadIds,
     countThreads: orchestrator.countThreads,
     listActiveShellIndex: orchestrator.listActiveShellIndex,
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,

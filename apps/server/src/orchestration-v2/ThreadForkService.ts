@@ -1,6 +1,6 @@
 import {
   ContextTransferId,
-  isSideChatThread,
+  isAnySideChatThread,
   OrchestrationV2Actor,
   OrchestrationV2AppThread,
   OrchestrationV2ContextSourcePoint,
@@ -181,8 +181,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
       const { sourceRun } = input;
       const sourceLineage = input.sourceProjection.thread.lineage;
       // T3 Learn side chats count too; Orchestrator's side-chat fork lock order relies on it.
-      const sourceIsSideChat =
-        sourceLineage.sideChat === true || isSideChatThread(input.sourceProjection.thread);
+      const sourceIsSideChat = isAnySideChatThread(input.sourceProjection.thread);
       // A task a linked environment delegated here is a subagent of a remote thread.
       if (
         input.sideChat &&

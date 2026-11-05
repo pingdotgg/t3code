@@ -353,6 +353,7 @@ describe("v2 thread shell lists", () => {
     });
     const sideChat = sideChatOf("side-chat", lesson);
     const nested = sideChatOf("nested", sideChat);
+    const sideChats = threads.sideChatsAtom({ environmentId, threadId: lesson.id });
     const setThreads = (shells: ReadonlyArray<OrchestrationV2ThreadShell>, sequence: number) =>
       registry.set(snapshotAtom(environmentId), {
         ...v2ShellSnapshot,
@@ -365,9 +366,11 @@ describe("v2 thread shell lists", () => {
     const disposeNavigation = registry.mount(navigation);
     const disposeLesson = registry.mount(lessonShell);
     const disposeInputs = registry.mount(inputs);
+    const disposeSideChats = registry.mount(sideChats);
     try {
       setThreads([lesson, { ...sideChat, pendingRuntimeRequest: asking("command") }, nested], 1);
       expect(registry.get(navigation).map((thread) => thread.id)).toEqual([lesson.id]);
+      expect(registry.get(sideChats).map((thread) => thread.id)).toEqual([sideChat.id]);
       expect(registry.get(inputs).map((thread) => thread.id)).toEqual([sideChat.id]);
       expect(childThreadInputsTitle(registry.get(inputs))).toBe("Side chat needs approval");
       expect(registry.get(lessonShell)?.pendingSubagentRequest).toBeNull();
@@ -429,6 +432,7 @@ describe("v2 thread shell lists", () => {
       expect(childThreadInputsTitle(registry.get(inputs))).toBe("2 threads need input");
     } finally {
       disposeInputs();
+      disposeSideChats();
       disposeLesson();
       disposeNavigation();
       registry.dispose();

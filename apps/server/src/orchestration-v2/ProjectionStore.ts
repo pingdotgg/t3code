@@ -516,10 +516,6 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<ThreadId>,
     ProjectionStoreV2Error
   >;
-  readonly listActiveSideChatThreadIds: () => Effect.Effect<
-    ReadonlyArray<ThreadId>,
-    ProjectionStoreV2Error
-  >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
@@ -7216,26 +7212,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         FROM orchestration_v2_projection_threads
         WHERE deleted_at IS NULL
           AND json_extract(payload_json, '$.archivedAt') IS NULL
-          AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+          AND (
+            json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            OR json_extract(payload_json, '$.sideChat') IS NOT NULL
+          )
       `;
         return rows.map((row) => ThreadId.make(row.thread_id));
       },
       Effect.mapError(shellSnapshotReadError),
     );
 
-    const listActiveSideChatThreadIds = Effect.fn("ProjectionStore.listActiveSideChatThreadIds")(
-      function* () {
-        const rows = yield* sql<{ readonly thread_id: string }>`
-        SELECT thread_id
-        FROM orchestration_v2_projection_threads
-        WHERE deleted_at IS NULL
-          AND json_extract(payload_json, '$.archivedAt') IS NULL
-          AND json_extract(payload_json, '$.sideChat') IS NOT NULL
-      `;
-        return rows.map((row) => ThreadId.make(row.thread_id));
-      },
-      Effect.mapError(shellSnapshotReadError),
-    );
     const countThreads = Effect.fn("ProjectionStore.countThreads")(function* () {
       const rows = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
@@ -7494,7 +7480,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getShellSnapshot: readOnReader(getShellSnapshot),
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
-      listActiveSideChatThreadIds: readOnReader(listActiveSideChatThreadIds),
       countThreads: readOnReader(countThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       readShellSnapshot: readOnReader(readShellSnapshot),

@@ -321,7 +321,6 @@ it.live.each(["thread", "shell"] as const)(
           ensureLegacyTranscript: () => Effect.void,
           getShellSnapshot: () => Effect.die("shell resume must not load a full snapshot"),
           listActiveSubagentThreadIds: () => Effect.succeed([]),
-          listActiveSideChatThreadIds: () => Effect.succeed([]),
           streamStoredEventsFrom: (
             input: Parameters<
               ThreadManagement.ThreadManagementService["Service"]["streamStoredEventsFrom"]
@@ -470,7 +469,6 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
         ),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           listActiveSubagentThreadIds: () => Effect.succeed([]),
-          listActiveSideChatThreadIds: () => Effect.succeed([]),
           getShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
             Effect.suspend(() => {
               shellReads.push(options?.threadIds);
@@ -1280,7 +1278,6 @@ it.effect.each(["thread", "shell"] as const)(
           listActiveShellIndex: () => Effect.die("snapshot"),
           readShellSnapshot: () => Effect.die("snapshot"),
           listActiveSubagentThreadIds: () => Effect.succeed([]),
-          listActiveSideChatThreadIds: () => Effect.succeed([]),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
