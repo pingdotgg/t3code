@@ -547,28 +547,28 @@ function useSidebarThreads(input: {
     ? workingThreads
     : collapsedRows(workingThreads);
   const visibleActiveThreads = activeSectionVisible ? activeThreads : EMPTY_THREADS;
-  const projectFolders =
+  const allProjectFolders =
     folderGroups === null
       ? null
-      : !activeSectionVisible
-        ? []
-        : groupSidebarThreadsByProject(folderGroups, activeThreads, keepEmpty).map((folder) => {
-            const collapsed = !resolveProjectExpanded(
-              projectExpandedById,
-              sidebarFolderExpansionKeys(folder.group),
-            );
-            return {
-              group: folder.group,
-              collapsed,
-              // A closed folder still shows the open thread, and hints at the rest.
-              threads: collapsed
-                ? routeThreadOnly(folder.threads, routeRowThreadKey)
-                : folder.threads,
-              hiddenThreads: collapsed
-                ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
-                : EMPTY_THREADS,
-            };
-          });
+      : groupSidebarThreadsByProject(folderGroups, activeThreads, keepEmpty).map((folder) => {
+          const collapsed = !resolveProjectExpanded(
+            projectExpandedById,
+            sidebarFolderExpansionKeys(folder.group),
+          );
+          return {
+            group: folder.group,
+            collapsed,
+            // A closed folder still shows the open thread, and hints at the rest.
+            threads: collapsed
+              ? routeThreadOnly(folder.threads, routeRowThreadKey)
+              : folder.threads,
+            hiddenThreads: collapsed
+              ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
+              : EMPTY_THREADS,
+          };
+        });
+  const projectFolders =
+    activeSectionVisible || allProjectFolders === null ? allProjectFolders : [];
   const orderedThreads = [
     ...pinnedThreads,
     ...(projectFolders === null
@@ -584,9 +584,9 @@ function useSidebarThreads(input: {
       ? orderedThreads
       : [
           ...pinnedThreads,
-          ...(projectFolders !== null && activeSectionVisible
-            ? projectFolders.flatMap((folder) => folder.threads)
-            : activeThreads),
+          ...(allProjectFolders === null
+            ? activeThreads
+            : allProjectFolders.flatMap((folder) => folder.threads)),
           ...workingThreads,
           ...snoozedThreads,
           ...visibleSettledThreads,
