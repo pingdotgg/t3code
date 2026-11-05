@@ -64,6 +64,8 @@ type SecretSourceInputProps = Omit<ComponentProps<typeof SecretInput>, "value" |
   readonly value: string | SecretReference;
   readonly sources: ReadonlyArray<SecretSource>;
   readonly onSecretChange: (secret: SecretReference | undefined) => void;
+  /** Whether the selected source and committed field can be saved or used. */
+  readonly onValidityChange?: (valid: boolean) => void;
   /** Places the parts in the caller's layout; `source` is null when there is nothing to pick. */
   readonly children?: (parts: {
     readonly source: ReactNode;
@@ -76,6 +78,7 @@ export function SecretSourceInput({
   value,
   sources,
   onSecretChange,
+  onValidityChange,
   children,
   ...rest
 }: SecretSourceInputProps) {
@@ -102,10 +105,12 @@ export function SecretSourceInput({
           setRejectedReference(null);
           if (value === STORED_VALUE || value === null) {
             setPendingProvider(null);
+            onValidityChange?.(true);
             if (secret !== undefined) onSecretChange(undefined);
             return;
           }
           const next = value as SecretProviderId;
+          onValidityChange?.(next === secret?.provider);
           setPendingProvider(next === secret?.provider ? null : next);
         }}
       >
@@ -150,6 +155,7 @@ export function SecretSourceInput({
           onCommit={(next) => {
             if (next.trim().length === 0) {
               setRejectedReference(null);
+              onValidityChange?.(pendingProvider === null && secret !== undefined);
               if (pendingProvider === null && secret !== undefined) onSecretChange(undefined);
               return;
             }
@@ -159,10 +165,12 @@ export function SecretSourceInput({
               definition?.isReference(decoded.value.reference) === false
             ) {
               setRejectedReference(next);
+              onValidityChange?.(false);
               return;
             }
             setRejectedReference(null);
             setPendingProvider(null);
+            onValidityChange?.(true);
             onSecretChange(decoded.value);
           }}
           autoComplete="off"

@@ -257,7 +257,7 @@ export function QueuedRunsControl({
               aria-posinset={position + 1}
               aria-setsize={items.length}
               aria-current={isEditing ? "true" : undefined}
-              className="group/queued flex w-full flex-col items-end gap-1 transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
+              className="group/queued flex w-full flex-col items-end gap-1"
             >
               <QueuedMessage
                 environmentId={props.environmentId}

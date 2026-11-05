@@ -112,10 +112,7 @@ const generate = (
     });
     return { algorithm, privateKey, publicKey };
   }
-  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync(
-    "ed25519",
-    pemEncoding,
-  );
+  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ed25519", pemEncoding);
   return { algorithm, privateKey, publicKey };
 };
 
