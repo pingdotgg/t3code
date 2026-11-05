@@ -15,9 +15,16 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutWorkspaceLeadTab,
+  type LayoutTab,
   type LayoutWorkspace,
 } from "./layoutModel";
+import { useLayoutTabLabel } from "./PaneTabs";
 import { useLayoutStore, type LayoutHint as LayoutHintState } from "./layoutStore";
+
+const NO_LEAD_TAB: LayoutTab = {
+  id: "none",
+  content: { kind: "launcher", id: "none", context: null },
+};
 
 const ARROWS: Record<string, string> = { Left: "←", Right: "→", Up: "↑", Down: "↓" };
 
@@ -235,18 +242,16 @@ function TerminalHintPill({
 }
 
 /**
- * A workspace's name: the one the user gave it, else its first thread's
- * title, else what it is.
+ * A workspace's name: the one the user gave it, else the title its focused
+ * tab shows in the tab strip.
  */
 function useLayoutWorkspaceName(workspace: LayoutWorkspace | null): string {
   const lead = workspace ? selectLayoutWorkspaceLeadTab(workspace) : null;
-  const target = lead?.content.kind === "chat" ? lead.content.target : null;
-  const thread = useThreadShell(target?.kind === "server" ? target.threadRef : null);
+  const label = useLayoutTabLabel(lead ?? NO_LEAD_TAB);
   if (!workspace) return "Workspace";
   if (workspace.name) return workspace.name;
-  if (workspace.columns.length === 0) return "Empty workspace";
-  if (target?.kind === "draft") return "New thread";
-  return thread?.title ?? "Workspace";
+  if (!lead) return "Empty workspace";
+  return label.title;
 }
 
 /**
