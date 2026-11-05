@@ -69,13 +69,27 @@ describe("Pi orchestration prompt section", () => {
       ],
     },
   ])("appends guidance $name", async ({ events }) => {
-    const bridge = await loadMcpBridge();
+    const bridge = await loadMcpBridge({ browserToolsAvailable: true });
     const hook = bridge.handlers.get("before_agent_start")!;
     for (const event of events) {
       const result = await hook(event, { ui: { notify: assert.fail } });
       assert.isDefined(result);
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
+      assert.include(result!.systemPrompt, "## T3 Code browser");
+      const withoutBrowser = await loadMcpBridge();
+      assert.notInclude(
+        (await withoutBrowser.handlers.get("before_agent_start")!(event, {
+          ui: { notify: assert.fail },
+        }))!.systemPrompt,
+        "## T3 Code browser",
+      );
+      const sections = {};
+      await hook(
+        { systemPrompt: "base", systemPromptOptions: { sections } },
+        { ui: { notify: assert.fail } },
+      );
+      assert.include(JSON.stringify(sections), "## T3 Code browser");
     }
   });
 });

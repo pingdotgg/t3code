@@ -385,34 +385,43 @@ const approval = (turnId: string) => ({
 vi.mock("node:fs/promises", { spy: true });
 
 describe("MuseAdapterV2", () => {
-  it.effect("connects the thread's MCP credential on native start and resume", () =>
-    Effect.gen(function* () {
-      yield* (yield* McpProviderSessions.McpProviderSessions).set({
-        environmentId: EnvironmentId.make("test-environment"),
-        threadId: THREAD_ID,
-        providerSessionId: "test-session",
-        providerInstanceId: INSTANCE_ID,
-        endpoint: "http://127.0.0.1:43210/mcp",
-        authorizationHeader: "Bearer thread-scoped-test-token",
-        browserToolsAvailable: true,
-      });
-      for (const nativeId of [undefined, "saved-native-session"]) {
-        const fake = yield* makeFakeMuse();
-        fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
-        yield* makeHarness(fake, INSTANCE_ID, nativeId);
-        const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
-        assert.deepStrictEqual(call.params.config, {
-          mcpServers: {
-            "t3-code": {
-              transport: "streamableHttp",
-              mode: "optional",
-              url: "http://127.0.0.1:43210/mcp",
-              headers: { Authorization: "Bearer thread-scoped-test-token" },
-            },
-          },
+  it.effect.each([false, true])(
+    "connects the thread's MCP credential and gates browser guidance (%s) on native start and resume",
+    (browser) =>
+      Effect.gen(function* () {
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: THREAD_ID,
+          providerSessionId: "test-session",
+          providerInstanceId: INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43210/mcp",
+          authorizationHeader: "Bearer thread-scoped-test-token",
+          browserToolsAvailable: browser,
+          capabilities: new Set(browser ? ["preview"] : []),
         });
-      }
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+        for (const nativeId of [undefined, "saved-native-session"]) {
+          const fake = yield* makeFakeMuse();
+          fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+          const harness = yield* makeHarness(fake, INSTANCE_ID, nativeId);
+          const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
+          assert.deepStrictEqual(call.params.config, {
+            mcpServers: {
+              "t3-code": {
+                transport: "streamableHttp",
+                mode: "optional",
+                url: "http://127.0.0.1:43210/mcp",
+                headers: { Authorization: "Bearer thread-scoped-test-token" },
+              },
+            },
+          });
+          yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread));
+          const started = yield* fake.takeCall("turn/start");
+          assert.equal(
+            JSON.stringify(started.params.input).includes("## T3 Code browser"),
+            browser,
+          );
+        }
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("selects the runtime mode's permission profile on native start and resume", () =>
