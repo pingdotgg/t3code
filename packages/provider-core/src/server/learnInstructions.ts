@@ -1,7 +1,7 @@
 // T3 Learn (fork-owned). Appended to T3_CODE_ORCHESTRATION_SECTIONS; each section stays under Codex's 4,000-byte cap.
 
-/** R-8's short quiz rules. APP-36's quiz-card tool will carry the full text. */
-export const T3_LEARN_QUIZ_RULES_FULL = `Use \`quiz_card\` for every multiple-choice check in a lesson, never AskUserQuestion. The app shuffles options, adds "I don't know" and a confidence slider, and grades it. \`answer\` is the right option as a bare answer; each wrong option needs its \`wrongIdea\` (shown to the learner only after a wrong pick). After calling it, end your turn and wait for their answer.
+/** R-8's full quiz rules: the `quiz_card` description. Claude truncates tool descriptions over 4,096 characters. */
+export const T3_LEARN_QUIZ_RULES_FULL = `Use \`quiz_card\` for every multiple-choice check in a lesson, never AskUserQuestion. The app shuffles the options and adds "I don't know" and a confidence slider. \`answer\` is the right option; each wrong option needs its \`wrongIdea\`, shown to the learner only after a wrong pick.
 
 Write quizzes that are hard and fair. Hard: answering takes the thinking the lesson taught, not recognising a sentence from it. Fair: one answer is clearly right to someone who understands, and every wrong answer is a mistake a real learner makes.
 
@@ -28,10 +28,6 @@ Write quizzes that are hard and fair. Hard: answering takes the thinking the les
 - Don't let the right answer sit where the options overlap. If each wrong answer changes one part of the right one (a sign, a factor, a unit, a name), the right one shares the most with the others and can be picked without the question. Balance the parts so each version of a part shows up about equally: with two parts that can each go two ways, use all four combinations; otherwise make some wrong answers share a part with each other but not with the right one. With numbers, put wrong answers above and below, so the right one is not always the middle value.
 - Never mark any option "(Recommended)".
 
-**After the answer**
-- Say whether it was right, and why, in one or two lines. For a wrong pick, name the wrong idea that option stands for, so the lure is not learned.
-- Read confidence with the verdict. Right and sure: step up a level. Right but unsure: one more item at this level. Wrong and sure: a real misconception; re-teach it, then retest the same wrong idea in a new setting. Wrong and unsure, or "don't know": a gap; a short fix is enough.
-- Two right in a row with high confidence means the items are too easy: go up.
 
 **Self-check before posting** (fix and re-check; never post on a "no")
 1. *Cover the options.* Can the stem be answered as written? One answer only, which an expert would not dispute?

@@ -23,6 +23,8 @@ export function QuizCardTimelineCard(props: {
   const [error, setError] = useState<string | null>(null);
   const revealed = props.answered || submitted;
   const picked = options.find((option) => option.option === selected);
+  // A pick that was never sent is not graded.
+  const sentPick = submitted ? picked : undefined;
   const submit = async () => {
     if (sending || revealed || props.onSendMessage === undefined || selected === null) return;
     setSending(true);
@@ -70,20 +72,27 @@ export function QuizCardTimelineCard(props: {
       ) : null}
       {props.onSendMessage !== undefined && !revealed ? (
         <>
-          <label className="mt-4 block text-sm font-medium" htmlFor={`${props.seed}-confidence`}>
-            How sure are you? <span>{confidence}%</span>
-          </label>
-          <input
-            id={`${props.seed}-confidence`}
-            aria-label="Confidence"
-            type="range"
-            min={0}
-            max={100}
-            value={confidence}
-            onChange={(event) => setConfidence(Number(event.target.value))}
-            disabled={sending}
-            className="mt-2 w-full"
-          />
+          {selected === "__unknown__" ? null : (
+            <>
+              <label
+                className="mt-4 block text-sm font-medium"
+                htmlFor={`${props.seed}-confidence`}
+              >
+                How sure are you? <span>{confidence}%</span>
+              </label>
+              <input
+                id={`${props.seed}-confidence`}
+                aria-label="Confidence"
+                type="range"
+                min={0}
+                max={100}
+                value={confidence}
+                onChange={(event) => setConfidence(Number(event.target.value))}
+                disabled={sending}
+                className="mt-2 w-full"
+              />
+            </>
+          )}
           <label className="mt-3 block text-sm font-medium" htmlFor={`${props.seed}-thinking`}>
             Your thinking (optional)
           </label>
@@ -93,9 +102,11 @@ export function QuizCardTimelineCard(props: {
             onChange={(event) => setThinking(event.target.value)}
             disabled={sending}
           />
-          <Button type="button" onClick={submit} disabled={sending || selected === null}>
-            Submit
-          </Button>
+          <div className="mt-3">
+            <Button type="button" onClick={submit} disabled={sending || selected === null}>
+              Submit
+            </Button>
+          </div>
           {error ? (
             <p role="alert" className="mt-2 text-sm text-destructive">
               {error}
@@ -107,20 +118,20 @@ export function QuizCardTimelineCard(props: {
         <div className="mt-4 space-y-2 text-sm">
           <p
             className={
-              picked === undefined
+              sentPick === undefined
                 ? undefined
-                : picked.correct
+                : sentPick.correct
                   ? "text-success"
                   : "text-destructive"
             }
           >
-            {picked?.correct === true
-              ? "Right."
-              : selected === "__unknown__"
+            {sentPick === undefined
+              ? submitted
                 ? "I don't know."
-                : props.answered && selected === null
-                  ? "Answered."
-                  : "Wrong."}
+                : "Answered."
+              : sentPick.correct
+                ? "Right."
+                : "Wrong."}
           </p>
           <p>{props.quizCard.explanation}</p>
           {options

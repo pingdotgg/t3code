@@ -31,6 +31,9 @@ describe("quiz cards", () => {
         ],
       }),
     ).toBeDefined();
+    expect(
+      quizCardProblem({ ...card, question: "漢".repeat(2000), explanation: "漢".repeat(1500) }),
+    ).toBeDefined();
     expect(quizCardProblem(card)).toBeUndefined();
     expect(
       readQuizCard({

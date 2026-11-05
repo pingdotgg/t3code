@@ -17,6 +17,7 @@ const MAX_WRONG_IDEA = 500;
 const MAX_EXPLANATION = 1500;
 const MAX_WRONG_OPTIONS = 4;
 const MIN_WRONG_OPTIONS = 2;
+const MAX_CARD_BYTES = 7_000;
 const LEVELS = new Set<QuizLevel>(["remember", "understand", "apply", "analyse"]);
 
 const boundedString = (value: unknown, max: number) =>
@@ -73,6 +74,10 @@ export function quizCardProblem(card: QuizCard): string | undefined {
     const key = option.trim().toLocaleLowerCase();
     if (seen.has(key)) return "Options must be unique (ignoring case and surrounding whitespace).";
     seen.add(key);
+  }
+  // Tool output metadata sent to clients is capped at 8 KB (toolOutput.ts).
+  if (new TextEncoder().encode(JSON.stringify(card)).byteLength > MAX_CARD_BYTES) {
+    return "The card is too long: shorten the question, explanation or wrong ideas.";
   }
   return undefined;
 }

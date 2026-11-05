@@ -125,8 +125,8 @@ import {
   ProposedPlanTimelineRow,
   HtmlRenderTimelineRow,
   McpAppTimelineRow,
+  QuizCardTimelineRow,
 } from "./TimelineAssistantRows";
-import { QuizCardTimelineRow } from "./TimelineAssistantRows";
 import { V2EventTimelineRow } from "./TimelineV2EventRow";
 import { startTimelinePositionRestore } from "./useTimelinePositionRestore";
 import {

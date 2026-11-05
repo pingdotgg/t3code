@@ -4,7 +4,6 @@ import { QUIZ_CARD_TOOL_NAME } from "@t3tools/shared/quizCard";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
-import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 export const QuizCardInput = Schema.Struct({
@@ -26,10 +25,7 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   success: Schema.Struct({ quizCard: QuizCardInput, message: Schema.String }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: [
-    McpInvocationContext.McpInvocationContext,
-    ThreadManagementService.ThreadManagementService,
-  ],
+  dependencies: [McpInvocationContext.McpInvocationContext],
 })
   .annotate(Tool.Title, "Ask a quiz")
   .annotate(Tool.Readonly, true)
