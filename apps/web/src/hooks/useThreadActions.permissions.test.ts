@@ -99,6 +99,9 @@ vi.mock("../state/threads", () => ({
 vi.mock("../state/vcs", () => ({
   vcsEnvironment: { removeWorktree: "removeWorktree", refreshStatus: "refreshStatus" },
 }));
+vi.mock("../state/pullRequests", () => ({
+  pullRequestEnvironment: { runAction: "closePullRequest" },
+}));
 vi.mock("../state/entities", () => ({
   readEnvironmentServerConfigLoaded: () => true,
   readThreadShell: (ref: ScopedThreadRef) =>

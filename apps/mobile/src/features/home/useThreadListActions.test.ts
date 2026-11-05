@@ -2,11 +2,14 @@ import { makeThreadShellFixture } from "../../test-fixtures";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
+  type ThreadPullRequestLink,
+  type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -23,14 +26,31 @@ const state = vi.hoisted(() => ({
   requests: [] as {
     action: string;
     environmentId: string;
-    input: { threadId: string; orderKey?: string; snoozedUntil?: string; reason?: string };
+    input: {
+      threadId?: string;
+      orderKey?: string;
+      snoozedUntil?: string;
+      reason?: string;
+      action?: string;
+      number?: number;
+      repository?: string;
+      host?: string;
+      projectId?: string;
+    };
   }[],
-  dialogs: [] as { onConfirm: () => void }[],
+  dialogs: [] as {
+    title?: string;
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm: () => void;
+    onCancel?: () => void;
+  }[],
   alerts: [] as {
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  closeFailures: new Set<number>(),
 }));
 
 vi.mock("react", () => ({
@@ -50,7 +70,33 @@ vi.mock("expo-haptics", () => ({
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
     state.alerts.push({ title, buttons }),
-  confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
+  confirm: (dialog: {
+    title?: string;
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm: () => void;
+    onCancel?: () => void;
+  }) => state.dialogs.push(dialog),
+}));
+vi.mock("../../state/pull-requests", () => ({
+  composerPullRequests: {
+    runAction: async (request: {
+      environmentId: string;
+      input: {
+        projectId: string;
+        host: string;
+        repository: string;
+        number: number;
+        action: string;
+      };
+    }) => {
+      state.requests.push({ action: "closePullRequest", ...request });
+      if (state.closeFailures.has(request.input.number)) {
+        return AsyncResult.failure(Cause.fail(new Error("Host refused close")));
+      }
+      return AsyncResult.success(undefined);
+    },
+  },
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: (environmentId: string) => {
@@ -200,6 +246,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.closeFailures = new Set();
 });
 
 afterEach(() => {
@@ -557,5 +604,122 @@ describe("thread archive guard", () => {
     expect(state.requests).toEqual([]);
     expect(state.archivedRefreshes).toEqual([]);
     expect(state.alerts.at(-1)?.title).toBe("Could not archive thread");
+  });
+});
+
+function pullRequestSnapshot(
+  input: Partial<ThreadPullRequestSnapshot> = {},
+): ThreadPullRequestSnapshot {
+  return {
+    state: "open",
+    title: "Change",
+    headBranch: "feature",
+    baseBranch: "main",
+    isDraft: false,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    syncedAt: "2026-01-01T00:00:00.000Z",
+    ...input,
+  };
+}
+
+function openPullRequestLink(
+  number: number,
+  input: Partial<Omit<ThreadPullRequestLink, "number">> = {},
+): ThreadPullRequestLink {
+  return {
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number,
+    url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    snapshot: pullRequestSnapshot(),
+    stack: null,
+    ...input,
+  };
+}
+
+describe("settleThread close open pull requests", () => {
+  beforeEach(() => {
+    state.scopes.set(
+      primaryEnvironmentId,
+      new Set([AuthOrchestrationOperateScope, AuthSourceControlWriteScope]),
+    );
+  });
+
+  it("settles without asking when there are no open pull requests", async () => {
+    expect(
+      await useThreadListActions().settleThread(
+        makeThread({
+          pullRequests: [
+            openPullRequestLink(1, { snapshot: pullRequestSnapshot({ state: "merged" }) }),
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(state.dialogs).toEqual([]);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle"]);
+  });
+
+  it("closes open pull requests after confirming Close & Settle", async () => {
+    const settling = useThreadListActions().settleThread(
+      makeThread({ pullRequests: [openPullRequestLink(4), openPullRequestLink(5)] }),
+    );
+    expect(state.dialogs[0]).toMatchObject({
+      title: "Close open pull requests?",
+      confirmText: "Close & Settle",
+      cancelText: "Settle",
+    });
+    state.dialogs[0]!.onConfirm();
+    expect(await settling).toBe(true);
+    expect(state.requests.map(({ action }) => action)).toEqual([
+      "settle",
+      "closePullRequest",
+      "closePullRequest",
+    ]);
+    expect(state.requests.slice(1)).toEqual([
+      {
+        action: "closePullRequest",
+        environmentId: primaryEnvironmentId,
+        input: {
+          projectId: ProjectId.make("project"),
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 4,
+          action: "close",
+        },
+      },
+      {
+        action: "closePullRequest",
+        environmentId: primaryEnvironmentId,
+        input: {
+          projectId: ProjectId.make("project"),
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 5,
+          action: "close",
+        },
+      },
+    ]);
+  });
+
+  it("settles without closing when Settle is chosen", async () => {
+    const settling = useThreadListActions().settleThread(
+      makeThread({ pullRequests: [openPullRequestLink(6)] }),
+    );
+    state.dialogs[0]!.onCancel?.();
+    expect(await settling).toBe(true);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle"]);
+  });
+
+  it("keeps the settle when a close fails", async () => {
+    state.closeFailures.add(7);
+    const settling = useThreadListActions().settleThread(
+      makeThread({ pullRequests: [openPullRequestLink(7)] }),
+    );
+    state.dialogs[0]!.onConfirm();
+    expect(await settling).toBe(true);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "closePullRequest"]);
+    expect(state.alerts.at(-1)?.title).toBe("Closed 0 of 1 pull requests");
   });
 });
