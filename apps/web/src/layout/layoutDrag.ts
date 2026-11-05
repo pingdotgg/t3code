@@ -16,7 +16,7 @@ import {
   type LayoutState,
   type LayoutTabDestination,
 } from "./layoutModel";
-import { notePaneDrop } from "../motion/paneMotion";
+import { notePaneDrop } from "../motion/paneDrop";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 export type LayoutDragSource =

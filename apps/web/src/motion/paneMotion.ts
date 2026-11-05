@@ -4,6 +4,7 @@ import { useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
 import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./animation";
+import { takePaneDrop } from "./paneDrop";
 import { configureMotion } from "./registry";
 import { stripCameraPosition } from "./stripCamera";
 
@@ -30,18 +31,6 @@ interface Slide {
 }
 
 const slides = new WeakMap<HTMLElement, Slide>();
-
-let dropped = false;
-
-export function notePaneDrop(next: boolean): void {
-  dropped = next;
-}
-
-function takePaneDrop(): boolean {
-  const drop = dropped;
-  dropped = false;
-  return drop;
-}
 
 const translate = (dx: number, dy: number): Keyframe => ({
   transform: `translate(${toDevicePixel(dx)}px, ${toDevicePixel(dy)}px)`,
