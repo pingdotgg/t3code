@@ -277,18 +277,11 @@ it.effect("checkpoint recovery discovers nested HEAD independently of inherited 
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const previous = process.env.GIT_DIR;
-        process.env.GIT_DIR = path.join(cwd, ".git");
-        return previous;
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }).pipe(
+      Effect.provideService(HostProcess.Environment, {
+        ...(yield* HostProcess.Environment),
+        GIT_DIR: path.join(cwd, ".git"),
       }),
-      () => driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env.GIT_DIR;
-          else process.env.GIT_DIR = previous;
-        }),
     );
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "empty"])).stdout, "");

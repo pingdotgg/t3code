@@ -3731,6 +3731,15 @@ export const ThreadFeed = memo(function ThreadFeed({
       >
         <ThreadMediaVisibility>
           {info.item.type === "message" &&
+          info.item.message.projectedItem?.item.type === "user_message" &&
+          info.item.message.projectedItem.item.freshContext ? (
+            <ThreadContextDivider
+              label="New session"
+              icon="arrow.clockwise"
+              iconColor={iconSubtleColor}
+            />
+          ) : null}
+          {info.item.type === "message" &&
           !isCompactionCommandFeedEntry(info.item) &&
           info.item.message.projectedItem?.item.type === "user_message" &&
           info.item.message.projectedItem.item.modelSwitch ? (
@@ -3807,7 +3816,12 @@ export const ThreadFeed = memo(function ThreadFeed({
 
   return (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
-      <View className="flex-1" onLayout={handleViewportLayout}>
+      {/* While the pane tracks a sliding sidebar, rows keep its settled width and re-wrap once. */}
+      <View
+        className="flex-1"
+        style={settledPaneWidth !== null ? { width: settledPaneWidth } : undefined}
+        onLayout={handleViewportLayout}
+      >
         <View className="flex-1">
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
