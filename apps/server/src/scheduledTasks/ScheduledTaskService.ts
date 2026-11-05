@@ -829,22 +829,21 @@ export const layer = Layer.effect(
     // The run already started the thread, so a failed write only costs the binding.
     // A thread deleted before the binding landed already ran its task cleanup, so apply that
     // cleanup here; a later deletion finds the binding. An unconfirmed lookup keeps the binding.
-    const bindThread = (task: ScheduledTask, threadId: ThreadId) =>
-      sql`
-        UPDATE scheduled_tasks SET thread_id = ${threadId}
-        WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
-          AND project_id = ${task.projectId}
-          AND thread_id IS NULL AND thread_mode != 'new_thread'
-      `.pipe(
-        Effect.andThen(threadManagement.getThreadShell(threadId)),
-        Effect.flatMap((shell) =>
-          shell === null || shell.deletedAt != null ? deleteForThread(threadId) : Effect.void,
-        ),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Could not bind a scheduled task to its first thread.", cause),
-        ),
-        Effect.asVoid,
-      );
+    const bindThread = Effect.fn("ScheduledTaskService.bindThread")(
+      function* (task: ScheduledTask, threadId: ThreadId) {
+        yield* sql`
+          UPDATE scheduled_tasks SET thread_id = ${threadId}
+          WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
+            AND project_id = ${task.projectId}
+            AND thread_id IS NULL AND thread_mode != 'new_thread'
+        `;
+        const shell = yield* threadManagement.getThreadShell(threadId);
+        if (shell === null || shell.deletedAt != null) yield* deleteForThread(threadId);
+      },
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not bind a scheduled task to its first thread.", cause),
+      ),
+    );
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
