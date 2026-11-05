@@ -269,6 +269,76 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
   }),
 );
 
+it.effect("waitForThread with afterRunId waits for a later run that is not its restart", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-after");
+    const threadId = ThreadId.make("thread:thread-management:wait-after");
+    const runId = RunId.make("run:thread-management:wait-after:1");
+    const subscribed = yield* Deferred.make<void>();
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    let runs: Array<{
+      id: RunId;
+      ordinal: number;
+      status: OrchestrationV2Run["status"];
+      restartContinuationOfRunId?: RunId;
+    }> = [{ id: runId, ordinal: 1, status: "completed" }];
+    const stored = (sequence: number, event: object) =>
+      ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "run.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          getThreadRecords: () =>
+            Effect.sync(
+              () =>
+                ({
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs,
+                }) as unknown as OrchestrationV2ThreadProjection,
+            ),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, afterRunId: runId, timeoutMs: 60 * 60 * 1_000 })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(subscribed);
+    // The run's own restart continues it; the run a new message starts after it is later.
+    const restart = {
+      id: RunId.make("run:thread-management:wait-after:restart"),
+      ordinal: 2,
+      restartContinuationOfRunId: runId,
+      status: "completed" as const,
+    };
+    const later = {
+      id: RunId.make("run:thread-management:wait-after:later"),
+      ordinal: 3,
+      status: "running" as const,
+    };
+    runs = [...runs, restart, later];
+    yield* Queue.offer(events, stored(1, { type: "run.updated", payload: restart }));
+    yield* Queue.offer(events, stored(2, { type: "run.updated", payload: later }));
+
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      timedOut: false,
+      run: { id: later.id, status: "running" },
+    });
+  }),
+);
+
 it.effect("waitForThread can wait past an ended run for the thread's delegated work", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-delegated");

@@ -175,6 +175,11 @@ export interface ThreadManagementWaitInput {
    * completion delivery will wake it again, as a delegated task's result does.
    */
   readonly untilDelegatedWorkSettled?: boolean;
+  /**
+   * Instead wait for a run that starts after this one and is not its restart
+   * continuation, returned as soon as it exists; on timeout, this one's latest.
+   */
+  readonly afterRunId?: RunId;
 }
 
 export interface ThreadManagementWaitResult {
@@ -528,6 +533,27 @@ export function latestRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+}
+
+/** The earliest run after `after` that is not `after` restarted. */
+function laterRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  after: OrchestrationV2Run,
+): OrchestrationV2Run | undefined {
+  const restarts = new Set<RunId>([after.id]);
+  let later: OrchestrationV2Run | undefined;
+  for (const run of runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
+    if (run.ordinal <= after.ordinal) continue;
+    if (
+      run.restartContinuationOfRunId !== undefined &&
+      restarts.has(run.restartContinuationOfRunId)
+    ) {
+      restarts.add(run.id);
+      continue;
+    }
+    later ??= run;
+  }
+  return later;
 }
 
 function latestRestartContinuation(
@@ -902,6 +928,57 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
+  // Runs inside waitForThread, which already traces it.
+  const waitForLaterRun = Effect.fnUntraced(function* (
+    input: ThreadManagementWaitInput,
+    afterRunId: RunId,
+    initialRuns: ReadonlyArray<OrchestrationV2Run>,
+    afterSequence: number,
+  ) {
+    const evaluate = (runs: ReadonlyArray<OrchestrationV2Run>) => {
+      const after = runs.find((candidate) => candidate.id === afterRunId);
+      if (after === undefined) {
+        return Effect.fail(
+          new ThreadManagementRunNotFoundError({ threadId: input.threadId, runId: afterRunId }),
+        );
+      }
+      const later = laterRun(runs, after);
+      return Effect.succeed({
+        threadId: input.threadId,
+        run: later ?? latestRestartContinuation(runs, after),
+        timedOut: later === undefined,
+      });
+    };
+    const initial = yield* evaluate(initialRuns);
+    if (!initial.timedOut) return initial;
+    const waited = yield* Stream.mergeAll(
+      (["run.updated", "thread.deleted"] as const).map((eventType) =>
+        orchestrator.streamStoredEventsFrom({ threadId: input.threadId, afterSequence, eventType }),
+      ),
+      { concurrency: "unbounded" },
+    ).pipe(
+      Stream.mapError(
+        (cause) =>
+          new ThreadManagementProjectionLoadError({
+            projectId: input.projectId,
+            threadId: input.threadId,
+            cause,
+          }),
+      ),
+      Stream.mapEffect(() =>
+        getProjectThreadRecords(input, ["runs"]).pipe(
+          Effect.flatMap((current) => evaluate(current.runs)),
+        ),
+      ),
+      Stream.filter((current) => !current.timedOut),
+      Stream.runHead,
+      Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
+    );
+    const found = Option.flatten(waited);
+    if (Option.isSome(found)) return found.value;
+    return yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs);
+  });
+
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
     "ThreadManagementService.waitForThread",
   )(function* (input) {
@@ -917,6 +994,9 @@ const make = Effect.gen(function* () {
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
     const target = yield* getProjectThreadRecords(input, ["runs"]);
+    if (input.afterRunId !== undefined) {
+      return yield* waitForLaterRun(input, input.afterRunId, target.runs, afterSequence);
+    }
     const selectedRun =
       input.runId === undefined
         ? latestRun(target)

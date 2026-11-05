@@ -105,6 +105,7 @@ import {
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import {
   CommandPolicyV2,
+  followUpOwnerRun,
   goalCommandStopsActiveRun,
   isActiveRun,
   isNativeMaintenanceCommand,
@@ -8233,9 +8234,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
     if (original === undefined || original.result === null) return;
-    const owner =
-      parent.runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
-      latestExecutedRun(parent.runs);
+    const owner = followUpOwnerRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
     const now = message.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
@@ -8352,7 +8351,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const parentProjection = yield* projectionStore
-      .getThreadRecords(command.parentThreadId, ["runs", "providerTurns", "attempts"])
+      .getThreadRecords(
+        command.parentThreadId,
+        ["runs", "providerTurns", "attempts", "subagents"],
+        {
+          subagentIds: command.followUpOf === undefined ? [] : [command.followUpOf],
+        },
+      )
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
@@ -8361,14 +8366,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const parentRun = parentProjection.runs.find(
       (candidate) => candidate.id === command.parentRunId,
     );
-    if (parentRun === undefined || !isActiveRun(parentRun) || parentRun.rootNodeId === null) {
+    const followed = parentProjection.subagents.find(
+      (task) =>
+        task.id === command.followUpOf &&
+        task.remoteChild?.followsAfterRunId !== undefined &&
+        task.remoteChild.environmentId === command.remoteChild.environmentId &&
+        task.remoteChild.threadId === command.remoteChild.threadId,
+    );
+    if (command.followUpOf !== undefined && followed?.remoteChild === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Delegated task ${command.followUpOf} no longer follows its thread there.`,
+      });
+    }
+    if (
+      parentRun === undefined ||
+      (followed === undefined
+        ? !isActiveRun(parentRun)
+        : parentRun.id !== followUpOwnerRun(parentProjection.runs)?.id) ||
+      parentRun.rootNodeId === null
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: `Parent run ${command.parentRunId} is not active.`,
       });
     }
-    if (yield* stopReachedRun(command, command.parentThreadId, parentRun.id)) {
+    // A follow-up binds as one to a child here does, even to a run that has ended.
+    if (
+      followed === undefined &&
+      (yield* stopReachedRun(command, command.parentThreadId, parentRun.id))
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -8395,6 +8424,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
     };
     const emitEvent = emit(events, command);
+    if (followed?.remoteChild !== undefined) {
+      const { followsAfterRunId: _, ...remoteChild } = followed.remoteChild;
+      yield* emitEvent({
+        type: "subagent.updated",
+        threadId: command.parentThreadId,
+        ...(followed.runId === null ? {} : { runId: followed.runId }),
+        nodeId: followed.id,
+        driver: followed.driver,
+        occurredAt: now,
+        payload: { ...followed, remoteChild, updatedAt: now },
+      });
+    }
     yield* emitEvent({
       ...common,
       type: "node.updated",
@@ -8526,10 +8567,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.stopCount ?? 0) !== (task.remoteChild?.stopCount ?? 0)
     )
       return;
+    const { followsAfterRunId, ...unfollowed } = task.remoteChild!;
     const remoteChild =
       command.stoppedThere === undefined
         ? task.remoteChild
-        : { ...task.remoteChild!, stoppedThere: true };
+        : command.stoppedThere === "ran-out" &&
+            task.result === null &&
+            command.lastRunId !== undefined
+          ? { ...unfollowed, stoppedThere: true, followsAfterRunId: command.lastRunId }
+          : { ...unfollowed, stoppedThere: true };
     // The first result stands; a repeated follower report records nothing, which
     // the dispatcher refuses. A stop there after the result is still recorded, but
     // a run that ended by itself does not settle a stop the task here still owes.
@@ -8542,9 +8588,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.status === "cancelled" ||
         task.status === "interrupted" ||
         task.remoteChild?.stoppedThere === false;
+      // A stop there also ends following the thread for later runs.
+      const unfollows = followsAfterRunId !== undefined && command.stoppedThere === "stopped";
       if (
-        task.remoteChild?.stoppedThere === true ||
-        (owesStop && command.stoppedThere !== "stopped")
+        !unfollows &&
+        (task.remoteChild?.stoppedThere === true ||
+          (owesStop && command.stoppedThere !== "stopped"))
       )
         return;
       const now = yield* DateTime.now;
@@ -8697,6 +8746,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     remoteChild: OrchestrationV2RemoteTaskChild,
   ) {
     const now = yield* DateTime.now;
+    // A stop asked for here also ends following the thread for later runs.
+    const { followsAfterRunId: _, ...unfollowed } = remoteChild;
     yield* emit(
       events,
       command,
@@ -8710,7 +8761,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: {
         ...task,
         remoteChild: {
-          ...remoteChild,
+          ...unfollowed,
           stoppedThere: false,
           stopCount: (remoteChild.stopCount ?? 0) + 1,
         },

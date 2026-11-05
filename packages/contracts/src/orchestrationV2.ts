@@ -880,6 +880,11 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
    * one owed, so each reaches the thread there once however often it is sent.
    */
   stopCount: Schema.optional(NonNegativeInt),
+  /**
+   * Its run there ended by itself and no later task here follows the thread yet: the next
+   * run there after this one, other than its restart, becomes a new task. Cleared by a stop.
+   */
+  followsAfterRunId: Schema.optional(RunId),
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
@@ -3447,6 +3452,11 @@ const OrchestrationV2InternalCommand = Schema.Union([
     modelSelection: ModelSelection,
     remoteChild: OrchestrationV2RemoteTaskChild,
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    /**
+     * The finished task whose thread there started this later run: the run binds as a
+     * follow-up to a finished child here does, and takes over following that thread.
+     */
+    followUpOf: Schema.optional(NodeId),
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its
@@ -3468,6 +3478,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
      * the stop owed for whatever follows it.
      */
     stoppedThere: Schema.optional(Schema.Literals(["ran-out", "stopped"])),
+    /** With `ran-out`: the thread's last run there, after which a later run is a new task. */
+    lastRunId: Schema.optional(RunId),
     /** The stop generation this report acknowledges; absent for the original unnumbered stop. */
     stopCount: Schema.optional(NonNegativeInt),
   }),

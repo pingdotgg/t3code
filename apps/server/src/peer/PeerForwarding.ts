@@ -202,12 +202,13 @@ const make = Effect.gen(function* () {
           ...(input.untilDelegatedWorkSettled === undefined
             ? {}
             : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
+          ...(input.afterRunId === undefined ? {} : { afterRunId: input.afterRunId }),
         },
       );
       remaining -= chunk;
       if (!result.timedOut || remaining <= 0) return result;
       // Later pieces wait for the run the first one picked, not a newer one.
-      runId = result.runId ?? undefined;
+      if (input.afterRunId === undefined) runId = result.runId ?? undefined;
     }
   });
 
