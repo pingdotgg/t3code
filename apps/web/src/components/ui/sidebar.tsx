@@ -200,7 +200,7 @@ function SidebarProvider({
   useSidebarSwipe({
     enabled: isMobile,
     open: openMobile,
-    setOpen: setOpenMobile,
+    setOpen: store.setOpenMobile,
     sheetRef: mobileSheetRef,
   });
 
