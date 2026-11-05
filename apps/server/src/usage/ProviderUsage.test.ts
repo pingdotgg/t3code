@@ -103,13 +103,18 @@ describe("providerUsageReport", () => {
     ["not installed", { installed: false }, { available: false, reason: "notInstalled" }],
     [
       "provider unavailable",
-      { availability: "unavailable", unavailableReason: "Needs an update." },
+      {
+        enabled: false,
+        installed: false,
+        availability: "unavailable",
+        unavailableReason: "Needs an update.",
+      },
       { available: false, reason: "providerUnavailable", message: "Needs an update." },
     ],
     [
-      "signed out with nothing read",
-      { auth: { status: "unauthenticated" } },
-      { available: false, reason: "unauthenticated", checkedAt: null },
+      "signed out hides its last windows",
+      { auth: { status: "unauthenticated" }, usageLimits: { checkedAt, windows: [session] } },
+      { available: false, reason: "unauthenticated", windows: [], checkedAt },
     ],
     ["driver never reported limits", {}, { available: false, reason: "notReported" }],
     [

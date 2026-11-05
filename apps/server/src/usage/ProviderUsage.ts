@@ -62,15 +62,15 @@ function limitsReading(limits: ServerProviderUsageLimits | undefined, gate: Gate
 }
 
 function providerGate(provider: ServerProvider): Gate | null {
-  if (!provider.enabled) return { reason: "disabled" };
-  if (!provider.installed) return { reason: "notInstalled" };
   if (!isProviderAvailable(provider)) {
     return {
       reason: "providerUnavailable",
       ...(provider.unavailableReason ? { message: provider.unavailableReason } : {}),
     };
   }
-  if (provider.auth.status === "unauthenticated" && provider.usageLimits === undefined) {
+  if (!provider.enabled) return { reason: "disabled" };
+  if (!provider.installed) return { reason: "notInstalled" };
+  if (provider.auth.status === "unauthenticated") {
     return { reason: "unauthenticated" };
   }
   return null;
