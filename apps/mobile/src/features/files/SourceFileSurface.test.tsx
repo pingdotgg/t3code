@@ -38,9 +38,7 @@ vi.mock("@t3tools/mobile-source-text", () => ({
   SourceText: ({ children }: { readonly children?: ReactNode }) => <span>{children}</span>,
 }));
 vi.mock("react-native-webview", () => ({
-  WebView: (props: { readonly source: { readonly html: string } }) => (
-    <div data-testid="source-selectable-web-view" data-html={props.source.html} />
-  ),
+  WebView: () => null,
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock("../../native/native-layout-metrics", () => ({ useNativeColumnLayoutMetrics: () => null }));
@@ -65,9 +63,8 @@ vi.mock("@effect/atom-react", () => ({ useAtomValue: () => AsyncResult.success(n
 
 import { SourceFileSurface } from "./SourceFileSurface";
 
-function setup(
-  contents = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n"),
-) {
+function setup() {
+  const contents = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n");
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 16));
@@ -89,12 +86,6 @@ function setup(
         ),
       );
       act(() => vi.runAllTimers());
-    },
-    selectableDocument: () => {
-      const html = container
-        .querySelector('[data-testid="source-selectable-web-view"]')
-        ?.getAttribute("data-html");
-      return html ? new DOMParser().parseFromString(html, "text/html") : null;
     },
     lineList: () => container.querySelector<HTMLDivElement>('[data-testid="source-lines"]'),
     [Symbol.dispose]() {
@@ -119,18 +110,4 @@ it("restores the requested wrapped line after leaving selection mode", () => {
   const returnedList = screen.lineList()!;
   expect(returnedList).not.toBe(firstList);
   expect(returnedList.scrollTop).toBe(39 * 24);
-});
-
-it("lets Android select plain text in a browser that keeps every character as text", () => {
-  using screen = setup("\n\tlead\r\n<script>alert(1)</script> &amp; > 😀\u00a0end\n");
-  screen.render(true);
-  const page = screen.selectableDocument();
-
-  if (process.env.T3_MOBILE_TEST_PLATFORM !== "android") {
-    expect(page).toBeNull();
-    return;
-  }
-
-  expect(page!.querySelector("script")).toBeNull();
-  expect(page!.body.textContent).toBe("\n\tlead\n<script>alert(1)</script> &amp; > 😀\u00a0end\n");
 });
