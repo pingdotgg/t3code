@@ -836,6 +836,13 @@ function TotalsSection(props: {
           detail="of records, excluded from cost"
         />
       </View>
+      {merged.providers.some(
+        ({ provider, totalTokens }) => provider === "antigravity" && totalTokens > 0,
+      ) ? (
+        <Text className="pt-2 text-sm text-foreground-muted">
+          Antigravity totals leave out subagent calls recorded only in transcripts.
+        </Text>
+      ) : null}
     </SettingsSection>
   );
 }
