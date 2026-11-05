@@ -770,7 +770,7 @@ export const make = Effect.gen(function* () {
     const shared = yield* sharedInputs;
     yield* wslEnvironment.preWarm(persistedSettings.wslDistro);
     // Only the primary's tabs render natively, so a WSL backend beside Windows gets no channel.
-    const desktopBrowserSocketSecret = Hex.encode(yield* crypto.randomBytes(32));
+    const desktopBrowserSocketSecret = Hex.encode(yield* random.randomBytes(32));
     return yield* resolveWslStartConfig({
       ...shared,
       port: backendExposure.port,
