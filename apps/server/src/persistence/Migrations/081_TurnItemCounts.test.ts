@@ -7,7 +7,7 @@ import { runMigrations } from "../Migrations.ts";
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 
-layer("080_TurnItemCounts", (it) => {
+layer("081_TurnItemCounts", (it) => {
   it.effect("backfills item counts, then follows upserts, moves, and deletes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
