@@ -1,55 +1,40 @@
 // @effect-diagnostics nodeBuiltinImport:off - the launcher loads only Node builtins so it starts in milliseconds.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
+import type * as NodeNet from "node:net";
 
-export type LauncherRequest =
-  | {
-      readonly type: "spawn";
-      readonly id: number;
-      readonly command: string;
-      readonly args: ReadonlyArray<string>;
-      readonly cwd: string | undefined;
-      readonly env: NodeJS.ProcessEnv;
-      readonly shell: boolean | string | undefined;
-    }
-  | { readonly type: "stdin"; readonly id: number; readonly chunk: Uint8Array }
-  | { readonly type: "stdinEnd"; readonly id: number };
-
-export interface LauncherSpawnFailure {
-  readonly method: "access" | "spawn";
-  readonly message: string;
-  readonly code: string | undefined;
-  readonly errno: number | undefined;
-  readonly syscall: string | undefined;
-  readonly path: string | undefined;
+export interface LauncherSpawnRequest {
+  readonly type: "spawn";
+  readonly id: number;
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly options: NodeChildProcess.SpawnOptions;
 }
 
-/** Per child, in order: `spawned` or `failed`, then output, `outputEnd` per stream, and `exit`. */
+export interface LauncherError {
+  readonly message: string;
+  readonly code?: string | undefined;
+  readonly errno?: number | undefined;
+  readonly syscall?: string | undefined;
+  readonly path?: string | undefined;
+}
+
+/** Per child, in order: `stdio` per piped fd (carrying its socket), `spawn`, then `exit`; or `error`. */
 export type LauncherEvent =
   | { readonly type: "ready" }
-  | { readonly type: "spawned"; readonly id: number; readonly pid: number }
-  | { readonly type: "failed"; readonly id: number; readonly failure: LauncherSpawnFailure }
-  | {
-      readonly type: "output";
-      readonly id: number;
-      readonly stream: "stdout" | "stderr";
-      readonly chunk: Uint8Array;
-    }
-  | { readonly type: "outputEnd"; readonly id: number; readonly stream: "stdout" | "stderr" }
+  | { readonly type: "stdio"; readonly id: number; readonly fd: number }
+  | { readonly type: "spawn"; readonly id: number; readonly pid: number }
   | {
       readonly type: "exit";
       readonly id: number;
       readonly code: number | null;
       readonly signal: NodeJS.Signals | null;
-    };
+    }
+  | { readonly type: "error"; readonly id: number; readonly error: LauncherError };
 
-const toFailure = (
-  method: LauncherSpawnFailure["method"],
-  cause: unknown,
-): LauncherSpawnFailure => {
+// Leaves out spawnargs; the server's spawner redacts its own copy.
+const toLauncherError = (cause: unknown): LauncherError => {
   const error = cause as Partial<NodeJS.ErrnoException> | undefined;
   return {
-    method,
     message: typeof error?.message === "string" ? error.message : String(cause),
     code: error?.code,
     errno: error?.errno,
@@ -57,6 +42,10 @@ const toFailure = (
     path: error?.path,
   };
 };
+
+// Child stdio has no public paused option; this is what net's pauseOnCreate does.
+const stopReading = (socket: NodeNet.Socket) =>
+  (socket as unknown as { _handle?: { readStop?: () => void } | null })._handle?.readStop?.();
 
 // Bundled import.meta.main is always true; importing this module must have no side effects.
 export function runProcessLauncher(): void {
@@ -66,7 +55,8 @@ export function runProcessLauncher(): void {
     process.exitCode = 1;
     return;
   }
-  const send = (event: LauncherEvent) => channel(event, undefined, undefined, () => {});
+  const send = (event: LauncherEvent, socket?: NodeNet.Socket) =>
+    channel(event, socket, undefined, () => {});
   const children = new Map<number, NodeChildProcess.ChildProcess>();
 
   // Group signals target the server; this process exits when the server's channel closes.
@@ -82,57 +72,38 @@ export function runProcessLauncher(): void {
     process.exit(0);
   });
 
-  const spawn = (request: Extract<LauncherRequest, { type: "spawn" }>) => {
+  process.on("message", (request: LauncherSpawnRequest) => {
     const { id } = request;
-    if (request.cwd !== undefined) {
-      try {
-        NodeFS.accessSync(request.cwd);
-      } catch (cause) {
-        send({ type: "failed", id, failure: toFailure("access", cause) });
-        return;
-      }
-    }
     let child: NodeChildProcess.ChildProcess;
     try {
-      child = NodeChildProcess.spawn(request.command, [...request.args], {
-        cwd: request.cwd,
-        env: request.env,
-        shell: request.shell,
-        detached: true,
-        stdio: "pipe",
-      });
+      child = NodeChildProcess.spawn(request.command, [...request.args], request.options);
     } catch (cause) {
-      send({ type: "failed", id, failure: toFailure("spawn", cause) });
+      send({ type: "error", id, error: toLauncherError(cause) });
       return;
     }
-    if (child.pid !== undefined) children.set(id, child);
+    const stdio = child.stdio.map((socket) => socket as NodeNet.Socket | null);
+    // The server reads and writes these pipes itself, so no byte may be consumed here.
+    for (const socket of stdio) if (socket) stopReading(socket);
+    // Node flushes and destroys a child's stdio at exit, even while a socket waits to be sent.
+    child.stdin = null;
+    child.stdout = null;
+    child.stderr = null;
+    child.stdio.fill(null);
     child.on("error", (cause) => {
-      if (child.pid === undefined) send({ type: "failed", id, failure: toFailure("spawn", cause) });
+      if (child.pid === undefined) for (const socket of stdio) socket?.destroy();
+      send({ type: "error", id, error: toLauncherError(cause) });
     });
-    child.once("spawn", () => send({ type: "spawned", id, pid: child.pid! }));
-    child.stdin!.on("error", () => {});
-    for (const stream of ["stdout", "stderr"] as const) {
-      child[stream]!.on("data", (chunk: Uint8Array) => send({ type: "output", id, stream, chunk }));
-      child[stream]!.once("close", () => send({ type: "outputEnd", id, stream }));
-    }
+    child.once("spawn", () => {
+      children.set(id, child);
+      stdio.forEach((socket, fd) => {
+        if (socket) send({ type: "stdio", id, fd }, socket);
+      });
+      send({ type: "spawn", id, pid: child.pid! });
+    });
     child.once("exit", (code, signal) => {
       children.delete(id);
       send({ type: "exit", id, code, signal });
     });
-  };
-
-  process.on("message", (request: LauncherRequest) => {
-    switch (request.type) {
-      case "spawn":
-        spawn(request);
-        break;
-      case "stdin":
-        children.get(request.id)?.stdin?.write(request.chunk);
-        break;
-      case "stdinEnd":
-        children.get(request.id)?.stdin?.end();
-        break;
-    }
   });
   send({ type: "ready" });
 }

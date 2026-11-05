@@ -3,14 +3,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
+import * as ProcessLauncher from "./process/ProcessLauncher.ts";
 import * as ProcessRunner from "./processRunner.ts";
 
 type ChildProcessCommand = {
@@ -294,6 +298,90 @@ describe("ProcessRunner.layer", () => {
         expect(error.cause).toBeInstanceOf(PlatformError.PlatformError);
         expect((error.cause as PlatformError.PlatformError).reason._tag).toBe("NotFound");
       }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+  );
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "kills descendants that ignore SIGTERM when a run is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const runner = yield* ProcessRunner.ProcessRunner;
+        const leader = yield* Deferred.make<number>();
+        const run = yield* runner
+          .run({
+            command: "sh",
+            args: ["-c", `(trap "" TERM; exec sleep 1000) & echo $$; wait`],
+            onStdoutChunk: (chunk) =>
+              Deferred.doneUnsafe(leader, Exit.succeed(Number(new TextDecoder().decode(chunk)))),
+          })
+          .pipe(Effect.forkChild);
+        const pgid = yield* Deferred.await(leader);
+        yield* Fiber.interrupt(run);
+
+        expect(() => process.kill(-pgid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+  );
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "runs in the server's working directory and fails stdin a command never reads",
+    () =>
+      Effect.gen(function* () {
+        const runner = yield* ProcessRunner.ProcessRunner;
+        const result = yield* runner.run({ command: "pwd", args: [] });
+        const error = yield* runner
+          .run({ command: "true", args: [], stdin: "x".repeat(16 * 1024 * 1024) })
+          .pipe(Effect.flip);
+
+        expect(result.stdout.trim()).toBe(process.cwd());
+        expect(error._tag).toBe("ProcessStdinError");
+      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+  );
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "rejects a NUL byte in an environment value without echoing the value",
+    () =>
+      Effect.gen(function* () {
+        const runner = yield* ProcessRunner.ProcessRunner;
+        const error = yield* runner
+          .run({ command: "true", args: [], env: { T3_TOKEN: "secret\0value" } })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("ProcessSpawnError");
+        expect((error.cause as PlatformError.PlatformError).reason._tag).toBe("BadArgument");
+        expect(String(error.cause)).toContain("T3_TOKEN");
+        expect(String(error.cause)).not.toContain("secret");
+      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+  );
+
+  // Descendants keep writing after the leader exits; losing the helper must not truncate that.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "delivers output written after the helper process dies",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const handle = yield* spawner.spawn(
+          ChildProcess.make("sh", [
+            "-c",
+            `d=$(mktemp -d); mkfifo "$d/f"; (cat "$d/f"; rm -r "$d") & echo "$PPID $d/f"`,
+          ]),
+        );
+        expect(yield* handle.exitCode).toBe(0);
+        const output = yield* handle.stdout.pipe(
+          Stream.tap((chunk) => {
+            const [helper, fifo] = new TextDecoder().decode(chunk).trim().split(" ");
+            if (fifo === undefined) return Effect.void;
+            process.kill(Number(helper), "SIGKILL");
+            return fs.writeFileString(fifo, "complete\n");
+          }),
+          Stream.decodeText(),
+          Stream.mkString,
+        );
+
+        expect(output).toMatch(/ \S+\ncomplete\n$/);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ProcessLauncher.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+      ),
   );
 });
 
