@@ -1,6 +1,7 @@
 import type { DesktopUpdateChannel, DesktopUpdateReleaseNote } from "@t3tools/contracts";
 
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 
 interface ElectronReleaseNoteInfo {
   readonly version: string;
@@ -177,6 +178,7 @@ export function normalizeDesktopUpdateReleaseNotes(
   fallbackVersion: string,
   channel: DesktopUpdateChannel,
   releaseDate?: string,
+  currentVersion?: string,
 ): NormalizedDesktopUpdateReleaseNotes {
   const rawNotes = (
     typeof releaseNotes === "string"
@@ -184,7 +186,14 @@ export function normalizeDesktopUpdateReleaseNotes(
       : Array.isArray(releaseNotes)
         ? releaseNotes.filter(isElectronReleaseNoteInfo)
         : []
-  ).filter((entry) => desktopUpdateChannelOf(entry.version) === channel);
+  ).filter(
+    (entry) =>
+      desktopUpdateChannelOf(entry.version) === channel &&
+      // The offered version always shows, even when a channel switch makes it older.
+      (entry.version === fallbackVersion ||
+        currentVersion === undefined ||
+        compareSemverVersions(entry.version, currentVersion) > 0),
+  );
 
   const normalizedNotes = rawNotes.flatMap((entry) => {
     const note = extractReleaseNoteItems(entry.note);

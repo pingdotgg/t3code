@@ -4,6 +4,7 @@ import { isElectron } from "../env";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 import { getDesktopUpdatePrompt } from "./desktopUpdate.logic";
 import { downloadLocalUpdate, installLocalUpdate } from "./sidebar/SidebarUpdatePill";
+import { DesktopUpdateReleaseNoteList } from "./sidebar/SidebarUpdateReleaseNotes";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -46,6 +47,11 @@ export function DesktopUpdatePrompt() {
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>You're on {state.currentVersion}.</AlertDialogDescription>
         </AlertDialogHeader>
+        {state.releaseNotes.length > 0 ? (
+          <div className="px-5">
+            <DesktopUpdateReleaseNoteList shell={bridge} state={state} />
+          </div>
+        ) : null}
         {prompt === "available" ? (
           <label className="flex items-center gap-2 px-6 pb-4 text-sm">
             <Checkbox

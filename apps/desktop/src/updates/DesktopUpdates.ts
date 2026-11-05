@@ -973,6 +973,7 @@ export const make = Effect.gen(function* () {
             info.version,
             state.channel,
             info.releaseDate,
+            state.currentVersion,
           );
           yield* setState(
             reduceDesktopUpdateStateOnUpdateAvailable(
