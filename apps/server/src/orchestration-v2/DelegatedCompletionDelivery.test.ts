@@ -2484,7 +2484,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           threadId: arm.threadId,
           limitRecovery: arm.limitRecovery,
         });
-        yield* TestClock.adjust("1 minute");
+        yield* TestClock.adjust("3 minutes");
         const resume = limitRecoveryCommand(
           (yield* childShell)!,
           true,
