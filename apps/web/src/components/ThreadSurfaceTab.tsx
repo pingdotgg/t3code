@@ -44,6 +44,7 @@ import {
   waitForThreadChatSendReady,
 } from "../layout/threadSurfaceBridge";
 import { showThreadChatBeside } from "../layout/openRules";
+import { requestLayoutSurfacePlacement } from "../layout/surfaceSync";
 import { shortcutLabelForCommand } from "../keybindings";
 import { readLocalApi } from "../localApi";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
@@ -518,9 +519,15 @@ function ThreadSurfacePane({
   const previewState = useThreadPreviewState(threadRef);
   const terminalLabels = useTerminalLabels(threadRef);
   const threadTitle = useThreadTitle(threadRef);
-  const { visible } = useLayoutPane();
+  const { visible, paneId } = useLayoutPane();
   const handleNewThread = useNewThreadHandler();
   const { projectRef } = context;
+  const add = (kind: LauncherSurfaceKind, browserProfileId?: string) => {
+    if (paneId !== null && openers.available[kind]) {
+      requestLayoutSurfacePlacement(threadRef, { kind: "pane", paneId });
+    }
+    openers.open(kind, browserProfileId);
+  };
   const getShortcutContext = () => ({
     terminalFocus: false,
     terminalOpen: false,
@@ -569,20 +576,20 @@ function ThreadSurfacePane({
           ),
         )
       }
-      onAddBrowser={() => openers.open("browser")}
-      onAddBrowserInProfile={(profileId) => openers.open("browser", profileId)}
+      onAddBrowser={() => add("browser")}
+      onAddBrowserInProfile={(profileId) => add("browser", profileId)}
       onNewThread={
         projectRef === null
           ? undefined
           : () => void runInNewLayoutTab(() => handleNewThread(projectRef))
       }
-      onAddTerminal={() => openers.open("terminal")}
-      onAddDiff={() => openers.open("diff")}
-      onAddFiles={() => openers.open("files")}
-      onAddPullRequest={() => openers.open("pull-request")}
-      onAddPullRequests={() => openers.open("pull-requests")}
-      onAddDevice={() => openers.open("device")}
-      onAddSideChat={() => openers.open("side-chat")}
+      onAddTerminal={() => add("terminal")}
+      onAddDiff={() => add("diff")}
+      onAddFiles={() => add("files")}
+      onAddPullRequest={() => add("pull-request")}
+      onAddPullRequests={() => add("pull-requests")}
+      onAddDevice={() => add("device")}
+      onAddSideChat={() => add("side-chat")}
       sideChatAvailable={openers.available["side-chat"]}
       browserAvailable={openers.available.browser}
       browserUnavailableReason={openers.browserUnavailableReason}
