@@ -20,6 +20,7 @@ export function PanelTabCloseButton({
       type="button"
       className="cursor-pointer group/close relative flex size-3.5 shrink-0 items-center justify-center rounded-sm hover:surface-ghost-hover"
       aria-label={label}
+      data-tab-close=""
       onClick={onClick}
     >
       <span className="relative flex size-3.5 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
