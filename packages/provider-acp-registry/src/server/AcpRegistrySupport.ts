@@ -549,7 +549,7 @@ export interface AcpRegistryCatalogOptions {
   readonly cacheDir: string;
   readonly toolsDir: string;
   readonly registryUrl?: string;
-  /** Set when policy forbids new installs: agents already on disk keep running. */
+  /** Set when policy forbids installs: nothing downloads, and the cached index stops changing. */
   readonly installDenial?: string;
 }
 
@@ -869,19 +869,24 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const current = yield* Ref.get(registryRef);
         if (current !== undefined && currentRevision !== observedRevision) return current;
 
-        const { registry, fetched } = yield* fetchRegistry().pipe(
-          Effect.map((registry) => ({ registry, fetched: true })),
-          Effect.catch((networkError) =>
-            readCachedRegistry.pipe(
-              Effect.flatMap(
-                Option.match({
-                  onNone: () => Effect.fail(networkError),
-                  onSome: (registry) => Effect.succeed({ registry, fetched: false }),
-                }),
+        // Installs are keyed by version, so a newer index would strand what is already installed.
+        const frozen =
+          input.installDenial === undefined ? Option.none() : yield* readCachedRegistry;
+        const { registry, fetched } = Option.isSome(frozen)
+          ? { registry: frozen.value, fetched: false }
+          : yield* fetchRegistry().pipe(
+              Effect.map((registry) => ({ registry, fetched: true })),
+              Effect.catch((networkError) =>
+                readCachedRegistry.pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () => Effect.fail(networkError),
+                      onSome: (registry) => Effect.succeed({ registry, fetched: false }),
+                    }),
+                  ),
+                ),
               ),
-            ),
-          ),
-        );
+            );
         yield* Ref.set(registryRef, registry);
         yield* Ref.set(registryFetchedAtMs, fetched ? yield* Clock.currentTimeMillis : undefined);
         yield* Ref.update(registryRevision, (revision) => revision + 1);

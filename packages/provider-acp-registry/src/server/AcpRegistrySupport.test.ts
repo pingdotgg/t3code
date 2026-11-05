@@ -569,6 +569,7 @@ describe("AcpRegistrySupport", () => {
     const agent = makeAgent({
       npx: { package: "@example/acp@V1.2.3", args: ["--stdio"] },
     });
+    let published = agent;
     const installDenial = "Example Corp's policy does not allow installing or updating providers.";
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -596,13 +597,22 @@ describe("AcpRegistrySupport", () => {
 
       const allowed = yield* makeResolver();
       yield* allowed.resolve(settings(), "/workspace", toolchain.environment);
-      const cached = yield* denied.resolve(settings(), "/workspace", toolchain.environment);
+      // A newer release must not strand what is installed, since it could never be installed.
+      published = {
+        ...makeAgent({ npx: { package: "@example/acp@V2.0.0", args: ["--stdio"] } }),
+        version: "2.0.0",
+      };
+      const frozen = yield* makeResolver(installDenial);
+      yield* frozen.search({ query: "example" });
+      const cached = yield* frozen.resolve(settings(), "/workspace", toolchain.environment);
       expect(cached.spawn.command).toBe(toolchain.executablePath);
     }).pipe(
       Effect.scoped,
       Effect.provide(
         layerResolver((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(published))),
+          ),
         ),
       ),
     );

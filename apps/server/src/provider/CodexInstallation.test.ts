@@ -378,6 +378,13 @@ it.effect("updates an older supported managed installation to the pinned release
       `${first.installation.managedDirectory}/active.json`,
       '{"version":"0.156.0"}',
     );
+    const refused = yield* makeHarness({
+      baseDir: first.baseDir,
+      options: { installsRefused: true },
+    });
+    expect((yield* refused.installation.state).operationId).toBeNull();
+    expect(refused.downloads()).toBe(0);
+
     const restarted = yield* makeHarness({ baseDir: first.baseDir });
     expect((yield* restarted.installation.state).operationId).not.toBeNull();
     expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
