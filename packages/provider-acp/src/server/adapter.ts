@@ -314,7 +314,7 @@ export interface AcpAdapterV2Flavor {
    * Runs before `session/prompt`. The returned check sees a prompt the agent ended
    * without an error or cancel, and reports a failure its stop reason hid. A reported
    * failure restarts the runtime before the next turn. A `broken` thread's native
-   * history is unusable, so it is never resumed and the next turn starts fresh.
+   * history is unusable, so the next turn falls back to a fresh session.
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
