@@ -2,7 +2,9 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
+import type { ProjectEntry } from "@t3tools/contracts";
 import { it, afterEach, describe, expect } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,6 +17,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -81,6 +84,58 @@ const searchWorkspaceEntries = (input: {
   Effect.gen(function* () {
     const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
     return yield* workspaceEntries.search(input);
+  });
+
+/**
+ * Lists folders at once, as "Expand all" does with a wide client. Git calls are held until four
+ * have started, so later folders find four checks running; records each call's cwd and stdin.
+ */
+const listAtOnce = (cwd: string, folders: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const fourStarted = yield* Deferred.make<void>();
+    const calls: Array<{ readonly cwd: string; readonly stdin: string }> = [];
+    let running = 0;
+    let mostRunning = 0;
+    const vcsProcess = Layer.effect(
+      VcsProcess.VcsProcess,
+      Effect.map(VcsProcess.VcsProcess, (inner) =>
+        VcsProcess.VcsProcess.of({
+          run: (input) =>
+            input.args.includes("check-ignore")
+              ? Effect.suspend(() => {
+                  calls.push({ cwd: input.cwd, stdin: input.stdin ?? "" });
+                  mostRunning = Math.max(mostRunning, ++running);
+                  if (calls.length === 4) Deferred.doneUnsafe(fourStarted, Effect.void);
+                  return Deferred.await(fourStarted).pipe(
+                    Effect.andThen(inner.run(input)),
+                    Effect.ensuring(Effect.sync(() => running--)),
+                  );
+                })
+              : inner.run(input),
+        }),
+      ),
+    ).pipe(Layer.provide(VcsProcess.layer));
+    const listings = yield* Effect.forEach(
+      folders,
+      (directoryPath) =>
+        Effect.flatMap(WorkspaceEntries.WorkspaceEntries, (workspaceEntries) =>
+          workspaceEntries.list({ cwd, directoryPath }),
+        ).pipe(
+          Effect.map(({ entries }) =>
+            entries.toSorted((left, right) => left.path.localeCompare(right.path)),
+          ),
+        ),
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.provide(
+        Layer.effect(WorkspaceEntries.WorkspaceEntries, WorkspaceEntries.make).pipe(
+          Layer.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
+          Layer.provide(vcsProcess),
+          Layer.provide(WorkspacePaths.layer),
+        ),
+      ),
+    );
+    return { listings, calls, mostRunning };
   });
 
 const appendSeparator = (input: string) =>
@@ -325,6 +380,141 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             directoryPath,
           ).toEqual(except);
         }
+      }),
+    );
+
+    it.effect("labels folders listed beyond four at once with shared Git calls", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "*.log\n");
+        const folders = Array.from({ length: 12 }, (_, index) => `folder-${index}`);
+        for (const folder of folders) {
+          yield* writeTextFile(cwd, `${folder}/keep.txt`);
+          yield* writeTextFile(cwd, `${folder}/drop.log`);
+        }
+
+        const { listings, calls, mostRunning } = yield* listAtOnce(cwd, folders);
+        expect(listings).toEqual(
+          folders.map((folder) => [
+            { path: `${folder}/drop.log`, kind: "file", ignored: true },
+            { path: `${folder}/keep.txt`, kind: "file" },
+          ]),
+        );
+        expect(mostRunning).toBe(4);
+        expect(calls.length).toBeLessThan(folders.length);
+      }),
+    );
+
+    it.effect("keeps the labels of folders checked with one that Git refuses", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "*.log\n");
+        const gitlink = yield* git(cwd, ["hash-object", ".gitignore"]);
+        // A submodule that was never checked out: Git refuses every path inside it, and with it
+        // the call it shares with the ordinary folders listed beside it.
+        const folders = Array.from({ length: 40 }, (_, index) =>
+          index === 20 ? "ghost" : `folder-${index}`,
+        );
+        for (const folder of folders) yield* writeTextFile(cwd, `${folder}/drop.log`);
+        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},ghost`]);
+
+        const { listings, calls, mostRunning } = yield* listAtOnce(cwd, folders);
+        expect(listings).toEqual(
+          folders.map((folder) => [
+            folder === "ghost"
+              ? { path: `${folder}/drop.log`, kind: "file" }
+              : { path: `${folder}/drop.log`, kind: "file", ignored: true },
+          ]),
+        );
+        expect(
+          calls.some(({ stdin }) => stdin.includes("ghost/") && stdin.includes("folder-")),
+        ).toBe(true);
+        // Asking the folders of the refused call again stays within the workspace's four calls.
+        expect(mostRunning).toBe(4);
+      }),
+    );
+
+    it.effect("keeps the Git calls of a folder that is not a repository within four", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        const folders = Array.from({ length: 24 }, (_, index) => `folder-${index}`);
+        for (const folder of folders) yield* writeTextFile(cwd, `${folder}/drop.log`);
+
+        const { listings, mostRunning } = yield* listAtOnce(cwd, folders);
+        expect(listings).toEqual(
+          folders.map((folder) => [{ path: `${folder}/drop.log`, kind: "file" }]),
+        );
+        expect(mostRunning).toBe(4);
+      }),
+    );
+
+    it.effect("checks a submodule's folders apart from the outer repository's", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "*.log\n");
+        yield* git(cwd, ["init", "sub"]);
+        yield* writeTextFile(cwd, "sub/.gitignore", "*.tmp\n");
+        const gitlink = yield* git(cwd, ["hash-object", ".gitignore"]);
+        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},sub`]);
+        const outer = Array.from({ length: 6 }, (_, index) => `outer-${index}`);
+        const inner = Array.from({ length: 6 }, (_, index) => `sub/inner-${index}`);
+        const folders = outer.flatMap((folder, index) => [folder, inner[index]!]);
+        for (const folder of folders) {
+          yield* writeTextFile(cwd, `${folder}/drop.log`);
+          yield* writeTextFile(cwd, `${folder}/drop.tmp`);
+        }
+
+        const { listings, calls, mostRunning } = yield* listAtOnce(cwd, folders);
+        expect(listings).toEqual(
+          folders.map((folder) =>
+            folder.startsWith("sub/")
+              ? [
+                  { path: `${folder}/drop.log`, kind: "file" },
+                  { path: `${folder}/drop.tmp`, kind: "file", ignored: true },
+                ]
+              : [
+                  { path: `${folder}/drop.log`, kind: "file", ignored: true },
+                  { path: `${folder}/drop.tmp`, kind: "file" },
+                ],
+          ),
+        );
+        // Calls never mix the two roots, and listings waiting to ask about `sub/.git` share one.
+        const path = yield* Path.Path;
+        const mixed = calls.filter(({ cwd: callCwd, stdin }) => {
+          const paths = stdin.split("\0").filter(Boolean);
+          return path.basename(callCwd) === "sub"
+            ? paths.some((checkPath) => !checkPath.startsWith("inner-"))
+            : paths.some((checkPath) => checkPath.startsWith("inner-"));
+        });
+        expect(mixed).toEqual([]);
+        expect(calls.filter(({ stdin }) => stdin === "sub/.git\0").length).toBeLessThan(
+          inner.length,
+        );
+        expect(mostRunning).toBe(4);
+      }),
+    );
+
+    it.effect("applies ignore rules edited between listings", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "*.log\n");
+        const folders = Array.from({ length: 8 }, (_, index) => `folder-${index}`);
+        for (const folder of folders) {
+          yield* writeTextFile(cwd, `${folder}/keep.txt`);
+          yield* writeTextFile(cwd, `${folder}/drop.log`);
+        }
+        yield* writeTextFile(cwd, "folder-7/.gitignore", "!drop.log\n");
+        const labels = (listings: ReadonlyArray<ReadonlyArray<ProjectEntry>>) =>
+          listings.flat().flatMap((entry) => (entry.ignored === true ? [entry.path] : []));
+
+        expect(labels((yield* listAtOnce(cwd, folders)).listings)).toEqual(
+          folders.slice(0, 7).map((folder) => `${folder}/drop.log`),
+        );
+        yield* writeTextFile(cwd, ".gitignore", "*.txt\n");
+        yield* writeTextFile(cwd, "folder-7/.gitignore", "");
+        expect(labels((yield* listAtOnce(cwd, folders)).listings)).toEqual(
+          folders.map((folder) => `${folder}/keep.txt`),
+        );
       }),
     );
 
