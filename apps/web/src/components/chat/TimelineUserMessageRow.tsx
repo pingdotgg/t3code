@@ -550,9 +550,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     userVideos.length === 0 &&
     regularImages.length > 1 &&
     regularImages.every((image) => image.source?.kind !== "snap-shot");
-  // Corners that touch the bubble or a neighbouring message tighten, like the bubble's.
+  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent);
+  const steerLabelAbove = userMessageMeta !== null && !row.continuesSteer;
+  // Corners that touch the bubble, a neighbouring message or the steer label tighten.
   const mediaCornerClassName = cn(
-    row.groupedWithPrevious && "rounded-tr-md",
+    (row.groupedWithPrevious || steerLabelAbove) && "rounded-tr-md",
     (mediaAboveText || row.groupedWithNext) && "rounded-br-md",
   );
   // Files sent without words show as cards, not as a bubble around a name chip.
@@ -837,7 +839,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
     ) : null;
 
-  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent);
   // Touch shows actions all the time, and narrow lanes have no room beside the
   // bubble, so both keep the actions on their own line.
   const floatActions = row.groupedWithNext === true && !coarsePointer;
@@ -908,7 +909,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <GuestMessageName name={userMessage.guestName} />
         </div>
       ) : null}
-      {userMessageMeta && !row.continuesSteer ? (
+      {userMessageMeta && steerLabelAbove ? (
         <UserMessageMeta unread={row.projectedItem?.item.status === "pending"} intent={userMessageMeta.intent} label={userMessageMeta.label} />
       ) : null}
       {mediaAboveText ? (
@@ -921,7 +922,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div
         className={cn(
           "relative min-w-0 max-w-[min(80%,32.5rem)] rounded-pane text-foreground",
-          (mediaAboveText || row.groupedWithPrevious) && "rounded-tr-md",
+          (mediaAboveText || row.groupedWithPrevious || steerLabelAbove) && "rounded-tr-md",
           row.groupedWithNext && "rounded-br-md",
           BUBBLE_CHIP_CLASS_NAME,
           userMessage.attribution === "guest"
