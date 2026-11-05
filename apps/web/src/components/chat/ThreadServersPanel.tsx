@@ -39,7 +39,7 @@ interface ThreadServersPanelProps {
   readonly threadId: ThreadId;
 }
 
-/** Local servers the thread's terminals and agent started. Includes a quiet state while none run. */
+/** Local servers the thread's terminals and agent started. Hidden while none run. */
 export function ThreadServersPanel(props: ThreadServersPanelProps) {
   return <ThreadServersList key={`${props.environmentId}:${props.threadId}`} {...props} />;
 }
@@ -59,6 +59,8 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   });
   const [stoppingKey, setStoppingKey] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(SERVER_PAGE_COUNT);
+
+  if (servers.length === 0) return null;
 
   const externalClickLabel = isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click";
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
@@ -105,17 +107,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   };
 
   return (
-    <ThreadDetailsSection
-      title="Servers"
-      empty={servers.length === 0}
-      summary={servers.length ? `${servers.length} running` : "None running"}
-    >
-      {servers.length === 0 ? (
-        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-muted-foreground">
-          <GlobeIcon className="size-4" />
-          No servers running
-        </div>
-      ) : null}
+    <ThreadDetailsSection title="Servers" summary={`${servers.length} running`}>
       <ul className="m-0 list-none p-0">
         {servers.slice(0, visibleCount).map((server, index) => {
           const key = serverKey(server);
