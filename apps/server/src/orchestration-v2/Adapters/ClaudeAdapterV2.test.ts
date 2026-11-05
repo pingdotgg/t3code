@@ -532,6 +532,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession,
       readOnlySandbox: true,
+      permissionMode: "dontAsk",
       allowedTools: [...ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS],
     });
 
@@ -557,7 +558,11 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     );
     const initialKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
       queryPolicy,
-      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false }),
+      ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession,
+        readOnlySandbox: false,
+        permissionMode: queryPolicy.permissionMode,
+      }),
     );
 
     const rotatedKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
@@ -565,6 +570,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ClaudeAdapterV2.claudeMcpQueryOverrides({
         mcpSession: mcpSessionFor(threadId, "Bearer rotated-claude-token"),
         readOnlySandbox: false,
+        permissionMode: queryPolicy.permissionMode,
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
@@ -607,6 +613,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession,
       readOnlySandbox: false,
+      permissionMode: "bypassPermissions",
       allowedTools: ["Read"],
     });
     assert.deepEqual(overrides, {

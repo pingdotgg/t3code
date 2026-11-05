@@ -87,12 +87,13 @@ Claude receives an HTTP MCP server in its query options:
       },
     },
   },
-  allowedTools: [
-    // existing allowed tools
-    "mcp__t3-code__*",
-  ],
 }
 ```
+
+T3 tools run without a prompt. Auto and Full access pre-approve them with
+`allowedTools: ["mcp__t3-code__*"]`. Modes that consult `canUseTool` approve
+them in the adapter's callback instead, because a bare `allowedTools` entry
+stops the SDK from calling it. Read-only sandboxes approve only read-only tools.
 
 The adapter logs only whether MCP configuration exists; it does not log the
 server headers or token.

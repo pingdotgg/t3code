@@ -2004,12 +2004,24 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
 // T3 waits can block for an hour; exceed Claude's default 60 s timeout.
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 
-// allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
-// limited to annotated read-only tools in read-only sandboxes.
+function isClaudeAutoApprovedT3McpTool(toolName: string, readOnlySandbox: boolean): boolean {
+  return readOnlySandbox
+    ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS.includes(toolName)
+    : toolName.startsWith("mcp__t3-code__");
+}
+
+// T3 tools are auto-approved, limited to annotated read-only tools in read-only sandboxes. Bare
+// allowedTools entries skip canUseTool, so modes that consult it approve them there instead.
+const CLAUDE_CAN_USE_TOOL_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set([
+  "default",
+  "acceptEdits",
+  "plan",
+]);
 
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
+  readonly permissionMode: PermissionMode;
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
@@ -2019,11 +2031,14 @@ export function claudeMcpQueryOverrides(input: {
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
-  const mcpAllowedTools = input.readOnlySandbox
-    ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
-    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  const mcpAllowedTools = CLAUDE_CAN_USE_TOOL_PERMISSION_MODES.has(input.permissionMode)
+    ? []
+    : input.readOnlySandbox
+      ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
+      : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  const allowedTools = [...new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])];
   return {
-    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    ...(allowedTools.length === 0 ? {} : { allowedTools }),
     mcpServers: {
       "t3-code": {
         type: "http",
@@ -10228,6 +10243,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          if (
+            callbackOptions.matchedAskRule === undefined &&
+            isClaudeAutoApprovedT3McpTool(
+              toolName,
+              sandboxPolicyKindForClaudeRuntimePolicy(context.input.runtimePolicy) === "readOnly",
+            )
+          ) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
@@ -10732,6 +10761,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             mcpSession,
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
+            permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowedTools === undefined
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
