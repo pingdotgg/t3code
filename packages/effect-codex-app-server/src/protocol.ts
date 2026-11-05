@@ -486,6 +486,15 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                           duration: EXIT_STATUS_GRACE,
                           orElse: () => Effect.succeed(ended),
                         }),
+                        // A defect here would leave termination marked handled but unfinished.
+                        Effect.catchDefect((cause) =>
+                          Effect.succeed(
+                            new CodexError.CodexAppServerTransportError({
+                              operation: "read-input-stream",
+                              cause,
+                            }),
+                          ),
+                        ),
                       );
                 }),
             }),

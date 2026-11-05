@@ -883,6 +883,33 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("fails pending requests when the exit status lookup dies", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const defect = new Error("Injected exit status defect");
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Effect.die(defect),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* Queue.end(input);
+
+      const failure = yield* Fiber.join(pending).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the pending request to fail"),
+        }),
+      );
+      assert.instanceOf(failure, CodexError.CodexAppServerTransportError);
+      assert.strictEqual(failure.cause, defect);
+      assert.strictEqual(yield* Deferred.await(terminated), failure);
+    }),
+  );
+
   it.effect("retires the transport after a defect in the writer", () =>
     Effect.gen(function* () {
       const { stdio: baseStdio } = yield* makeInMemoryStdio();
