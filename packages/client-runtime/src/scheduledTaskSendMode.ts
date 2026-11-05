@@ -18,11 +18,11 @@ export const SCHEDULED_TASK_SEND_MODE_COPY: Record<
   steer: {
     label: "Steer only",
     description:
-      "Steers the current turn. Without a turn that can take new input, nothing is sent and the run fails.",
+      "Steers the current turn, like steering from the composer. With no turn to steer, nothing is sent and the run fails.",
   },
   restart: {
     label: "Restart",
     description:
-      "Stops the current turn and starts over with this prompt. Without a turn that can take new input, nothing is sent and the run fails.",
+      "Stops the current turn and starts over with this prompt, like restarting from the composer. With no turn to restart, nothing is sent and the run fails.",
   },
 };
