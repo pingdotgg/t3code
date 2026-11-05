@@ -2,6 +2,7 @@ import {
   ACP_REGISTRY_MAX_AGENTS,
   AcpRegistryOperationError,
   AcpRegistryOperationErrorReason,
+  managedAcpAgentDenial,
   TrimmedNonEmptyString,
   type AcpRegistryManagedBinaryUninstallInput,
   type AcpRegistryManagedBinaryUninstallResult,
@@ -531,11 +532,12 @@ const layer = (options: AcpRegistryCatalogOptions) =>
 export const layerFromHost = Layer.merge(
   Layer.unwrap(
     Effect.gen(function* () {
-      const { paths } = yield* ProviderHost.ProviderHost;
+      const { paths, managedPolicy } = yield* ProviderHost.ProviderHost;
       const path = yield* Path.Path;
       return layer({
         cacheDir: paths.providerStatusCacheDir,
         toolsDir: path.join(paths.baseDir, "tools"),
+        agentDenial: (agentId) => managedAcpAgentDenial(managedPolicy, agentId),
       });
     }),
   ),
@@ -546,6 +548,8 @@ export interface AcpRegistryCatalogOptions {
   readonly cacheDir: string;
   readonly toolsDir: string;
   readonly registryUrl?: string;
+  /** Why policy keeps an agent from running, or undefined when it may. */
+  readonly agentDenial?: (agentId: string) => string | undefined;
 }
 
 const INSTALL_LOCK_RETRY_COUNT = 300;
@@ -654,6 +658,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const resolveExecutable = yield* SpawnExecutableResolution;
   const platformTarget = resolveAcpRegistryPlatformTarget(platform, architecture);
   const registryUrl = input.registryUrl ?? ACP_REGISTRY_URL;
+  const { agentDenial } = input;
   const registryDirectory = path.join(input.cacheDir, "acp-registry");
   const registryCachePath = path.join(registryDirectory, "registry.json");
   const installsDirectory = input.toolsDir;
@@ -1594,6 +1599,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     );
   });
 
+  const refuseUnderPolicy = (agentId: string) => {
+    const detail = agentDenial?.(agentId);
+    return detail === undefined
+      ? Effect.void
+      : Effect.fail(new AcpRegistryError({ reason: "agent_not_found", detail }));
+  };
+
   const findAgent = Effect.fn("AcpRegistryCatalog.findAgent")(function* (
     registry: AcpRegistryIndex,
     agentId: string,
@@ -1641,7 +1653,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const packageManagerAvailable =
           packageManager === undefined ||
           resolveExecutable(packageManager, platform, hostEnvironment) !== undefined;
-        return distribution === undefined || rank === undefined || !packageManagerAvailable
+        return distribution === undefined ||
+          rank === undefined ||
+          !packageManagerAvailable ||
+          agentDenial?.(agent.id) !== undefined
           ? []
           : [{ agent, distribution, rank }];
       });
@@ -1675,6 +1690,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const prepare: AcpRegistryCatalog["Service"]["prepare"] = Effect.fn("AcpRegistryCatalog.prepare")(
     function* (input) {
+      yield* refuseUnderPolicy(input.agentId.trim());
       const registry = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");
@@ -1727,6 +1743,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }
       const agentId = settings.agentId.trim();
       if (agentId.length === 0) return { status: "unconfigured" } as const;
+      yield* refuseUnderPolicy(agentId);
       const registry = yield* loadCachedRegistry();
       const agent = registry.agents.find((candidate) => candidate.id === agentId);
       if (agent === undefined) return { status: "not_found", agentId } as const;
@@ -1855,6 +1872,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           detail: "ACP Registry provider requires a registry agent ID.",
         });
       }
+      yield* refuseUnderPolicy(agentId);
       const registry = yield* loadRegistry();
       const agent = yield* findAgent(registry, agentId);
       const distribution = yield* compatibleDistribution(agent, settings.distribution);

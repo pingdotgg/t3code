@@ -841,6 +841,52 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("hides and refuses agents the policy leaves out", () => {
+    const allowed = makeAgent({ npx: { package: "@example/acp@1.0.0" } });
+    const refused = { ...allowed, id: "refused-agent", name: "Refused Agent" };
+    const denial = "Example Corp's policy does not allow the ACP agent refused-agent.";
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-allowed-agents-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+        agentDenial: (agentId) => (agentId === allowed.id ? undefined : denial),
+      }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
+
+      const found = yield* catalog.search({ query: "agent" });
+      expect(found.agents.map((agent) => agent.id)).toEqual([allowed.id]);
+
+      const blocked = settings({ agentId: refused.id });
+      const errors = [
+        yield* Effect.flip(catalog.prepare({ agentId: refused.id })),
+        yield* Effect.flip(catalog.inspect(blocked, toolchain.environment)),
+        yield* Effect.flip(catalog.resolve(blocked, "/workspace", toolchain.environment)),
+      ];
+      expect(errors.map((error) => error.detail)).toEqual([denial, denial, denial]);
+      const commands = yield* fileSystem
+        .readFileString(toolchain.logPath)
+        .pipe(Effect.orElseSucceed(() => ""));
+      expect(commands).not.toContain("install --global");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ version: "1.0.0", agents: [allowed, refused] })),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("searches reuse an index fetched in the last five minutes", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     let requests = 0;
