@@ -54,6 +54,6 @@ export function titleRegenerationToast(results: ReadonlyArray<TitleRegenerationR
     description:
       kept === results.length
         ? "The current titles already fit these threads."
-        : "The rest were renamed. The kept titles already fit their threads.",
+        : "Those titles already fit their threads.",
   });
 }
