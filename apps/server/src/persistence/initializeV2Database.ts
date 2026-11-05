@@ -74,20 +74,19 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
       prefix: `.v2-import-${process.pid}-`,
     });
     const snapshotPath = path.join(temporaryDirectory, "snapshot.sqlite");
-    yield* Effect.tryPromise({
-      try: (signal) =>
-        new Promise<void>((resolve, reject) => {
-          const worker = new NodeWorkerThreads.Worker(snapshotWorkerSource, {
-            eval: true,
-            workerData: { sourcePath, snapshotPath },
-          });
-          signal.addEventListener("abort", () => void worker.terminate(), { once: true });
-          worker.once("error", reject);
-          worker.once("exit", (code) =>
-            code === 0 ? resolve() : reject(new Error(`Snapshot worker exited with ${code}`)),
-          );
-        }),
-      catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+    yield* Effect.callback<void, V2DatabaseImportError>((resume) => {
+      const fail = (cause: unknown) =>
+        resume(Effect.fail(new V2DatabaseImportError({ sourcePath, destinationPath, cause })));
+      const worker = new NodeWorkerThreads.Worker(snapshotWorkerSource, {
+        eval: true,
+        workerData: { sourcePath, snapshotPath },
+      });
+      worker.once("error", fail);
+      worker.once("exit", (code) =>
+        code === 0 ? resume(Effect.void) : fail(new Error(`Snapshot worker exited with ${code}`)),
+      );
+      // Interruption waits for the worker to exit before the scope removes its directory.
+      return Effect.promise(() => worker.terminate());
     });
     // Publish only a complete snapshot, without replacing an existing V2 database.
     yield* fs.link(snapshotPath, destinationPath).pipe(
