@@ -261,6 +261,7 @@ interface MessagesTimelineProps {
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  latestQueuedUserMessageAt?: string | null;
   latestRun: TimelineLatestRun | null;
   /** The run the screen reader announcer follows; see announcedRun. */
   announcedRun?: { readonly runId: RunId; readonly status: TimelineLatestRun["status"] } | null;
@@ -383,6 +384,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingRequestId = null,
   listRef,
   timelineEntries,
+  latestQueuedUserMessageAt,
   findOpen = false,
   findExpanded = false,
   findQuery = "",
@@ -699,6 +701,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
+    ...(latestQueuedUserMessageAt === undefined ? {} : { latestQueuedUserMessageAt }),
     pendingApprovalRequestIds,
     latestRun,
     runningRunId,

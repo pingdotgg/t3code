@@ -131,6 +131,20 @@ export function getUserQueuedThreadRuns(
   );
 }
 
+export function latestQueuedUserMessageCreatedAt(
+  projection: Pick<Projection, "runs" | "messages" | "thread">,
+): string | null {
+  let latest: string | null = null;
+  for (const run of getUserQueuedThreadRuns(projection)) {
+    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+    const createdAt = message === undefined ? null : String(message.createdAt);
+    if (createdAt !== null && (latest === null || createdAt > latest)) {
+      latest = createdAt;
+    }
+  }
+  return latest;
+}
+
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);

@@ -64,6 +64,8 @@ import { useEnvironmentProviders } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { newMessageId } from "../../lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   applyOptimisticUserMessagesAction,
@@ -322,6 +324,27 @@ export function SideChatPanel(props: {
   const openSideChat = useOrchestrationCommand(threadEnvironment.openSideChat, {
     reportFailure: false,
   });
+  const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
+    reportFailure: false,
+  });
+  const sendAppMessage = async (text: string) => {
+    if (shell === null) throw new Error("Messages from apps need a started thread.");
+    const result = await startThreadTurn({
+      environmentId,
+      input: {
+        threadId: sideChatRef.threadId,
+        message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+        runtimeMode: shell.runtimeMode,
+        interactionMode: shell.interactionMode,
+        dispatchMode: "queue",
+      },
+    });
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      throw error instanceof Error ? error : new Error("Could not send the app's message.");
+    }
+  };
+  const sendAppMessageStable = useStableCallback(sendAppMessage);
 
   const reportFinish = async (discard: boolean) => {
     const threadId = sideChatRef.threadId;
@@ -710,6 +733,7 @@ export function SideChatPanel(props: {
                 respondingRequestIds={respondingRequestIds}
                 canOperate={canOperate}
                 onRespondToApproval={onRespondToApproval}
+                onSendAppMessage={sendAppMessageStable}
                 footer={
                   (projection !== null && getUserQueuedThreadRuns(projection).length > 0) ||
                   optimisticMessages.some((message) => message.inputIntent === "queued_turn") ? (

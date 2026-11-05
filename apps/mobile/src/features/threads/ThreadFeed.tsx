@@ -231,6 +231,8 @@ import {
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
+import { QuizCard } from "./QuizCard";
+import { quizCardFromToolItem } from "@t3tools/shared/toolOutput";
 import {
   appendGuestPendingMessages,
   appendPendingThreadMessages,
@@ -1668,6 +1670,8 @@ function renderFeedEntry(
     | "threadId"
     | "workspaceRoot"
   > & {
+    readonly latestUserMessageAt: string | null;
+    readonly latestQueuedUserMessageAt: string | null;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1777,6 +1781,29 @@ function renderFeedEntry(
         width={props.contentWidth}
       />
     );
+  }
+
+  if (entry.type === "activity-group" && entry.activities.length === 1) {
+    const activity = entry.activities[0]!;
+    const item = activity.projectedItem.item;
+    if (item.type === "dynamic_tool" && item.status === "completed") {
+      const quizCard = quizCardFromToolItem(item);
+      if (quizCard !== undefined) {
+        return (
+          <QuizCard
+            quizCard={quizCard}
+            seed={entry.id}
+            answered={
+              (props.latestUserMessageAt !== null && props.latestUserMessageAt > entry.createdAt) ||
+              (props.latestQueuedUserMessageAt !== null &&
+                props.latestQueuedUserMessageAt > entry.createdAt)
+            }
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+          />
+        );
+      }
+    }
   }
 
   if (entry.type === "work-toggle") {
@@ -3317,6 +3344,20 @@ export const ThreadFeed = memo(function ThreadFeed({
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups),
     guestShare,
   );
+  const latestUserMessageAt = presentedFeed.reduce<string | null>(
+    (latest, entry) =>
+      entry.type === "message" &&
+      entry.message.role === "user" &&
+      (latest === null || entry.createdAt > latest)
+        ? entry.createdAt
+        : latest,
+    null,
+  );
+  const latestQueuedUserMessageAt = props.queuedMessages.reduce<string | null>(
+    (latest, message) =>
+      latest === null || message.createdAt > latest ? message.createdAt : latest,
+    null,
+  );
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
@@ -3745,6 +3786,8 @@ export const ThreadFeed = memo(function ThreadFeed({
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
+            latestUserMessageAt,
+            latestQueuedUserMessageAt,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
             threadId: props.threadId,
             copiedRowId,

@@ -65,7 +65,7 @@ import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
-import { type QuizCard } from "@t3tools/shared/quizCard";
+import type { QuizCard } from "@t3tools/shared/quizCard";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -1410,6 +1410,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  latestQueuedUserMessageAt?: string | null;
   /** Native subagent work has no app run; runless entries form the live response. */
   runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
@@ -2000,7 +2001,11 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "quiz-card") {
-      const answered = index < lastUserMessageIndex;
+      const answered =
+        index < lastUserMessageIndex ||
+        (input.latestQueuedUserMessageAt !== null &&
+          input.latestQueuedUserMessageAt !== undefined &&
+          input.latestQueuedUserMessageAt > timelineEntry.createdAt);
       nextRows.push({
         kind: "quiz-card",
         id: timelineEntry.id,
