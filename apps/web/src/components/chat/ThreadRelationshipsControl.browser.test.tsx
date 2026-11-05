@@ -208,6 +208,48 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
   );
 });
 
+it("keeps focus on the list when Show more pages reveal the last rows", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const environmentId = EnvironmentId.make("local");
+  const { updatedAt } = projection.thread;
+  state.projection = {
+    ...projection,
+    subagents: Array.from({ length: 7 }, (_, index) => ({
+      id: NodeId.make(`agent-${index}`),
+      threadId: projection.thread.id,
+      runId: null,
+      parentNodeId: NodeId.make("parent"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "codex",
+      providerInstanceId: projection.thread.providerInstanceId,
+      providerThreadId: null,
+      childThreadId: ThreadId.make(`omitted-child-${index}`),
+      nativeTaskRef: null,
+      prompt: `Inspect the change part ${index}`,
+      title: `Agent ${index}`,
+      model: null,
+      status: "completed",
+      result: null,
+      startedAt: null,
+      completedAt: updatedAt,
+      updatedAt,
+    })),
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: "Show 1 more" }).click();
+  await expect.element(screen.getByRole("list", { name: "Related threads" })).toHaveFocus();
+});
+
 it("shows a lineage thread's full title in its tooltip", async () => {
   setup();
   const longTitle = "Compare the lineage tooltip against a title that the row truncates";
