@@ -196,6 +196,16 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
   });
 
+  it("treats a generated entry with an edited Exec as generated", () => {
+    // Startup has always rewritten this file, so an edited Exec never took effect.
+    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "T3 Code (Beta)",
+      execTarget: "t3code",
+      scheme: "t3code",
+    }).replace(/^Exec=.*$/m, "Exec=t3code --ozone-platform=x11 %U");
+    assert.isTrue(DesktopLinuxUrlHandler.isGeneratedUrlHandlerDesktopEntry(entry, "t3code"));
+  });
+
   it.effect(
     "writes the handler entry, refreshes the MIME cache, and claims the scheme default",
     () => {
