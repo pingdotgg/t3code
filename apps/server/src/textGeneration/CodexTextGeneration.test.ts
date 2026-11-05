@@ -1,5 +1,6 @@
 import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  ProjectId,
   ProviderDriverKind,
   type ModelSelection,
   type ServerProvider,
@@ -444,10 +445,20 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+const PREFLIGHT_PRIMARY_STATES = [
+  "ready",
+  "pending",
+  "exhausted",
+  "not installed",
+  "not installed, fallback disabled for project",
+] as const;
+
+it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
   Effect.gen(function* () {
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
+    const projectId = ProjectId.make("project-a");
+    const primaryMissing = primaryState.startsWith("not installed");
     const selection = {
       instanceId: primary,
       model: "chat-model",
@@ -468,7 +479,13 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         models: [],
         slashCommands: [],
         skills: [],
-        ...(exhausted && instanceId === primary
+        ...(primaryState === "pending" && instanceId === primary
+          ? { installed: false, status: "warning", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryMissing && instanceId === primary
+          ? { installed: false, status: "error", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState === "exhausted" && instanceId === primary
           ? {
               usageLimits: {
                 checkedAt: "1970-01-01T00:00:00Z",
@@ -510,6 +527,13 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
             providerInstances: {
               [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
             },
+            ...(primaryState === "not installed, fallback disabled for project"
+              ? {
+                  projectSettingsOverrides: {
+                    [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
+                  },
+                }
+              : {}),
           }),
           Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
             resolveLink: () => Effect.die("unused"),
@@ -523,10 +547,11 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         message: "hello",
         linkedContext: "",
         modelSelection: selection,
+        projectId,
       }),
     ).toEqual({ title: "Generated title" });
     expect(calls).toEqual([
-      exhausted
+      primaryState === "exhausted" || primaryState === "not installed"
         ? {
             instanceId: fallback,
             model:

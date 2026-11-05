@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import {
   isProviderAvailable,
   isProviderTextGenerationCapable,
@@ -74,7 +74,10 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const generate = Effect.fn("TextGeneration.generate")(function* <A>(
     operation: TextGenerationOp,
-    selection: ModelSelection,
+    input: {
+      readonly modelSelection: ModelSelection;
+      readonly projectId?: ProjectId | null | undefined;
+    },
     invoke: (
       service: ProviderTextGeneration,
       modelSelection: ModelSelection,
@@ -86,12 +89,12 @@ export const make = Effect.gen(function* () {
       ),
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const limited = exhaustedUsageWindow(
-      snapshots.find((provider) => provider.instanceId === selection.instanceId),
-      now,
-      selection.model,
-    );
-    if (limited) {
+    let selection = input.modelSelection;
+    const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
+    // A pending snapshot is also not installed, but only a failed probe reports an error.
+    const missing =
+      selected?.enabled === true && !selected.installed && selected.status === "error";
+    if (missing || exhaustedUsageWindow(selected, now, selection.model)) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
@@ -110,7 +113,11 @@ export const make = Effect.gen(function* () {
             return (
               instanceId !== selection.instanceId &&
               provider?.enabled === true &&
-              resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
+              resolveProjectProviderInstanceEnabled(
+                settings,
+                input.projectId ?? null,
+                instanceId,
+              ) &&
               provider.installed &&
               provider.auth.status !== "unauthenticated" &&
               isProviderAvailable(provider) &&
@@ -128,45 +135,42 @@ export const make = Effect.gen(function* () {
   });
   return TextGeneration.of({
     generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
-      return generate("generateCommitMessage", input.modelSelection, (service, modelSelection) =>
+      return generate("generateCommitMessage", input, (service, modelSelection) =>
         service.generateCommitMessage({ ...input, modelSelection }),
       );
     }),
     generatePrContent: Effect.fn("TextGeneration.generatePrContent")(function (input) {
-      return generate("generatePrContent", input.modelSelection, (service, modelSelection) =>
+      return generate("generatePrContent", input, (service, modelSelection) =>
         service.generatePrContent({ ...input, modelSelection }),
       );
     }),
     generateBranchName: Effect.fn("TextGeneration.generateBranchName")(function (input) {
-      return generate("generateBranchName", input.modelSelection, (service, modelSelection) =>
+      return generate("generateBranchName", input, (service, modelSelection) =>
         service.generateBranchName({ ...input, modelSelection }),
       );
     }),
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {
-      return generate("generateReviewGuide", input.modelSelection, (service, modelSelection) =>
+      return generate("generateReviewGuide", input, (service, modelSelection) =>
         service.generateReviewGuide({ ...input, modelSelection }),
       );
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
-      return generate(
-        "generateThreadTitle",
-        input.modelSelection,
-        (textGeneration, modelSelection) =>
-          Effect.gen(function* () {
-            const linkedContext =
-              input.linkedContext ??
-              (yield* ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
-                Effect.provideService(
-                  SourceControlProviderRegistry.SourceControlProviderRegistry,
-                  sourceControl,
-                ),
-              ));
-            return yield* textGeneration.generateThreadTitle({
-              ...input,
-              linkedContext,
-              modelSelection,
-            });
-          }),
+      return generate("generateThreadTitle", input, (textGeneration, modelSelection) =>
+        Effect.gen(function* () {
+          const linkedContext =
+            input.linkedContext ??
+            (yield* ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
+              Effect.provideService(
+                SourceControlProviderRegistry.SourceControlProviderRegistry,
+                sourceControl,
+              ),
+            ));
+          return yield* textGeneration.generateThreadTitle({
+            ...input,
+            linkedContext,
+            modelSelection,
+          });
+        }),
       );
     }),
   });
