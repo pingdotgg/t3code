@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-04T10:28:00Z",
+  "updatedAt": "2026-11-05T22:38:29Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -620,10 +620,7 @@
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": {
-                "ultracode": "xhigh",
-                "ultrathink": null
-              },
+              "effortMap": { "ultrathink": null },
               "fixedContextWindowTokens": 1000000
             }
           }
@@ -722,10 +719,7 @@
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": {
-                "ultracode": "xhigh",
-                "ultrathink": null
-              },
+              "effortMap": { "ultrathink": null },
               "fixedContextWindowTokens": 1000000
             }
           }
