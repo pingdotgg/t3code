@@ -41,6 +41,7 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { GuestShareIndicator } from "./GuestShareControls";
 
 interface ChatHeaderProps {
@@ -84,6 +85,13 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenProjectSettings,
   onFindInThread,
 }: ChatHeaderProps) {
+  const projectGroups = useSidebarProjectGroups();
+  const activeProjectGroup = projectGroups.find((group) =>
+    group.memberProjectRefs.some(
+      (ref) =>
+        ref.environmentId === activeProject?.environmentId && ref.projectId === activeProject.id,
+    ),
+  );
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
@@ -306,7 +314,10 @@ export const ChatHeader = memo(function ChatHeader({
                     />
                   }
                 >
-                  <ProjectFavicon project={activeProject} className="size-3.5" />
+                  <ProjectFavicon
+                    project={activeProjectGroup ?? activeProject}
+                    className="size-3.5"
+                  />
                   <WorkspaceBreadcrumbText className="max-w-40">
                     {activeProjectName}
                   </WorkspaceBreadcrumbText>
