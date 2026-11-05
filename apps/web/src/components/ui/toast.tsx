@@ -114,7 +114,7 @@ const toastDismissPositionClass = "absolute z-20 -top-1.5 -right-1.5 flex";
 const toastDismissButtonClass = cn(
   "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border surface-dismiss text-muted-foreground outline-none",
   "transition-colors hover:text-foreground",
-  "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
+  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
 );
 // Notices close from inside their head row instead of the corner badge.
 // The 12px X's ink sits 7px inside its 20px button: right-1.25 ends the ink on the
@@ -123,7 +123,7 @@ const noticeDismissPositionClass = "absolute z-20 top-3 right-1.25 flex";
 const noticeDismissButtonClass = cn(
   "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none",
   "transition-colors hover:bg-accent hover:text-foreground",
-  "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
+  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
 );
 
 function handleToastDismissClick(
