@@ -930,8 +930,10 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     clearTypedHighlight();
     const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
+    // A rewritten paste has no matching offsets, so its caret lands at the end.
     if (
       source instanceof HTMLInputElement &&
+      resolvedQuery === nextQuery &&
       (canBrowsePaths && isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform)) !==
         isBrowsing
     ) {
