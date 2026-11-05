@@ -10,7 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -72,7 +72,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   readonly timeoutMs?: number;
 }) {
   const scope = yield* Scope.Scope;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const lock = yield* Semaphore.make(1);
   const timeoutMs = options.timeoutMs ?? 300_000;
   const empty: ProviderAuthState = {
@@ -221,7 +221,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
             Effect.forkIn(child),
           );
           return yield* restore(Fiber.await(fiber)).pipe(
-            Effect.flatMap((result) => result),
+            Effect.flatten,
             Effect.onExit((result) =>
               Exit.isFailure(result) ? Scope.close(child, Exit.void) : Effect.void,
             ),
@@ -238,7 +238,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               operation: "start",
               detail: "Provider setup is already in progress.",
             });
-          const id = yield* crypto.randomUUIDv4().pipe(
+          const id = yield* random.uuidV4().pipe(
             Effect.mapError(
               () =>
                 new ProviderSetupError({
