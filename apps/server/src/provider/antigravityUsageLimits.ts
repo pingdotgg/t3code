@@ -224,7 +224,9 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       }),
       Effect.timeout("10 seconds"),
     );
-  const read = Effect.gen(function* () {
+  const read = Effect.fn("AntigravityUsageProbe.read")(function* (
+    onAccount: (account: string) => void,
+  ) {
     const startedGeneration = generation;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
@@ -242,6 +244,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const fingerprint = yield* sha256(
       `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
     );
+    if (cached?.fingerprint === fingerprint) onAccount(cached.account);
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
     let account: string;
@@ -280,6 +283,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
+    onAccount(account);
     const throttleIdentity = throttleIdentities.get(fingerprint) ?? account;
     throttleIdentities.set(fingerprint, throttleIdentity);
     const sampleTimes: string[] = [];
@@ -335,29 +339,40 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           decodeModels(response).pipe(Effect.map(modelWindows)),
         );
     if (windows.length === 0) {
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "probeFailed",
-        message: "Antigravity did not return usable quota information.",
-      });
+      return {
+        ...makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "Antigravity did not return usable quota information.",
+        }),
+        credentialFingerprint: account,
+      };
     }
     return {
       ...makeUsageLimits({ checkedAt: sampleTimes.toSorted()[0] ?? checkedAt, windows }),
       credentialFingerprint: account,
     };
   });
-  const probe = read.pipe(
-    Effect.timeout("30 seconds"),
-    Effect.catch(() =>
-      Effect.gen(function* () {
-        return makeUnavailableUsageLimits({
-          checkedAt: DateTime.formatIso(yield* DateTime.now),
-          reason: "probeFailed",
-          message: "Could not read Antigravity limits. Refresh provider status to retry.",
-        });
-      }),
-    ),
-  );
+  const probe = Effect.gen(function* () {
+    let credentialFingerprint: string | undefined;
+    return yield* read((account) => {
+      credentialFingerprint = account;
+    }).pipe(
+      Effect.timeout("30 seconds"),
+      Effect.catch(() =>
+        Effect.gen(function* () {
+          return {
+            ...makeUnavailableUsageLimits({
+              checkedAt: DateTime.formatIso(yield* DateTime.now),
+              reason: "probeFailed",
+              message: "Could not read Antigravity limits. Refresh provider status to retry.",
+            }),
+            ...(credentialFingerprint ? { credentialFingerprint } : {}),
+          };
+        }),
+      ),
+    );
+  });
   return {
     probe,
     clear: Effect.sync(() => {

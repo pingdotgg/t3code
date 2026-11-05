@@ -174,7 +174,9 @@ describe("Antigravity subscription limits", () => {
         expect(quotaCalls()).toBe(2);
         yield* TestClock.adjust("51 minutes");
         options.summaryStatus = 429;
-        yield* probe;
+        const limited = yield* probe;
+        expect(limited.credentialFingerprint).toBeDefined();
+        expect(limited.credentialFingerprint).toBe(first.credentialFingerprint);
         expect(quotaCalls()).toBe(4);
         yield* TestClock.adjust("5 minutes");
         options.userId = discovery === "fails" ? undefined : "google-account";
@@ -656,11 +658,22 @@ describe("Antigravity subscription limits", () => {
 
   it.effect("returns a safe failure when OAuth refresh fails", () =>
     Effect.gen(function* () {
-      const { probe } = yield* fixture({ tokenStatus: 401 });
+      const options = { tokenStatus: 401, userId: "google-account" };
+      const { probe, writeToken } = yield* fixture(options);
       const limits = yield* probe;
       expect(limits.windows).toEqual([]);
       expect(limits.unavailable?.reason).toBe("probeFailed");
       expect(JSON.stringify(limits)).not.toMatch(/client-secret|refresh-a|access-token/);
+      expect(limits.credentialFingerprint).toBeUndefined();
+      options.tokenStatus = 200;
+      const successful = yield* probe;
+      yield* TestClock.adjust("60 minutes");
+      options.tokenStatus = 401;
+      const renewalFailure = yield* probe;
+      expect(renewalFailure.unavailable?.reason).toBe("probeFailed");
+      expect(renewalFailure.credentialFingerprint).toBe(successful.credentialFingerprint);
+      yield* writeToken("refresh-b");
+      expect((yield* probe).credentialFingerprint).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
