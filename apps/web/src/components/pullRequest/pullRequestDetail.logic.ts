@@ -38,7 +38,7 @@ import {
 } from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
-import { reviewCommentContextId } from "~/lib/composerContextRecords";
+import { reviewCommentDraftContextId } from "~/lib/composerContextRecords";
 import { removeInlineContextReference } from "~/lib/composerContextReferences";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
@@ -835,7 +835,7 @@ export function stripPullRequestHandoffReferences(
   let next = prompt;
   for (const comment of comments) {
     if (!comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX) || retainedIds.has(comment.id)) continue;
-    next = removeInlineContextReference(next, reviewCommentContextId(comment.id)).prompt;
+    next = removeInlineContextReference(next, reviewCommentDraftContextId(comment)).prompt;
   }
   return next;
 }

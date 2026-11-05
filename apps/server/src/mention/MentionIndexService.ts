@@ -41,7 +41,8 @@ const make = Effect.gen(function* () {
     }),
 
     ensureIndexed: Effect.fn("MentionIndexService.ensureIndexed")(function* (projectId) {
-      yield* pullRequests.syncProject(projectId);
+      // Honor freshness / in-flight guards; do not force a blocking full sync.
+      yield* pullRequests.ensureIndexed(projectId);
       return yield* index.search({
         projectId,
         providers: ["pull-request"],

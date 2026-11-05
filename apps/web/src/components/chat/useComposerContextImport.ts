@@ -29,8 +29,9 @@ import {
   previewAnnotationContextId,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
-  reviewCommentContextId,
+  reviewCommentDraftContextId,
   reviewCommentContextRecord,
+  reviewCommentContextReference,
   reviewCommentFromRecord,
   terminalContextDraftFromRecord,
   terminalContextRecord,
@@ -52,6 +53,7 @@ import {
   type ComposerDraftContextRecords,
   uploadedContextRecordFromDraft,
 } from "../composerContextPresentation";
+import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -339,14 +341,16 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" ||
-                  existing?.kind === "environment" ||
-                  existing?.kind === "jira" ||
-                  existing?.kind === "figma"
-                ? existing.record
-                : existing
-                  ? (uploadedContextRecordFromDraft(existing) ?? undefined)
-                  : undefined;
+              : existing?.kind === "pull-request"
+                ? reviewCommentContextRecord(existing.record)
+                : existing?.kind === "thread" ||
+                    existing?.kind === "environment" ||
+                    existing?.kind === "jira" ||
+                    existing?.kind === "figma"
+                  ? existing.record
+                  : existing
+                    ? (uploadedContextRecordFromDraft(existing) ?? undefined)
+                    : undefined;
       if (
         existingRecord &&
         isSameComposerContextPayload(existingRecord, record) &&
@@ -376,7 +380,26 @@ export function useComposerContextImport(input: {
           addComposerDraftReviewComment(composerDraftTarget, comment, {
             appendReference: false,
           });
-          rewritten.set(record.contextId, reviewCommentContextId(comment.id));
+          rewritten.set(record.contextId, reviewCommentDraftContextId(comment));
+          break;
+        }
+        case "pull-request": {
+          // Question answers carry no PR chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = buildPullRequestReferenceContext({
+            number: record.number,
+            title: record.title,
+            url: record.url,
+            headBranch: record.headBranch,
+            baseBranch: record.baseBranch,
+            state: record.state,
+            isDraft: record.isDraft,
+          });
+          const comment = conflicts ? { ...imported, id: randomUUID() } : imported;
+          addComposerDraftReviewComment(composerDraftTarget, comment, {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, reviewCommentContextReference(comment).contextId);
           break;
         }
         case "element":

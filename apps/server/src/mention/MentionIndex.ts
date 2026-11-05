@@ -198,6 +198,9 @@ export const make = Effect.gen(function* () {
       });
       return published;
     }
+    // Disk miss can race a concurrent markSyncing/replaceScope; prefer any hot publish.
+    const raced = (yield* Ref.get(hot)).get(scopeKey);
+    if (raced) return raced;
     return {
       rows: [],
       meta: { syncedAt: 0, status: "empty" },

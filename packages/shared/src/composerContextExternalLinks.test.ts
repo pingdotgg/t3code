@@ -25,6 +25,23 @@ describe("composerContextExternalLinks", () => {
     });
   });
 
+  it("keeps trailing prose punctuation outside a Figma URL rewrite", () => {
+    const rewritten = externalLinkContextReferences(
+      "See https://www.figma.com/design/AbCdEf123/Flow?node-id=1-2).",
+    );
+    expect(rewritten.records).toHaveLength(1);
+    expect(rewritten.records[0]).toMatchObject({ kind: "figma", nodeId: "1:2" });
+    expect(rewritten.text.endsWith(").")).toBe(true);
+  });
+
+  it("scopes Jira context ids by site host", () => {
+    const rewritten = externalLinkContextReferences(
+      "https://acme.atlassian.net/browse/APP-1 https://other.atlassian.net/browse/APP-1",
+    );
+    expect(rewritten.records).toHaveLength(2);
+    expect(new Set(rewritten.records.map((record) => record.contextId)).size).toBe(2);
+  });
+
   it("rejects Figma URLs with malformed percent escapes", () => {
     expect(parseFigmaDesignUrl("https://www.figma.com/design/AbCdEf123/%")).toBeNull();
     expect(

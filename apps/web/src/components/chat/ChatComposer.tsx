@@ -172,7 +172,7 @@ import {
   uploadedAttachmentContextRecord,
   previewAnnotationContextId,
   previewAnnotationContextRecord,
-  reviewCommentContextId,
+  reviewCommentDraftContextId,
   reviewCommentContextReference,
   reviewCommentContextRecord,
   terminalContextReference,
@@ -1340,7 +1340,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ...composerJiraContexts.filter((record) => wanted.has(record.contextId)),
       ...composerFigmaContexts.filter((record) => wanted.has(record.contextId)),
       ...composerReviewComments
-        .filter((c) => wanted.has(reviewCommentContextId(c.id)))
+        .filter((c) => wanted.has(reviewCommentDraftContextId(c)))
         .map(reviewCommentContextRecord),
       ...composerPreviewAnnotations
         .filter((a) => wanted.has(previewAnnotationContextId(a.id)))
@@ -1727,14 +1727,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     for (const comment of composerReviewComments) {
-      const contextId = reviewCommentContextId(comment.id);
+      const contextId = reviewCommentDraftContextId(comment);
       if (!referenced.has(contextId)) {
         retained.reviewComments.set(contextId, comment);
         removeComposerDraftReviewComment(composerDraftTarget, comment.id);
       }
     }
     const liveReviewIds = new Set<string>(
-      composerReviewComments.map((comment) => reviewCommentContextId(comment.id)),
+      composerReviewComments.map((comment) => reviewCommentDraftContextId(comment)),
     );
     for (const contextId of referenced) {
       if (liveReviewIds.has(contextId)) continue;
@@ -2016,8 +2016,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (item.type === "thread") {
       if (trigger.kind !== "path") return;
       const shell = readThreadShell(item.thread);
-      if (!shell) return;
-      const record = threadContextRecord(item.thread, shell.title);
+      const record = threadContextRecord(item.thread, shell?.title ?? item.label);
       const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,

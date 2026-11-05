@@ -7,8 +7,9 @@ import {
 } from "./composerContextReferences.ts";
 
 const JIRA_URL = /https?:\/\/([a-z0-9-]+\.)?atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)\b/giu;
+/** Stop before whitespace and closing punctuation so `url).` keeps the trailing `).`. */
 const FIGMA_URL =
-  /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#]*))?(?:\?[^\s#]*)?(?:#([^?\s]*))?/giu;
+  /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#)]*))?(?:\?([^#\s)]*))?(?:#([^\s)]*))?/giu;
 
 export function parseJiraBrowseUrl(value: string): {
   readonly key: string;
@@ -28,7 +29,7 @@ export function parseFigmaDesignUrl(value: string): {
   readonly nodeId?: string;
 } | null {
   const match =
-    /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#]*))?(?:\?([^#\s]*))?(?:#([^\s]*))?/iu.exec(
+    /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#)]*))?(?:\?([^#\s)]*))?(?:#([^\s)]*))?/iu.exec(
       value.trim(),
     );
   if (!match) return null;
@@ -64,10 +65,16 @@ export function jiraContextRecord(input: {
   readonly summary?: string;
 }): JiraContextRecord {
   const summary = (input.summary ?? input.key).slice(0, 2_048);
+  let host = "atlassian.net";
+  try {
+    host = new URL(input.url).host.toLowerCase() || host;
+  } catch {
+    // Keep a stable fallback when the URL is malformed.
+  }
   return {
     version: 1,
     kind: "jira",
-    contextId: toKindScopedComposerContextId("jira", input.key),
+    contextId: toKindScopedComposerContextId("jira", `${host}:${input.key}`),
     label: sanitizeComposerContextLabel(input.key, "jira"),
     key: input.key,
     url: input.url.slice(0, 2_048),

@@ -204,6 +204,14 @@ export function reviewCommentContextReference(
   };
 }
 
+/** Draft lookup id for a review comment, including pull-request summary chips. */
+export function reviewCommentDraftContextId(comment: ReviewCommentContext): ComposerContextId {
+  if (isPullRequestSummaryContext(comment) && comment.pullRequest !== undefined) {
+    return pullRequestContextId(comment.id);
+  }
+  return reviewCommentContextId(comment.id);
+}
+
 export function previewAnnotationContextReference(
   annotation: PreviewAnnotationPayload,
 ): ComposerContextReference {

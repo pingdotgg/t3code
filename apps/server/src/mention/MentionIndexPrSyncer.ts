@@ -121,10 +121,14 @@ const make = Effect.gen(function* () {
     if (!stale) return;
 
     const key = String(projectId);
-    const running = yield* Ref.get(inFlight);
-    if (running.has(key)) return;
+    const claimed = yield* Ref.modify(inFlight, (set) => {
+      if (set.has(key)) return [false, set] as const;
+      const next = new Set(set);
+      next.add(key);
+      return [true, next] as const;
+    });
+    if (!claimed) return;
 
-    yield* Ref.update(inFlight, (set) => new Set(set).add(key));
     yield* syncProject(projectId).pipe(
       Effect.ensuring(
         Ref.update(inFlight, (set) => {

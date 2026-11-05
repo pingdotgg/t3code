@@ -87,7 +87,7 @@ import {
   fileContextReference,
   previewAnnotationContextId,
   previewAnnotationContextReference,
-  reviewCommentContextId,
+  reviewCommentDraftContextId,
   reviewCommentContextReference,
   terminalContextReference,
   threadContextReference,
@@ -3879,7 +3879,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               if (retainedIds.has(previous.id)) continue;
               prompt = removeInlineContextReference(
                 prompt,
-                reviewCommentContextId(previous.id),
+                reviewCommentDraftContextId(previous),
               ).prompt;
             }
             prompt = ensureInlineContextReferences(
@@ -4162,13 +4162,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           set((state) => {
             const current = state.draftsByThreadKey[threadKey];
             if (!current) return state;
+            const removed = current.reviewComments.find((entry) => entry.id === commentId);
             const reviewComments = current.reviewComments.filter((entry) => entry.id !== commentId);
-            if (reviewComments.length === current.reviewComments.length) return state;
+            if (reviewComments.length === current.reviewComments.length || removed === undefined) {
+              return state;
+            }
             const nextDraft = {
               ...current,
               prompt: removeInlineContextReference(
                 current.prompt,
-                reviewCommentContextId(commentId),
+                reviewCommentDraftContextId(removed),
               ).prompt,
               reviewComments,
             };
