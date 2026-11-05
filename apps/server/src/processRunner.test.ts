@@ -71,7 +71,7 @@ const runWith =
         }),
       ),
       Effect.provide(
-        ProcessRunner.layer.pipe(
+        ProcessRunner.layerWithSpawner.pipe(
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         ),
       ),
@@ -277,6 +277,22 @@ describe("ProcessRunner.layer", () => {
           Number(result.stdout.trim()),
           "the command's parent process is the server process itself",
         ).not.toBe(process.pid);
+      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+  );
+
+  // Callers report a missing CLI from the NotFound reason.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "reports a missing command as a NotFound spawn failure",
+    () =>
+      Effect.gen(function* () {
+        const runner = yield* ProcessRunner.ProcessRunner;
+        const error = yield* runner
+          .run({ command: "t3code-missing-command", args: [] })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("ProcessSpawnError");
+        expect(error.cause).toBeInstanceOf(PlatformError.PlatformError);
+        expect((error.cause as PlatformError.PlatformError).reason._tag).toBe("NotFound");
       }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
   );
 });
