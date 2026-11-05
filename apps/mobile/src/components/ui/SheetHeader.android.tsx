@@ -1,6 +1,6 @@
 import { View } from "react-native";
 
-import { AndroidScreenHeader } from "./AndroidScreenHeader";
+import { AppBar } from "./AppBar";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 import type { SheetCloseButtonProps, SheetHeaderProps } from "./SheetHeader.types";
@@ -36,8 +36,9 @@ export function SheetHeader(props: SheetHeaderProps) {
     ) : undefined;
 
   return (
-    <AndroidScreenHeader
-      embedded={props.presentation === "inline"}
+    <AppBar
+      embedded
+      sheet={props.presentation === "inline"}
       title={props.title}
       subtitle={props.subtitle}
       leading={

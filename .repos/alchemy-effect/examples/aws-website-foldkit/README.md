@@ -2,9 +2,9 @@
 
 Deploys a [Foldkit](https://foldkit.dev) app to AWS with
 `AWS.Website.Foldkit` — the client build in S3 behind a CloudFront
-distribution, no CloudFormation templates. Foldkit apps are client-only
-Vite projects, so the deployment is assets-only and never creates a
-server function.
+distribution, no CloudFormation templates. This integration supports
+client-only Foldkit apps, so the deployment is assets-only and never
+creates a server function.
 
 - `src/main.ts` holds the Elm-architecture model/update/view; the page
   renders a `card` view function (`src/components/Card.ts`) written in
@@ -37,7 +37,7 @@ the input files are content-hashed (scoped by `memo.include`).
 bun run dev
 ```
 
-`alchemy dev` runs Vite's own dev server — Foldkit's HMR and devtools
+`alchemy dev` runs Vite's own dev server — Foldkit's live reload and devtools
 wiring work unchanged — and no AWS resources are created.
 
 ## Destroy

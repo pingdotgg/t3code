@@ -1,9 +1,11 @@
+import * as NodeCrypto from "node:crypto";
+import { createRequire } from "node:module";
 /**
  * The alchemy Worker source-provider entry for Next.js
  * (`@alchemy.run/frontend-frameworks/nextjs/source`).
  *
  * The default export implements alchemy's `WorkerSourceModule` contract
- * (`packages/alchemy/src/Cloudflare/Workers/Source.ts`) **structurally** —
+ * (`packages/cloudflare/src/Workers/Source.ts`) **structurally** —
  * this package deliberately does not import alchemy types. The shapes
  * mirrored here are:
  *
@@ -24,26 +26,19 @@
  * ISR revalidation writes are a documented no-op (read-only static-assets
  * incremental cache).
  */
-import type {
-  BindingHooks,
-  RuntimeWorker,
-} from "@alchemy.run/cloudflare-runtime/core";
-import * as FrameworkCore from "../core/index.ts";
+import type { BindingHooks, RuntimeWorker } from "@alchemy.run/cloudflare-runtime/core";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
-import * as NodeCrypto from "node:crypto";
-import { createRequire } from "node:module";
-import { runBuildChild } from "../core/BuildChild.ts";
+import { resolveBuildEnv, runBuildChild } from "../core/BuildChild.ts";
+import * as FrameworkCore from "../core/index.ts";
 import * as Nextjs from "./Nextjs.ts";
 import * as Runner from "./Runner.ts";
 
-const packageVersion: string = createRequire(import.meta.url)(
-  "../../package.json",
-).version;
+const packageVersion: string = createRequire(import.meta.url)("../../package.json").version;
 
 const PROVIDER = "@alchemy.run/frontend-frameworks/nextjs/source";
 
@@ -90,9 +85,7 @@ export interface SourceAssets {
 
 /** Mirror of alchemy's `SourceBuildOutput`. */
 export interface SourceBuildOutput {
-  readonly bundle:
-    | { readonly files: Array<SourceBundleFile>; readonly hash: string }
-    | undefined;
+  readonly bundle: { readonly files: Array<SourceBundleFile>; readonly hash: string } | undefined;
   readonly assets: SourceAssets | undefined;
   readonly hash: SourceHash;
 }
@@ -106,6 +99,7 @@ export interface SourceContext {
     readonly date: string;
     readonly flags: Array<string>;
   };
+  readonly env?: Record<string, unknown> | undefined;
   readonly assets?: string | Record<string, unknown> | undefined;
 }
 
@@ -118,14 +112,19 @@ type WorkerWiring = Omit<
 export interface DevContext extends SourceContext {
   readonly worker: {
     readonly bindings: NonNullable<WorkerWiring["bindings"]>;
-    readonly durableObjectNamespaces: NonNullable<
-      WorkerWiring["durableObjectNamespaces"]
-    >;
+    readonly durableObjectNamespaces: NonNullable<WorkerWiring["durableObjectNamespaces"]>;
     readonly hyperdrives: NonNullable<WorkerWiring["hyperdrives"]>;
-    readonly queueConsumers: Effect.Effect<
-      NonNullable<WorkerWiring["queueConsumers"]>
-    >;
+    readonly queueConsumers: Effect.Effect<NonNullable<WorkerWiring["queueConsumers"]>>;
     readonly assets: WorkerWiring["assets"] | undefined;
+    /**
+     * The Worker's other runtime settings (crons, Workflows, tail consumers,
+     * Cache API, `request.cf`, zone, Access), spread whole into the runtime
+     * Worker.
+     */
+    readonly options: Pick<
+      RuntimeWorker,
+      "workflows" | "crons" | "tails" | "streamingTails" | "cache" | "cf" | "zone" | "access"
+    >;
   };
   /**
    * The host's runtime stack (a `Context.Context<RuntimeServices>`) — the
@@ -157,11 +156,7 @@ export interface SourceProvider {
   ) => Effect.Effect<Partial<SourceHash>, SourceError, SourceServices>;
   readonly dev: (
     ctx: DevContext,
-  ) => Effect.Effect<
-    SourceDevHandle,
-    SourceError,
-    SourceServices | Scope.Scope
-  >;
+  ) => Effect.Effect<SourceDevHandle, SourceError, SourceServices | Scope.Scope>;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -236,9 +231,7 @@ export interface NextjsSourceOptions {
 // ─────────────────────────────────────────────────────────────────────
 
 const sha256Hex = (input: string | Uint8Array): Effect.Effect<string> =>
-  Effect.sync(() =>
-    NodeCrypto.createHash("sha256").update(input).digest("hex"),
-  );
+  Effect.sync(() => NodeCrypto.createHash("sha256").update(input).digest("hex"));
 
 /** JSON.stringify with recursively sorted object keys (stable across runs). */
 const stableStringify = (value: unknown): string => {
@@ -319,9 +312,7 @@ const listProjectFiles = Effect.fn(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeDirectory =
-    dotAlchemy === undefined
-      ? undefined
-      : path.resolve(process.cwd(), dotAlchemy);
+    dotAlchemy === undefined ? undefined : path.resolve(process.cwd(), dotAlchemy);
   const out: Array<string> = [];
   const walk = (relative: string): Effect.Effect<void, PlatformError, never> =>
     Effect.gen(function* () {
@@ -330,10 +321,7 @@ const listProjectFiles = Effect.fn(function* (
       for (const entry of entries) {
         const rel = relative === "" ? entry : `${relative}/${entry}`;
         if (runtimeDirectory !== undefined) {
-          const runtimeRelative = path.relative(
-            runtimeDirectory,
-            path.join(root, rel),
-          );
+          const runtimeRelative = path.relative(runtimeDirectory, path.join(root, rel));
           if (
             runtimeRelative === "" ||
             (!path.isAbsolute(runtimeRelative) &&
@@ -389,14 +377,8 @@ const hashInputTree = Effect.fn(function* (
   const memo = options.memo ?? {};
   const include = (memo.include ?? ["**/*"]).map(globToRegExp);
   const exclude = (memo.exclude ?? []).map(globToRegExp);
-  const files = (yield* listProjectFiles(
-    root,
-    ALWAYS_PRUNED,
-    dotAlchemy,
-  )).filter(
-    (file) =>
-      include.some((re) => re.test(file)) &&
-      !exclude.some((re) => re.test(file)),
+  const files = (yield* listProjectFiles(root, ALWAYS_PRUNED, dotAlchemy)).filter(
+    (file) => include.some((re) => re.test(file)) && !exclude.some((re) => re.test(file)),
   );
   const path = yield* Path.Path;
   const entries = yield* Effect.forEach(
@@ -421,9 +403,7 @@ const hashInputTree = Effect.fn(function* (
       "yarn.lock",
     ]);
     if (lockfile !== undefined) {
-      lockfileHash = yield* fs
-        .readFile(lockfile)
-        .pipe(Effect.flatMap(sha256Hex));
+      lockfileHash = yield* fs.readFile(lockfile).pipe(Effect.flatMap(sha256Hex));
     }
   }
   const configPath = yield* Runner.resolveConfigPath({
@@ -466,9 +446,7 @@ const MAX_ASSET_COUNT = 20_000;
 
 const maybeReadString = Effect.fn(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
-  return yield* fs
-    .readFileString(file)
-    .pipe(Effect.orElseSucceed(() => undefined));
+  return yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => undefined));
 });
 
 /**
@@ -525,9 +503,7 @@ const readClientAssets = Effect.fn(function* (
           message: `Too many assets in ${directory} (the Workers Assets limit is ${MAX_ASSET_COUNT})`,
         });
       }
-      const hash = (yield* fs
-        .readFile(file)
-        .pipe(Effect.flatMap(sha256Hex))).slice(0, 32);
+      const hash = (yield* fs.readFile(file).pipe(Effect.flatMap(sha256Hex))).slice(0, 32);
       manifest[`/${name}`] = { hash, size };
     }),
     { concurrency: 16 },
@@ -555,16 +531,12 @@ const readClientAssets = Effect.fn(function* (
 // The provider
 // ─────────────────────────────────────────────────────────────────────
 
-const assetsConfigOf = (
-  ctx: SourceContext,
-): Record<string, unknown> | undefined =>
+const assetsConfigOf = (ctx: SourceContext): Record<string, unknown> | undefined =>
   ctx.assets !== undefined && typeof ctx.assets !== "string"
     ? (ctx.assets as Record<string, unknown>)
     : undefined;
 
-const frameworkError = (cause: {
-  readonly message: string;
-}): SourceProviderError =>
+const frameworkError = (cause: { readonly message: string }): SourceProviderError =>
   new SourceProviderError({
     provider: PROVIDER,
     message: cause.message,
@@ -574,9 +546,7 @@ const frameworkError = (cause: {
 /** Run `use` against a freshly-built `Framework` service for `options`. */
 const withFramework = <A, E, R>(
   options: Nextjs.NextjsFrameworkOptions,
-  use: (
-    framework: FrameworkCore.Framework["Service"],
-  ) => Effect.Effect<A, E, R>,
+  use: (framework: FrameworkCore.Framework["Service"]) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
     const framework = yield* FrameworkCore.Framework;
@@ -626,9 +596,7 @@ export const buildInChild = (config: NextjsBuildChildConfig) =>
   );
 
 const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
-  const frameworkOptions = (
-    ctx: SourceContext,
-  ): Nextjs.NextjsFrameworkOptions => ({
+  const frameworkOptions = (ctx: SourceContext): Nextjs.NextjsFrameworkOptions => ({
     root: options.root,
     vite: {
       compatibilityDate: ctx.compatibility.date,
@@ -647,9 +615,7 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
 
   const resolveRoot = Effect.fn(function* () {
     const path = yield* Path.Path;
-    return path.resolve(
-      options.root ?? (yield* Effect.sync(() => process.cwd())),
-    );
+    return path.resolve(options.root ?? (yield* Effect.sync(() => process.cwd())));
   });
 
   return {
@@ -661,6 +627,7 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
         module: import.meta.url,
         rootDir: root,
         framework: "nextjs",
+        env: resolveBuildEnv(ctx.env),
         config: {
           rootDir: root,
           compatibilityDate: ctx.compatibility.date,
@@ -673,10 +640,7 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
           debug: options.debug,
         } satisfies NextjsBuildChildConfig,
       }).pipe(Effect.mapError(frameworkError));
-      if (
-        output.serverModules === undefined ||
-        output.serverModules.length === 0
-      ) {
+      if (output.serverModules === undefined || output.serverModules.length === 0) {
         return yield* new SourceProviderError({
           provider: PROVIDER,
           message: "The OpenNext build produced no server modules",
@@ -693,7 +657,7 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
       const [assets, input] = yield* Effect.all([
         output.clientDirectory !== undefined
           ? readClientAssets(output.clientDirectory, assetsConfigOf(ctx))
-          : Effect.succeed(undefined),
+          : Effect.undefined,
         hashInputTree(root, options, ctx.dotAlchemy),
       ]);
       return {
@@ -736,6 +700,7 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
           compatibilityDate: ctx.compatibility.date,
           compatibilityFlags: ctx.compatibility.flags,
           worker: {
+            ...ctx.worker.options,
             name: ctx.workerName,
             bindings: ctx.worker.bindings,
             durableObjectNamespaces: ctx.worker.durableObjectNamespaces,
@@ -745,9 +710,9 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
           },
         },
       };
-      const server = yield* withFramework(devOptions, (framework) =>
-        framework.dev({ root }),
-      ).pipe(Effect.mapError(frameworkError));
+      const server = yield* withFramework(devOptions, (framework) => framework.dev({ root })).pipe(
+        Effect.mapError(frameworkError),
+      );
       return {
         mode: "server",
         url: new URL(server.url),
@@ -764,15 +729,11 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
 const make = (
   options: unknown,
 ): Effect.Effect<SourceProvider, SourceProviderError, SourceServices> => {
-  if (
-    options !== undefined &&
-    (typeof options !== "object" || Array.isArray(options))
-  ) {
+  if (options !== undefined && (typeof options !== "object" || Array.isArray(options))) {
     return Effect.fail(
       new SourceProviderError({
         provider: PROVIDER,
-        message:
-          "Invalid source options: expected a plain JSON object (NextjsSourceOptions)",
+        message: "Invalid source options: expected a plain JSON object (NextjsSourceOptions)",
       }),
     );
   }

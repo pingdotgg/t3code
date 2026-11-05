@@ -1,9 +1,9 @@
-import * as Queue from "../../core/bindings/queue/Queue.ts";
-import cloudflareVitePlugin from "../plugin.ts";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vite from "vite";
 import { afterEach, describe, expect, test } from "vitest";
+import * as Queue from "../../core/bindings/queue/Queue.ts";
+import cloudflareVitePlugin from "../plugin.ts";
 
 /**
  * A Worker that both produces to and consumes from one queue.
@@ -58,6 +58,7 @@ async function startDevServer() {
   const server = await vite.createServer({
     root,
     configFile: false,
+    cacheDir: path.join(root, ".vite"),
     logLevel: "silent",
     server: { port: 0 },
     plugins: [
@@ -70,9 +71,7 @@ async function startDevServer() {
           // The worker consumes the same queue it produces to, so the producer
           // binding must resolve to a local broker rather than the dev-registry
           // proxy. That only happens if this option reaches `runtime.start`.
-          queueConsumers: [
-            { queueName: QUEUE_NAME, maxBatchSize: 1, maxBatchTimeout: 0 },
-          ],
+          queueConsumers: [{ queueName: QUEUE_NAME, maxBatchSize: 1, maxBatchTimeout: 0 }],
         },
       }),
     ],
@@ -147,10 +146,6 @@ describe("queue consumers in dev", () => {
     await send("b");
     await send("c");
 
-    expect((await receivedEventually(received, 3)).sort()).toEqual([
-      "a",
-      "b",
-      "c",
-    ]);
+    expect((await receivedEventually(received, 3)).sort()).toEqual(["a", "b", "c"]);
   });
 });
