@@ -58,7 +58,7 @@ export class SshConnectError extends Schema.TaggedError<SshConnectError>()("SshC
       case "host_key_changed":
         return `The host key of ${this.target} changed since ${here} trusted it. If you expected this, remove the old key with \`ssh-keygen -R\` there, then connect once with ssh to accept the new one.`;
       case "auth":
-        return `SSH rejected the login to ${this.target}: ${detail}. Check the user name and key; ssh from ${here} must log in without a prompt.`;
+        return `SSH login failed while connecting to ${this.target}: ${detail}. SSH from ${here} must log in without a prompt.`;
       case "resolve":
         return `Could not resolve the host name ${this.target} from ${here}: ${detail}.`;
       case "connect":
