@@ -744,5 +744,86 @@
   { "text": "ab\n\nc", "start": [0, 0], "keys": "yljxp", "value": "ab\na\nc", "cursor": [1, 0] },
   { "text": "ab\n\nc", "start": [0, 0], "keys": "yl0Xp", "value": "aab\n\nc", "cursor": [0, 1] },
   { "text": "ab\n\nc", "start": [0, 0], "keys": "ylj0Dp", "value": "ab\na\nc", "cursor": [1, 0] },
-  { "text": "ab", "start": [0, 0], "keys": "yl0db$p", "value": "aba", "cursor": [0, 2] }
+  { "text": "ab", "start": [0, 0], "keys": "yl0db$p", "value": "aba", "cursor": [0, 2] },
+  { "text": "([x)]", "start": [0, 0], "keys": "%", "value": "([x)]", "cursor": [0, 3] },
+  { "text": "([x)]", "start": [0, 0], "keys": "d%", "value": "]", "cursor": [0, 0] },
+  { "text": "(a]b)", "start": [0, 0], "keys": "%", "value": "(a]b)", "cursor": [0, 4] },
+  { "text": "(a]b)", "start": [0, 4], "keys": "%", "value": "(a]b)", "cursor": [0, 0] },
+  { "text": "[(])", "start": [0, 0], "keys": "%", "value": "[(])", "cursor": [0, 2] },
+  { "text": "(text]", "start": [0, 0], "keys": "%x", "value": "text]", "cursor": [0, 0] },
+  {
+    "text": "foo\nfoobar",
+    "start": [1, 3],
+    "keys": "?foo$<CR>x",
+    "value": "oo\nfoobar",
+    "cursor": [0, 0]
+  },
+  { "text": "ab ab ab", "start": [0, 6], "keys": "?ab<CR>x", "value": "ab b ab", "cursor": [0, 3] },
+  { "text": "one two", "start": [0, 5], "keys": "?o.*<CR>x", "value": "ne two", "cursor": [0, 0] },
+  { "text": "ab\nab", "start": [1, 1], "keys": "?^a<CR>x", "value": "ab\nb", "cursor": [1, 0] },
+  {
+    "text": "a\nb\nc\nd",
+    "start": [0, 0],
+    "keys": "qaccx<Esc>jddq@a",
+    "value": "x\nx",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "a\nb\nc\nd\ne\nf",
+    "start": [0, 0],
+    "keys": "qaccx<Esc>jddq2@a",
+    "value": "x\nx\nx",
+    "cursor": [2, 0]
+  },
+  { "text": "(foo\nbar\n)", "start": [0, 1], "keys": "di(", "value": "(\n)", "cursor": [0, 0] },
+  { "text": "(foo\nbar\n)", "start": [1, 1], "keys": "di(", "value": "(\n)", "cursor": [0, 0] },
+  { "text": "(\n  foo\n)", "start": [1, 2], "keys": "di(", "value": "(\n)", "cursor": [1, 0] },
+  { "text": "x(foo\nbar)y", "start": [0, 2], "keys": "di(", "value": "x()y", "cursor": [0, 2] },
+  { "text": "{\n  a\n  b\n}", "start": [1, 2], "keys": "di{", "value": "{\n}", "cursor": [1, 0] },
+  { "text": "(foo\nbar\n)z", "start": [1, 1], "keys": "da(", "value": "z", "cursor": [0, 0] },
+  {
+    "text": "(foo\nbar\n)",
+    "start": [1, 1],
+    "keys": "ci(x<Esc>",
+    "value": "(x\n)",
+    "cursor": [0, 1]
+  },
+  {
+    "text": "ab\ncd\nef\ngh",
+    "start": [0, 0],
+    "keys": "jlmajmbkddgg]'x",
+    "value": "ab\nf\ngh",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "ab\ncd\nef\ngh",
+    "start": [0, 0],
+    "keys": "jlmajmbkddgg]`x",
+    "value": "ab\ne\ngh",
+    "cursor": [1, 0]
+  },
+  {
+    "text": "ab\ncd\nef\ngh",
+    "start": [3, 1],
+    "keys": "jlkmakmbjddG['x",
+    "value": "ab\nd\ngh",
+    "cursor": [1, 0]
+  },
+  { "text": "aaa bbb", "start": [0, 5], "keys": "?bb*<CR>x", "value": "aaa bb", "cursor": [0, 4] },
+  { "text": "aaaa", "start": [0, 2], "keys": "?aa*<CR>x", "value": "aaa", "cursor": [0, 0] },
+  {
+    "text": "x foo bar foo",
+    "start": [0, 7],
+    "keys": "?foo$<CR>x",
+    "value": "x foo bar oo",
+    "cursor": [0, 10]
+  },
+  { "text": "abc abc", "start": [0, 5], "keys": "?abc<CR>x", "value": "abc bc", "cursor": [0, 4] },
+  {
+    "text": "one two one",
+    "start": [0, 9],
+    "keys": "?one<CR>x",
+    "value": "one two ne",
+    "cursor": [0, 8]
+  }
 ]

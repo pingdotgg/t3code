@@ -18,7 +18,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
-import { isComposerVimActive } from "~/composer-vim-editor";
+import { flattenComposerVimDocument, isComposerVimActive } from "~/composer-vim-editor";
 import { isMacPlatform } from "~/lib/utils";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
@@ -995,6 +995,16 @@ describe("vim mode", () => {
       "# same\nsame\nx\n# same\nsame",
     ],
     ["a counted paste", "# Title\nx", "{Escape}ggyyG2p", "# Title\nx\n# Title\n# Title"],
+    ["the yank register", "# Title\nx", '{Escape}ggyyG"0p', "# Title\nx\n# Title"],
+    ["a yank past a delete", "# Title\nx", '{Escape}ggyyjdd"0P', "# Title\n# Title"],
+    ["the delete register", "# Title\nx", '{Escape}ggddG"1p', "x\n# Title"],
+    ["a rotated delete", "# Title\nx\ny", '{Escape}ggddddG"2p', "y\n# Title"],
+    [
+      "code blocks in different languages",
+      "```ts\na\n```\n```py\nb\n```\nx",
+      "{Escape}gg2yyGp",
+      "```ts\na\n```\n```py\nb\n```\nx\n```ts\na\n```\n```py\nb\n```",
+    ],
   ])("pastes %s line by line", async (_name, value, keys, expected) => {
     await using screen = await mountVim(value);
     await userEvent.keyboard(keys);
@@ -1438,6 +1448,20 @@ describe("vim mode", () => {
     await using screen = await mountVim("$babysit x");
     await userEvent.keyboard("{Escape}0yl$p");
     expect(screen.text()).toBe("$babysit x$babysit");
+  });
+
+  it("keeps real private-use text apart from a chip's placeholder", async () => {
+    const chip = await (async () => {
+      await using screen = await mountVim("$babysit x");
+      return flattenComposerVimDocument(screen.editor.state.doc).text.charAt(0);
+    })();
+    expect(chip).not.toBe("$");
+    await using screen = await mountVim(`${chip} x`);
+    await userEvent.keyboard("{Escape}0yl$p");
+    expect(screen.text()).toBe(`${chip} x${chip}`);
+    using _readText = vi.spyOn(navigator.clipboard, "readText").mockResolvedValue(chip);
+    await userEvent.keyboard('"+p');
+    await vi.waitFor(() => expect(screen.text()).toBe(`${chip} x${chip}${chip}`));
   });
 
   it("does not submit the composer from the search prompt", async () => {

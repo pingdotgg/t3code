@@ -15,6 +15,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import {
   COMPOSER_VIM_ATOM_PATTERN,
   composerVimAtomJson,
+  escapeComposerVimText,
   composerVimFlatOffset,
   flattenComposerVimDocument,
   setComposerVimState,
@@ -30,7 +31,6 @@ import {
 import { createVimController, INDENT, Pos, Vim, VimEditor, vimTextHooks } from "./vim-engine";
 
 const LIST_ITEM_NODES = new Set(["listItem", "taskItem"]);
-const RICH_REGISTER_LIMIT = 32;
 const UNNAMED_REGISTER = '"';
 const VISUAL_LINE_PROBES = 6;
 
@@ -42,47 +42,47 @@ interface RichLine {
 
 type RichLines = ReadonlyArray<RichLine | null>;
 
-// Registers hold text, so each text keeps its lines, in order, beside it. Identical lines inside
-// one register stay distinct. What the engine reads waits here until a register takes it.
+// Registers hold text, so each keeps its lines, in order, beside it. Identical lines inside one
+// register stay distinct. What the engine reads waits here until a register takes it.
 const pendingRichText = new Map<string, RichLines>();
-const richRegisters = new Map<string, RichLines>();
+const richRegisters = new Map<string, { readonly body: string; readonly lines: RichLines }>();
 
 function withoutFinalNewline(text: string) {
   return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 
-function richRegisterKey(register: string | undefined, text: string) {
-  return `${register ?? UNNAMED_REGISTER}\0${text}`;
+/** Follows the engine's own routing: yanks to 0, small deletes to -, and others down 1 to 9. */
+function automaticRegister(operator: string, text: string) {
+  if (operator === "yank") return "0";
+  if (!text.includes("\n")) return "-";
+  for (let index = 9; index >= 2; index -= 1) {
+    const previous = richRegisters.get(`${index - 1}`);
+    if (previous) richRegisters.set(`${index}`, previous);
+    else richRegisters.delete(`${index}`);
+  }
+  return "1";
 }
 
-function rememberRegisterText(register: string | undefined, text: string) {
+function rememberRegisterText(register: string | undefined, operator: string, text: string) {
   const body = withoutFinalNewline(text);
   const lines = pendingRichText.get(body);
   pendingRichText.clear();
   // The unnamed register always mirrors the last write.
-  for (const key of new Set([richRegisterKey(register, body), richRegisterKey(undefined, body)])) {
-    richRegisters.delete(key);
-    if (lines?.some(Boolean)) richRegisters.set(key, lines);
-  }
-  while (richRegisters.size > RICH_REGISTER_LIMIT) {
-    richRegisters.delete(richRegisters.keys().next().value!);
+  for (const name of [register || automaticRegister(operator, text), UNNAMED_REGISTER]) {
+    if (lines?.some(Boolean)) richRegisters.set(name, { body, lines });
+    else richRegisters.delete(name);
   }
 }
 
 /** A count pastes the register's text repeatedly, which only the lines can reveal. */
 function richLinesFor(register: string | undefined, text: string): RichLines | null {
-  const exact = richRegisters.get(richRegisterKey(register, text));
-  if (exact) return exact;
-  const prefix = richRegisterKey(register, "");
-  for (const [key, lines] of richRegisters) {
-    if (!key.startsWith(prefix)) continue;
-    const body = key.slice(prefix.length);
-    const copies = (text.length + 1) / (body.length + 1);
-    if (!Number.isInteger(copies) || copies < 2) continue;
-    if (Array.from({ length: copies }, () => body).join("\n") !== text) continue;
-    return Array.from({ length: copies }, () => lines).flat();
-  }
-  return null;
+  const record = richRegisters.get(register ?? UNNAMED_REGISTER);
+  if (!record) return null;
+  if (record.body === text) return record.lines;
+  const copies = (text.length + 1) / (record.body.length + 1);
+  if (!Number.isInteger(copies) || copies < 2) return null;
+  if (Array.from({ length: copies }, () => record.body).join("\n") !== text) return null;
+  return Array.from({ length: copies }, () => record.lines).flat();
 }
 
 /** Rebuilds just this line inside copies of its ancestors. */
@@ -97,11 +97,12 @@ function lineBlock($line: ResolvedPos, inline: Fragment) {
   return block.toJSON() as unknown;
 }
 
-/** Only placeholders go; a real private-use character is someone's icon font glyph. */
+/** Chips go; a real private-use character is someone's icon font glyph. */
 function stripAtoms(text: string) {
-  return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), (character) =>
-    composerVimAtomJson(character) ? "" : character,
-  );
+  return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), (character) => {
+    const json = composerVimAtomJson(character);
+    return json ? (json.text ?? "") : character;
+  });
 }
 
 function lineFragment(
@@ -122,11 +123,11 @@ function lineFragment(
     };
     for (const character of line) {
       const json = composerVimAtomJson(character);
-      if (json) {
+      if (json && json.text === undefined) {
         flush();
         nodes.push(schema.nodeFromJSON(json));
       } else {
-        text += character;
+        text += json?.text ?? character;
       }
     }
     flush();
@@ -198,11 +199,12 @@ function mergeLineNodes(nodes: ReadonlyArray<ProseMirrorNode>) {
   const merged: ProseMirrorNode[] = [];
   for (const node of nodes) {
     const previous = merged.at(-1);
-    if (previous?.type !== node.type || !node.type.spec.content?.includes("+")) {
-      if (previous?.type !== node.type || !node.type.spec.code) {
-        merged.push(node);
-        continue;
-      }
+    const joins = node.type.spec.code
+      ? previous?.sameMarkup(node)
+      : previous?.type === node.type && node.type.spec.content?.includes("+");
+    if (!previous || !joins) {
+      merged.push(node);
+      continue;
     }
     const content = node.type.spec.code
       ? Fragment.from(node.type.schema.text(`${previous.textContent}\n${node.textContent}`))
@@ -717,10 +719,10 @@ let activeSchema: Schema | null = null;
 /** Chips leave as the prompt text they stand for; their placeholders mean nothing elsewhere. */
 function clipboardText(text: string) {
   const schema = activeSchema;
-  if (!schema) return text;
   return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), (character) => {
     const json = composerVimAtomJson(character);
-    if (!json) return character;
+    if (json?.text !== undefined) return json.text;
+    if (!json || !schema) return character;
     const line = schema.node("paragraph", null, [schema.nodeFromJSON(json)]);
     return serializeEditorDoc(schema.node("doc", null, [line])).value;
   });
@@ -728,6 +730,7 @@ function clipboardText(text: string) {
 
 vimTextHooks.rememberRegisterText = rememberRegisterText;
 vimTextHooks.clipboardText = clipboardText;
+vimTextHooks.clipboardInput = escapeComposerVimText;
 
 export { Vim };
 

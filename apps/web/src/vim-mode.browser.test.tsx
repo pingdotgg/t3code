@@ -34,8 +34,13 @@ vi.mock("./rpc/atomRegistry", () => ({
 }));
 vi.mock("./state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 
+function setup(vimModeEnabled: boolean) {
+  settings.vimModeEnabled = vimModeEnabled;
+  listeners.clear();
+}
+
 function useVimMode() {
-  settings.vimModeEnabled = true;
+  setup(true);
   const stop = startVimMode();
   return {
     [Symbol.dispose]() {
@@ -98,6 +103,55 @@ describe("textareas", () => {
     await focusField(screen);
     await userEvent.keyboard("A one two{Escape}u");
     expect(textOf()).toBe("a");
+  });
+
+  it("keeps Mod+Z as undo and redo while typing", async () => {
+    using _vim = useVimMode();
+    await using screen = await render(<Field initial="a" />);
+    await focusField(screen);
+    await userEvent.keyboard("Ab");
+    expect(textOf()).toBe("ab");
+    await userEvent.keyboard("{Control>}z{/Control}");
+    expect(textOf()).toBe("a");
+    await userEvent.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+    expect(textOf()).toBe("ab");
+    await userEvent.keyboard("c");
+    expect(textOf()).toBe("abc");
+    await userEvent.keyboard("{Control>}z{/Control}");
+    expect(textOf()).toBe("ab");
+  });
+
+  it("undoes with Mod+Z from visual mode instead of changing case", async () => {
+    using _vim = useVimMode();
+    await using screen = await render(<Field initial="AB" />);
+    await focusField(screen);
+    await userEvent.keyboard("0xv{Control>}z{/Control}");
+    expect(textOf()).toBe("AB");
+    expect(document.querySelector("[data-vim-mode-label]")?.textContent).toBe("NORMAL");
+  });
+
+  it("undoes each native paste in normal mode on its own", async () => {
+    using _vim = useVimMode();
+    await using screen = await render(<Field initial="abc" />);
+    await focusField(screen);
+    const paste = (data: string) =>
+      document.querySelector("textarea")?.dispatchEvent(
+        new InputEvent("beforeinput", {
+          inputType: "insertFromPaste",
+          data,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    await userEvent.keyboard("0x");
+    paste("X");
+    paste("Y");
+    const pasted = textOf();
+    expect(pasted).toHaveLength(4);
+    await userEvent.keyboard("u");
+    expect(textOf()).toHaveLength(3);
+    await userEvent.keyboard("u");
+    expect(textOf()).toBe("bc");
   });
 
   it("blocks typing in normal mode and shows the mode", async () => {
@@ -223,6 +277,7 @@ describe("navigation", () => {
   });
 
   it("does nothing with the setting off", async () => {
+    setup(false);
     await using _screen = await render(<Pane />);
     await userEvent.keyboard("j");
     expect(document.querySelector("main")?.scrollTop).toBe(0);

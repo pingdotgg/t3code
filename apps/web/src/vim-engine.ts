@@ -5,6 +5,7 @@ import { isMacPlatform } from "~/lib/utils";
 export type VimMode = "insert" | "normal" | "visual" | "visual line" | "replace";
 
 export const INDENT = "  ";
+const BRACKET_PAIRS = ["()", "[]", "{}"];
 const NOTIFICATION_DURATION = 5000;
 // Ctrl+letter is the app's own modifier off macOS, so only these reach the engine there.
 const PORTABLE_CTRL_KEYS = new Set(["<C-r>", "<C-d>", "<C-u>"]);
@@ -412,11 +413,14 @@ export abstract class VimEditor {
 
   findMatchingBracket(pos: VimPos) {
     const character = this.getLine(pos.line).charAt(pos.ch);
-    const opening = "([{".includes(character);
-    if (!character || (!opening && !")]}".includes(character))) return { to: undefined };
+    const pair = BRACKET_PAIRS.find((candidate) => candidate.includes(character));
+    if (!character || !pair) return { to: undefined };
+    const opening = character === pair[0];
     const found = this.scanForBracket(
       new Pos(pos.line, pos.ch + (opening ? 1 : 0)),
       opening ? 1 : -1,
+      undefined,
+      { bracketRegex: new RegExp(`[\\${pair[0]}\\${pair[1]}]`) },
     );
     return found ? { to: found.pos } : { to: undefined };
   }
@@ -464,12 +468,13 @@ export abstract class VimEditor {
       return match ? { from: match.index, to: match.index + match[0].length, match } : null;
     };
     const matchBefore = (limit: number) => {
-      // Greedy patterns must see the text end at the limit, as a backward search does.
-      const text = cm.flat.text.slice(0, Math.max(0, limit));
+      const { text } = cm.flat;
       let found: typeof last = null;
       pattern.lastIndex = 0;
       for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
         const empty = match[0].length === 0;
+        // Vim searches back by where a match starts, so one may run past the limit.
+        if (match.index > limit || (match.index === limit && !empty)) break;
         // An empty match right after a real one is the same search position.
         if (!empty || !found || found.to !== match.index) {
           found = { from: match.index, to: match.index + match[0].length, match };
@@ -653,7 +658,12 @@ export abstract class VimEditor {
 
 /** The rich composer plugs in here without the engine depending on it. */
 export const vimTextHooks = {
-  rememberRegisterText: (_register: string | undefined, _text: string): void => {},
+  rememberRegisterText: (
+    _register: string | undefined,
+    _operator: string,
+    _text: string,
+  ): void => {},
+  clipboardInput: (text: string) => text,
   clipboardText: (text: string): string => text,
 };
 
@@ -691,13 +701,17 @@ const CodeMirrorStatics = Object.assign(VimEditor, {
     event.stopPropagation();
   },
   isWordChar: (character: string) => WORD_CHARACTER.test(character),
-  rememberRegisterText: (register: string | undefined, text: string) =>
-    vimTextHooks.rememberRegisterText(register, text),
+  rememberRegisterText: (register: string | undefined, operator: string, text: string) =>
+    vimTextHooks.rememberRegisterText(register, operator, text),
   // navigator.clipboard is absent on plain HTTP, which is how LAN and Tailscale hosts are reached.
   writeClipboard(text: string) {
     void navigator.clipboard?.writeText(vimTextHooks.clipboardText(text)).catch(() => {});
   },
-  readClipboard: () => navigator.clipboard?.readText().catch(() => "") ?? Promise.resolve(""),
+  readClipboard: () =>
+    navigator.clipboard
+      ?.readText()
+      .then((text) => vimTextHooks.clipboardInput(text))
+      .catch(() => "") ?? Promise.resolve(""),
   lookupKey(key: string, _map: string, handle: (binding: (cm: VimEditor) => void) => void) {
     const binding = replayKeys[key.replace(/^Arrow/, "")];
     if (binding) handle(binding);
