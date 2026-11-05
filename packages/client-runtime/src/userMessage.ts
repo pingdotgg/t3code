@@ -8,6 +8,7 @@ import {
   type OrchestrationV2IdleCompaction,
   type OrchestrationV2UserMessageInputIntent,
   ScheduledTaskId,
+  type SentMessageDisplay,
 } from "@t3tools/contracts";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -115,6 +116,21 @@ export function resolveUserMessagePresentation(message: {
           : "agent",
     scheduledTaskId: undefined,
   };
+}
+
+export interface SentMessageDisplaySettings {
+  readonly agentMessageDisplay: SentMessageDisplay;
+  readonly automationMessageDisplay: SentMessageDisplay;
+}
+
+export function isSentMessageHidden(
+  message: Parameters<typeof resolveUserMessagePresentation>[0],
+  settings: SentMessageDisplaySettings,
+): boolean {
+  const { attribution } = resolveUserMessagePresentation(message);
+  return attribution === "agent"
+    ? settings.agentMessageDisplay === "hide"
+    : attribution === "automation" && settings.automationMessageDisplay === "hide";
 }
 
 type GroupableUserMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
