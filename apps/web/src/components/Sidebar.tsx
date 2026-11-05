@@ -2586,7 +2586,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           await handleMultiSelectContextMenu(position);
           return;
         }
-        const thread = threadByKeyRef.current.get(threadKey);
+        // Search results also reach threads in collapsed shelves, which are not rendered rows.
+        const thread =
+          threadByKeyRef.current.get(threadKey) ??
+          searchableThreads.find((candidate) => threadShellKey(candidate) === threadKey);
         if (!thread) return;
         const threadWorkspacePath =
           thread.worktreePath ??
@@ -3271,6 +3274,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         searchMatchQuery={threadSearch.query}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
+                        onContextMenu={handleThreadContextMenu}
                         onFileDropThreads={handleThreadFileDrop}
                       />
                     );
