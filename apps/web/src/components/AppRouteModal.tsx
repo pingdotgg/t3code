@@ -1,6 +1,6 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
 import { Button } from "./ui/button";
@@ -14,7 +14,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
  */
 export function AppRouteModal({ label, children }: { label: string; children: ReactNode }) {
   const closeAppModal = useCloseAppModal();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync, react/set-state-in-effect -- Base UI skips the enter transition for a dialog that mounts open, so open it after the first commit, before paint.
+  useLayoutEffect(() => setOpen(true), []);
   // Text selection that ends on the backdrop is not a dismissal.
   const backdropPressRef = useRef(false);
   // Focus the surface, not its first control: no stray focus ring, no phone keyboard.
