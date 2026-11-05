@@ -19,6 +19,10 @@
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
     },
+    "./socketFrameParts": {
+      "types": "./src/socketFrameParts.ts",
+      "import": "./src/socketFrameParts.ts"
+    },
     "./composerPullRequestMatches": {
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"
@@ -458,6 +462,10 @@
     "./markdownFrontmatter": {
       "types": "./src/markdownFrontmatter.ts",
       "import": "./src/markdownFrontmatter.ts"
+    },
+    "./markdownTaskList": {
+      "types": "./src/markdownTaskList.ts",
+      "import": "./src/markdownTaskList.ts"
     },
     "./markdownListIndentation": {
       "types": "./src/markdownListIndentation.ts",
