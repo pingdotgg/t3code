@@ -1113,7 +1113,12 @@ export function useComposerCommandMenu({
         ? pullRequestProjectId === null || pullRequestRepository === null
           ? "Pull requests and issues are unavailable for this project."
           : mentionIndexEnabled
-            ? pullRequestIndexError
+            ? (pullRequestIndexError ??
+              (issueMentionIndexLookup.error !== null ||
+              issueMentionIndexLookup.data?.status === "error"
+                ? (issueMentionIndexLookup.data?.detail ??
+                  "GitHub issues could not be read for this project.")
+                : null))
             : pullRequestSearch.error
         : trigger?.kind === "pull-request"
           ? pullRequestProjectId === null || pullRequestRepository === null

@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -481,11 +482,37 @@ const make = Effect.gen(function* () {
     return pickServer(candidates, input.kind, input.serverName);
   });
 
-  const withStdioSession = <A, E>(
+  const withStdioSession = Effect.fn("MentionIndexMcpClient.withStdioSession")(function* <A, E>(
     config: MentionMcpStdioConfig,
     use: (session: MentionMcpToolSession) => Effect.Effect<A, E>,
-  ): Effect.Effect<A, E | Error> =>
-    Effect.acquireUseRelease(
+  ) {
+    const env = yield* HostProcess.Environment;
+    const platform = yield* HostProcess.Platform;
+    const spawnEnv: Record<string, string> = {
+      PATH: env.PATH ?? env.Path ?? env.path ?? "",
+    };
+    if (platform === "win32") {
+      const windowsKeys = [
+        "SystemRoot",
+        "SYSTEMROOT",
+        "USERPROFILE",
+        "APPDATA",
+        "PATHEXT",
+      ] as const;
+      for (const key of windowsKeys) {
+        const value = env[key];
+        if (typeof value === "string" && value.length > 0) spawnEnv[key] = value;
+      }
+    }
+    Object.assign(spawnEnv, config.env);
+
+    // Windows .cmd/.bat MCP shims need shell dispatch; keep the env minimal so unrelated secrets stay out.
+    const resolved = yield* resolveSpawnCommand(config.command, [...config.args], {
+      env: spawnEnv,
+      extendEnv: false,
+    });
+
+    return yield* Effect.acquireUseRelease(
       Effect.callback<StdioResource, Error>((resume) => {
         let settled = false;
         const pending = new Map<number, StdioPending>();
@@ -512,10 +539,9 @@ const make = Effect.gen(function* () {
           }
           rejectPending(mapped);
         };
-        const child = NodeChildProcess.spawn(config.command, [...config.args], {
-          // Pass only the executable search path and explicitly configured MCP values.
-          // Inheriting the server environment would expose unrelated secrets.
-          env: { PATH: process.env.PATH ?? "", ...config.env },
+        const child = NodeChildProcess.spawn(resolved.command, [...resolved.args], {
+          env: spawnEnv,
+          shell: resolved.shell,
           // Ignore stderr so a full pipe cannot block the child.
           stdio: ["pipe", "pipe", "ignore"],
         });
@@ -646,6 +672,7 @@ const make = Effect.gen(function* () {
           if (!child.killed) child.kill();
         }),
     );
+  });
 
   const openHttpSession = Effect.fn("MentionIndexMcpClient.openHttpSession")(function* (
     config: MentionMcpHttpConfig,

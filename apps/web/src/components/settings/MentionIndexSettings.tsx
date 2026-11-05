@@ -152,6 +152,7 @@ function JiraMentionSettings() {
     readonly spaces: ReadonlyArray<string>;
     readonly jqlExtra: string;
   }) => {
+    if (mixed) return;
     updateSettings({
       mentionIndex: withMentionIndex(mentionIndex, { jira: compactJira(next) }),
     });
@@ -166,7 +167,7 @@ function JiraMentionSettings() {
         {...searchableSetting("mention-jira-spaces")}
         description="Jira project keys to index for @jira: mentions. Requires a Jira MCP server."
         resetAction={
-          mixed || configured ? (
+          !mixed && configured ? (
             <SettingResetButton
               label="Jira mention spaces"
               onClick={() =>
@@ -182,6 +183,7 @@ function JiraMentionSettings() {
             size="sm"
             className="w-full sm:w-72"
             value={mixed ? "" : spaces}
+            disabled={mixed}
             onCommit={(next) =>
               commit({
                 serverName,
@@ -206,6 +208,7 @@ function JiraMentionSettings() {
             size="sm"
             className="w-full sm:w-72"
             value={mixed ? "" : serverName}
+            disabled={mixed}
             onCommit={(next) =>
               commit({
                 serverName: next,
@@ -245,12 +248,14 @@ function JiraMentionSettings() {
             key={`${mixed}:${jqlExtra}`}
             rows={2}
             defaultValue={mixed ? "" : jqlExtra}
+            disabled={mixed}
             placeholder={mixed ? "Mixed" : 'status != "Done"'}
             spellCheck={false}
             aria-label="Jira JQL filter"
             onBlur={(event) => {
+              if (mixed) return;
               const next = event.target.value;
-              if (mixed ? next.trim().length > 0 : next.trim() !== jqlExtra.trim()) {
+              if (next.trim() !== jqlExtra.trim()) {
                 commit({
                   serverName,
                   spaces: jira?.spaces ?? [],
@@ -282,6 +287,7 @@ function FigmaMentionSettings() {
     readonly projects: ReadonlyArray<MentionIndexFigmaProjectRef>;
     readonly fileKeys: ReadonlyArray<string>;
   }) => {
+    if (mixed) return;
     updateSettings({
       mentionIndex: withMentionIndex(mentionIndex, { figma: compactFigma(next) }),
     });
@@ -340,7 +346,7 @@ function FigmaMentionSettings() {
         {...searchableSetting("mention-figma-files")}
         description="Optional extra design links merged with project files. You can still paste a link in chat to attach a design directly."
         resetAction={
-          mixed || configured ? (
+          !mixed && configured ? (
             <SettingResetButton
               label="Figma mention settings"
               onClick={() =>
@@ -356,6 +362,7 @@ function FigmaMentionSettings() {
             size="sm"
             className="w-full sm:w-72"
             value={mixed ? "" : fileKeys}
+            disabled={mixed}
             onCommit={(next) =>
               commit({
                 serverName,
@@ -380,6 +387,7 @@ function FigmaMentionSettings() {
             size="sm"
             className="w-full sm:w-72"
             value={mixed ? "" : serverName}
+            disabled={mixed}
             onCommit={(next) =>
               commit({
                 serverName: next,
