@@ -107,6 +107,7 @@ import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
   ComposerDictationCancelAction,
   ComposerDictationDraftContent,
+  ComposerDictationError,
   ComposerDictationPrimaryAction,
   ComposerDictationStartAction,
   ComposerDictationStatus,
@@ -214,6 +215,8 @@ export interface ThreadComposerProps {
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
+  /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
+  readonly onFreshSession?: () => void;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -560,6 +563,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
+    ...(props.onFreshSession === undefined ? {} : { onFreshSession: props.onFreshSession }),
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
@@ -576,7 +580,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     voiceInput.state,
     voiceInput.elapsedSeconds,
   );
-  const isVoiceInputPresented = voicePresentation.statusLabel !== null;
+  const isVoiceInputPresented = voicePresentation.statusKind === "active";
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { layout, setComposerEditing } = useAdaptiveWorkspaceLayout();
   const floatingSidebarComposer = useAndroidFloatingTabs() && layout.usesSplitView;
@@ -881,6 +885,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             paddingVertical: surfacePaddingVertical,
           }}
         >
+          <ComposerDictationError
+            error={voiceInput.state.phase === "error" ? voiceInput.state.error : null}
+            onDismiss={voiceInput.cancel}
+          />
           {isExpanded ? editingAttachments : null}
           <View
             onLayout={(event) => {
@@ -1145,7 +1153,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   elapsedSeconds={voiceInput.elapsedSeconds}
                   phase={voiceInput.state.phase}
                   presentation={voicePresentation}
-                  onDismissError={voiceInput.cancel}
                 />
                 <View className="shrink-0 flex-row items-center">
                   <ComposerDictationPrimaryAction

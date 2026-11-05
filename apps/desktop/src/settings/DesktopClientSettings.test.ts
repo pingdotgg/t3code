@@ -144,6 +144,29 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
+  it.effect("removes its temporary file when replacing the settings file fails", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(`${environment.clientSettingsPath}/occupied`, {
+          recursive: true,
+        });
+
+        const error = yield* settings.set(clientSettings).pipe(Effect.flip);
+
+        assert.equal(error.operation, "replace-settings-file");
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
+            name.endsWith(".tmp"),
+          ),
+          [],
+        );
+      }),
+    ),
+  );
+
   it.effect.each([
     { label: "permission", reason: "PermissionDenied" },
     { label: "I/O", reason: "Unknown" },
