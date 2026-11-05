@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { ProviderDriverKind } from "@t3tools/contracts";
+import {
+  slashCommandItemsForPromptPosition,
+  searchSlashCommandItems,
+} from "./composerSlashCommandSearch";
+
 import { composerSuggestionOptionId } from "./ComposerCommandMenu";
 
 describe("composerSuggestionOptionId", () => {
@@ -24,4 +30,21 @@ describe("composerSuggestionOptionId", () => {
       composerSuggestionOptionId("suggestions", paths[0]!),
     );
   });
+});
+
+it("offers advertised skills inline while restricting ordinary provider commands", () => {
+  const items = ["skill:logo-archive", "compact"].map((name) => ({
+    id: name,
+    type: "provider-slash-command" as const,
+    provider: ProviderDriverKind.make("acpRegistry"),
+    command: { name },
+    label: `/${name}`,
+    description: "",
+  }));
+  expect(slashCommandItemsForPromptPosition(items, true)).toEqual(items);
+  const inline = slashCommandItemsForPromptPosition(items, false);
+  expect(inline.map((item) => item.id)).toEqual(["skill:logo-archive"]);
+  expect(searchSlashCommandItems(inline, "skill:logo").map((item) => item.id)).toEqual([
+    "skill:logo-archive",
+  ]);
 });
