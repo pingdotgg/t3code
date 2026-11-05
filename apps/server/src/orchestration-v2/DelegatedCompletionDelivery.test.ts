@@ -322,48 +322,54 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
-  it.effect("keeps an idle parent waiting while a finished task waits for the next delivery", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const sink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread:wake-handoff-successor");
-      const runId = RunId.make("run:wake-handoff-successor");
-      const deliveredTaskId = NodeId.make("node:wake-handoff-successor-delivered");
-      const taskId = NodeId.make("node:wake-handoff-successor-pending");
-      // The delivery run has ended, but the successor delivery is not claimed yet.
-      yield* seedParentWithTerminalTask({
-        threadId,
-        projectId: ProjectId.make("project:wake-handoff-successor"),
-        runId,
-        rootNodeId: NodeId.make("node:wake-handoff-successor-root"),
-        taskId,
-        deliveryState: "pending",
-        deliveryTaskIds: [deliveredTaskId],
-        siblingTasks: [{ id: deliveredTaskId, deliveryState: "delivered" }],
-        parentRunStatus: "completed",
-        completionWake: "always",
-        now,
-      });
-      yield* sink.write({
-        events: [
-          subagentTurnItemEvent({
-            threadId,
-            runId,
-            taskId,
-            childThreadId: null,
-            status: "completed",
-            now,
-          }),
-        ],
-      });
-      const shell = yield* orchestrator.getThreadShell(threadId);
-      assert.equal(shell?.status, "completed");
-      assert.deepEqual(
-        shell?.pendingBackgroundTasks?.map((task) => task.kind),
-        ["subagent"],
-      );
-    }),
+  it.effect.each([
+    // The delivery run has ended, but the successor delivery is not claimed yet.
+    { name: "reserved", reserved: true, held: ["subagent"] },
+    // No delivery will claim it, so it must not hold the parent forever.
+    { name: "unreserved", reserved: false, held: [] },
+  ])(
+    "holds an idle parent on a pending finished task only while $name",
+    ({ name, reserved, held }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:wake-handoff-successor-${name}`);
+        const runId = RunId.make(`run:wake-handoff-successor-${name}`);
+        const deliveredTaskId = NodeId.make(`node:wake-handoff-successor-${name}-delivered`);
+        const taskId = NodeId.make(`node:wake-handoff-successor-${name}-pending`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:wake-handoff-successor-${name}`),
+          runId,
+          rootNodeId: NodeId.make(`node:wake-handoff-successor-${name}-root`),
+          taskId,
+          deliveryState: "pending",
+          ...(reserved ? { deliveryTaskIds: [deliveredTaskId] } : {}),
+          siblingTasks: [{ id: deliveredTaskId, deliveryState: "delivered" }],
+          parentRunStatus: "completed",
+          completionWake: "always",
+          now,
+        });
+        yield* sink.write({
+          events: [
+            subagentTurnItemEvent({
+              threadId,
+              runId,
+              taskId,
+              childThreadId: null,
+              status: "completed",
+              now,
+            }),
+          ],
+        });
+        const shell = yield* orchestrator.getThreadShell(threadId);
+        assert.equal(shell?.status, "completed");
+        assert.deepEqual(
+          shell?.pendingBackgroundTasks?.map((task) => task.kind),
+          held,
+        );
+      }),
   );
   it.effect(
     "interrupting a completion wake disposes both cohorts without reviving them on late results",
