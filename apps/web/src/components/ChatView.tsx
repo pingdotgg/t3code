@@ -361,6 +361,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   codexArtifactTemplatePromptToAppend,
+  isCoveredByModal,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -2153,16 +2154,18 @@ export default function ChatView(props: ChatViewProps) {
     setTimelineAnchor,
   });
 
+  const focusOpenedThreadComposer = useStableCallback(() => {
+    if (!isCoveredByModal(composerOverlayElement)) focusComposer();
+  });
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
     if (embedded || !activeThread?.id || terminalUiState.terminalOpen) return;
-    const frame = window.requestAnimationFrame(() => {
-      focusComposerStable();
-    });
+    const frame = window.requestAnimationFrame(focusOpenedThreadComposer);
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, embedded, focusOpenedThreadComposer, terminalUiState.terminalOpen]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
   useEffect(() => {
