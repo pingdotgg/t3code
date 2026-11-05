@@ -157,8 +157,9 @@ describe("threadHtmlRenderAttachmentIds", () => {
   it("returns pages this thread published and skips other threads' and failed calls", () => {
     const own = createAttachmentId("thread-a", "html")!;
     const other = createAttachmentId("thread-b", "html")!;
-    const render = (attachmentId: string, extra = {}) => ({
-      toolName: "mcp__t3-code__html_render",
+    const clip = createAttachmentId("thread-a", "html")!;
+    const render = (attachmentId: string, extra = {}, toolName = "mcp__t3-code__html_render") => ({
+      toolName,
       output: [
         {
           type: "text",
@@ -172,8 +173,9 @@ describe("threadHtmlRenderAttachmentIds", () => {
         render(other),
         render(createAttachmentId("thread-a", "html")!, { isError: true }),
         { toolName: "mcp__t3-code__html_preview", output: render(own).output },
+        render(clip, {}, "mcp__t3-code__animation_render"),
       ]),
-    ).toEqual([own]);
+    ).toEqual([own, clip]);
   });
 
   it("includes captured MCP App documents from any tool", () => {

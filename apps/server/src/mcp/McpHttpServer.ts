@@ -28,6 +28,7 @@ import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as ManimRender from "../animation/ManimRender.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -76,9 +77,13 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import * as AnimationHandlers from "./toolkits/animation/handlers.ts";
+import { AnimationToolkit } from "./toolkits/animation/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as KnowledgeHandlers from "./toolkits/knowledge/handlers.ts";
+import { KnowledgeToolkit } from "./toolkits/knowledge/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -1094,9 +1099,15 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
+// KnowledgeMap comes from the server runtime: one instance, so its write lock covers RPC and MCP saves.
+const layerKnowledgeToolkit = toolkitRegistration(KnowledgeToolkit, KnowledgeHandlers.layer);
+
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
+  toolkitRegistration(AnimationToolkit, AnimationHandlers.layer).pipe(
+    Layer.provide(ManimRender.layer),
+  ),
 ).pipe(Layer.provide(HtmlRender.layer));
 
 const layerPreviewStandardToolkitRegistration = toolkitRegistration(
@@ -1205,6 +1216,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerKnowledgeToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

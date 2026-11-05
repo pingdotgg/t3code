@@ -7,6 +7,8 @@ import {
 import { EVENT_CODE_SHORTCUT_KEYS } from "./keybindings.ts";
 
 export const HTML_RENDER_TOOL_NAME = "html_render";
+// T3 Learn: a Manim clip published as an html_render card.
+export const ANIMATION_RENDER_TOOL_NAME = "animation_render";
 export const HTML_RENDER_MIN_HEIGHT = 80;
 export const HTML_RENDER_MAX_HEIGHT = 2000;
 // A client fits the frame to the live page up to this height. It only stops a

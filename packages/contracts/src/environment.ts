@@ -155,6 +155,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverBrowser: Schema.optionalKey(Schema.Boolean),
   /** Server handles thread.side_chat.* commands (T3 Learn side chats) */
   lessonSideChats: Schema.optionalKey(Schema.Boolean),
+  /** Server-backed learner knowledge map. */
+  knowledgeMap: Schema.optionalKey(Schema.Boolean),
   /** Server links to other environments (`PeerLink`) and its agents can work
       in them. Absent on servers from before linking, which clients must not
       offer linking for. */
