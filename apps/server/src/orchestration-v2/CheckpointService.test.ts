@@ -15,11 +15,33 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+
+it.effect("gives each worktree its own path prefix, also when folder names match", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const worktree = (repository: string, worktreePath: string) => ({
+      repository,
+      repositoryPath: `/folder/${repository}`,
+      worktreePath,
+    });
+    const prefixes = CheckpointService.repositoryPathPrefixes(path, [
+      worktree("alpha", "/worktrees/one/shared"),
+      worktree("alpha", "/worktrees/two/shared"),
+      worktree("alpha", "/worktrees/shared-2"),
+      worktree("beta", "/worktrees/beta/work"),
+    ]);
+    assert.deepEqual(
+      [...prefixes.values()],
+      ["alpha@shared", "alpha@shared-2", "alpha@shared-2-2", "beta"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 // Turn 2 had no worktrees; turn 3 first attached beta, and its baseline sits
 // at ordinal 2. Turn 2's checkpoint names that baseline.

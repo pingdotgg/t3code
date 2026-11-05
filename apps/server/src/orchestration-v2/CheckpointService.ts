@@ -350,9 +350,10 @@ export function checkpointWorkspaceFiles(
 
 /**
  * Names each worktree's paths after its repository. Two worktrees of one
- * repository, or of the folder itself, add the worktree's folder name.
+ * repository, or of the folder itself, add the worktree's folder name, and a
+ * number when those folder names match too, so file opens find the right one.
  */
-function repositoryPathPrefixes(
+export function repositoryPathPrefixes(
   path: Path.Path,
   repositories: ReadonlyArray<
     Pick<ThreadRepoWorktree, "repository" | "repositoryPath" | "worktreePath">
@@ -366,15 +367,18 @@ function repositoryPathPrefixes(
   for (const entry of repositories) {
     counts.set(nameOf(entry), (counts.get(nameOf(entry)) ?? 0) + 1);
   }
+  const used = new Set<string>();
   return new Map(
     repositories.map((entry) => {
       const name = nameOf(entry);
-      return [
-        entry.worktreePath,
+      const base =
         entry.repository === "." || (counts.get(name) ?? 0) > 1
           ? `${name}@${path.basename(entry.worktreePath)}`
-          : name,
-      ] as const;
+          : name;
+      let prefix = base;
+      for (let suffix = 2; used.has(prefix); suffix += 1) prefix = `${base}-${suffix}`;
+      used.add(prefix);
+      return [entry.worktreePath, prefix] as const;
     }),
   );
 }
