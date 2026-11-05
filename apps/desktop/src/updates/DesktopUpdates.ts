@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - `node:crypto` hashes cached update packages the way
-// electron-updater does; Effect has no streaming sha512.
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's Digest has no streaming sha512 for update packages.
 import * as NodeCrypto from "node:crypto";
 
 import {
