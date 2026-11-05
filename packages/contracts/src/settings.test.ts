@@ -59,6 +59,13 @@ describe("sidebar variant setting", () => {
   });
 });
 
+describe("opt-in display settings", () => {
+  it("default off, so existing users see no change", () => {
+    const decoded = decodeClientSettings({});
+    expect(decoded.composerQuietStopWhileWaiting).toBe(false);
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

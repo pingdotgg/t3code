@@ -1,4 +1,5 @@
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
+import { useClientSettings } from "~/hooks/useSettings";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -503,6 +504,9 @@ const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
+  const quietStopWhileWaiting = useClientSettings(
+    (settings) => settings.composerQuietStopWhileWaiting,
+  );
   const {
     composerDraftTarget,
     environmentId,
@@ -3508,6 +3512,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     canInterrupt={canInterrupt}
+                    quietStop={
+                      quietStopWhileWaiting &&
+                      (pendingApprovals.length > 0 || pendingUserInputs.length > 0)
+                    }
                     followUpBehavior={followUpBehavior}
                     canSteer={!isCompacting}
                     alternateShortcutLabel={shortcutLabelForCommand(

@@ -526,6 +526,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
+    ...(settings.composerQuietStopWhileWaiting !==
+    DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting
+      ? ["Quiet stop button"]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
@@ -648,6 +652,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      composerQuietStopWhileWaiting: DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
@@ -1201,6 +1206,33 @@ export function ChatSettingsPanel() {
             }
           />
         </AdvancedSettings>
+        <SettingsRow
+          {...searchableSetting("composer-quiet-stop")}
+          description="Show the stop button in a neutral color while a thread waits on you. It turns red on hover."
+          resetAction={
+            settings.composerQuietStopWhileWaiting !==
+            DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting ? (
+              <SettingResetButton
+                label="quiet stop button"
+                onClick={() =>
+                  updateSettings({
+                    composerQuietStopWhileWaiting:
+                      DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.composerQuietStopWhileWaiting}
+              onCheckedChange={(checked) =>
+                updateSettings({ composerQuietStopWhileWaiting: Boolean(checked) })
+              }
+              aria-label="Quiet stop button"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="follow-ups" title="Follow-ups">

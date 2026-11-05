@@ -589,6 +589,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["command menu dollar $ slash /"],
   },
   {
+    id: "composer-quiet-stop",
+    title: "Quiet stop button",
+    to: "/settings/chat",
+    searchTerms: ["composer stop interrupt button red quiet neutral waiting approval"],
+  },
+  {
     id: "composer-rich-text",
     title: "Rich text composer",
     to: "/settings/chat",
