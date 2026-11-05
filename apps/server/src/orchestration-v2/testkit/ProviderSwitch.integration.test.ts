@@ -23,12 +23,14 @@ import {
   ThreadId,
   TurnItemId,
   ProviderDriverKind,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -1735,9 +1737,22 @@ describe("orchestration v2 provider switching", () => {
           );
           if (scenario === "a delegated follow-up") {
             const followup = projection.runs.find((run) => run.userMessageId === "full-native:3")!;
-            const parent = yield* orchestrator.getThreadProjection(parentThreadId);
-            const task = parent.subagents.find((row) => row.id === followup.delegatedTaskId)!;
-            assert.deepEqual([task.status, task.result], ["completed", "Request 3 done"]);
+            // The parent hears of the result from the run-update handler, after the run ends.
+            const settled = yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "subagent.updated" &&
+                  event.payload.id === followup.delegatedTaskId &&
+                  !isOrchestrationV2WorkActive(event.payload.status),
+              ),
+              Stream.runHead,
+            );
+            const task = Option.getOrThrow(settled).event;
+            assert(task.type === "subagent.updated");
+            assert.deepEqual(
+              [task.payload.status, task.payload.result],
+              ["completed", "Request 3 done"],
+            );
           }
         }).pipe(
           Effect.provide(
