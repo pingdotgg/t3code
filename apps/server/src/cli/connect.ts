@@ -141,12 +141,40 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
+/** A missing side (no link, older credential without a subject) is unknown, not a mismatch. */
+export const isLinkedAccountMismatch = (
+  linkedCloudUserId: string | null,
+  currentCloudUserId: string | null,
+) =>
+  linkedCloudUserId !== null &&
+  currentCloudUserId !== null &&
+  linkedCloudUserId !== currentCloudUserId;
+
+// Checked after linking: dropping a revoked link clears the stored account first.
+const hasLinkedAccountMismatch = Effect.gen(function* () {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const tokens = yield* CliTokenManager.CloudCliTokenManager;
+  const [linkedUserId, stored] = yield* Effect.all([
+    secrets.get(CLOUD_LINKED_USER_ID),
+    tokens.readStored.pipe(Effect.orElseSucceed(() => Option.none())),
+  ]);
+  return isLinkedAccountMismatch(
+    Option.isSome(linkedUserId) ? bytesToString(linkedUserId.value) : null,
+    Option.isSome(stored) ? (stored.value.subject ?? null) : null,
+  );
+});
+
+const ACCOUNT_MISMATCH_REMEDY =
+  "Run `t3 connect unlink`, then `t3 connect link`, and restart the T3 service to switch accounts.";
+
 interface CloudCliStatus {
   readonly desired: boolean;
   readonly authenticated: boolean;
   readonly linked: boolean;
   readonly revoked: boolean;
   readonly cloudUserId: string | null;
+  readonly currentCloudUserId: string | null;
+  readonly accountMismatch: boolean;
   readonly relayUrl: string | null;
   readonly publishAgentActivity: boolean;
   readonly relayClient: RelayClient.RelayClientStatus;
@@ -180,7 +208,10 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
   }
 }
 
-function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: boolean }): string {
+export function formatCloudStatus(
+  status: CloudCliStatus,
+  options?: { readonly json?: boolean },
+): string {
   if (options?.json) {
     return JSON.stringify(status, null, 2);
   }
@@ -188,7 +219,9 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
   const provisioned = status.revoked
     ? "removed from T3 Connect"
     : status.linked
-      ? "provisioned"
+      ? status.accountMismatch
+        ? "provisioned for a different account than the current sign-in"
+        : "provisioned"
       : status.desired && status.authenticated
         ? "pending server startup"
         : "not provisioned";
@@ -196,11 +229,13 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     ? "Run `t3 connect link` to authorize and enable T3 Connect."
     : status.revoked
       ? "Run `t3 connect link` to link this environment again."
-      : !status.desired
-        ? "Run `t3 connect link` to enable T3 Connect."
-        : !status.linked
-          ? "Start T3 to provision the environment link and launch its managed tunnel."
-          : undefined;
+      : status.accountMismatch
+        ? ACCOUNT_MISMATCH_REMEDY
+        : !status.desired
+          ? "Run `t3 connect link` to enable T3 Connect."
+          : !status.linked
+            ? "Start T3 to provision the environment link and launch its managed tunnel."
+            : undefined;
 
   return [
     "T3 Connect",
@@ -643,7 +678,11 @@ const connectLinkCommand = Command.make("link", {
         yield* requireConnectAllowed;
         yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
-        if (linked) {
+        if (linked && (yield* hasLinkedAccountMismatch)) {
+          yield* Console.warn(
+            `Signed in${connectedAs(linked.identity)}, but this environment is already linked to a different cloud account.\n${ACCOUNT_MISMATCH_REMEDY}`,
+          );
+        } else if (linked) {
           const serveCommand = yield* resolveCliCommand("serve");
           yield* Console.log(
             flags.publishOnly
@@ -672,35 +711,44 @@ const connectStatusCommand = Command.make("status", {
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         const [
           desired,
-          authenticated,
           cloudUserId,
           relayUrl,
           publishAgentActivity,
           revoked,
           executable,
           linkMode,
+          storedToken,
         ] = yield* Effect.all(
           [
             CliState.readCliDesiredCloudLink,
-            tokens.hasCredential,
             secrets.get(CLOUD_LINKED_USER_ID),
             secrets.get(RELAY_URL_SECRET),
             secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
             secrets.get(CLOUD_LINK_REVOKED),
             relayClient.resolve,
             CliState.readCliDesiredLinkMode,
+            // Status must still print when the credential is unreadable.
+            tokens.readStored.pipe(Effect.orElseSucceed(() => Option.none())),
           ],
           { concurrency: "unbounded" },
         );
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
           desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
+        const linkedCloudUserId = Option.isSome(cloudUserId)
+          ? bytesToString(cloudUserId.value)
+          : null;
+        const currentCloudUserId = Option.isSome(storedToken)
+          ? (storedToken.value.subject ?? null)
+          : null;
         const status: CloudCliStatus = {
           desired,
-          authenticated,
+          authenticated: Option.isSome(storedToken),
           linked: Option.isSome(cloudUserId),
           revoked: Option.isSome(cloudUserId) && Option.isSome(revoked),
-          cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
+          cloudUserId: linkedCloudUserId,
+          currentCloudUserId,
+          accountMismatch: isLinkedAccountMismatch(linkedCloudUserId, currentCloudUserId),
           relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
           publishAgentActivity: isAgentActivityPublishingEnabledValue(
             Option.isSome(publishAgentActivity) ? bytesToString(publishAgentActivity.value) : null,
