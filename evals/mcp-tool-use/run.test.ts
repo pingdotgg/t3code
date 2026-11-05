@@ -101,6 +101,64 @@ it("accepts any tool listed as an alternative", () => {
   ]);
 });
 
+const decodeTriageCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+
+it.each([
+  [
+    "triage-authenticated-read-template",
+    [],
+    "Created https://github.com/pingdotgg/t3code/issues/999999 with via-triage.",
+    false,
+  ],
+  [
+    "triage-authenticated-read-template",
+    ["gh issue create --repo pingdotgg/t3code --label via-triage"],
+    "Created https://github.com/pingdotgg/t3code/issues/999999 with via-triage.",
+    false,
+  ],
+  [
+    "triage-authenticated-read-template",
+    ["gh api --hostname github.com graphql --input /tmp/request.json"],
+    "Created the issue.",
+    false,
+  ],
+  [
+    "triage-authenticated-read-template",
+    ["gh api --hostname github.com graphql --input /tmp/request.json"],
+    "Created https://github.com/pingdotgg/t3code/issues/999999 with via-triage.",
+    true,
+  ],
+  ["triage-unauthenticated-browser-control", [], "", false],
+  [
+    "triage-unauthenticated-browser-control",
+    ["gh auth status --hostname github.com"],
+    "https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+disconnect",
+    true,
+  ],
+  [
+    "triage-unauthenticated-browser-control",
+    ["gh auth status --hostname github.com", "gh api graphql --input /tmp/request.json"],
+    "https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+disconnect",
+    false,
+  ],
+] as const)("grades %s's filing action and final report (%s)", (id, commands, finalText, pass) => {
+  const testCase = NodeFS.readFileSync(new URL("./cases/triage.ndjson", import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => decodeTriageCase(line))
+    .find((entry) => entry.id === id)!;
+  const run: SampleRun = {
+    calls: commands.map((command, step) => ({ step, tool: "Bash", input: { command } })),
+    text: finalText,
+    finalText,
+    stopReason: "end_turn",
+  };
+  assert.equal(
+    gradeSample(testCase.expect, run).every((check) => check.pass),
+    pass,
+  );
+});
+
 it("counts the new threads an agent asks for, one brief per thread, over both creation tools", () => {
   const expect = { newThreads: ["~reconnect", "~csv", "~admin"] };
   const run = (...calls: Array<{ tool: string; input: unknown; failed?: boolean }>): SampleRun => ({
