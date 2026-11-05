@@ -370,6 +370,7 @@ export function ComposerDictationStatus(props: {
       <View
         accessible
         accessibilityLabel={`${props.presentation.statusLabel}: ${liveTranscript}`}
+        accessibilityLiveRegion={recording ? "none" : "polite"}
         className="h-11 min-w-0 flex-1 flex-row items-center gap-2 px-1"
       >
         {/* Head truncation keeps the newest words, and their corrections, in view. */}

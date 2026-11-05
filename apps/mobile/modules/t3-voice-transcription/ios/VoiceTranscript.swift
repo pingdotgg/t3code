@@ -40,6 +40,14 @@ enum VoiceDraft {
     let rows = correctedWords[rowStart...]
     let columns = provisionalWords[columnStart...]
 
+    // The engines can write the same number as digits or words ("25" / "twenty five").
+    let spellOut = NumberFormatter()
+    spellOut.numberStyle = .spellOut
+    func isDigits(_ word: Word) -> Bool { word.value.contains(where: \.isWholeNumber) }
+    func isSpelled(_ word: Word) -> Bool { !isDigits(word) && spellOut.number(from: word.value) != nil }
+    let rowDigits = rows.map(isDigits), rowSpelled = rows.map(isSpelled)
+    let columnDigits = columns.map(isDigits), columnSpelled = columns.map(isSpelled)
+
     // Edit distance from the corrected words to each provisional prefix. An anchored
     // alignment starts at the shared prefix; a windowed one may start anywhere.
     var costs = anchored ? Array(0...columns.count) : Array(repeating: 0, count: columns.count + 1)
@@ -47,8 +55,10 @@ enum VoiceDraft {
     for (row, word) in rows.enumerated() {
       var next = [row + 1]
       for (column, candidate) in columns.enumerated() {
-        var cost = min(costs[column + 1] + 1, next[column] + 1,
-                       costs[column] + (word.value == candidate.value ? 0 : 1))
+        let spelledRow = rowSpelled[row] && columnDigits[column]
+        let spelledColumn = rowDigits[row] && columnSpelled[column]
+        let matches = word.value == candidate.value || spelledRow || spelledColumn
+        var cost = min(costs[column + 1] + 1, next[column] + 1, costs[column] + (matches ? 0 : 1))
         // The engines can spell the same compound as one word or two ("timeout" / "time out").
         if column > 0, word.value == provisionalWords[columnStart + column - 1].value + candidate.value {
           cost = min(cost, costs[column - 1])
@@ -56,6 +66,8 @@ enum VoiceDraft {
         if row > 0, correctedWords[rowStart + row - 1].value + word.value == candidate.value {
           cost = min(cost, precedingCosts[column])
         }
+        if spelledRow, row > 0, rowSpelled[row - 1] { cost = min(cost, costs[column + 1]) }
+        if spelledColumn, column > 0, columnSpelled[column - 1] { cost = min(cost, next[column]) }
         next.append(cost)
       }
       precedingCosts = costs
