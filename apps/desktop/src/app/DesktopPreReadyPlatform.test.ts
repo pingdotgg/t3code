@@ -171,8 +171,6 @@ describe("DesktopPreReadyPlatform", () => {
 
   it.effect("leaves an identical pre-ready entry and icon untouched across launches", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
-    vi.stubEnv("XDG_DATA_HOME", "/xdg");
-    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
     const files = new Map<string, string | Buffer>([
       [
         "/tmp/.mount_T3/resources/app.asar/apps/desktop/prod-resources/icon.png",
@@ -199,6 +197,12 @@ describe("DesktopPreReadyPlatform", () => {
       assert.equal(setDesktopNameMock.mock.calls.length, 2);
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provide(
+        DesktopConfig.layerTest({
+          XDG_DATA_HOME: "/xdg",
+          APPIMAGE: "/Applications/current.AppImage",
+        }),
+      ),
       Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
     );
   });
