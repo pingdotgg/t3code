@@ -40,6 +40,7 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
   resolveThreadListV2SnoozePresets,
+  resolveThreadListMessagePreview,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
@@ -243,6 +244,107 @@ describe("resolveThreadListV2SwipeActions", () => {
   });
 });
 
+describe("resolveThreadListMessagePreview", () => {
+  it("collapses whitespace and maps roles for the Mail-style preview line", () => {
+    const assistant = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        latestVisibleMessage: {
+          id: MessageId.make("msg-assistant"),
+          role: "assistant",
+          text: "  Shipped\nthe fix  ",
+          updatedAt: DateTime.makeUnsafe(NOW),
+        },
+      }),
+    );
+    const user = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        latestVisibleMessage: {
+          id: MessageId.make("msg-user"),
+          role: "user",
+          text: "Please fix it",
+          updatedAt: DateTime.makeUnsafe(NOW),
+        },
+      }),
+    );
+
+    expect(resolveThreadListMessagePreview(assistant)).toEqual({
+      speaker: "agent",
+      text: "Shipped the fix",
+    });
+    expect(resolveThreadListMessagePreview(user)).toEqual({
+      speaker: "you",
+      text: "Please fix it",
+    });
+    expect(
+      resolveThreadListMessagePreview(
+        presentThreadShell(environmentId, makeRawThreadShell({ latestVisibleMessage: null })),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("unread ready rows keep a date stamp", () => {
+  it("stamps a relative time instead of clearing the trailing slot for unseen completions", () => {
+    const completedAt = "2026-06-01T23:55:00.000Z";
+    const thread = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        id: ThreadId.make("unread-ready"),
+        title: "Unread ready",
+        status: "completed",
+        latestRunId: RunId.make("run-unread"),
+        latestRunCompletedAt: DateTime.makeUnsafe(completedAt),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-06-01T23:50:00.000Z"),
+        lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:40:00.000Z"),
+      }),
+    );
+    expect(threadHasUnseenCompletion(thread)).toBe(true);
+    expect(resolveThreadListV2Status(thread)).toBe("ready");
+
+    const [row] = buildThreadListV2ListItems({
+      items: buildThreadListV2Items({
+        threads: [thread],
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+      }).items,
+      pendingTasks: [],
+    });
+    expect(row?.type === "v2-thread" && row.timeLabel.length > 0).toBe(true);
+  });
+});
+
+describe("queued messages keep a settled thread active", () => {
+  const threads = [
+    makeThread({ id: ThreadId.make("active"), title: "Active" }),
+    makeThread({ id: ThreadId.make("settled"), title: "Settled", settledOverride: "settled" }),
+    makeThread({
+      id: ThreadId.make("settled-queued"),
+      title: "Settled with outbox",
+      settledOverride: "settled",
+    }),
+  ];
+  const queuedThreadKeys = new Set([`${environmentId}:settled-queued`]);
+
+  it("lists the thread in the active block instead of the settled shelf", () => {
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      queuedThreadKeys,
+    });
+    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
+      ["active", "card"],
+      ["settled-queued", "card"],
+      ["settled", "card"],
+    ]);
+    expect(layout.settledCount).toBe(1);
+  });
+});
+
 describe("search lists ranked matches", () => {
   const matchKey = (id: string) =>
     threadSearchMatchKey({ environmentId, threadId: ThreadId.make(id) });
@@ -262,7 +364,7 @@ describe("search lists ranked matches", () => {
     });
     // The exact title leads even from a collapsed Settled shelf, and keeps its look.
     expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
-      ["exact", "slim"],
+      ["exact", "card"],
       ["notes", "card"],
       ["mentioned", "card"],
     ]);
@@ -492,7 +594,7 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(0);
   });
 
-  it("partitions settled threads into a slim shelf", () => {
+  it("partitions settled threads into a settled shelf", () => {
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
@@ -516,8 +618,8 @@ describe("buildThreadListV2Items", () => {
 
     expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
       ["active", "card"],
-      ["settled", "slim"],
-      ["settled-2", "slim"],
+      ["settled", "card"],
+      ["settled-2", "card"],
     ]);
     expect(layout.items.map((item) => item.isLast)).toEqual([false, false, true]);
     expect(layout.settledCount).toBe(2);
@@ -543,7 +645,7 @@ describe("buildThreadListV2Items", () => {
 
     expect(items.map((item) => [item.thread.id, item.variant])).toEqual([
       ["match", "card"],
-      ["settled", "slim"],
+      ["settled", "card"],
     ]);
   });
 
@@ -619,7 +721,9 @@ describe("buildThreadListV2Items settled paging", () => {
     });
 
     expect(layout.hiddenSettledCount).toBe(2);
-    expect(layout.items.filter((item) => item.variant === "slim")).toHaveLength(2);
+    expect(layout.items.filter((item) => item.thread.settledOverride === "settled")).toHaveLength(
+      2,
+    );
     expect(layout.items.map((item) => item.thread.id)).toEqual([
       "active",
       "settled-3",
@@ -696,7 +800,7 @@ describe("buildThreadListV2Items settled sort reuse", () => {
       searchQuery: "",
       now: NOW,
     })
-      .items.filter((item) => item.variant === "slim")
+      .items.filter((item) => item.thread.settledOverride === "settled")
       .map((item) => `${item.thread.environmentId}:${item.thread.id}`);
   }
 
