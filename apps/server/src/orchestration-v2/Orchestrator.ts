@@ -845,6 +845,26 @@ function queuedRunModelSelection(
     : run.modelSelection;
 }
 
+function queuedRunModes(
+  thread: Pick<OrchestrationV2ThreadProjection["thread"], "runtimeMode" | "interactionMode">,
+  run: OrchestrationV2Run,
+  followsCurrent: boolean,
+  maxRuntimeMode: RuntimeMode | undefined,
+): Pick<OrchestrationV2ThreadProjection["thread"], "runtimeMode" | "interactionMode"> {
+  return {
+    // A ceiling lowered after the send falls back to the thread's mode, which the user can lower.
+    runtimeMode:
+      followsCurrent ||
+      run.runtimeMode === undefined ||
+      isRuntimeModeAbove(run.runtimeMode, maxRuntimeMode)
+        ? thread.runtimeMode
+        : run.runtimeMode,
+    interactionMode: followsCurrent
+      ? thread.interactionMode
+      : (run.interactionMode ?? thread.interactionMode),
+  };
+}
+
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
@@ -1677,9 +1697,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
+      const followsCurrent = followsCurrentConversation(queuedMessage);
       const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
+      const modes = queuedRunModes(
+        projection.thread,
+        storedQueuedRun,
+        followsCurrent,
+        runtimeModeCeiling?.maxRuntimeMode,
+      );
       const queuedRun = {
         ...storedQueuedRun,
+        ...modes,
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
@@ -1688,7 +1716,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       // Waits without a hold: lowering the thread's mode starts the queue again.
-      if (isRuntimeModeAbove(projection.thread.runtimeMode, runtimeModeCeiling?.maxRuntimeMode)) {
+      if (isRuntimeModeAbove(modes.runtimeMode, runtimeModeCeiling?.maxRuntimeMode)) {
         return;
       }
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
@@ -1806,7 +1834,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const activeProviderThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
-      const followsCurrent = followsCurrentConversation(queuedMessage);
       const targetProviderThread = followsCurrent
         ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId
           ? activeProviderThread
@@ -2053,7 +2080,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const checkpointScope =
         storedCheckpointScope ??
         (yield* runtimePolicy
-          .resolve({ thread: projection.thread, modelSelection: queuedRun.modelSelection })
+          .resolve({
+            thread: { ...projection.thread, ...modes },
+            modelSelection: queuedRun.modelSelection,
+          })
           .pipe(
             Effect.flatMap((resolvedRuntimePolicy) =>
               checkpointService.prepareRootRunScope({
@@ -2244,27 +2274,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               },
             ]
           : [];
+      const startedThread = {
+        ...projection.thread,
+        ...modes,
+        providerInstanceId: queuedRun.providerInstanceId,
+        modelSelection: queuedRun.modelSelection,
+        updatedAt: now,
+      };
+      const threadEventTypes = [
+        ...(selectionChanged
+          ? [
+              queuedRun.providerInstanceId === projection.thread.providerInstanceId
+                ? ("thread.model-selection-updated" as const)
+                : ("thread.provider-switched" as const),
+            ]
+          : []),
+        ...(modes.runtimeMode === projection.thread.runtimeMode
+          ? []
+          : ["thread.runtime-mode-updated" as const]),
+        ...(modes.interactionMode === projection.thread.interactionMode
+          ? []
+          : ["thread.interaction-mode-updated" as const]),
+      ];
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
-            ? [
-                {
-                  type:
-                    queuedRun.providerInstanceId === projection.thread.providerInstanceId
-                      ? ("thread.model-selection-updated" as const)
-                      : ("thread.provider-switched" as const),
-                  threadId,
-                  providerInstanceId: queuedRun.providerInstanceId,
-                  occurredAt: now,
-                  payload: {
-                    ...projection.thread,
-                    providerInstanceId: queuedRun.providerInstanceId,
-                    modelSelection: queuedRun.modelSelection,
-                    updatedAt: now,
-                  },
-                },
-              ]
-            : []),
+          ...threadEventTypes.map((type) => ({
+            type,
+            threadId,
+            providerInstanceId: queuedRun.providerInstanceId,
+            occurredAt: now,
+            payload: startedThread,
+          })),
           ...(handoff === null || transferId === null || latestHandoffRun === undefined
             ? []
             : [
@@ -6128,6 +6168,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ordinal,
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
+        runtimeMode: projection.thread.runtimeMode,
+        interactionMode: projection.thread.interactionMode,
         providerThreadId: queuedProviderThread.id,
         userMessageId: command.messageId,
         rootNodeId,
