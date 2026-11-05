@@ -28,7 +28,7 @@ import {
   cloudflareClient,
   ollamaClient,
   zedClient,
-} from "@t3tools/client-runtime/providerClients";
+} from "@t3tools/client-runtime/provider-clients";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 
 interface KnownDriver {

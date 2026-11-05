@@ -23,7 +23,7 @@ import {
   cloudflareClient,
   ollamaClient,
   zedClient,
-} from "@t3tools/client-runtime/providerClients";
+} from "@t3tools/client-runtime/provider-clients";
 import {
   readSecretFieldValues,
   SOURCE_CONTROL_HOST_SECRET_FIELDS,
