@@ -24,6 +24,7 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -568,6 +569,14 @@ describe("KiroProvider", () => {
           environment: [],
           config: settings,
         });
+        // Subscribed before the session opens, so the publish cannot slip past it.
+        const advertised = yield* instance.snapshot.streamChanges.pipe(
+          Stream.takeUntil((snapshot) =>
+            snapshot.skills.some(({ name }) => name === "probe-skill"),
+          ),
+          Stream.runLast,
+          Effect.forkChild({ startImmediately: true }),
+        );
         const threadId = ThreadId.make("thread-kiro-skills");
         const modelSelection = { instanceId, model: "default" };
         const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
@@ -628,15 +637,16 @@ describe("KiroProvider", () => {
           modelSelection,
           runtimePolicy,
         });
-        // The turn's reply follows the session's command update.
         yield* session.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runDrain,
         );
-        const snapshot = yield* instance.snapshot.getSnapshot;
+        const snapshot = yield* Fiber.join(advertised);
         assert.deepEqual(
-          snapshot.skills.map((skill) => ({ name: skill.name, enabled: skill.enabled })),
-          [{ name: "probe-skill", enabled: true }],
+          Option.map(snapshot, ({ skills }) =>
+            skills.map((skill) => ({ name: skill.name, enabled: skill.enabled })),
+          ),
+          Option.some([{ name: "probe-skill", enabled: true }]),
         );
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, cli.spawner),

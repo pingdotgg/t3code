@@ -29,6 +29,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -57,8 +58,10 @@ import {
   KIRO_PROVIDER,
   kiroApprovalOptions,
   kiroAutopilotValue,
+  type KiroSkills,
   kiroPermissionDisposition,
   makeKiroAdapterV2,
+  makeKiroSkills,
 } from "@t3tools/provider-kiro/testing";
 
 const testLayer = Layer.mergeAll(
@@ -313,6 +316,8 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
   /** The user's message text for every turn. */
   readonly text?: string;
+  /** Where the adapter records advertised skills. */
+  readonly skills?: KiroSkills;
   readonly drive: (session: {
     readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
     readonly startTurn: Effect.Effect<void, ProviderAdapterV2Error>;
@@ -373,6 +378,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
         })),
       ),
     ...(input.testHooks === undefined ? {} : { testHooks: input.testHooks }),
+    ...(input.skills === undefined ? {} : { skills: input.skills }),
   });
   // Held frames must not outlive a failed drive and wedge teardown.
   yield* Effect.addFinalizer(() => Effect.sync(() => input.replayGate?.releaseAll()));
@@ -838,97 +844,116 @@ describe("KiroAdapterV2", () => {
 });
 
 describe("KiroAdapterV2 skills", () => {
+  const userSkill = (name: string) => ({
+    name,
+    description: "A probe skill that checks skill discovery over ACP.",
+    input: { hint: "optional context" },
+    _meta: {
+      kiro: {
+        type: "skill",
+        resource: { resourceType: "skill", source: { origin: "user" } },
+        originalName: name,
+      },
+    },
+  });
   // Shaped like kiro-cli 2.37.1's second `available_commands_update` after
   // `session/new` with `~/.kiro/skills/probe-skill/SKILL.md` installed.
   const skillCommands = update({
     sessionUpdate: "available_commands_update",
-    availableCommands: [
-      {
-        name: "probe-skill",
-        description: "A probe skill that checks skill discovery over ACP.",
-        input: { hint: "optional context" },
-        _meta: {
-          kiro: {
-            type: "skill",
-            resource: { resourceType: "skill", source: { origin: "user" } },
-            originalName: "probe-skill",
-          },
-        },
-      },
-    ],
+    availableCommands: [userSkill("probe-skill")],
   });
+
+  const recordPrompts = (sent: Array<string>) =>
+    ((send) => (payload, options) => {
+      for (const block of payload.prompt) {
+        if (block.type === "text") sent.push(block.text);
+      }
+      return send(payload, options);
+    }) satisfies NonNullable<Parameters<typeof runKiroScript>[0]["wrapPrompt"]>;
+
+  // The store holds the session's updates in order, so seeing `name` means every earlier one landed.
+  const awaitSkill = (skills: KiroSkills, name: string) =>
+    SubscriptionRef.changes(skills).pipe(
+      Stream.takeUntil((current) => current.some((skill) => skill.name === name)),
+      Stream.runDrain,
+    );
 
   // Kiro runs a command only from a leading `/name`; T3's `$` picker inserts `$name`.
-  it.effect("sends a $ skill mention as the /command Kiro runs", () => {
-    const sent: Array<string> = [];
-    return runKiroScript({
-      scenario: "skill-mention",
-      text: "$probe-skill rest",
-      frames: [
-        ...openSessionFrames({
-          initialize: KIRO_V3_INITIALIZE,
-          configOptions: [modeOption, autopilotOption("on")],
-        }),
-        skillCommands,
-        turnPrompt,
-        answer("session/prompt", { stopReason: "end_turn" }),
-        ...closeSession,
-      ],
-      wrapPrompt: (send) => (payload, options) => {
-        for (const block of payload.prompt) {
-          if (block.type === "text") sent.push(block.text);
-        }
-        return send(payload, options);
-      },
-      drive: ({ events, startTurn }) =>
-        Effect.gen(function* () {
-          yield* startTurn;
-          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
-          assert.deepEqual(sent, ["/probe-skill rest"]);
-        }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped);
-  });
+  it.effect("sends a $ skill mention as the /command Kiro runs", () =>
+    Effect.gen(function* () {
+      const sent: Array<string> = [];
+      const skills = yield* makeKiroSkills();
+      yield* runKiroScript({
+        scenario: "skill-mention",
+        text: "$probe-skill rest",
+        skills,
+        frames: [
+          ...openSessionFrames({
+            initialize: KIRO_V3_INITIALIZE,
+            configOptions: [modeOption, autopilotOption("on")],
+          }),
+          skillCommands,
+          turnPrompt,
+          answer("session/prompt", { stopReason: "end_turn" }),
+          ...closeSession,
+        ],
+        wrapPrompt: recordPrompts(sent),
+        drive: ({ events, startTurn }) =>
+          Effect.gen(function* () {
+            yield* awaitSkill(skills, "probe-skill");
+            yield* startTurn;
+            assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
+            assert.deepEqual(sent, ["/probe-skill rest"]);
+          }),
+      });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
 
   // Kiro also sends updates without skills, such as a session's first, agents-only one.
-  it.effect("keeps advertised skills through an update without skills", () => {
-    const sent: Array<string> = [];
-    return runKiroScript({
-      scenario: "skill-mention-after-agents-update",
-      text: "$probe-skill rest",
-      frames: [
-        ...openSessionFrames({
-          initialize: KIRO_V3_INITIALIZE,
-          configOptions: [modeOption, autopilotOption("on")],
-        }),
-        skillCommands,
-        update({
-          sessionUpdate: "available_commands_update",
-          availableCommands: [
-            {
-              name: "reviewer",
-              description: "Reviews changes",
-              _meta: { kiro: { type: "custom-agent" } },
-            },
-          ],
-        }),
-        turnPrompt,
-        answer("session/prompt", { stopReason: "end_turn" }),
-        ...closeSession,
-      ],
-      wrapPrompt: (send) => (payload, options) => {
-        for (const block of payload.prompt) {
-          if (block.type === "text") sent.push(block.text);
-        }
-        return send(payload, options);
-      },
-      drive: ({ events, startTurn }) =>
-        Effect.gen(function* () {
-          yield* startTurn;
-          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
-          assert.deepEqual(sent, ["/probe-skill rest"]);
-        }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped);
-  });
+  it.effect("keeps advertised skills through an update without skills", () =>
+    Effect.gen(function* () {
+      const sent: Array<string> = [];
+      const skills = yield* makeKiroSkills();
+      yield* runKiroScript({
+        scenario: "skill-mention-after-agents-update",
+        text: "$probe-skill rest",
+        skills,
+        frames: [
+          ...openSessionFrames({
+            initialize: KIRO_V3_INITIALIZE,
+            configOptions: [modeOption, autopilotOption("on")],
+          }),
+          skillCommands,
+          update({
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "reviewer",
+                description: "Reviews changes",
+                _meta: { kiro: { type: "custom-agent" } },
+              },
+            ],
+          }),
+          // Changes the store after the agents-only update, so the test can see it was handled.
+          update({
+            sessionUpdate: "available_commands_update",
+            availableCommands: [userSkill("later-skill")],
+          }),
+          turnPrompt,
+          answer("session/prompt", { stopReason: "end_turn" }),
+          ...closeSession,
+        ],
+        wrapPrompt: recordPrompts(sent),
+        drive: ({ events, startTurn }) =>
+          Effect.gen(function* () {
+            yield* awaitSkill(skills, "later-skill");
+            yield* startTurn;
+            assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
+            assert.deepEqual(sent, ["/probe-skill rest"]);
+          }),
+      });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
 });
 
 describe("KiroAdapterV2 agents", () => {

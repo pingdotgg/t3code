@@ -12,9 +12,9 @@ const MAX_DESCRIPTION_LENGTH = 1_024;
 const LEADING_MENTION = /^\s*\$(\S+)/;
 
 /**
- * Every skill the instance's Kiro sessions have advertised since the server
- * started. Kiro reports them only as `available_commands_update` entries with
- * `_meta.kiro.type: "skill"`, and some updates carry none.
+ * Every global skill the instance's Kiro sessions have advertised since the
+ * server started. Kiro reports them only as `available_commands_update` entries
+ * with `_meta.kiro.type: "skill"`, and some updates carry none.
  */
 export type KiroSkills = SubscriptionRef.SubscriptionRef<ReadonlyArray<ServerProviderSkill>>;
 
@@ -22,8 +22,32 @@ export const makeKiroSkills = (): Effect.Effect<KiroSkills> =>
   SubscriptionRef.make<ReadonlyArray<ServerProviderSkill>>([]);
 
 const decodeKiroSkillMeta = Schema.decodeUnknownOption(
-  Schema.Struct({ kiro: Schema.Struct({ type: Schema.Literal("skill") }) }),
+  Schema.Struct({
+    kiro: Schema.Struct({
+      type: Schema.Literal("skill"),
+      resource: Schema.optional(
+        Schema.Struct({
+          source: Schema.optional(
+            Schema.Struct({
+              origin: Schema.optional(Schema.Unknown),
+              root: Schema.optional(Schema.Unknown),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
 );
+
+// The store is shared by every project, so a skill Kiro scopes to one workspace stays out.
+const isKiroGlobalSkill = (meta: unknown) =>
+  Option.match(decodeKiroSkillMeta(meta), {
+    onNone: () => false,
+    onSome: ({ kiro }) => {
+      const source = kiro.resource?.source;
+      return source?.origin !== "workspace" && source?.root === undefined;
+    },
+  });
 
 function kiroSkillsFromCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
@@ -32,7 +56,7 @@ function kiroSkillsFromCommands(
   const skills: Array<ServerProviderSkill> = [];
   for (const command of commands) {
     if (skills.length === MAX_SKILLS) break;
-    if (Option.isNone(decodeKiroSkillMeta(command._meta))) continue;
+    if (!isKiroGlobalSkill(command._meta)) continue;
     const { name } = command;
     if (name.length === 0 || name.length > MAX_NAME_LENGTH || name !== name.trim()) continue;
     const key = name.toLowerCase();

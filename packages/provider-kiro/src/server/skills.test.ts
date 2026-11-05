@@ -4,10 +4,15 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { kiroSkillCommandText, makeKiroSkills, recordKiroSkills } from "./skills.ts";
 
-const skill = (name: string) => ({
+const skill = (name: string, source?: { readonly origin: string; readonly root?: string }) => ({
   name,
   description: `${name} skill`,
-  _meta: { kiro: { type: "skill" } },
+  _meta: {
+    kiro: {
+      type: "skill",
+      ...(source === undefined ? {} : { resource: { resourceType: "skill", source } }),
+    },
+  },
 });
 const agent = (name: string) => ({
   name,
@@ -29,6 +34,23 @@ describe("recordKiroSkills", () => {
         (yield* SubscriptionRef.get(skills)).map(({ name, path }) => ({ name, path })),
         [{ name: "deploy", path: "acp://skill/deploy" }],
       );
+    }),
+  );
+
+  // Shaped like kiro-cli 3.0.0, which lists `<cwd>/.kiro/skills` beside `~/.kiro/skills`.
+  it.effect("leaves out skills Kiro scopes to a workspace", () =>
+    Effect.gen(function* () {
+      const skills = yield* makeKiroSkills();
+      yield* recordKiroSkills(skills, [
+        skill("project-skill", { origin: "workspace", root: "/abs/project/path" }),
+        skill("user-skill", { origin: "user" }),
+      ]);
+      assert.deepEqual(
+        (yield* SubscriptionRef.get(skills)).map(({ name }) => name),
+        ["user-skill"],
+      );
+      assert.equal(yield* kiroSkillCommandText(skills, "$project-skill x"), "$project-skill x");
+      assert.equal(yield* kiroSkillCommandText(skills, "$user-skill x"), "/user-skill x");
     }),
   );
 
