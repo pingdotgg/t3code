@@ -479,6 +479,18 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(dated.settleUpdatedAt).toBeUndefined();
       expect(threadReads).toHaveLength(6);
 
+      const action = yield* provider.runAction({
+        cwd: "/listed",
+        repository: "platform/web",
+        host: "dev.azure.com",
+        number: 3,
+        action: "draft",
+      });
+      expect(action).toMatchObject({
+        updatedAt: "2026-07-01T00:00:00.000Z",
+        updatedAtState: "unavailable",
+      });
+
       // Old dates are shown while they are read again, which needs no refresh when none moved.
       yield* provider.forgetChangeRequestReads!();
       const forgotten = yield* list;

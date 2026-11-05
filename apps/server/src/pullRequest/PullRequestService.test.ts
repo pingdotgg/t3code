@@ -1294,6 +1294,7 @@ it.effect("returns the host's merged reply as a summary and trusts it without an
         autoMergeEnabled: false,
       };
       let summaryReads = 0;
+      let unavailable = false;
       const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
       const service = yield* makeService({
         projects: [
@@ -1301,7 +1302,12 @@ it.effect("returns the host's merged reply as a summary and trusts it without an
         ],
         providers: [
           fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            runAction: () => Effect.succeed(merged),
+            runAction: () =>
+              Effect.succeed(
+                unavailable
+                  ? { ...merged, state: "open" as const, updatedAtState: "unavailable" as const }
+                  : merged,
+              ),
             getChangeRequestSummary: () =>
               Effect.sync(() => {
                 summaryReads++;
@@ -1337,6 +1343,13 @@ it.effect("returns the host's merged reply as a summary and trusts it without an
         ...reference,
         mergedAt,
       });
+      unavailable = true;
+      const undated = yield* service.runAction({
+        ...reference,
+        action: "draft",
+        replyWithSummary: true,
+      });
+      assert.strictEqual(undated?.updatedAtState, "unavailable");
     }),
   ),
 );

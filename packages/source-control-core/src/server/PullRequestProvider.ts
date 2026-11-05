@@ -115,6 +115,7 @@ export interface ProviderChangeRequestSummary {
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;
+  readonly updatedAtState?: PullRequestUpdatedAtState | undefined;
   readonly author?: PullRequestActor | null | undefined;
   readonly additions?: number | undefined;
   readonly deletions?: number | undefined;

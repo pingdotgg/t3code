@@ -610,16 +610,26 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((reply) =>
             reply === undefined
               ? Effect.void
-              : Effect.map(
-                  dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(reply),
-                  (pullRequest) => ({
+              : Effect.gen(function* () {
+                  const pullRequest = yield* dated(
+                    input,
+                    AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+                  )(reply);
+                  const activity = yield* cli.listedActivity({
+                    cwd: input.cwd,
+                    repository: input.repository,
+                    pullRequest,
+                    maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+                  });
+                  return {
                     ...toSummary(pullRequest),
+                    ...(activity.state === undefined ? {} : { updatedAtState: activity.state }),
                     autoMergeEnabled: pullRequest.autoMergeEnabled,
                     ...(pullRequest.autoMergeMethod === undefined
                       ? {}
                       : { autoMergeMethod: pullRequest.autoMergeMethod }),
-                  }),
-                ),
+                  };
+                }),
           ),
         ),
 

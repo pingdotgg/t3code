@@ -1716,6 +1716,9 @@ export const make = Effect.gen(function* () {
       ? {}
       : { mergedAt: changeRequest.mergedAt ?? null }),
     updatedAt: changeRequest.updatedAt,
+    ...(changeRequest.updatedAtState === undefined
+      ? {}
+      : { updatedAtState: changeRequest.updatedAtState }),
     observedAt,
     ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
     ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
