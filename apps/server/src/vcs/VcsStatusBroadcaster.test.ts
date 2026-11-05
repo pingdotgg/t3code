@@ -243,6 +243,7 @@ describe("VcsStatusBroadcaster", () => {
         { _tag: "localUpdated", local: state.currentLocalStatus },
       ]);
       assert.isNull((yield* broadcaster.getStatus({ cwd: "/repo" })).pr);
+      state.currentLocalStatus = { ...baseLocalStatus, refName: "union" };
       const snapshot = yield* broadcaster
         .streamStatus({ cwd: "/repo", includeRemote: false })
         .pipe(Stream.take(1), Stream.runCollect);

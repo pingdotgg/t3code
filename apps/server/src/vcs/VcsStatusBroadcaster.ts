@@ -205,6 +205,10 @@ function remoteRefreshFailureDelay(
 export class VcsStatusBroadcaster extends Context.Service<
   VcsStatusBroadcaster,
   {
+    readonly streamLocalChanges: Stream.Stream<{
+      readonly cwd: string;
+      readonly local: VcsStatusLocalResult;
+    }>;
     readonly getStatus: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
@@ -245,6 +249,10 @@ export const make = Effect.gen(function* () {
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
   );
+  const localChangesPubSub = yield* Effect.acquireRelease(
+    PubSub.unbounded<{ readonly cwd: string; readonly local: VcsStatusLocalResult }>(),
+    (pubsub) => PubSub.shutdown(pubsub),
+  );
   const broadcasterScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
@@ -274,6 +282,9 @@ export const make = Effect.gen(function* () {
           new Map(cache).set(cwd, { local: nextLocal, remote }),
         ] as const;
       });
+      if (localChanged) {
+        yield* PubSub.publish(localChangesPubSub, { cwd, local });
+      }
       if (options?.publish && remoteCleared) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
@@ -322,7 +333,9 @@ export const make = Effect.gen(function* () {
   ) {
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local) {
-      return cached.local.value;
+      const branch = yield* workflow.currentBranch(cwd);
+      if (branch === cached.local.value.refName) return cached.local.value;
+      return yield* refreshLocalStatusCore(cwd);
     }
     return yield* loadLocalStatus(cwd);
   });
@@ -760,6 +773,7 @@ export const make = Effect.gen(function* () {
     );
 
   return VcsStatusBroadcaster.of({
+    streamLocalChanges: Stream.fromPubSub(localChangesPubSub),
     getStatus,
     refreshLocalStatus,
     refreshStatus,
