@@ -30,7 +30,10 @@ import { setPendingConnectionError } from "./use-remote-environment-registry";
 import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import {
+  useSelectedThreadSourceControl,
+  useSelectedThreadWorktree,
+} from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitActions() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -53,10 +56,13 @@ export function useSelectedThreadGitActions() {
   );
   const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  // Commits, pushes, and pulls go to the chosen repository worktree; branch
+  // switching stays with the thread's own workspace.
+  const { sourceControlCwd, repoWorktree } = useSelectedThreadSourceControl();
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      cwd: sourceControlCwd,
     }),
     { reportFailure: false },
   );
@@ -107,7 +113,7 @@ export function useSelectedThreadGitActions() {
         return null;
       }
 
-      const cwd = options?.cwd ?? selectedThreadCwd;
+      const cwd = options?.cwd ?? sourceControlCwd;
       if (!cwd) {
         return null;
       }
@@ -138,7 +144,7 @@ export function useSelectedThreadGitActions() {
       setPendingConnectionError(null);
       return result.value;
     },
-    [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
+    [refreshStatus, selectedThread, selectedThreadProject, sourceControlCwd],
   );
 
   // Shell updates replace the selected thread object many times per second while a
@@ -155,7 +161,7 @@ export function useSelectedThreadGitActions() {
       selectedEnvironmentId === null ||
       selectedThreadId === null ||
       !hasSelectedThreadProject ||
-      selectedThreadCwd === null ||
+      sourceControlCwd === null ||
       !isEnvironmentConnected
     ) {
       return;
@@ -165,7 +171,7 @@ export function useSelectedThreadGitActions() {
     selectedEnvironmentId,
     selectedThreadId,
     hasSelectedThreadProject,
-    selectedThreadCwd,
+    sourceControlCwd,
     isEnvironmentConnected,
   ]);
 
@@ -178,12 +184,18 @@ export function useSelectedThreadGitActions() {
         readonly project: EnvironmentProject;
         readonly cwd: string;
       }) => Promise<AtomCommandResult<T, E>>,
-      options?: { readonly managedExternally?: boolean; readonly changesThreadBranch?: boolean },
+      options?: {
+        readonly managedExternally?: boolean;
+        readonly changesThreadBranch?: boolean;
+        /** Runs in the thread's own workspace even when a repository worktree is chosen. */
+        readonly threadWorkspace?: boolean;
+      },
     ): Promise<T | null> => {
+      const cwd = options?.threadWorkspace === true ? selectedThreadCwd : sourceControlCwd;
       if (
         !selectedThread ||
         !selectedThreadProject ||
-        !selectedThreadCwd ||
+        !cwd ||
         !readEnvironmentScope(selectedThread.environmentId, AuthSourceControlWriteScope) ||
         (options?.changesThreadBranch === true &&
           !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope))
@@ -193,14 +205,14 @@ export function useSelectedThreadGitActions() {
 
       const target = {
         environmentId: selectedThread.environmentId,
-        cwd: selectedThreadCwd,
+        cwd,
       };
       setPendingConnectionError(null);
       const run = () =>
         execute({
           thread: selectedThread,
           project: selectedThreadProject,
-          cwd: selectedThreadCwd,
+          cwd,
         });
       const result =
         options?.managedExternally === true
@@ -215,7 +227,7 @@ export function useSelectedThreadGitActions() {
       }
       return result.value;
     },
-    [selectedThread, selectedThreadCwd, selectedThreadProject],
+    [selectedThread, selectedThreadCwd, selectedThreadProject, sourceControlCwd],
   );
 
   const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
@@ -272,7 +284,7 @@ export function useSelectedThreadGitActions() {
           });
           return AsyncResult.isFailure(syncResult) ? AsyncResult.failure(syncResult.cause) : result;
         },
-        { changesThreadBranch: true },
+        { changesThreadBranch: true, threadWorkspace: true },
       );
     },
     [
@@ -306,7 +318,7 @@ export function useSelectedThreadGitActions() {
           });
           return AsyncResult.isFailure(syncResult) ? AsyncResult.failure(syncResult.cause) : result;
         },
-        { changesThreadBranch: true },
+        { changesThreadBranch: true, threadWorkspace: true },
       );
     },
     [
@@ -345,7 +357,7 @@ export function useSelectedThreadGitActions() {
           });
           return AsyncResult.isFailure(syncResult) ? AsyncResult.failure(syncResult.cause) : result;
         },
-        { changesThreadBranch: true },
+        { changesThreadBranch: true, threadWorkspace: true },
       );
     },
     [createWorktree, runSelectedThreadGitMutation, syncSelectedThreadBranchState],
@@ -395,7 +407,12 @@ export function useSelectedThreadGitActions() {
             return result;
           }
 
-          if (result.value.branch.status === "created" && result.value.branch.name) {
+          // A repository worktree's new branch is not the thread's branch.
+          if (
+            repoWorktree === null &&
+            result.value.branch.status === "created" &&
+            result.value.branch.name
+          ) {
             const syncResult = await syncSelectedThreadBranchState({
               thread,
               cwd,
@@ -419,10 +436,14 @@ export function useSelectedThreadGitActions() {
           });
           return result;
         },
-        { managedExternally: true, changesThreadBranch: input.featureBranch === true },
+        {
+          managedExternally: true,
+          changesThreadBranch: input.featureBranch === true && repoWorktree === null,
+        },
       );
     },
     [
+      repoWorktree,
       runStackedAction,
       refreshSelectedThreadGitStatus,
       runSelectedThreadGitMutation,

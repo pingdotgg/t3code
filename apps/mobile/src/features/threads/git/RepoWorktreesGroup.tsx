@@ -9,10 +9,16 @@ import { environmentThreadDetails, threadEnvironment } from "../../../state/thre
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { SheetListRow } from "./gitSheetComponents";
 
-/** Where this thread's work lives when its project holds several repositories. */
+/**
+ * Where this thread's work lives when its project holds several repositories,
+ * and which one the Git actions and changes above use.
+ */
 export function RepoWorktreesGroup(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly selected: ThreadRepoWorktree | null;
+  readonly workspaceLabel: string;
+  readonly onSelect: (worktreePath: string | null) => void;
 }) {
   const repoWorktrees = useAtomValue(
     environmentThreadDetails.repoWorktreesAtom({
@@ -23,8 +29,15 @@ export function RepoWorktreesGroup(props: {
   const detach = useAtomCommand(threadEnvironment.detachRepoWorktree, { reportFailure: true });
   if (repoWorktrees.length === 0) return null;
 
-  const showActions = (entry: ThreadRepoWorktree) =>
+  const showActions = (entry: ThreadRepoWorktree) => {
+    const isSelected = props.selected?.worktreePath === entry.worktreePath;
     Dialog.alert(`${entry.repository} · ${entry.branch}`, entry.worktreePath, [
+      isSelected
+        ? {
+            text: `Use ${props.workspaceLabel.toLowerCase()} for Git`,
+            onPress: () => props.onSelect(null),
+          }
+        : { text: "Use for Git and changes", onPress: () => props.onSelect(entry.worktreePath) },
       { text: "Copy path", onPress: () => void Clipboard.setStringAsync(entry.worktreePath) },
       {
         text: "Detach from thread",
@@ -37,6 +50,7 @@ export function RepoWorktreesGroup(props: {
       },
       { text: "Cancel", style: "cancel" },
     ]);
+  };
 
   return (
     <View className="gap-2">
@@ -50,14 +64,22 @@ export function RepoWorktreesGroup(props: {
             <SheetListRow
               icon="folder"
               title={`${entry.repository} · ${entry.branch}`}
-              subtitle={entry.worktreePath}
+              subtitle={
+                props.selected?.worktreePath === entry.worktreePath
+                  ? `Git and changes above · ${entry.worktreePath}`
+                  : entry.worktreePath
+              }
               onPress={() => showActions(entry)}
             />
           </View>
         ))}
       </View>
       <Text className="px-1 text-xs text-foreground-muted">
-        Checkpoints, diffs, and rollback don't cover these.
+        {props.selected === null
+          ? `Git and changes above use the ${props.workspaceLabel.toLowerCase()}. `
+          : ""}
+        Turn diffs and rollback include these. Rollback restores no files while another thread also
+        works in one.
       </Text>
     </View>
   );

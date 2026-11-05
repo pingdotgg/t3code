@@ -26,6 +26,27 @@ const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItem
 );
 const EMPTY_REPO_WORKTREES: ReadonlyArray<ThreadRepoWorktree> = Object.freeze([]);
 
+/**
+ * The repository worktree a thread's Changes and Git actions use, or null for
+ * the thread's own workspace. `selection` is the user's choice: a worktree
+ * path, null for the workspace, or undefined for none. Without a choice, a
+ * thread whose workspace is not a Git repository uses its first repository
+ * worktree, so its changes are not hidden behind one.
+ */
+export function resolveSelectedRepoWorktree(input: {
+  readonly repoWorktrees: ReadonlyArray<ThreadRepoWorktree>;
+  readonly selection: string | null | undefined;
+  readonly workspaceIsRepository: boolean;
+}): ThreadRepoWorktree | null {
+  if (input.selection === null) return null;
+  const chosen =
+    input.selection === undefined
+      ? undefined
+      : input.repoWorktrees.find((entry) => entry.worktreePath === input.selection);
+  if (chosen !== undefined) return chosen;
+  return input.workspaceIsRepository ? null : (input.repoWorktrees[0] ?? null);
+}
+
 export function createEnvironmentThreadDetailAtoms<E>(
   threadStateAtom: (
     environmentId: ScopedThreadRef["environmentId"],
@@ -143,6 +164,13 @@ export function createEnvironmentThreadDetailAtoms<E>(
         EMPTY_REPO_WORKTREES,
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-repo-worktrees:${key}`)),
   );
+  // A view choice, kept for the session like the selected diff scope.
+  const repoWorktreeSelectionAtomFamily = Atom.family((key: string) =>
+    Atom.make<string | null | undefined>(undefined).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`environment-thread-repo-worktree-selection:${key}`),
+    ),
+  );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
     let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
       null;
@@ -200,6 +228,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
   return {
     worktreePathAtom: (ref: ScopedThreadRef) => worktreePathAtomFamily(threadKey(ref)),
     repoWorktreesAtom: (ref: ScopedThreadRef) => repoWorktreesAtomFamily(threadKey(ref)),
+    repoWorktreeSelectionAtom: (ref: ScopedThreadRef) =>
+      repoWorktreeSelectionAtomFamily(threadKey(ref)),
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),

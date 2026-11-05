@@ -9,6 +9,7 @@ import {
   RunId,
   MessageId,
   type ScopedThreadRef,
+  type ThreadRepoWorktree,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -16,7 +17,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection, v2Now } from "./orchestrationV2TestFixtures.ts";
 import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
-import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
+import { createEnvironmentThreadDetailAtoms, resolveSelectedRepoWorktree } from "./threadDetail.ts";
 import type { EnvironmentThreadState } from "./threads.ts";
 
 const ref: ScopedThreadRef = {
@@ -325,4 +326,57 @@ it("keeps worktree and pending requests stable during output updates, then refle
   expect(registry.get(details.worktreePathAtom(ref))).toBe("/workspace/moved");
   dispose();
   registry.dispose();
+});
+
+describe("resolveSelectedRepoWorktree", () => {
+  const repoWorktree = (repository: string): ThreadRepoWorktree => ({
+    repository,
+    repositoryPath: `/folder/${repository}`,
+    worktreePath: `/worktrees/${repository}/work`,
+    branch: "t3/work",
+    baseRef: "main",
+    origin: "created",
+    attachedAt: "2026-11-04T00:00:00.000Z",
+  });
+  const repoWorktrees = [repoWorktree("alpha"), repoWorktree("beta")];
+
+  it("shows a repository's changes when the folder itself is not a Git repository", () => {
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: undefined,
+        workspaceIsRepository: false,
+      })?.repository,
+    ).toBe("alpha");
+  });
+
+  it("keeps a Git workspace until the user chooses a repository", () => {
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: undefined,
+        workspaceIsRepository: true,
+      }),
+    ).toBeNull();
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: "/worktrees/beta/work",
+        workspaceIsRepository: true,
+      })?.repository,
+    ).toBe("beta");
+  });
+
+  it("honors choosing the workspace, and forgets a choice the thread detached", () => {
+    expect(
+      resolveSelectedRepoWorktree({ repoWorktrees, selection: null, workspaceIsRepository: false }),
+    ).toBeNull();
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: "/worktrees/gone/work",
+        workspaceIsRepository: false,
+      })?.repository,
+    ).toBe("alpha");
+  });
 });

@@ -178,7 +178,7 @@ export function shouldOpenProactiveTurnDiff(input: {
 }
 
 export function resolveProactiveTurnDiffAction(input: {
-  checkpoint: Pick<TurnDiffSummary, "status" | "files"> | undefined;
+  checkpoint: Pick<TurnDiffSummary, "status" | "files" | "repositories"> | undefined;
   isGitRepo: boolean | undefined;
   activeSurfaceKind: RightPanelSurface["kind"] | null;
 }): "defer" | "ignore" | "open" {
@@ -187,9 +187,11 @@ export function resolveProactiveTurnDiffAction(input: {
     return "ignore";
   }
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
-  if (input.isGitRepo === undefined) return "defer";
+  // Repository worktrees have diffs even when the folder is not a Git repository.
+  const hasRepositories = (input.checkpoint.repositories?.length ?? 0) > 0;
+  if (input.isGitRepo === undefined && !hasRepositories) return "defer";
   if (
-    !input.isGitRepo ||
+    (!input.isGitRepo && !hasRepositories) ||
     input.checkpoint.status !== "ready" ||
     input.checkpoint.files.length === 0
   ) {

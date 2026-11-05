@@ -7,18 +7,18 @@ import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import { useSelectedThreadSourceControl } from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState() {
   const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { sourceControlCwd } = useSelectedThreadSourceControl();
 
   const selectedThreadGitTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      cwd: sourceControlCwd,
     }),
-    [selectedThread?.environmentId, selectedThreadCwd],
+    [selectedThread?.environmentId, sourceControlCwd],
   );
   const gitActionState = useVcsActionState(selectedThreadGitTarget);
   const sourceControlDiscovery = useEnvironmentQuery(

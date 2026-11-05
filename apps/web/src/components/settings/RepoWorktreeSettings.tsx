@@ -30,7 +30,7 @@ export function RepoWorktreeSettings() {
         {...searchableSetting("repo-worktrees")}
         description={
           isProjectScope
-            ? "For a folder of several Git repositories. The thread stays in the folder, and agents create or reuse a worktree for each repository the work needs. Checkpoints, diffs, and rollback cover only the folder, not those worktrees."
+            ? "For a folder of several Git repositories. The thread stays in the folder, and agents create or reuse a worktree for each repository the work needs. Turn diffs and rollback include those worktrees."
             : "For project folders that hold several Git repositories. Turn it on for those projects."
         }
         resetAction={

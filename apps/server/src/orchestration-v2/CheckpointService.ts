@@ -313,25 +313,23 @@ export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdi
  * Lives in the worktree's repository. Two worktrees of one repository share
  * its refs, so the worktree path is part of the key.
  */
-export const checkpointRefForRepository = Effect.fn("checkpointRefForRepository")(
-  function* (input: {
-    readonly scopeId: CheckpointScopeId;
-    readonly worktreePath: string;
-    readonly ordinalWithinScope: number;
-  }) {
-    return yield* checkpointRefForKey(
-      `${input.scopeId}\u0000repository\u0000${input.worktreePath}`,
-      input.ordinalWithinScope,
-    );
-  },
-);
+const checkpointRefForRepository = Effect.fn("checkpointRefForRepository")(function* (input: {
+  readonly scopeId: CheckpointScopeId;
+  readonly worktreePath: string;
+  readonly ordinalWithinScope: number;
+}) {
+  return yield* checkpointRefForKey(
+    `${input.scopeId}\u0000repository\u0000${input.worktreePath}`,
+    input.ordinalWithinScope,
+  );
+});
 
 /** The status of the scope's own workspace snapshot. */
 export const checkpointWorkspaceStatus = (
   checkpoint: Pick<OrchestrationV2Checkpoint, "status" | "workspaceStatus">,
 ): OrchestrationV2CheckpointStatus => checkpoint.workspaceStatus ?? checkpoint.status;
 
-export function aggregateCheckpointStatus(
+function aggregateCheckpointStatus(
   workspaceStatus: OrchestrationV2CheckpointStatus,
   repositories: ReadonlyArray<Pick<OrchestrationV2CheckpointRepository, "status">>,
 ): OrchestrationV2CheckpointStatus {
@@ -354,7 +352,7 @@ export function checkpointWorkspaceFiles(
  * Names each worktree's paths after its repository. Two worktrees of one
  * repository, or of the folder itself, add the worktree's folder name.
  */
-export function repositoryPathPrefixes(
+function repositoryPathPrefixes(
   path: Path.Path,
   repositories: ReadonlyArray<
     Pick<ThreadRepoWorktree, "repository" | "repositoryPath" | "worktreePath">

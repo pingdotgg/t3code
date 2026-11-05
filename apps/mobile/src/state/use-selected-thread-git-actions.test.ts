@@ -45,6 +45,7 @@ vi.mock("./use-selected-thread-worktree", () => ({
     selectedThreadCwd: "/repo",
     selectedThreadWorktreePath: null,
   }),
+  useSelectedThreadSourceControl: () => ({ sourceControlCwd: "/repo", repoWorktree: null }),
 }));
 vi.mock("./queries", () => ({
   useBranches: () => ({ data: { refs: [] }, refresh: () => {} }),

@@ -960,6 +960,70 @@ describe("repository worktree checkpoints", () => {
     { timeout: 120_000 },
   );
 
+  // Permissions do not stop root or Windows from writing.
+  it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "names the repositories it restored when a later one fails",
+    () =>
+      withHarness(({ agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* createThread({ threadId: "thread:partial" });
+          let alpha = "";
+          let beta = "";
+          yield* runTurn(
+            agent,
+            threadId,
+            Effect.gen(function* () {
+              alpha = (yield* repoWorktrees.ensure({
+                threadId,
+                repository: "alpha",
+                branch: "t3/partial",
+                baseRef: "main",
+              })).repoWorktree.worktreePath;
+              beta = (yield* repoWorktrees.ensure({
+                threadId,
+                repository: "beta",
+                branch: "t3/partial",
+                baseRef: "main",
+              })).repoWorktree.worktreePath;
+              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
+              yield* write(path.join(beta, "README.md"), "# beta\nturn 1\n");
+            }),
+          );
+          yield* runTurn(
+            agent,
+            threadId,
+            Effect.gen(function* () {
+              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
+              yield* write(path.join(beta, "README.md"), "# beta\nturn 2\n");
+            }),
+          );
+          // Git can read beta but not replace its files.
+          yield* fileSystem.chmod(beta, 0o555);
+          yield* Effect.addFinalizer(() => fileSystem.chmod(beta, 0o755).pipe(Effect.ignore));
+
+          yield* rollback(threadId, 1);
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            yield* TestClock.adjust(Duration.seconds(31));
+            yield* worker.drain();
+          }
+          const after = yield* projectionOf(threadId);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
+          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 2\n");
+          assert.equal(after.runs.find((run) => run.ordinal === 2)?.status, "completed");
+          assert.include(
+            after.thread.rollbackFailure?.message ?? "",
+            "Restoring files stopped at the beta worktree",
+          );
+          assert.include(after.thread.rollbackFailure?.message ?? "", "Already restored: alpha.");
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
   it.effect.each(["removed", "replaced"] as const)(
     "handles a repository worktree whose folder is %s",
     (state) =>

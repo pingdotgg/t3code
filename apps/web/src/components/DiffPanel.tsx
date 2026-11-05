@@ -7,6 +7,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { resolveCheckpointFilePath } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
@@ -88,6 +90,9 @@ import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
+import { useThreadRepoWorktreeTarget } from "../hooks/useThreadRepoWorktreeTarget";
+import { useRightPanelStore } from "../rightPanelStore";
+import { RepoWorktreeTargetMenu } from "./RepoWorktreeTargetMenu";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
@@ -233,8 +238,15 @@ export default function DiffPanel({
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
+  const workspaceCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const repoTarget = useThreadRepoWorktreeTarget({
+    threadRef: routeThreadRef ?? null,
+    workspaceCwd: workspaceCwd ?? null,
+  });
+  const selectedRepoWorktree = repoTarget.repoWorktree;
+  // Changes and Git status follow the chosen repository; turn diffs cover all of them.
+  const activeCwd = selectedRepoWorktree?.worktreePath ?? workspaceCwd;
+  const workspaceRepositoryRoot = activeThread?.worktreePath
     ? undefined
     : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
@@ -260,6 +272,10 @@ export default function DiffPanel({
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByRunId } =
     useTurnDiffSummaries(activeThreadProjection);
+  // A folder that is not a Git repository still has turn diffs from its repository worktrees.
+  const hasRepositoryTurns = turnDiffSummaries.some(
+    (summary) => (summary.repositories?.length ?? 0) > 0,
+  );
   const orderedTurnDiffSummaries = useMemo(
     () =>
       [...turnDiffSummaries].toSorted((left, right) => {
@@ -335,7 +351,7 @@ export default function DiffPanel({
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.runId}` : null,
     },
-    { enabled: isGitRepo && selectedTurn !== undefined },
+    { enabled: (isGitRepo || hasRepositoryTurns) && selectedTurn !== undefined },
   );
   const branchDiffPreview = useEnvironmentQuery(
     canReadFiles && selectedRunId === null && activeThread && activeCwd
@@ -626,13 +642,42 @@ export default function DiffPanel({
     revealDiffFile(selectedFilePath);
   }, [lazySource, selectedFilePath, selectedFileRevealRequestId, filePatchScope, revealDiffFile]);
 
+  // A turn diff names repository files by their prefix; a repository's
+  // Changes are relative to its worktree. Either way the file opens there.
+  const repositoryFileTarget = useCallback(
+    (filePath: string) => {
+      if (selectedTurn) {
+        const target = resolveCheckpointFilePath(selectedTurn.repositories, filePath);
+        return target === null
+          ? null
+          : { filePath: target.relativePath, workspaceRoot: target.worktreePath };
+      }
+      return selectedRepoWorktree === null
+        ? null
+        : { filePath, workspaceRoot: selectedRepoWorktree.worktreePath };
+    },
+    [selectedRepoWorktree, selectedTurn],
+  );
   const openDiffFile = useCallback(
     (filePath: string) => {
+      const repositoryFile = repositoryFileTarget(filePath);
+      if (repositoryFile !== null) {
+        const absolutePath = resolvePathLinkTarget(
+          repositoryFile.filePath,
+          repositoryFile.workspaceRoot,
+        );
+        if (routeThreadRef) {
+          useRightPanelStore.getState().openFile(routeThreadRef, absolutePath);
+        } else {
+          void openInPreferredEditor(absolutePath);
+        }
+        return;
+      }
       openDiffFilePrimaryAction({
         threadRef: routeThreadRef,
         filePath,
-        activeCwd,
-        repositoryRoot: activeRepositoryRoot,
+        activeCwd: workspaceCwd,
+        repositoryRoot: workspaceRepositoryRoot,
         openInEditor: (targetPath) => {
           void (async () => {
             const result = await openInPreferredEditor(targetPath);
@@ -652,7 +697,13 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
+    [
+      workspaceRepositoryRoot,
+      openInPreferredEditor,
+      repositoryFileTarget,
+      routeThreadRef,
+      workspaceCwd,
+    ],
   );
   const collapseDefaultsRef = useRef({ collapseScopeKey, defaultCollapsedDiffFileKeys });
   useLayoutEffect(() => {
@@ -781,6 +832,14 @@ export default function DiffPanel({
             </DropdownMenuSub>
           </DropdownMenuContent>
         </DropdownMenu>
+        {selectedRunId === null ? (
+          <RepoWorktreeTargetMenu
+            repoWorktrees={repoTarget.repoWorktrees}
+            selected={selectedRepoWorktree}
+            workspaceLabel={activeThread?.worktreePath ? "Thread worktree" : "Project folder"}
+            onSelect={repoTarget.select}
+          />
+        ) : null}
         {selectedRunId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
@@ -1040,9 +1099,11 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo ? (
+      ) : !isGitRepo && (selectedRunId === null || !hasRepositoryTurns) ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Turn diffs are unavailable because this project is not a git repository.
+          {selectedRunId === null && repoTarget.repoWorktrees.length > 0
+            ? "This folder is not a Git repository. Choose one of its repository worktrees above."
+            : "Turn diffs are unavailable because this project is not a git repository."}
         </div>
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
@@ -1133,13 +1194,20 @@ export default function DiffPanel({
                     const filePath = title?.textContent?.trim();
                     if (!filePath) return;
                     event.preventDefault();
+                    const repositoryFile = repositoryFileTarget(filePath);
                     onFileContextMenu(
-                      {
-                        environmentId: activeThread?.environmentId ?? null,
-                        filePath,
-                        workspaceRoot: activeCwd,
-                        repositoryRoot: activeRepositoryRoot,
-                      },
+                      repositoryFile === null
+                        ? {
+                            environmentId: activeThread?.environmentId ?? null,
+                            filePath,
+                            workspaceRoot: workspaceCwd,
+                            repositoryRoot: workspaceRepositoryRoot,
+                          }
+                        : {
+                            environmentId: activeThread?.environmentId ?? null,
+                            ...repositoryFile,
+                            repositoryRoot: undefined,
+                          },
                       event,
                     );
                   }}

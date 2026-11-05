@@ -101,6 +101,17 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
 
 const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
 
+const FILE_RESTORE_REFUSALS: ReadonlySet<CheckpointRollbackExecutionError["reason"]> = new Set([
+  "shared-workspace",
+  "shared-repository",
+  "repository-unavailable",
+  "repository-restore-failed",
+]);
+
+/** A rollback stopped over the files it would restore, with a message for the user. */
+export const isFileRestoreRefusal = (error: CheckpointRollbackExecutionError) =>
+  FILE_RESTORE_REFUSALS.has(error.reason);
+
 export interface CheckpointRollbackServiceV2Shape {
   readonly execute: (input: {
     readonly threadId: ThreadId;

@@ -422,14 +422,14 @@ export const layerExecutor: Layer.Layer<
                           commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
                           threadId: effect.threadId,
                           requestId: effect.commandId,
-                          // A refusal names what blocked the rollback; anything else
-                          // keeps the generic message.
+                          // A file restore refusal names what blocked it; anything
+                          // else keeps the generic message.
                           message: Option.match(Cause.findErrorOption(cause), {
                             onNone: () => CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
                             onSome: (error) =>
-                              error.reason === "unexpected-failure"
-                                ? CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE
-                                : error.message,
+                              CheckpointRollbackService.isFileRestoreRefusal(error)
+                                ? error.message
+                                : CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
                           }),
                         })
                         .pipe(

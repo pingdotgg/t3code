@@ -18,7 +18,7 @@ export function RepoWorktreeSettings(props: {
       <SettingsSwitchRow
         icon="folder"
         label="Repository worktrees"
-        subtitle="For a folder of several Git repositories. The thread stays in the folder, and agents create or reuse a worktree for each repository the work needs. Checkpoints, diffs, and rollback cover only the folder, not those worktrees."
+        subtitle="For a folder of several Git repositories. The thread stays in the folder, and agents create or reuse a worktree for each repository the work needs. Turn diffs and rollback include those worktrees."
         value={props.enabled}
         disabled={props.disabled}
         onValueChange={(value) => props.onChange({ repoWorktrees: value })}

@@ -12,6 +12,7 @@ import {
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { RightPanelSurface } from "../rightPanelStore";
 import {
+  CheckpointRef,
   CommandId,
   EnvironmentId,
   EventId,
@@ -1767,6 +1768,39 @@ describe("proactive completed diff guard", () => {
         activeSurfaceKind: null,
       }),
     ).toBe("defer");
+  });
+
+  it("opens repository worktree changes in a folder that is not a Git repository", () => {
+    const repositoryCheckpoint = {
+      status: "ready",
+      files: ["alpha/a.ts", "alpha/b.ts", "beta/README.md"].map((path) => ({
+        path,
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      })),
+      repositories: [
+        {
+          repository: "alpha",
+          repositoryPath: "/folder/alpha",
+          worktreePath: "/worktrees/alpha/work",
+          branch: "t3/work",
+          pathPrefix: "alpha",
+          ref: CheckpointRef.make("refs/t3/alpha"),
+          status: "ready",
+        },
+      ],
+    } satisfies Pick<TurnDiffSummary, "status" | "files" | "repositories">;
+
+    for (const isGitRepo of [false, undefined]) {
+      expect(
+        resolveProactiveTurnDiffAction({
+          checkpoint: repositoryCheckpoint,
+          isGitRepo,
+          activeSurfaceKind: null,
+        }),
+      ).toBe("open");
+    }
   });
 
   it("keeps an active pull request above a completed turn diff", () => {

@@ -41,7 +41,10 @@ import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
-import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import {
+  useSelectedThreadSourceControl,
+  useSelectedThreadWorktree,
+} from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
@@ -78,7 +81,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
   const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const { selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const sourceControl = useSelectedThreadSourceControl();
+  const selectedThreadCwd = sourceControl.sourceControlCwd;
   const supportsLinkedPrSnapshots =
     selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true;
   const linkedPrChains = useMemo(
@@ -323,7 +328,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           icon="text.bubble"
           title="Review changes"
           subtitle="Inspect changes, uncommitted edits, and turn diffs"
-          disabled={busy || !isRepo}
+          disabled={busy || (!isRepo && sourceControl.repoWorktrees.length === 0)}
           onPress={() => {
             const params = { environmentId, threadId };
             navigation.dispatch(
@@ -333,23 +338,28 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             );
           }}
         />
-        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
-        <SheetListRow
-          icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
-          subtitle={
-            canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
-          }
-          disabled={busy || !isRepo}
-          onPress={() =>
-            navigation.navigate("GitBranches", {
-              environmentId: String(environmentId),
-              threadId: String(threadId),
-            })
-          }
-        />
+        {/* The thread's own branch; a repository worktree keeps its branch. */}
+        {sourceControl.repoWorktree === null ? (
+          <>
+            {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
+            <SheetListRow
+              icon="point.topleft.down.curvedto.point.bottomright.up"
+              title="Branches & worktrees"
+              subtitle={
+                canChangeThreadBranch
+                  ? "Switch branch, create branch, or move to a worktree"
+                  : "View branches and worktrees"
+              }
+              disabled={busy || !isRepo}
+              onPress={() =>
+                navigation.navigate("GitBranches", {
+                  environmentId: String(environmentId),
+                  threadId: String(threadId),
+                })
+              }
+            />
+          </>
+        ) : null}
       </View>
 
       {linkedPrChains.length > 0 ? (
@@ -405,7 +415,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         </View>
       ) : null}
 
-      <RepoWorktreesGroup environmentId={environmentId} threadId={threadId} />
+      <RepoWorktreesGroup
+        environmentId={environmentId}
+        threadId={threadId}
+        selected={sourceControl.repoWorktree}
+        workspaceLabel={selectedThreadWorktreePath ? "Thread worktree" : "Project folder"}
+        onSelect={sourceControl.select}
+      />
 
       {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
     </ScrollView>

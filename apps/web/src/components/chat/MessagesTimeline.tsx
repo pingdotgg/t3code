@@ -40,6 +40,7 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
+import { resolveCheckpointFilePath } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   liveThoughtLine,
@@ -4196,20 +4197,29 @@ function AssistantChangedFilesSectionInner({
         setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
       }
       onOpenTurnDiff={onOpenTurnDiff}
-      onFileContextMenu={(filePath, event) =>
+      onFileContextMenu={(filePath, event) => {
+        // A repository worktree's file lives in that worktree, not the thread's workspace.
+        const repositoryFile = resolveCheckpointFilePath(turnSummary.repositories, filePath);
         onFileContextMenu(
-          {
-            environmentId: ctx.activeThreadEnvironmentId,
-            filePath,
-            workspaceRoot: ctx.workspaceRoot,
-            repositoryRoot:
-              thread?.worktreePath == null
-                ? activeProject?.repositoryIdentity?.rootPath
-                : undefined,
-          },
+          repositoryFile === null
+            ? {
+                environmentId: ctx.activeThreadEnvironmentId,
+                filePath,
+                workspaceRoot: ctx.workspaceRoot,
+                repositoryRoot:
+                  thread?.worktreePath == null
+                    ? activeProject?.repositoryIdentity?.rootPath
+                    : undefined,
+              }
+            : {
+                environmentId: ctx.activeThreadEnvironmentId,
+                filePath: repositoryFile.relativePath,
+                workspaceRoot: repositoryFile.worktreePath,
+                repositoryRoot: undefined,
+              },
           event,
-        )
-      }
+        );
+      }}
     />
   );
 }

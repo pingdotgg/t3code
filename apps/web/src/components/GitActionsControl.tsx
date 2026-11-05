@@ -129,6 +129,8 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
+  /** False when `gitCwd` is a repository worktree, whose branch is not the thread's. */
+  syncThreadBranch?: boolean;
 }
 
 interface PendingDefaultBranchAction {
@@ -989,6 +991,7 @@ export default function GitActionsControl({
   displayMode = "toolbar",
   compact = false,
   onOpenChanges,
+  syncThreadBranch = true,
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -1055,7 +1058,7 @@ export default function GitActionsControl({
 
   const persistThreadBranchSync = useCallback(
     (branch: string | null, manualSelection = false) => {
-      if (!activeThreadRef) {
+      if (!activeThreadRef || !syncThreadBranch) {
         return;
       }
 
@@ -1097,6 +1100,7 @@ export default function GitActionsControl({
       activeThreadRef,
       draftId,
       setDraftThreadContext,
+      syncThreadBranch,
       updateThreadMetadata,
     ],
   );

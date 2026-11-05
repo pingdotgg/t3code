@@ -69,7 +69,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import {
+  useSelectedThreadSourceControl,
+  useSelectedThreadWorktree,
+} from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
@@ -435,11 +438,13 @@ function ThreadRouteContent(
   ]
     .filter(Boolean)
     .join(" · ");
+  // The Git menu follows the repository chosen for Git; files and terminals stay in the workspace.
+  const { sourceControlCwd } = useSelectedThreadSourceControl();
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    selectedThread !== null && sourceControlCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: sourceControlCwd },
         })
       : null,
   );
@@ -466,9 +471,9 @@ function ThreadRouteContent(
   const gitActionProgressTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      cwd: sourceControlCwd,
     }),
-    [selectedThread?.environmentId, selectedThreadCwd],
+    [selectedThread?.environmentId, sourceControlCwd],
   );
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 

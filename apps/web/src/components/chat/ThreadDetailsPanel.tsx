@@ -8,9 +8,11 @@ import type {
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
+import { useThreadRepoWorktreeTarget } from "../../hooks/useThreadRepoWorktreeTarget";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import BaseGitActionsControl from "../GitActionsControl";
+import { RepoWorktreeTargetMenu } from "../RepoWorktreeTargetMenu";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -70,6 +72,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  const repoTarget = useThreadRepoWorktreeTarget({
+    threadRef: props.draftId ? null : activeThreadRef,
+    workspaceCwd: props.gitCwd,
+  });
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -155,14 +161,23 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               separated={density === "full"}
             >
               <div className="flex flex-col">
-                {props.isGitRepo ? (
+                <RepoWorktreeTargetMenu
+                  repoWorktrees={repoTarget.repoWorktrees}
+                  selected={repoTarget.repoWorktree}
+                  workspaceLabel={
+                    props.envMode === "worktree" ? "Thread worktree" : "Project folder"
+                  }
+                  onSelect={repoTarget.select}
+                />
+                {props.isGitRepo && repoTarget.repoWorktree === null ? (
                   <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                 ) : null}
                 {props.activeProjectName ? (
                   <GitActionsControl
                     displayMode="panel"
                     compact={density !== "full"}
-                    gitCwd={props.gitCwd}
+                    gitCwd={repoTarget.repoWorktree?.worktreePath ?? props.gitCwd}
+                    syncThreadBranch={repoTarget.repoWorktree === null}
                     activeThreadRef={activeThreadRef}
                     {...(props.draftId ? { draftId: props.draftId } : {})}
                     {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
@@ -176,6 +191,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             <ThreadRepoWorktreesSection
               environmentId={props.environmentId}
               threadId={props.threadId}
+              onShowChanges={(worktreePath) => {
+                repoTarget.select(worktreePath);
+                props.onOpenChanges?.();
+              }}
             />
           ) : null}
 

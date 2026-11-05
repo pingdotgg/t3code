@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId, ThreadRepoWorktree } from "@t3tools/contracts";
-import { CopyIcon, FolderGit2Icon, UnlinkIcon } from "lucide-react";
+import { CopyIcon, FileDiffIcon, FolderGit2Icon, UnlinkIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { environmentThreadDetails, threadEnvironment } from "~/state/threads";
@@ -16,6 +16,8 @@ import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./threadDetailsPanelStyles";
 export function ThreadRepoWorktreesSection(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** Makes the worktree the thread's Changes and Git target, then shows its changes. */
+  readonly onShowChanges?: (worktreePath: string) => void;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const repoWorktrees = useAtomValue(environmentThreadDetails.repoWorktreesAtom(ref));
@@ -61,6 +63,12 @@ export function ThreadRepoWorktreesSection(props: {
                     {entry.origin === "reused" ? "Reused worktree" : "Worktree"} at{" "}
                     {entry.worktreePath}
                   </MenuGroupLabel>
+                  {props.onShowChanges ? (
+                    <MenuItem onClick={() => props.onShowChanges?.(entry.worktreePath)}>
+                      <FileDiffIcon className="size-3.5" />
+                      Show changes
+                    </MenuItem>
+                  ) : null}
                   <MenuItem onClick={() => copyPath(entry)}>
                     <CopyIcon className="size-3.5" />
                     Copy path
@@ -83,7 +91,8 @@ export function ThreadRepoWorktreesSection(props: {
         ))}
       </ul>
       <p className="px-1.5 pt-1 text-2xs text-muted-foreground">
-        Checkpoints, diffs, and rollback don't cover these.
+        Turn diffs and rollback include these. Rollback restores no files while another thread also
+        works in one.
       </p>
     </ThreadDetailsSection>
   );
