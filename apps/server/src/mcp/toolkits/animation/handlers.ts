@@ -1,8 +1,8 @@
-// @effect-diagnostics preferSchemaOverJson:off
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { HTML_RENDER_COLUMN_WIDTH } from "@t3tools/shared/htmlRender";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -105,10 +105,8 @@ const handlers = {
             yield* fs.makeDirectory(cacheDir, { recursive: true });
             yield* fs.writeFile(path.join(cacheDir, "clip.mp4"), clip);
             yield* fs.writeFileString(path.join(cacheDir, "scene.py"), code);
-            yield* fs.writeFileString(
-              path.join(cacheDir, "meta.json"),
-              `${JSON.stringify(meta)}\n`,
-            );
+            const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(meta);
+            yield* fs.writeFileString(path.join(cacheDir, "meta.json"), `${json}\n`);
           }).pipe(
             Effect.catch((error) => Effect.logWarning("Could not cache the animation clip", error)),
           );
