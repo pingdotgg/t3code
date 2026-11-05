@@ -141,8 +141,14 @@ QueuedStarts(c) ==
   /\ queued' = [queued EXCEPT ![c] = @ - 1]
   /\ UNCHANGED <<done, req, held, parked, pending, nextReq, finishes, landed>>
 
+\* Send now or Resume on a parked run (queued-run.start, queue.resume): the learner's own
+\* action, so it reopens the chat like UserSend (D47) and lifts the hold; QueuedStarts runs it.
+SendNow(c) ==
+  /\ parked[c] > 0
+  /\ Commit([Reopen(St, c) EXCEPT !.held[c] = FALSE])
+
 \* A parked run's hold can be lifted while the chat is done (the learner's /compact,
-\* releaseUnattendedHolds, queue.resume), so only startNextQueuedRun's done check stops it.
+\* releaseUnattendedHolds), so only startNextQueuedRun's done check stops it.
 StartParked(c) ==
   /\ done[c] = "open" /\ turn[c] = "idle" /\ parked[c] > 0
   /\ turn' = [turn EXCEPT ![c] = "running"]
@@ -163,7 +169,7 @@ OutcomeComplete(e) ==
 
 Next ==
   \/ \E c \in Chats : Done(c) \/ UserSend(c) \/ ExternalSend(c) \/ Stop(c) \/ RunEnds(c) \/ QueuedStarts(c)
-     \/ StartParked(c)
+     \/ StartParked(c) \/ SendNow(c)
   \/ LessonSend
   \/ \E e \in pending : OutcomeComplete(e)
 

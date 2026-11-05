@@ -7,6 +7,7 @@ Done finishes an active side chat and leaves an outcome note; discard removes it
 - `done-finish` finishes a chat and writes its note.
 - `done-discard` discards an empty or unwanted chat.
 - `done-reopen` reopens a finished chat by asking again (driven at the end of feature 5).
+- `done-parked` shows a message that isn't the learner's own (scheduled task, agent send, notification, delegated result) in a finished chat's queue; **Send now** on it reopens the chat and runs it. Replay can't send such a message into a side chat, so `testkit/SideChatDone.integration.test.ts` (`Send now on a parked notification reopens the finished side chat and runs it`) covers it instead of the Browser panel.
 
 ## How to get to it (user POV)
 

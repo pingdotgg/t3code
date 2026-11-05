@@ -211,62 +211,69 @@ describe("thread workflows", () => {
     }
   });
 
-  it("hides automatic completion delivery from the visible queue", () => {
-    const state = deriveThreadQueueWorkflowState({
-      thread: { id: "thread", activeProviderThreadId: null },
-      runs: [
-        {
-          id: "provider-wake",
-          status: "queued",
-          userMessageId: "provider-wake",
-          ordinal: 4,
-          queuePosition: 3,
+  it.each([false, true])(
+    "hides automatic completion delivery unless a done side chat parks it (done: %s)",
+    (done) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: {
+          id: "thread",
+          activeProviderThreadId: null,
+          ...(done ? { sideChat: { done: { at: "2026-11-04T00:00:00.000Z" } } } : {}),
         },
-        {
-          id: "automatic",
-          status: "queued",
-          userMessageId: "message-automatic",
-          ordinal: 2,
-          queuePosition: 1,
-        },
-        {
-          id: "visible",
-          status: "queued",
-          userMessageId: "message-visible",
-          ordinal: 3,
-          queuePosition: 2,
-        },
-      ],
-      messages: [
-        {
-          id: "provider-wake",
-          text: "Model-facing text",
-          notification: {
-            source: { kind: "monitor" },
-            outcome: "updated",
-            summary: "Monitor updated",
+        runs: [
+          {
+            id: "provider-wake",
+            status: "queued",
+            userMessageId: "provider-wake",
+            ordinal: 4,
+            queuePosition: 3,
           },
-        },
-        {
-          id: "message-automatic",
-          text: "A delegated task reached a terminal state.",
-          delegatedCompletion: {
-            generation: 1,
-            parentRunId: "run:parent",
-            taskIds: ["task:child"],
+          {
+            id: "automatic",
+            status: "queued",
+            userMessageId: "message-automatic",
+            ordinal: 2,
+            queuePosition: 1,
           },
-        },
-        { id: "message-visible", text: "Visible queued message" },
-      ],
-      providerTurns: [],
-      providerThreads: [],
-      providerSessions: [],
-    } as never);
+          {
+            id: "visible",
+            status: "queued",
+            userMessageId: "message-visible",
+            ordinal: 3,
+            queuePosition: 2,
+          },
+        ],
+        messages: [
+          {
+            id: "provider-wake",
+            text: "Model-facing text",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary: "Monitor updated",
+            },
+          },
+          {
+            id: "message-automatic",
+            text: "A delegated task reached a terminal state.",
+            delegatedCompletion: {
+              generation: 1,
+              parentRunId: "run:parent",
+              taskIds: ["task:child"],
+            },
+          },
+          { id: "message-visible", text: "Visible queued message" },
+        ],
+        providerTurns: [],
+        providerThreads: [],
+        providerSessions: [],
+      } as never);
 
-    expect(state.queuedRuns.map(({ run, text }) => [run.id, text])).toEqual([
-      ["visible", "Visible queued message"],
-    ]);
-  });
+      expect(state.queuedRuns.map(({ run }) => run.id)).toEqual(
+        done ? ["automatic", "visible", "provider-wake"] : ["visible"],
+      );
+    },
+  );
 
   it("removes only the promoted head from the visible queue", () => {
     const state = deriveThreadQueueWorkflowState({
