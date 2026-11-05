@@ -4,20 +4,36 @@ import type { ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 /**
- * A project row's icon slot. With `selection`, the icon toggles the project: a checked one wears a
- * small check, and an unchecked one shows an empty ring there on the highlighted row (always on touch).
+ * A project row's icon slot. A checked row's icon wears a small check. With `onToggle`, the icon
+ * toggles the row, and an unchecked one shows an empty ring there on the highlighted row (always on
+ * touch).
  */
 export function ProjectRowLeading(props: {
   readonly icon: ReactNode;
-  readonly selection?:
-    | {
-        readonly checked: boolean;
-        readonly onToggle: () => void;
-      }
-    | undefined;
+  readonly checked: boolean;
+  readonly onToggle?: (() => void) | undefined;
 }) {
-  const { selection } = props;
-  if (!selection) return <span className="flex shrink-0 pointer-coarse:mr-2">{props.icon}</span>;
+  const { checked, onToggle } = props;
+  const mark = (
+    <span className="relative flex">
+      {props.icon}
+      {checked || onToggle ? (
+        <span
+          className={cn(
+            "pointer-events-none absolute -right-1 -bottom-1 grid size-3 place-items-center rounded-full",
+            checked
+              ? "bg-primary group-hover/toggle:brightness-125"
+              : "invisible border border-foreground/50 bg-popover group-hover/toggle:border-primary group-hover/toggle:bg-primary/40 pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
+          )}
+        >
+          {checked ? (
+            <CheckIcon className="size-2 text-primary-foreground" strokeWidth={4} aria-hidden />
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  );
+  if (!onToggle) return <span className="flex shrink-0 pointer-coarse:mr-2">{mark}</span>;
   return (
     <button
       type="button"
@@ -29,24 +45,10 @@ export function ProjectRowLeading(props: {
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        selection.onToggle();
+        onToggle();
       }}
     >
-      <span className="relative flex">
-        {props.icon}
-        <span
-          className={cn(
-            "pointer-events-none absolute -right-1 -bottom-1 grid size-3 place-items-center rounded-full",
-            selection.checked
-              ? "bg-primary group-hover/toggle:brightness-125"
-              : "invisible border border-foreground/50 bg-popover group-hover/toggle:border-primary group-hover/toggle:bg-primary/40 pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
-          )}
-        >
-          {selection.checked ? (
-            <CheckIcon className="size-2 text-primary-foreground" strokeWidth={4} aria-hidden />
-          ) : null}
-        </span>
-      </span>
+      {mark}
     </button>
   );
 }

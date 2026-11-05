@@ -3090,8 +3090,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             hideIndicator
                             value={item}
                             aria-selected={isSelected}
-                            // Base UI marks only its single value; this list can select several.
-                            data-selected={isSelected ? "" : undefined}
+                            // The icon badge marks selection; Base UI's single value would shade one row.
+                            data-selected={undefined}
                             onContextMenu={(event) => {
                               if (project) handleProjectSettings(event, project);
                             }}
@@ -3104,12 +3104,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   <FolderIcon className="size-4 shrink-0" />
                                 )
                               }
-                              selection={
+                              checked={isSelected}
+                              onToggle={
                                 project
-                                  ? {
-                                      checked: isSelected,
-                                      onToggle: () => toggleProjectScopeKey(project.projectKey),
-                                    }
+                                  ? () => toggleProjectScopeKey(project.projectKey)
                                   : undefined
                               }
                             />
