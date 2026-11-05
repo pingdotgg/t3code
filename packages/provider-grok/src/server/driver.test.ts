@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { hasProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -175,63 +176,77 @@ it.layer(layerTest)("GrokDriver", (it) => {
     });
   }
 
-  it.effect("omits usage failures from health-only checks", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const config = GrokDriver.defaultConfig();
-        const initial = yield* GrokStatus.buildInitialGrokProviderSnapshot(config);
-        using _status = vi.spyOn(GrokStatus, "checkGrokProviderStatus").mockReturnValue(
-          Effect.succeed({
-            ...initial,
-            enabled: true,
-            installed: true,
-            status: "ready",
-            auth: { status: "authenticated", type: "cached_token" },
-          }),
-        );
-        const fs = yield* FileSystem.FileSystem;
-        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-usage-" });
-        let requests = 0;
-        const instance = yield* GrokDriver.create({
-          instanceId: ProviderInstanceId.make("grok-usage"),
-          displayName: "Grok test",
-          enabled: true,
-          config,
-          environment: [
-            { name: "GROK_HOME", value: home, sensitive: false },
-            { name: "XAI_API_KEY", value: "", sensitive: true },
-            {
-              name: "GROK_AUTH",
-              value: JSON.stringify({
-                "https://accounts.x.ai/sign-in": {
-                  key: "test-token",
-                  email: "account@example.com",
-                },
-              }),
-              sensitive: true,
-            },
-          ],
-        }).pipe(
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              requests += 1;
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
-              );
+  it.effect.each(["subscription", "api-key", "custom-auth", "missing-token"] as const)(
+    "keeps health-only usage capability accurate for %s",
+    (mode) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const config = GrokDriver.defaultConfig();
+          const initial = yield* GrokStatus.buildInitialGrokProviderSnapshot(config);
+          using _status = vi.spyOn(GrokStatus, "checkGrokProviderStatus").mockReturnValue(
+            Effect.succeed({
+              ...initial,
+              enabled: true,
+              installed: true,
+              status: "ready",
+              auth: { status: "authenticated", type: "cached_token" },
             }),
-          ),
-        );
-        const health = yield* instance.snapshot.refresh;
-        expect(health.auth.email).toBe("account@example.com");
-        expect(health.usageLimits).toBeUndefined();
-        expect(requests).toBe(0);
-        yield* instance.snapshot.refreshUsage!;
-        const usage = yield* instance.snapshot.getSnapshot;
-        expect(usage.usageLimits?.unavailable?.reason).toBe("probeFailed");
-        expect(requests).toBe(1);
-      }),
-    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+          );
+          const fs = yield* FileSystem.FileSystem;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-usage-" });
+          let requests = 0;
+          const instance = yield* GrokDriver.create({
+            instanceId: ProviderInstanceId.make("grok-usage"),
+            displayName: "Grok test",
+            enabled: true,
+            config,
+            environment: [
+              { name: "GROK_HOME", value: home, sensitive: false },
+              { name: "XAI_API_KEY", value: mode === "api-key" ? "api-key" : "", sensitive: true },
+              {
+                name: "GROK_OIDC_ISSUER",
+                value: mode === "custom-auth" ? "https://custom.test" : "",
+                sensitive: false,
+              },
+              {
+                name: "GROK_AUTH",
+                value: JSON.stringify({
+                  "https://accounts.x.ai/sign-in": {
+                    key: mode === "missing-token" ? "" : "test-token",
+                    email: "account@example.com",
+                  },
+                }),
+                sensitive: true,
+              },
+            ],
+          }).pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                requests += 1;
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+                );
+              }),
+            ),
+          );
+          const health = yield* instance.snapshot.refresh;
+          const supported = mode === "subscription";
+          expect(health.auth.email).toBe(
+            mode === "api-key" || mode === "custom-auth" ? undefined : "account@example.com",
+          );
+          expect(health.supportsUsageLimits).toBe(supported);
+          expect(hasProviderUsageLimits(health.driver, [health], [])).toBe(supported);
+          expect(health.usageLimits).toBeUndefined();
+          expect(requests).toBe(0);
+          yield* instance.snapshot.refreshUsage!;
+          const usage = yield* instance.snapshot.getSnapshot;
+          expect(usage.usageLimits?.unavailable?.reason).toBe(
+            supported ? "probeFailed" : "unsupported",
+          );
+          expect(requests).toBe(supported ? 1 : 0);
+        }),
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
   );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>

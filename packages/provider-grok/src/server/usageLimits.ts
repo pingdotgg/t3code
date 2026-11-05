@@ -174,12 +174,18 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   const credential = yield* Effect.option(
     readGrokCredential(environment).pipe(Effect.timeout("10 seconds")),
   );
-  if (Option.isNone(credential)) return { email: undefined, usageLimits: probeFailed };
+  if (Option.isNone(credential))
+    return { email: undefined, usageLimits: probeFailed, supportsUsageLimits: false };
   const email = credential.value?.email?.trim() || undefined;
-  if (!includeUsage) return { email, usageLimits: probeFailed };
   const token = credential.value?.key?.trim();
+  if (!includeUsage)
+    return { email, usageLimits: probeFailed, supportsUsageLimits: Boolean(token) };
   if (!token) {
-    return { email, usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) };
+    return {
+      email,
+      usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+      supportsUsageLimits: false,
+    };
   }
   const digest = yield* Digest.Digest;
   const credentialFingerprint = yield* digest
@@ -211,5 +217,9 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() => probeFailed),
   );
-  return { email, usageLimits: { ...usageLimits, credentialFingerprint } };
+  return {
+    email,
+    usageLimits: { ...usageLimits, credentialFingerprint },
+    supportsUsageLimits: true,
+  };
 });
