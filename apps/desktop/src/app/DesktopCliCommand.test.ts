@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { afterEach, beforeEach, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,7 +29,13 @@ const environmentFor = (
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
 const commandIn = (
-  input: { home: string; baseDir?: string; platform?: NodeJS.Platform; isPackaged?: boolean },
+  input: {
+    home: string;
+    baseDir?: string;
+    platform?: NodeJS.Platform;
+    isPackaged?: boolean;
+    env?: NodeJS.ProcessEnv;
+  },
   spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"],
 ) =>
   Effect.gen(function* () {
@@ -42,6 +48,7 @@ const commandIn = (
         DesktopEnvironment.DesktopEnvironment,
         environmentFor(path, { ...input, baseDir }),
       ),
+      Effect.provideService(HostProcess.Environment, input.env ?? { PATH: "" }),
     );
     return yield* spawner
       ? make.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner))
@@ -84,14 +91,6 @@ const fakePowerShell = (initial: string) => {
   return { registry, spawner };
 };
 
-const machinePath = process.env.PATH;
-beforeEach(() => {
-  process.env.PATH = "";
-});
-afterEach(() => {
-  process.env.PATH = machinePath;
-});
-
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
   it.effect("links the launcher onto PATH and removes only that link", () =>
     Effect.gen(function* () {
@@ -124,7 +123,8 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
-      const command = yield* commandIn({ home });
+      const env: NodeJS.ProcessEnv = { PATH: "" };
+      const command = yield* commandIn({ home, env });
       const theirs = path.join(home, ".local", "bin", "t3");
       yield* fs.makeDirectory(path.dirname(theirs), { recursive: true });
       yield* fs.writeFileString(theirs, "npm's t3\n");
@@ -139,7 +139,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
       const launcher = path.join(home, ".t3", "bin", "t3");
       yield* fs.writeFileString(launcher, "npm's t3\n");
-      process.env.PATH = path.dirname(launcher);
+      env.PATH = path.dirname(launcher);
       expect(yield* command.state).toMatchObject({ onPath: false, shadowedBy: launcher });
       expect((yield* Effect.flip(command.install)).message).toContain("Could not set up");
       yield* command.uninstall;
@@ -173,9 +173,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);
       yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
-      process.env.PATH = [shadow, path.join(home, ".local", "bin")].join(":");
+      const env = { PATH: [shadow, path.join(home, ".local", "bin")].join(":") };
 
-      const command = yield* commandIn({ home });
+      const command = yield* commandIn({ home, env });
       const theirs = path.join(shadow, "t3");
       expect((yield* command.state).shadowedBy).toBe(theirs);
       const error = yield* Effect.flip(command.install);
@@ -209,9 +209,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         yield* fs.chmod(path.join(plain, "t3"), process.getuid?.() === 0 ? 0o600 : 0o601);
         yield* fs.makeDirectory(shadow);
         yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
-        process.env.PATH = [folder, plain, shadow, path.join(home, ".local", "bin")].join(":");
+        const env = { PATH: [folder, plain, shadow, path.join(home, ".local", "bin")].join(":") };
 
-        const command = yield* commandIn({ home });
+        const command = yield* commandIn({ home, env });
         expect((yield* command.state).shadowedBy).toBe(path.join(shadow, "t3"));
 
         const error = yield* Effect.flip(command.install);
@@ -231,9 +231,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
       const launcher = path.join(home, ".t3", "bin", "t3");
-      process.env.PATH = [path.dirname(launcher), path.join(home, ".local", "bin")].join(":");
+      const env = { PATH: [path.dirname(launcher), path.join(home, ".local", "bin")].join(":") };
 
-      const command = yield* commandIn({ home });
+      const command = yield* commandIn({ home, env });
       const installed = yield* command.install;
 
       expect(yield* fs.exists(launcher)).toBe(true);

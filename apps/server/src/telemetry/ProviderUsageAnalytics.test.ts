@@ -77,7 +77,10 @@ const context = (
   modelSelection: {
     instanceId: ProviderInstanceId.make("codex"),
     model,
-    options: [{ id: "reasoningEffort", value: "xhigh" }],
+    options: [
+      { id: "reasoningEffort", value: "xhigh" },
+      { id: "serviceTier", value: "priority" },
+    ],
   },
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -154,6 +157,7 @@ describe("provider usage reporting", () => {
           lifecycleObserved: true,
           model: "gpt-6-sol",
           effort: "xhigh",
+          serviceTier: "fast",
           runtimeMode: "full-access",
           interactionMode: "default",
           createdBy: "user",
@@ -319,5 +323,28 @@ describe("provider usage reporting", () => {
       expect(local).not.toHaveProperty("observedModel");
     }
     expect(routed("ollama/acme-internal", "secret-variant")).not.toHaveProperty("effort");
+  });
+
+  it("reports closed service tiers from a tier option or a fast mode toggle", () => {
+    const tier = (option: { id: string; value: string | boolean }) =>
+      providerTurnProperties(
+        {
+          driver: "codex",
+          context: {
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-6-sol",
+              options: [option],
+            },
+          },
+          providerTurn: turn("t", complete(1, 1)),
+        },
+        label,
+      ).serviceTier;
+    expect(tier({ id: "serviceTier", value: "ultrafast" })).toBe("ultrafast");
+    expect(tier({ id: "serviceTier", value: "default" })).toBe("standard");
+    expect(tier({ id: "serviceTier", value: "/home/me/secret" })).toBeUndefined();
+    expect(tier({ id: "fastMode", value: true })).toBe("fast");
+    expect(tier({ id: "fastMode", value: false })).toBe("standard");
   });
 });

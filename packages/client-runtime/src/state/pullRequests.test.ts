@@ -11,7 +11,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
@@ -53,7 +53,7 @@ const trustedRouting = {
   forget: () => Effect.void,
 };
 
-class MutationRefused extends Data.TaggedError("MutationRefused") {}
+class MutationRefused extends Schema.TaggedError<MutationRefused>()("MutationRefused", {}) {}
 
 for (const scenario of [
   "prefers the local environment with the same github account",
@@ -510,7 +510,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
         client[WS_METHODS.pullRequestsInvalidate] ?? (() => Effect.void),
     },
     initialConfig: client[WS_METHODS.serverGetConfig]?.({}).pipe(Effect.orDie) ?? Effect.never,
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
@@ -1363,20 +1363,80 @@ it.effect("shares checks reads across reference property order", () =>
 it.effect("keeps live detail reads separate from reads that allow stale data", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      let reads = 0;
+      let hostStamp: number | undefined;
+      let hold = false;
+      const readStarted = yield* Latch.make();
+      const releaseRead = yield* Latch.make();
       const client = {
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
         [WS_METHODS.pullRequestsDetail]: (input: { allowStale?: boolean }) =>
-          Effect.succeed({ title: input.allowStale === false ? "latest checks" : "cached checks" }),
+          Effect.gen(function* () {
+            reads++;
+            if (hold) {
+              yield* readStarted.open;
+              yield* releaseRead.await;
+            }
+            return {
+              title: input.allowStale === false ? "latest checks" : "cached checks",
+              ...(hostStamp === undefined ? {} : { observedAt: hostStamp }),
+            };
+          }),
       } as unknown as WsRpcProtocolClient;
-      const { atoms, registry } = yield* makeTestRuntime(client);
+      const { atoms, registry, supervisor } = yield* makeTestRuntime(client);
       const target = {
         environmentId: TARGET.environmentId,
         input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
       };
       const cached = atoms.detail(target);
       const live = atoms.detail({ ...target, input: { ...target.input, allowStale: false } });
-      expect((yield* AtomRegistry.getResult(registry, cached)).title).toBe("cached checks");
+      const first = yield* AtomRegistry.getResult(registry, cached);
+      expect(first.title).toBe("cached checks");
+      expect(first.observedAt).toBeUndefined();
+      const reading = atoms.detailReadVersion(target);
+      const firstVersion = registry.get(reading);
+      expect(firstVersion).toBeGreaterThan(0);
       expect((yield* AtomRegistry.getResult(registry, live)).title).toBe("latest checks");
+      expect(reads).toBe(2);
+      hold = true;
+      registry.refresh(cached);
+      yield* readStarted.await;
+      expect(registry.get(reading)).toBe(firstVersion);
+      yield* releaseRead.open;
+      expect(yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true })).toBe(
+        first,
+      );
+      const settledVersion = registry.get(reading);
+      expect(settledVersion).toBeGreaterThan(firstVersion);
+      hold = false;
+
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        phase: "offline" as const,
+      }));
+      yield* Effect.yieldNow;
+      registry.refresh(cached);
+      const offline = yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true });
+      expect(offline.observedAt).toBeUndefined();
+      expect(registry.get(reading)).toBe(settledVersion);
+      expect(reads).toBe(3);
+
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        phase: "connected" as const,
+      }));
+      yield* Effect.yieldNow;
+      registry.refresh(cached);
+      const reread = yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true });
+      expect(reread).toBe(first);
+      expect(reread.observedAt).toBeUndefined();
+      expect(registry.get(reading)).toBeGreaterThan(settledVersion);
+
+      hostStamp = 27;
+      registry.refresh(cached);
+      expect(
+        (yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true })).observedAt,
+      ).toBe(hostStamp);
     }),
   ),
 );
