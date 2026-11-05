@@ -930,6 +930,28 @@ export function isOrchestrationV2WorkActive(
   return status === "pending" || status === "running" || status === "waiting";
 }
 
+export function isOrchestrationV2RunActive(status: OrchestrationV2Run["status"]): boolean {
+  return (
+    status === "preparing" || status === "starting" || status === "running" || status === "waiting"
+  );
+}
+
+/**
+ * Whether the child's live run belongs to another delegated task. Stopping this task then
+ * cancels only its own queued runs instead of stopping the child thread.
+ */
+export function delegatedTaskYieldsLiveRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  taskId: NodeId,
+): boolean {
+  return runs.some(
+    (run) =>
+      isOrchestrationV2RunActive(run.status) &&
+      run.delegatedTaskId !== undefined &&
+      run.delegatedTaskId !== taskId,
+  );
+}
+
 export const OrchestrationV2CheckpointScope = Schema.Struct({
   id: CheckpointScopeId,
   threadId: ThreadId,
