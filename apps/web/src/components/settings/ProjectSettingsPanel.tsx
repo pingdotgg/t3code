@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -82,6 +84,8 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
   const selection = useClientSettings(
     (settings) => settings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
   );
+  const messageText =
+    selection === "inherit" ? PROJECT_GROUPING_MODE_LABELS[globalMode] : undefined;
   return (
     <Select
       value={selection}
@@ -99,8 +103,9 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not save grouping rule",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: t({ message: "Could not save grouping rule" }),
+              description:
+                error instanceof Error ? error.message : t({ message: "An error occurred." }),
             }),
           );
         });
@@ -115,14 +120,16 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
         }`}
       >
         <SelectValue>
-          {selection === "inherit"
-            ? `Default (${PROJECT_GROUPING_MODE_LABELS[globalMode]})`
-            : PROJECT_GROUPING_MODE_LABELS[selection]}
+          {selection === "inherit" ? (
+            <Trans>Default ({messageText})</Trans>
+          ) : (
+            PROJECT_GROUPING_MODE_LABELS[selection]
+          )}
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
         <SelectItem hideIndicator value="inherit">
-          Use global default
+          <Trans>Use global default</Trans>
         </SelectItem>
         <SelectItem hideIndicator value="repository">
           {PROJECT_GROUPING_MODE_LABELS.repository}
@@ -223,16 +230,18 @@ export function ProjectSettingsPanel({
   if (!selected) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
-        {groups.length === 0
-          ? "Add a project from the sidebar to configure it here."
-          : "This project is no longer available."}
+        {groups.length === 0 ? (
+          <Trans>Add a project from the sidebar to configure it here.</Trans>
+        ) : (
+          <Trans>This project is no longer available.</Trans>
+        )}
       </div>
     );
   }
   if (members.length === 0)
     return (
       <p className="p-8 text-sm text-muted-foreground">
-        This checkout is no longer available in the selected project and environment.
+        <Trans>This checkout is no longer available in the selected project and environment.</Trans>
       </p>
     );
   const scopedGroup = {
@@ -311,7 +320,7 @@ function ProjectDetail({
   const renameGroup = async (nextTitle: string, wasEdited: boolean) => {
     const title = nextTitle.trim();
     if (!title) {
-      toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+      toastManager.add({ type: "warning", title: t({ message: "Project title cannot be empty" }) });
       return;
     }
     if (
@@ -426,23 +435,25 @@ function ProjectDetail({
           onClick={() => void removeMembers([member])}
           aria-label={`Remove checkout ${member.workspaceRoot}`}
         >
-          Remove
+          <Trans>Remove</Trans>
         </Button>
       ) : null}
     </div>
   );
   const checkoutChoices = (
-    <SettingsSection title="Checkouts">
+    <SettingsSection title={t({ message: "Checkouts" })}>
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        Grouping rule decides how each checkout joins project groups in the sidebar. Changing it can
-        move a checkout to a different project.
+        <Trans>
+          Grouping rule decides how each checkout joins project groups in the sidebar. Changing it
+          can move a checkout to a different project.
+        </Trans>
       </p>
       {Array.from(checkoutsByEnvironment, ([environmentId, members]) => {
         if (checkoutsByEnvironment.size === 1) {
           return members.map((member) => (
             <SettingsRow
               key={member.physicalProjectKey}
-              title={member.environmentLabel ?? "Environment"}
+              title={member.environmentLabel ?? t({ message: "Environment" })}
               description={member.workspaceRoot}
               control={checkoutControls(member)}
             />
@@ -509,24 +520,33 @@ function ProjectDetail({
         <Alert variant="info">
           <InfoIcon aria-hidden />
           <AlertDescription>
-            Can't find a setting? Keep this project picked above and hop to any other settings page.
+            <Trans>
+              Can't find a setting? Keep this project picked above and hop to any other settings
+              page.
+            </Trans>
           </AlertDescription>
         </Alert>
-        <SettingsSection id="project-overview" title="Project" hideTitle>
+        <SettingsSection id="project-overview" title={t({ message: "Project" })} hideTitle>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
-              {group.memberProjects.length > 1
-                ? "Shared settings require permission to change every checkout in this group."
-                : "This connection cannot change this project."}
+              {group.memberProjects.length > 1 ? (
+                <Trans>
+                  Shared settings require permission to change every checkout in this group.
+                </Trans>
+              ) : (
+                <Trans>This connection cannot change this project.</Trans>
+              )}
             </p>
           ) : null}
           <SettingsRow
-            title="Name"
-            description="The shared name for this project group in the sidebar and thread lists."
+            title={t({ message: "Name" })}
+            description={t({
+              message: "The shared name for this project group in the sidebar and thread lists.",
+            })}
             resetAction={
               canResetScratchTitle ? (
                 <SettingResetButton
-                  label="project name"
+                  label={t({ message: "project name" })}
                   disabled={!canEditGroup}
                   onClick={() =>
                     void updateAllMembers(
@@ -542,7 +562,7 @@ function ProjectDetail({
                 key={`${group.projectKey}:${group.displayName}`}
                 size="sm"
                 className="w-full sm:w-64"
-                aria-label="Project name"
+                aria-label={t({ message: "Project name" })}
                 disabled={!canEditGroup}
                 defaultValue={group.displayName}
                 onChange={() => {
@@ -561,20 +581,20 @@ function ProjectDetail({
             }
           />
           <SettingsRow
-            title="Project icon"
+            title={t({ message: "Project icon" })}
             description={
               projectIcon?.kind === "lucide"
-                ? `${projectIcon.name} · ${projectIcon.color}`
+                ? t`${projectIcon.name} · ${projectIcon.color}`
                 : projectIcon?.kind === "monogram"
-                  ? `${projectIcon.text} · ${projectIcon.color}`
+                  ? t`${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+                    : (faviconPath ?? t({ message: "Automatic" }))
             }
             resetAction={
               group.memberProjects.some((member) => !hasDefaultProjectIcon(member)) ? (
                 <SettingResetButton
-                  label="project icon"
+                  label={t({ message: "project icon" })}
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => void setProjectIcon(defaultProjectIcon)}
                 />
@@ -587,21 +607,21 @@ function ProjectDetail({
                   size="sm"
                   variant="outline"
                   type="button"
-                  aria-label="Choose a project icon"
+                  aria-label={t({ message: "Choose a project icon" })}
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => setIconPickerOpen(true)}
                 >
-                  Choose icon
+                  <Trans>Choose icon</Trans>
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   type="button"
-                  aria-label="Choose a project icon file"
+                  aria-label={t({ message: "Choose a project icon file" })}
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => setFaviconPickerOpen(true)}
                 >
-                  Choose file
+                  <Trans>Choose file</Trans>
                 </Button>
               </div>
             }
@@ -609,8 +629,8 @@ function ProjectDetail({
           {canOrganize ? (
             <>
               <SettingsRow
-                title="Pin"
-                description="Pinned projects come first in project pickers."
+                title={t({ message: "Pin" })}
+                description={t({ message: "Pinned projects come first in project pickers." })}
                 control={
                   <Switch
                     checked={group.pinned}
@@ -621,16 +641,19 @@ function ProjectDetail({
                         checked ? "Failed to pin project" : "Failed to unpin project",
                       )
                     }
-                    aria-label="Pin project"
+                    aria-label={t({ message: "Pin project" })}
                   />
                 }
               />
               <SettingsRow
-                title="Archive"
+                title={t({ message: "Archive" })}
                 description={
                   group.archived
-                    ? "Hidden from project pickers. Threads and files are kept."
-                    : "Hides the project from project pickers. Threads and files are kept."
+                    ? t({ message: "Hidden from project pickers. Threads and files are kept." })
+                    : t({
+                        message:
+                          "Hides the project from project pickers. Threads and files are kept.",
+                      })
                 }
                 control={
                   <Button
@@ -646,7 +669,7 @@ function ProjectDetail({
                       )
                     }
                   >
-                    {group.archived ? "Unarchive" : "Archive"}
+                    {group.archived ? <Trans>Unarchive</Trans> : <Trans>Archive</Trans>}
                   </Button>
                 }
               />
@@ -656,21 +679,27 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {checkoutChoices}
-        <SettingsSection title="Danger">
+        <SettingsSection title={t({ message: "Danger" })}>
           <SettingsRow
             title={
               hasOtherMembers
-                ? "Remove checkout"
+                ? t({ message: "Remove checkout" })
                 : group.memberProjects.length > 1
-                  ? "Remove this project everywhere"
-                  : "Remove project"
+                  ? t({ message: "Remove this project everywhere" })
+                  : t({ message: "Remove project" })
             }
             description={
               hasOtherMembers
-                ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+                ? t({
+                    message:
+                      "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched.",
+                  })
                 : group.memberProjects.length > 1
-                  ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                  : "Deletes the project entry and its threads. Files on disk are not touched."
+                  ? t`Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
+                  : t({
+                      message:
+                        "Deletes the project entry and its threads. Files on disk are not touched.",
+                    })
             }
             control={
               <Button
@@ -680,11 +709,13 @@ function ProjectDetail({
                 onClick={() => void removeMembers(group.memberProjects)}
               >
                 <Trash2Icon />
-                {hasOtherMembers
-                  ? "Remove checkout"
-                  : group.memberProjects.length > 1
-                    ? "Remove all entries"
-                    : "Remove project"}
+                {hasOtherMembers ? (
+                  <Trans>Remove checkout</Trans>
+                ) : group.memberProjects.length > 1 ? (
+                  <Trans>Remove all entries</Trans>
+                ) : (
+                  <Trans>Remove project</Trans>
+                )}
               </Button>
             }
           />

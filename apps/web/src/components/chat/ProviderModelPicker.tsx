@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -139,10 +141,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerTitle = selectedModel
     ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
-      ? "Choose model"
-      : props.model || "Choose model";
+      ? t({ message: "Choose model" })
+      : props.model || t({ message: "Choose model" });
+  const getDisplayModelNameText = selectedModel ? getDisplayModelName(selectedModel) : undefined;
+  const selectedModelIsUnavailableText = selectedModel
+    ? selectedModel.isUnavailable
+      ? " (Unavailable)"
+      : ""
+    : undefined;
   const triggerLabel = selectedModel
-    ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    ? `${getDisplayModelNameText}${selectedModelIsUnavailableText}`
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -208,22 +216,33 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
     });
     const unavailable = model?.isUnavailable ? " (Unavailable)" : "";
+    const getTriggerDisplayModelNameText = model
+      ? getTriggerDisplayModelName(model, entry?.driverKind)
+      : undefined;
     return {
       ...selection,
       entry,
-      label: model
-        ? `${getTriggerDisplayModelName(model, entry?.driverKind)}${unavailable}`
-        : selection.model,
+      label: model ? `${getTriggerDisplayModelNameText}${unavailable}` : selection.model,
       fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
     };
   });
-  const multipleLabel = selectedEntries
-    ? selectedEntries.length === 0
-      ? "Choose models"
-      : `${selectedEntries
+  const selectedEntriesSlice02MapSelectionSelectionLabelJoinText =
+    selectedEntries && !(selectedEntries.length === 0)
+      ? selectedEntries
           .slice(0, 2)
           .map((selection) => selection.label)
-          .join(", ")}${selectedEntries.length > 2 ? `, ${selectedEntries.length - 2} more` : ""}`
+          .join(", ")
+      : undefined;
+  const selectedEntriesLength2Text =
+    selectedEntries && !(selectedEntries.length === 0)
+      ? selectedEntries.length > 2
+        ? `, ${selectedEntries.length - 2} more`
+        : ""
+      : undefined;
+  const multipleLabel = selectedEntries
+    ? selectedEntries.length === 0
+      ? t({ message: "Choose models" })
+      : `${selectedEntriesSlice02MapSelectionSelectionLabelJoinText}${selectedEntriesLength2Text}`
     : undefined;
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || "Choose models"
@@ -398,7 +417,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {props.triggerSuffix}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
-              Unavailable
+              <Trans>Unavailable</Trans>
             </Badge>
           ) : null}
         </span>

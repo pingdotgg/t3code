@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
@@ -144,7 +146,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   };
 
   if (!item) return null;
-  const mediaLabel = item.type === "video" ? "video" : "image";
+  const mediaLabel = item.type === "video" ? t({ message: "video" }) : t({ message: "image" });
   const openOriginalLink =
     item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
       <OpenMediaLink originalUrl={item.originalUrl} />
@@ -153,11 +155,12 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const showingAccessibilityDetails =
     Boolean(accessibilityDetails) && accessibilityDetailsSrc === item.src;
   const contentsLabel = showingAccessibilityDetails
-    ? "Show screenshot"
+    ? t({ message: "Show screenshot" })
     : accessibilityDetails?.format === "json"
-      ? "Show accessibility JSON"
-      : "Show extracted text";
+      ? t({ message: "Show accessibility JSON" })
+      : t({ message: "Show extracted text" });
 
+  const indexText = preview.images.length > 1 ? index + 1 : undefined;
   return (
     <Dialog
       open
@@ -184,7 +187,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           if (event.target === event.currentTarget) close();
         }}
       >
-        <DialogTitle className="sr-only">Expanded {mediaLabel} preview</DialogTitle>
+        <DialogTitle className="sr-only">
+          <Trans>Expanded {mediaLabel} preview</Trans>
+        </DialogTitle>
         <Button
           type="button"
           ref={closeButtonRef}
@@ -202,7 +207,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="left-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Previous media"
+            aria-label={t({ message: "Previous media" })}
             onClick={() => navigateImage(-1)}
           >
             <ChevronLeftIcon className="size-5" />
@@ -222,9 +227,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             ) : item.src === null || failedImageSrc === item.src ? (
               <ExpandedMediaFailure>
                 <p>
-                  {openOriginalLink
-                    ? "This image could not be loaded."
-                    : "Image unavailable. The file may have been moved or deleted."}
+                  {openOriginalLink ? (
+                    <Trans>This image could not be loaded.</Trans>
+                  ) : (
+                    <Trans>Image unavailable. The file may have been moved or deleted.</Trans>
+                  )}
                 </p>
                 {openOriginalLink}
               </ExpandedMediaFailure>
@@ -241,7 +248,14 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             <div className="mt-2 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/80 max-sm:px-10">
               <span className="truncate" aria-live="polite" aria-atomic="true">
                 {item.name}
-                {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
+                {preview.images.length > 1 ? (
+                  <>
+                    {" "}
+                    ({indexText}/{preview.images.length})
+                  </>
+                ) : (
+                  ""
+                )}
               </span>
               {accessibilityDetails && item.source ? (
                 <Tooltip>
@@ -278,7 +292,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="right-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Next media"
+            aria-label={t({ message: "Next media" })}
             onClick={() => navigateImage(1)}
           >
             <ChevronRightIcon className="size-5" />

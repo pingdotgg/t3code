@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";

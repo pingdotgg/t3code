@@ -314,7 +314,7 @@ export function DraftHeroHeadline({
       <ComboboxPopup align="center" className="w-72 overflow-hidden">
         <ComboboxSearchInput
           aria-label={t`Search projects`}
-          placeholder="Search projects..."
+          placeholder={t({ message: "Search projects..." })}
           value={pickerQuery}
           onChange={(event) => setPickerQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -328,7 +328,9 @@ export function DraftHeroHeadline({
             toggleProjectGroupPin(group);
           }}
         />
-        <ComboboxEmpty>{t`No matching projects.`}</ComboboxEmpty>
+        <ComboboxEmpty>
+          <Trans>No matching projects.</Trans>
+        </ComboboxEmpty>
         <ComboboxList>
           {(item: PickerItem) => {
             const entry = projectEntryByKey.get(item.value);
@@ -395,7 +397,7 @@ export function DraftHeroHeadline({
             />
           }
         >
-          or start without a project
+          <Trans>or start without a project</Trans>
         </TooltipTrigger>
         {noProjectShortcut ? <TooltipPopup side="bottom">{noProjectShortcut}</TooltipPopup> : null}
       </Tooltip>

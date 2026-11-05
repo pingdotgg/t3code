@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   type ModelCapabilities,
   ProviderDriverKind,
@@ -37,76 +38,241 @@ export interface DescriptorPreset {
 }
 
 const EFFORT_CHOICES = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium", isDefault: true },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra High" },
+  {
+    id: "low",
+    get label() {
+      return t({ message: "Low" });
+    },
+  },
+  {
+    id: "medium",
+    get label() {
+      return t({ message: "Medium" });
+    },
+    isDefault: true,
+  },
+  {
+    id: "high",
+    get label() {
+      return t({ message: "High" });
+    },
+  },
+  {
+    id: "xhigh",
+    get label() {
+      return t({ message: "Extra High" });
+    },
+  },
 ] as const;
 
 export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
   Record<ProviderDriverKind, ReadonlyArray<DescriptorPreset>>
 > = {
   [ProviderDriverKind.make("codex")]: [
-    { id: "reasoningEffort", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
+    {
+      id: "reasoningEffort",
+      get label() {
+        return t({ message: "Reasoning" });
+      },
+      type: "select",
+      choices: EFFORT_CHOICES,
+    },
     {
       id: "serviceTier",
-      label: "Speed",
+      get label() {
+        return t({ message: "Speed" });
+      },
       type: "select",
       choices: [
-        { id: "default", label: "Standard", isDefault: true },
-        { id: "fast", label: "Fast" },
+        {
+          id: "default",
+          get label() {
+            return t({ message: "Standard" });
+          },
+          isDefault: true,
+        },
+        {
+          id: "fast",
+          get label() {
+            return t({ message: "Fast" });
+          },
+        },
       ],
     },
   ],
   [ProviderDriverKind.make("claudeAgent")]: [
     {
       id: "effort",
-      label: "Reasoning",
+      get label() {
+        return t({ message: "Reasoning" });
+      },
       type: "select",
       choices: [
-        { id: "low", label: "Low" },
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High", isDefault: true },
-        { id: "xhigh", label: "Extra High" },
-        { id: "max", label: "Max" },
+        {
+          id: "low",
+          get label() {
+            return t({ message: "Low" });
+          },
+        },
+        {
+          id: "medium",
+          get label() {
+            return t({ message: "Medium" });
+          },
+        },
+        {
+          id: "high",
+          get label() {
+            return t({ message: "High" });
+          },
+          isDefault: true,
+        },
+        {
+          id: "xhigh",
+          get label() {
+            return t({ message: "Extra High" });
+          },
+        },
+        {
+          id: "max",
+          get label() {
+            return t({ message: "Max" });
+          },
+        },
       ],
     },
-    { id: "fastMode", label: "Fast Mode", type: "boolean" },
-    { id: "thinking", label: "Thinking", type: "boolean" },
+    {
+      id: "fastMode",
+      get label() {
+        return t({ message: "Fast Mode" });
+      },
+      type: "boolean",
+    },
+    {
+      id: "thinking",
+      get label() {
+        return t({ message: "Thinking" });
+      },
+      type: "boolean",
+    },
   ],
   [ProviderDriverKind.make("cursor")]: [
-    { id: "reasoning", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
-    { id: "fastMode", label: "Fast Mode", type: "boolean" },
-    { id: "thinking", label: "Thinking", type: "boolean" },
+    {
+      id: "reasoning",
+      get label() {
+        return t({ message: "Reasoning" });
+      },
+      type: "select",
+      choices: EFFORT_CHOICES,
+    },
+    {
+      id: "fastMode",
+      get label() {
+        return t({ message: "Fast Mode" });
+      },
+      type: "boolean",
+    },
+    {
+      id: "thinking",
+      get label() {
+        return t({ message: "Thinking" });
+      },
+      type: "boolean",
+    },
   ],
   [ProviderDriverKind.make("grok")]: [
-    { id: "reasoningEffort", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
+    {
+      id: "reasoningEffort",
+      get label() {
+        return t({ message: "Reasoning" });
+      },
+      type: "select",
+      choices: EFFORT_CHOICES,
+    },
   ],
   [ProviderDriverKind.make("pi")]: [
     {
       id: "thinking",
-      label: "Thinking",
+      get label() {
+        return t({ message: "Thinking" });
+      },
       type: "select",
       choices: [
-        { id: "off", label: "Off" },
-        { id: "minimal", label: "Minimal" },
-        { id: "low", label: "Low" },
-        { id: "medium", label: "Medium", isDefault: true },
-        { id: "high", label: "High" },
-        { id: "xhigh", label: "Extra High" },
-        { id: "max", label: "Max" },
+        {
+          id: "off",
+          get label() {
+            return t({ message: "Off" });
+          },
+        },
+        {
+          id: "minimal",
+          get label() {
+            return t({ message: "Minimal" });
+          },
+        },
+        {
+          id: "low",
+          get label() {
+            return t({ message: "Low" });
+          },
+        },
+        {
+          id: "medium",
+          get label() {
+            return t({ message: "Medium" });
+          },
+          isDefault: true,
+        },
+        {
+          id: "high",
+          get label() {
+            return t({ message: "High" });
+          },
+        },
+        {
+          id: "xhigh",
+          get label() {
+            return t({ message: "Extra High" });
+          },
+        },
+        {
+          id: "max",
+          get label() {
+            return t({ message: "Max" });
+          },
+        },
       ],
     },
   ],
   [ProviderDriverKind.make("opencode")]: [
-    { id: "variant", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
+    {
+      id: "variant",
+      get label() {
+        return t({ message: "Reasoning" });
+      },
+      type: "select",
+      choices: EFFORT_CHOICES,
+    },
     {
       id: "agent",
-      label: "Agent",
+      get label() {
+        return t({ message: "Agent" });
+      },
       type: "select",
       choices: [
-        { id: "build", label: "Build", isDefault: true },
-        { id: "plan", label: "Plan" },
+        {
+          id: "build",
+          get label() {
+            return t({ message: "Build" });
+          },
+          isDefault: true,
+        },
+        {
+          id: "plan",
+          get label() {
+            return t({ message: "Plan" });
+          },
+        },
       ],
     },
   ],

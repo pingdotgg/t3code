@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import {
   SecretReference,
   type EnvironmentId,
@@ -202,7 +204,7 @@ export function SecretSourceInput({
         />
         {rejectedReference !== null ? (
           <p className="text-2xs text-destructive">
-            {definition?.invalidReferenceMessage ?? "Enter a valid secret reference."}
+            {definition?.invalidReferenceMessage ?? <Trans>Enter a valid secret reference.</Trans>}
           </p>
         ) : null}
       </div>

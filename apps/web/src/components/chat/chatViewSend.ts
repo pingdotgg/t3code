@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   CommandId,
   type EnvironmentId,
@@ -106,8 +107,9 @@ export async function startFanoutThread(input: {
     const failureToastId = toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: `Could not start ${input.model}`,
-        description: error instanceof Error ? error.message : "Failed to send message.",
+        title: t`Could not start ${input.model}`,
+        description:
+          error instanceof Error ? error.message : t({ message: "Failed to send message." }),
         ...(retainedThreadId
           ? {
               timeout: 0,

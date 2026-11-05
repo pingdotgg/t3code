@@ -6,7 +6,7 @@ import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../times
 
 export const MESSAGE_HEADING_LEVEL = 3;
 
-export function MessageAuthorHeading({ children }: { children: string }) {
+export function MessageAuthorHeading({ children }: { children: ReactNode }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
 

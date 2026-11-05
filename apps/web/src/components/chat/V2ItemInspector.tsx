@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import {
@@ -147,7 +149,7 @@ function ToolOutputImages(props: ToolOutputState) {
       key={resource.index}
       environmentId={props.environmentId}
       resource={resource}
-      alt="Tool output image"
+      alt={t({ message: "Tool output image" })}
       maxHeightRem={16}
       onImageExpand={props.onImageExpand}
     />
@@ -158,11 +160,17 @@ function ToolOutput(props: ToolOutputState) {
   return props.output ? (
     <StructuredValue value={props.output} highlightJson />
   ) : props.pending ? (
-    <div className="text-muted-foreground italic">Loading output…</div>
+    <div className="text-muted-foreground italic">
+      <Trans>Loading output…</Trans>
+    </div>
   ) : props.error ? (
-    <div className="text-destructive">Couldn&apos;t load output: {props.error}</div>
+    <div className="text-destructive">
+      <Trans>Couldn&apos;t load output: {props.error}</Trans>
+    </div>
   ) : props.empty && props.images.length === 0 ? (
-    <div className="text-muted-foreground italic">No output.</div>
+    <div className="text-muted-foreground italic">
+      <Trans>No output.</Trans>
+    </div>
   ) : null;
 }
 
@@ -217,7 +225,9 @@ function ToolCallBody(
       {call.argsText ? <StructuredValue value={call.argsText} highlightJson /> : null}
       {props.outputSlot ?? <ToolOutput {...props} />}
       {props.exitCode !== undefined && props.exitCode !== 0 ? (
-        <div className="text-destructive">exit {props.exitCode}</div>
+        <div className="text-destructive">
+          <Trans>exit {props.exitCode}</Trans>
+        </div>
       ) : null}
     </div>
   );
@@ -296,7 +306,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                   })
                 }
               >
-                Open diff
+                <Trans>Open diff</Trans>
               </Button>
             ) : null}
           </div>
@@ -305,15 +315,23 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           ) : null}
           {item.changes !== undefined && item.changes.length > 0 ? (
             <ul className="space-y-1 font-mono text-muted-foreground">
-              {item.changes.map((change) => (
-                <li key={JSON.stringify([change.operation, change.oldPath, change.path])}>
-                  {change.operation} {change.oldPath ? `${change.oldPath} → ` : ""}
-                  {formatWorkspaceRelativePath(change.path, props.workspaceRoot)}
-                  {change.fileType || change.mimeType
-                    ? ` (${[change.fileType, change.mimeType].filter(Boolean).join(", ")})`
-                    : ""}
-                </li>
-              ))}
+              {item.changes.map((change) => {
+                const changeFileTypeChangeMimeTypeFilterBooleanJoinText =
+                  change.fileType || change.mimeType
+                    ? [change.fileType, change.mimeType].filter(Boolean).join(", ")
+                    : undefined;
+                return (
+                  <li key={JSON.stringify([change.operation, change.oldPath, change.path])}>
+                    {change.operation} {change.oldPath ? <Trans>{change.oldPath} → </Trans> : ""}
+                    {formatWorkspaceRelativePath(change.path, props.workspaceRoot)}
+                    {change.fileType || change.mimeType ? (
+                      <Trans> ({changeFileTypeChangeMimeTypeFilterBooleanJoinText})</Trans>
+                    ) : (
+                      ""
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : null}
         </div>
@@ -333,8 +351,8 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             <li key={JSON.stringify(result)}>
               <span className="font-mono text-foreground/80">
                 {formatWorkspaceRelativePath(result.fileName, props.workspaceRoot)}
-                {result.line === undefined ? "" : `:${result.line}`}
-                {result.column === undefined ? "" : `:${result.column}`}
+                {result.line === undefined ? "" : <Trans>:{result.line}</Trans>}
+                {result.column === undefined ? "" : <Trans>:{result.column}</Trans>}
               </span>
               {result.preview ? (
                 <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{result.preview}</p>
@@ -362,7 +380,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                   </a>
                 ) : (
                   <p className="font-medium text-foreground">
-                    {result.title ?? result.url ?? "Search result"}
+                    {result.title ?? result.url ?? <Trans>Search result</Trans>}
                   </p>
                 )}
                 {result.snippet ? <p className="text-muted-foreground">{result.snippet}</p> : null}

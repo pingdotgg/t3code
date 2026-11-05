@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
 import { Check } from "lucide-react";
@@ -179,8 +181,10 @@ export function DeviceSetup(props: {
   return (
     <>
       <WizardHeader
-        title="Set up devices"
-        description="Review what runs on this environment before using simulators and emulators."
+        title={t({ message: "Set up devices" })}
+        description={t({
+          message: "Review what runs on this environment before using simulators and emulators.",
+        })}
       >
         <WizardSteps
           steps={["Device hub", "Simulators", "Agent access"]}
@@ -194,13 +198,15 @@ export function DeviceSetup(props: {
         <DeviceHostUpdates state={props.state} environmentId={props.environmentId} />
         {step === 0 ? (
           <section className="space-y-3 text-sm">
-            <h3 className="font-medium">Enable the device hub</h3>
+            <h3 className="font-medium">
+              <Trans>Enable the device hub</Trans>
+            </h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{deviceHubDescription}</p>
               <Switch
                 checked={enabled}
                 disabled={!canConfigure || busy || pending !== null}
-                aria-label="Enable device hub"
+                aria-label={t({ message: "Enable device hub" })}
                 onCheckedChange={(checked) =>
                   void update("hub", {
                     enabled: Boolean(checked),
@@ -218,7 +224,9 @@ export function DeviceSetup(props: {
 
         {step === 1 || (step === 0 && enabled && localPlatformsUnavailable) ? (
           <section className={cn("space-y-3 text-sm", step === 0 && "mt-4")}>
-            <h3 className="font-medium">Check simulator support</h3>
+            <h3 className="font-medium">
+              <Trans>Check simulator support</Trans>
+            </h3>
             <DevicePlatformSetup
               state={props.state}
               checking={pending === "check"}
@@ -235,13 +243,15 @@ export function DeviceSetup(props: {
 
         {step === 2 ? (
           <section className="space-y-3 text-sm">
-            <h3 className="font-medium">Allow agent control</h3>
+            <h3 className="font-medium">
+              <Trans>Allow agent control</Trans>
+            </h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{agentDeviceDescription}</p>
               <Switch
                 checked={props.state.agentAccessEnabled}
                 disabled={!canConfigure || !enabled || busy || pending !== null}
-                aria-label="Allow agents to control devices"
+                aria-label={t({ message: "Allow agents to control devices" })}
                 onCheckedChange={(checked) =>
                   void update("agent", { agentAccessEnabled: Boolean(checked) })
                 }
@@ -249,7 +259,9 @@ export function DeviceSetup(props: {
             </div>
             <AgentDeviceSetupStatus state={props.state} pending={pending === "agent"} />
             <p className="text-xs text-muted-foreground">
-              Leave this off to keep manual device controls without giving agents access.
+              <Trans>
+                Leave this off to keep manual device controls without giving agents access.
+              </Trans>
             </p>
           </section>
         ) : null}
@@ -262,26 +274,28 @@ export function DeviceSetup(props: {
 
       <WizardFooter>
         {step === 0 ? (
-          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <DialogClose render={<Button variant="outline" />}>
+            <Trans>Cancel</Trans>
+          </DialogClose>
         ) : (
           <Button
             variant="outline"
             disabled={busy || pending !== null}
             onClick={() => setStep(step - 1)}
           >
-            Back
+            <Trans>Back</Trans>
           </Button>
         )}
         {step < 2 ? (
           <Button disabled={!ready || pending !== null} onClick={() => setStep(step + 1)}>
-            Continue
+            <Trans>Continue</Trans>
           </Button>
         ) : (
           <Button
             disabled={!canConfigure || !ready || pending !== null}
             onClick={() => void update("complete", { onboardingCompleted: true })}
           >
-            {pending === "complete" ? "Saving…" : "Done"}
+            {pending === "complete" ? <Trans>Saving…</Trans> : <Trans>Done</Trans>}
           </Button>
         )}
       </WizardFooter>
@@ -302,19 +316,27 @@ export function DeviceHubSetupStatus({
   return (
     <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
       {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success" />}
-      {pending
-        ? state.hostStatus === "installing"
-          ? compact
-            ? "Installing…"
-            : "Installing device hub…"
-          : state.hostStatus === "starting"
-            ? compact
-              ? "Starting…"
-              : "Starting device hub…"
-            : compact
-              ? "Updating…"
-              : "Updating device hub…"
-        : "Device hub is ready."}
+      {pending ? (
+        state.hostStatus === "installing" ? (
+          compact ? (
+            <Trans>Installing…</Trans>
+          ) : (
+            <Trans>Installing device hub…</Trans>
+          )
+        ) : state.hostStatus === "starting" ? (
+          compact ? (
+            <Trans>Starting…</Trans>
+          ) : (
+            <Trans>Starting device hub…</Trans>
+          )
+        ) : compact ? (
+          <Trans>Updating…</Trans>
+        ) : (
+          <Trans>Updating device hub…</Trans>
+        )
+      ) : (
+        <Trans>Device hub is ready.</Trans>
+      )}
     </p>
   );
 }
@@ -331,11 +353,13 @@ function DevicePlatformSetup(props: {
       <PlatformStatus platform="Android" status={platformSetupStatus(props.state, "android")} />
       <DeviceHostDiagnostics hosts={props.state.hosts} hostStatuses={props.state.hostStatuses} />
       <p className="text-xs text-muted-foreground">
-        You can use either platform. Fixing a missing platform does not block the other one.
+        <Trans>
+          You can use either platform. Fixing a missing platform does not block the other one.
+        </Trans>
       </p>
       <Button size="compact" variant="outline" disabled={props.disabled} onClick={props.onCheck}>
         {props.checking ? <Spinner size="xs" /> : null}
-        {props.checking ? "Checking…" : "Check again"}
+        {props.checking ? <Trans>Checking…</Trans> : <Trans>Check again</Trans>}
       </Button>
     </div>
   );
@@ -350,15 +374,15 @@ export function AgentDeviceSetupStatus(props: {
     const label =
       props.state.hostStatus === "installing"
         ? props.compact
-          ? "Installing…"
-          : "Installing agent tools…"
+          ? t({ message: "Installing…" })
+          : t({ message: "Installing agent tools…" })
         : props.state.hostStatus === "starting"
           ? props.compact
-            ? "Starting…"
-            : "Starting agent tools…"
+            ? t({ message: "Starting…" })
+            : t({ message: "Starting agent tools…" })
           : props.compact
-            ? "Updating…"
-            : "Updating agent access…";
+            ? t({ message: "Updating…" })
+            : t({ message: "Updating agent access…" });
     return (
       <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
         <Spinner size="xs" />
@@ -374,7 +398,7 @@ export function AgentDeviceSetupStatus(props: {
     return (
       <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
         <Check className="size-3 text-success" />
-        Agent tools are ready.
+        <Trans>Agent tools are ready.</Trans>
       </p>
     );
   }
@@ -400,7 +424,7 @@ function PlatformStatus(props: {
       <div className={cn(props.compact && props.status.ready && "flex items-center gap-2")}>
         <p className="font-medium">{props.platform}</p>
         <p className="text-xs text-muted-foreground">
-          {props.compact && props.status.ready ? "Ready" : props.status.message}
+          {props.compact && props.status.ready ? <Trans>Ready</Trans> : props.status.message}
         </p>
       </div>
     </div>

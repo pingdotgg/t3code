@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type {
   EnvironmentId,
   OrchestrationV2GetNativeChildWorkResult,
@@ -36,12 +38,18 @@ export function NativeChildWorkDialog(props: {
     <Dialog open={open} onOpenChange={setOpen}>
       <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
         <ListTreeIcon />
-        <span className="@max-[420px]/composer-surface:sr-only">Subagent work</span>
+        <span className="@max-[420px]/composer-surface:sr-only">
+          <Trans>Subagent work</Trans>
+        </span>
       </Button>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Subagent work</DialogTitle>
-          <DialogDescription>Read only. These subagents cannot take messages.</DialogDescription>
+          <DialogTitle>
+            <Trans>Subagent work</Trans>
+          </DialogTitle>
+          <DialogDescription>
+            <Trans>Read only. These subagents cannot take messages.</Trans>
+          </DialogDescription>
         </DialogHeader>
         {open ? <NativeChildWorkContent {...props} /> : null}
       </DialogPopup>
@@ -66,10 +74,12 @@ function NativeChildWorkContent(props: {
         {query.error !== null ? (
           <p className="text-sm text-destructive-foreground">{query.error}</p>
         ) : children === undefined ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">
+            <Trans>Loading…</Trans>
+          </p>
         ) : children.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            The provider has no record of which subagents this call started.
+            <Trans>The provider has no record of which subagents this call started.</Trans>
           </p>
         ) : (
           children.map((child) => <NativeChild key={child.conversationId} child={child} />)
@@ -77,7 +87,7 @@ function NativeChildWorkContent(props: {
       </DialogPanel>
       <DialogFooter variant="bare">
         <Button size="sm" variant="outline" disabled={query.isPending} onClick={query.refresh}>
-          Refresh
+          <Trans>Refresh</Trans>
         </Button>
       </DialogFooter>
     </>
@@ -87,16 +97,25 @@ function NativeChildWorkContent(props: {
 function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) {
   const { child } = props;
   return (
-    <section aria-label={child.role || "Subagent"} className="flex min-w-0 flex-col gap-2">
-      <h3 className="text-sm font-medium text-foreground">{child.role || "Subagent"}</h3>
+    <section
+      aria-label={child.role || t({ message: "Subagent" })}
+      className="flex min-w-0 flex-col gap-2"
+    >
+      <h3 className="text-sm font-medium text-foreground">
+        {child.role || <Trans>Subagent</Trans>}
+      </h3>
       <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
         {child.prompt}
       </p>
       {child.truncated ? (
-        <p className="text-xs text-muted-foreground">Earlier steps are not shown.</p>
+        <p className="text-xs text-muted-foreground">
+          <Trans>Earlier steps are not shown.</Trans>
+        </p>
       ) : null}
       {child.steps === null ? (
-        <p className="text-xs text-muted-foreground">No transcript yet.</p>
+        <p className="text-xs text-muted-foreground">
+          <Trans>No transcript yet.</Trans>
+        </p>
       ) : (
         <ol className="m-0 flex list-none flex-col gap-2 border-s ps-3">
           {child.steps.map((step) => (
@@ -110,11 +129,13 @@ function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) 
 
 function NativeChildStep(props: { readonly step: OrchestrationV2NativeChildStep }) {
   const { step } = props;
+  const stepLabelText =
+    step.status !== null && step.status !== "DONE" ? stepLabel(step.status) : undefined;
   return (
     <li className="flex min-w-0 flex-col gap-1">
       <span className="text-xs font-medium text-muted-foreground">
         {stepLabel(step.type)}
-        {step.status !== null && step.status !== "DONE" ? ` · ${stepLabel(step.status)}` : ""}
+        {step.status !== null && step.status !== "DONE" ? <Trans> · {stepLabelText}</Trans> : ""}
       </span>
       {step.toolCalls.length === 0 ? null : (
         <code className="whitespace-pre-wrap break-all text-xs text-foreground">

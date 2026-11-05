@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
   DevicePlatform,
@@ -215,6 +217,12 @@ export function DevicePanel(props: {
     );
   }
 
+  const stateHostsFindHostHostIdPendingDeviceHostIdLabelText =
+    !(activeDevice && activeSession) && loading && pendingDevice
+      ? (state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host")
+      : undefined;
+  const bootingDevicesMapDeviceDeviceNameJoinText =
+    bootingDevices.length > 0 ? bootingDevices.map((device) => device.name).join(", ") : undefined;
   return (
     <PreviewPanelShell mode={props.mode}>
       <div className="relative flex min-h-0 flex-1 flex-col">
@@ -238,8 +246,9 @@ export function DevicePanel(props: {
           <DeviceHostUpdates state={state} environmentId={environmentId} />
           {bootingDevices.length > 0 ? (
             <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
-              Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a
-              minute.
+              <Trans>
+                Starting {bootingDevicesMapDeviceDeviceNameJoinText}… This can take a minute.
+              </Trans>
             </div>
           ) : null}
           {operationError ? (
@@ -267,7 +276,7 @@ export function DevicePanel(props: {
               name={pendingDevice?.name ?? "Devices"}
               description={
                 pendingDevice
-                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
+                  ? t`${stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · ${pendingDevice.version}`
                   : ""
               }
               stage="opening"
@@ -285,7 +294,7 @@ export function DevicePanel(props: {
             >
               {loadError !== null ? (
                 <Button size="sm" variant="outline" onClick={refreshState}>
-                  Retry
+                  <Trans>Retry</Trans>
                 </Button>
               ) : null}
             </DeviceLoadingView>
@@ -304,9 +313,11 @@ export function DevicePanel(props: {
                       className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
                       tabIndex={state.hostStatus === "failed" ? 0 : undefined}
                     >
-                      {state.hostStatus === "failed"
-                        ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                        : "No simulators or emulators were found on this environment."}
+                      {state.hostStatus === "failed" ? (
+                        (state.hostStatusDetail ?? "The device hub failed to start.")
+                      ) : (
+                        <Trans>No simulators or emulators were found on this environment.</Trans>
+                      )}
                     </p>
                   </>
                 ) : null}
@@ -319,40 +330,50 @@ export function DevicePanel(props: {
                           <h3 className="font-medium">{platformLabel(group.platform)}</h3>
                         </div>
                         <DiscoveryList>
-                          {group.devices.map((device) => (
-                            <div
-                              key={deviceKey(device)}
-                              className="flex items-center gap-3 px-3 py-3"
-                            >
-                              <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
-                                <Smartphone className="size-4" />
-                              </span>
-                              <div className="flex min-w-0 flex-1 flex-col">
-                                <span className="truncate text-sm font-medium text-foreground">
-                                  {device.name}
-                                </span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
-                                </span>
-                              </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={pendingDeviceKey !== null}
-                                aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
-                                onClick={() => void selectDevice(deviceKey(device))}
+                          {group.devices.map((device) => {
+                            const messageText = state.hosts.find(
+                              (host) => host.id === device.hostId,
+                            )?.label;
+                            const deviceBootedText = device.booted ? "Running" : "Stopped";
+                            return (
+                              <div
+                                key={deviceKey(device)}
+                                className="flex items-center gap-3 px-3 py-3"
                               >
-                                {pendingDeviceKey === deviceKey(device) ? (
-                                  <Spinner size="xs" />
-                                ) : device.booted ? (
-                                  <ArrowUpRight />
-                                ) : (
-                                  <Play />
-                                )}
-                                {device.booted ? "Open" : "Start"}
-                              </Button>
-                            </div>
-                          ))}
+                                <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
+                                  <Smartphone className="size-4" />
+                                </span>
+                                <div className="flex min-w-0 flex-1 flex-col">
+                                  <span className="truncate text-sm font-medium text-foreground">
+                                    {device.name}
+                                  </span>
+                                  <span className="truncate text-xs text-muted-foreground">
+                                    {
+                                      <Trans>
+                                        {messageText} · {device.version} · {deviceBootedText}
+                                      </Trans>
+                                    }
+                                  </span>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={pendingDeviceKey !== null}
+                                  aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
+                                  onClick={() => void selectDevice(deviceKey(device))}
+                                >
+                                  {pendingDeviceKey === deviceKey(device) ? (
+                                    <Spinner size="xs" />
+                                  ) : device.booted ? (
+                                    <ArrowUpRight />
+                                  ) : (
+                                    <Play />
+                                  )}
+                                  {device.booted ? <Trans>Open</Trans> : <Trans>Start</Trans>}
+                                </Button>
+                              </div>
+                            );
+                          })}
                         </DiscoveryList>
                       </section>
                     ))}
@@ -363,8 +384,10 @@ export function DevicePanel(props: {
                 !state.devices.some((device) => device.platform === "android") &&
                 !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
                   <p className="max-w-sm text-xs">
-                    No Android virtual devices found. Create one in Android Studio's Device Manager,
-                    then refresh.
+                    <Trans>
+                      No Android virtual devices found. Create one in Android Studio's Device
+                      Manager, then refresh.
+                    </Trans>
                   </p>
                 ) : null}
                 {loaded && !hostBusy ? (
@@ -374,7 +397,7 @@ export function DevicePanel(props: {
                     size="sm"
                     onClick={() => void list({ environmentId, input: {} })}
                   >
-                    Refresh devices
+                    <Trans>Refresh devices</Trans>
                   </Button>
                 ) : null}
               </div>

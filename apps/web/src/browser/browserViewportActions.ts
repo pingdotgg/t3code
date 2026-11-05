@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -75,14 +76,14 @@ async function resizeBrowserViewport(
       environmentId: target.threadRef.environmentId,
       input: { threadId: target.threadRef.threadId, tabId: target.tabId, viewport },
     },
-    { label: "preview viewport resize" },
+    { label: t({ message: "preview viewport resize" }) },
   );
   if (result._tag === "Failure") {
     const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",
-      title: "Unable to resize browser viewport",
-      description: error instanceof Error ? error.message : "An error occurred.",
+      title: t({ message: "Unable to resize browser viewport" }),
+      description: error instanceof Error ? error.message : t({ message: "An error occurred." }),
     });
     throw error;
   }

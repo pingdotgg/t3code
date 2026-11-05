@@ -1,3 +1,5 @@
+import { Trans, Plural } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import {
   DEFAULT_SERVER_SETTINGS,
   PROJECT_FILE_BACKED_SETTINGS,
@@ -32,16 +34,30 @@ interface InheritanceLayer {
 }
 
 const WRITING_STYLE_LABELS: Record<string, string> = {
-  repo_conventions: "Repository conventions",
-  conventional_commits: "Conventional Commits",
-  custom: "Custom instructions",
+  get repo_conventions() {
+    return t({ message: "Repository conventions" });
+  },
+  get conventional_commits() {
+    return t({ message: "Conventional Commits" });
+  },
+  get custom() {
+    return t({ message: "Custom instructions" });
+  },
 };
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<string, string> = {
-  balanced: "Balanced",
-  performance: "Performance",
-  "battery-saver": "Battery saver",
-  custom: "Advanced",
+  get balanced() {
+    return t({ message: "Balanced" });
+  },
+  get performance() {
+    return t({ message: "Performance" });
+  },
+  get "battery-saver"() {
+    return t({ message: "Battery saver" });
+  },
+  get custom() {
+    return t({ message: "Advanced" });
+  },
 };
 
 function formatValue(key: keyof ServerSettings, value: unknown): string {
@@ -110,7 +126,7 @@ export function settingInheritanceLayers(
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
     layers.push({
       key: "project",
-      label: "Project",
+      label: t({ message: "Project" }),
       value: source === "project" ? formatValue(key, target.settings[key]) : "Inherits",
       effective: source === "project",
       set: source === "project",
@@ -138,7 +154,7 @@ export function settingInheritanceLayers(
     : DEFAULT_SERVER_SETTINGS[key];
   layers.push({
     key: "built-in",
-    label: "Default",
+    label: t({ message: "Default" }),
     value: formatValue(key, builtIn),
     effective: source === "environment" && !environmentSet,
     set: true,
@@ -290,7 +306,7 @@ export function SettingInheritance({
                         layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
                       )}
                     >
-                      {layer.key === "environment" ? "Environment" : layer.label}
+                      {layer.key === "environment" ? <Trans>Environment</Trans> : layer.label}
                     </span>
                     <span
                       className={cn(
@@ -342,9 +358,11 @@ export function SettingInheritance({
                             {winningLayer?.value}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {winningLayer?.key === "environment"
-                              ? "Environment"
-                              : winningLayer?.label}
+                            {winningLayer?.key === "environment" ? (
+                              <Trans>Environment</Trans>
+                            ) : (
+                              winningLayer?.label
+                            )}
                           </span>
                           <ChevronRightIcon
                             aria-hidden
@@ -377,7 +395,7 @@ export function SettingInheritance({
                     {chain}
                     {hasMultipleEnvironments ? (
                       <p className="px-2 pt-1.5 text-xs text-muted-foreground">
-                        Same on all machines
+                        <Trans>Same on all machines</Trans>
                       </p>
                     ) : null}
                   </>
@@ -388,6 +406,7 @@ export function SettingInheritance({
                   );
                   if (overriding.length === 0) return null;
                   const foldOverrides = hasMultipleEnvironments && overriding.length > 3;
+
                   const header = (
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
                       {foldOverrides ? (
@@ -396,14 +415,16 @@ export function SettingInheritance({
                             aria-hidden
                             className="size-3 [[data-panel-open]_&]:rotate-90"
                           />
-                          Overridden by
+                          <Trans>Overridden by</Trans>
                         </CollapsibleTrigger>
                       ) : (
-                        <span>Overridden by</span>
+                        <span>
+                          <Trans>Overridden by</Trans>
+                        </span>
                       )}
                       {onClearOverrides ? (
                         <InlineButton onClick={() => onClearOverrides(overriding)}>
-                          Reset {overriding.length === 1 ? "it" : "all"}
+                          <Plural value={overriding.length} one={`Reset it`} other={`Reset all`} />
                         </InlineButton>
                       ) : null}
                     </div>

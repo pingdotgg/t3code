@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
@@ -96,21 +98,24 @@ export default function Presentation(props: {
     setPage(index);
     scroll.current?.(index);
   };
+  const pageText = page + 1;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className={FILE_SURFACE_SUBHEADER_CLASS}>
         <FileSurfaceAction
-          label="Previous slide"
+          label={t({ message: "Previous slide" })}
           disabled={page === 0}
           onPress={() => select(page - 1)}
         >
           <ChevronLeftIcon className="size-3.5" />
         </FileSurfaceAction>
         <span className="flex-1 text-center text-xs tabular-nums" aria-live="polite">
-          Slide {page + 1} of {opened.slides.length}
+          <Trans>
+            Slide {pageText} of {opened.slides.length}
+          </Trans>
         </span>
         <FileSurfaceAction
-          label="Next slide"
+          label={t({ message: "Next slide" })}
           disabled={page + 1 === opened.slides.length}
           onPress={() => select(page + 1)}
         >
@@ -120,7 +125,7 @@ export default function Presentation(props: {
       <OfficePages
         pages={opened.slides}
         paint={opened.paint}
-        label="Slide"
+        label={t({ message: "Slide" })}
         scrollRef={scroll}
         onPageChange={setPage}
         onError={onError}
@@ -134,7 +139,7 @@ export default function Presentation(props: {
                 role="status"
                 className="absolute inset-0 flex items-center justify-center bg-background/80 p-4 text-xs text-foreground"
               >
-                This slide could not be drawn.
+                <Trans>This slide could not be drawn.</Trans>
               </p>
             ) : null}
           </>
@@ -143,11 +148,15 @@ export default function Presentation(props: {
           const slide = opened.slides[index];
           return slide?.notes || slide?.hidden ? (
             <div className="space-y-1 text-xs text-muted-foreground">
-              {slide.hidden ? <p>Hidden slide</p> : null}
+              {slide.hidden ? (
+                <p>
+                  <Trans>Hidden slide</Trans>
+                </p>
+              ) : null}
               {slide.notes ? (
                 <p
                   role="note"
-                  aria-label="Speaker notes"
+                  aria-label={t({ message: "Speaker notes" })}
                   className="select-text whitespace-pre-wrap break-words"
                 >
                   {slide.notes}

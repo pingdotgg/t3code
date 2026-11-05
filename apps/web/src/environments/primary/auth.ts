@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
@@ -323,7 +324,8 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
     return {
       status: "requires-auth",
       auth: currentSession.auth,
-      errorMessage: error instanceof Error ? error.message : "Authentication failed.",
+      errorMessage:
+        error instanceof Error ? error.message : t({ message: "Authentication failed." }),
     };
   }
 }

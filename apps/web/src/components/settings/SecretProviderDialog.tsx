@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { useState } from "react";
@@ -67,11 +69,17 @@ export function SecretProviderDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {existing ? `Edit ${existing.config.label}` : "Add a 1Password provider"}
+            {existing ? (
+              <Trans>Edit {existing.config.label}</Trans>
+            ) : (
+              <Trans>Add a 1Password provider</Trans>
+            )}
           </DialogTitle>
           <DialogDescription>
-            Provider variables on {environmentLabel} can read values from it by name. Values are
-            read with the op CLI on that server when a provider starts.
+            <Trans>
+              Provider variables on {environmentLabel} can read values from it by name. Values are
+              read with the op CLI on that server when a provider starts.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -84,10 +92,12 @@ export function SecretProviderDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="secret-provider-name">Name</Label>
+              <Label htmlFor="secret-provider-name">
+                <Trans>Name</Trans>
+              </Label>
               <Input
                 id="secret-provider-name"
-                placeholder="Personal"
+                placeholder={t({ message: "Personal" })}
                 value={draft.name}
                 onChange={(event) => update({ name: event.target.value })}
                 maxLength={64}
@@ -108,7 +118,9 @@ export function SecretProviderDialog({
               ) : null}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="secret-provider-account">Account</Label>
+              <Label htmlFor="secret-provider-account">
+                <Trans>Account</Trans>
+              </Label>
               <Input
                 id="secret-provider-account"
                 placeholder="my.1password.com"
@@ -131,22 +143,24 @@ export function SecretProviderDialog({
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                The account shorthand, sign-in address without https://, or ID that op account list
-                shows.
+                <Trans>
+                  The account shorthand, sign-in address without https://, or ID that op account
+                  list shows.
+                </Trans>
               </p>
             </div>
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            <Trans>Cancel</Trans>
           </Button>
           <Button
             type="submit"
             form="secret-provider-form"
             disabled={submitted && Result.isFailure(result)}
           >
-            {existing ? "Save changes" : "Add provider"}
+            {existing ? <Trans>Save changes</Trans> : <Trans>Add provider</Trans>}
           </Button>
         </DialogFooter>
       </DialogPopup>

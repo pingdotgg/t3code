@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
@@ -205,7 +207,7 @@ function WorkspaceImagePreview(props: {
     return (
       <MediaActions source={actionsSource}>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-          Unable to load workspace image.
+          <Trans>Unable to load workspace image.</Trans>
         </div>
       </MediaActions>
     );
@@ -256,7 +258,7 @@ export function WorkspaceBrowserPreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load file preview.
+        <Trans>Unable to load file preview.</Trans>
       </div>
     );
   }
@@ -371,7 +373,7 @@ function WorkspaceAudioPreview(props: {
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
       <FileSurfaceFailure
-        message="Unable to load audio."
+        message={t({ message: "Unable to load audio." })}
         onRetry={() => {
           setFailedUrl(null);
           void refreshAssetUrl().catch(() => undefined);
@@ -1234,8 +1236,9 @@ export default function FilePreviewPanel({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open file in browser",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: t({ message: "Unable to open file in browser" }),
+          description:
+            error instanceof Error ? error.message : t({ message: "An error occurred." }),
         }),
       );
     })();
@@ -1246,17 +1249,50 @@ export default function FilePreviewPanel({
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-4" />
-          Checking file access...
+          <Trans>Checking file access...</Trans>
         </div>
       );
     }
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        {fileAccess.error ?? "This connection cannot read host files."}
+        {fileAccess.error ?? <Trans>This connection cannot read host files.</Trans>}
       </div>
     );
   }
 
+  const fileDataByteLengthToLocaleStringText =
+    previewPath &&
+    attachment === undefined &&
+    !isMedia &&
+    !renderBrowserFile &&
+    file.data?.truncated &&
+    (draft || isMarkdown || isMermaid || isHtml)
+      ? file.data.byteLength.toLocaleString()
+      : undefined;
+  const fileReadErrorCwdText =
+    !isFolder &&
+    !(relativePath && attachment) &&
+    !(relativePath && isVideo && absolutePath) &&
+    !(relativePath && isAudio && absolutePath) &&
+    !(relativePath && isImage && absolutePath) &&
+    !(relativePath && renderBrowserFile && absolutePath) &&
+    !(
+      relativePath &&
+      absolutePath &&
+      file.data?.truncated &&
+      !isDocument &&
+      !draft &&
+      !isMarkdown &&
+      !isMermaid &&
+      !isHtml
+    ) &&
+    !(relativePath && absolutePath && (isDocument || file.readError?.failure === "binary_file")) &&
+    relativePath &&
+    file.error &&
+    file.data === null &&
+    !isHostFile
+      ? (file.readError?.cwd ?? cwd)
+      : undefined;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {breadcrumbPath !== null && breadcrumbTrail !== null ? (
@@ -1317,7 +1353,9 @@ export default function FilePreviewPanel({
           ) : null}
           {showsRawText ? (
             <FileSurfaceAction
-              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              label={
+                wordWrap ? t({ message: "Disable word wrap" }) : t({ message: "Enable word wrap" })
+              }
               pressed={wordWrap}
               onPress={() => setWordWrapOverride(!wordWrap)}
             >
@@ -1325,13 +1363,20 @@ export default function FilePreviewPanel({
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
-            <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
+            <FileSurfaceAction
+              label={t({ message: "Open file in preview browser" })}
+              onPress={handleOpenInBrowser}
+            >
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {!isHostFile && previewPath !== null ? (
             <FileSurfaceAction
-              label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
+              label={
+                explorerOpen
+                  ? t({ message: "Hide file explorer" })
+                  : t({ message: "Show file explorer" })
+              }
               pressed={explorerOpen}
               onPress={toggleExplorer}
             >
@@ -1342,7 +1387,7 @@ export default function FilePreviewPanel({
       ) : null}
       {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
-          Read-only connection. Unsaved edits are kept until write access returns.
+          <Trans>Read-only connection. Unsaved edits are kept until write access returns.</Trans>
         </div>
       ) : null}
       {previewPath &&
@@ -1352,7 +1397,9 @@ export default function FilePreviewPanel({
       file.data?.truncated &&
       (draft || isMarkdown || isMermaid || isHtml) ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
-          Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
+          <Trans>
+            Preview limited to the first 1 MB of a {fileDataByteLengthToLocaleStringText} byte file.
+          </Trans>
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -1466,19 +1513,21 @@ export default function FilePreviewPanel({
                 </p>
                 {attemptedPath ? (
                   <p className="text-muted-foreground">
-                    Attempted path
-                    <code className="block break-all font-mono text-foreground select-all">
-                      {attemptedPath}
-                    </code>
+                    <Trans>
+                      Attempted path
+                      <code className="block break-all font-mono text-foreground select-all">
+                        {attemptedPath}
+                      </code>
+                    </Trans>
                   </p>
                 ) : null}
                 {!isHostFile ? (
                   <p className="text-muted-foreground">
-                    Workspace folder:{" "}
-                    <code className="break-all font-mono select-all">
-                      {file.readError?.cwd ?? cwd}
-                    </code>
-                    . Check the link's path or locate the file in Files.
+                    <Trans>
+                      Workspace folder:{" "}
+                      <code className="break-all font-mono select-all">{fileReadErrorCwdText}</code>
+                      . Check the link's path or locate the file in Files.
+                    </Trans>
                   </p>
                 ) : null}
               </div>
@@ -1596,8 +1645,8 @@ export function WorkspaceLargeTextPreview(props: {
   const showError = (cause: unknown) => {
     toastManager.add({
       type: "error",
-      title: "Could not read file",
-      description: cause instanceof Error ? cause.message : "Try again.",
+      title: t({ message: "Could not read file" }),
+      description: cause instanceof Error ? cause.message : t({ message: "Try again." }),
     });
   };
   // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
@@ -1620,7 +1669,7 @@ export function WorkspaceLargeTextPreview(props: {
   if (assetUrl._tag === "Failure")
     return (
       <FileSurfaceFailure
-        message="Unable to load file preview."
+        message={t({ message: "Unable to load file preview." })}
         onRetry={() => {
           setRevision((value) => value + 1);
           void refreshAssetUrl().catch(showError);
@@ -1628,14 +1677,20 @@ export function WorkspaceLargeTextPreview(props: {
       />
     );
   if (assetUrl._tag !== "Success" || loaded === null)
-    return <div className="p-6 text-xs text-muted-foreground">Loading…</div>;
+    return (
+      <div className="p-6 text-xs text-muted-foreground">
+        <Trans>Loading…</Trans>
+      </div>
+    );
   const src = `${loaded.url}${loaded.url.includes("?") ? "&" : "?"}revision=${encodeURIComponent(loaded.revision)}`;
   return (
     <>
       <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-        <span className="min-w-0 flex-1 text-xs text-muted-foreground">Full file</span>
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+          <Trans>Full file</Trans>
+        </span>
         <FileSurfaceAction
-          label={isCopied ? "Copied" : "Copy contents"}
+          label={isCopied ? t({ message: "Copied" }) : t({ message: "Copy contents" })}
           onPress={() => {
             const copy = copyContents.current;
             if (!copy) return;
@@ -1647,7 +1702,7 @@ export function WorkspaceLargeTextPreview(props: {
           {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </FileSurfaceAction>
         <FileSurfaceAction
-          label={saving ? "Preparing file…" : "Save file"}
+          label={saving ? t({ message: "Preparing file…" }) : t({ message: "Save file" })}
           disabled={saving}
           onPress={() => {
             setSaving(true);
@@ -1670,7 +1725,13 @@ export function WorkspaceLargeTextPreview(props: {
           <DownloadIcon className="size-3.5" />
         </FileSurfaceAction>
       </div>
-      <Suspense fallback={<div className="p-6 text-xs text-muted-foreground">Loading…</div>}>
+      <Suspense
+        fallback={
+          <div className="p-6 text-xs text-muted-foreground">
+            <Trans>Loading…</Trans>
+          </div>
+        }
+      >
         <LargeTextViewer
           key={`${src}:${revision}`}
           name={props.name}

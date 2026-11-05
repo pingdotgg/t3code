@@ -9,9 +9,10 @@
     "dev:built": "vp build --watch",
     "build": "vp build",
     "i18n:extract": "pmds extract",
-    "i18n:check": "pmds extract --check && pmds lint && pmds report --fail-if-below 100",
+    "i18n:check": "pmds extract --check && pmds lint --fail-on warning && pmds catalog compile --target js --output .palamedes/check",
     "preview": "vp preview",
-    "test": "vp test run --passWithNoTests --project unit --project browser"
+    "test": "vp test run --passWithNoTests --project unit --project browser",
+    "i18n:coverage": "pmds report --fail-if-below 100"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

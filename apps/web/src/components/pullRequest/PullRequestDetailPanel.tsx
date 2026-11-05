@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t, plural } from "@palamedes/core/macro";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useAtomValue } from "@effect/atom-react";
@@ -198,10 +200,30 @@ const UPDATE_BRANCH_REBASE_FAILURE_HINT =
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.";
 
 const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
-  { value: "summary", label: "Summary" },
-  { value: "guide", label: "Guide" },
-  { value: "timeline", label: "Timeline" },
-  { value: "code", label: "Code" },
+  {
+    value: "summary",
+    get label() {
+      return t({ message: "Summary" });
+    },
+  },
+  {
+    value: "guide",
+    get label() {
+      return t({ message: "Guide" });
+    },
+  },
+  {
+    value: "timeline",
+    get label() {
+      return t({ message: "Timeline" });
+    },
+  },
+  {
+    value: "code",
+    get label() {
+      return t({ message: "Code" });
+    },
+  },
 ];
 
 // Defer the diff viewer's worker pool until Code is approached.
@@ -211,7 +233,7 @@ const PullRequestCodeTab = lazy(loadCodeTab);
 function reportCheckoutCommandError(error: Error) {
   toastManager.add({
     type: "error",
-    title: "Could not copy checkout command",
+    title: t({ message: "Could not copy checkout command" }),
     description: error.message,
   });
 }
@@ -475,11 +497,11 @@ export function PullRequestDetailPanel({
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
     target: `${terminology.singular} reference`,
-    onCopy: (label) => toastManager.add({ type: "success", title: `${label} copied` }),
+    onCopy: (label) => toastManager.add({ type: "success", title: t`${label} copied` }),
     onError: (error, label) =>
       toastManager.add({
         type: "error",
-        title: `Failed to copy ${label}`,
+        title: t`Failed to copy ${label}`,
         description: error.message,
       }),
   });
@@ -688,10 +710,10 @@ export function PullRequestDetailPanel({
       return false;
     }
     if (action === "revert") {
-      toastManager.add({ type: "success", title: `Revert ${terminology.singular} opened` });
+      toastManager.add({ type: "success", title: t`Revert ${terminology.singular} opened` });
     }
     if (action === "delete-branch") {
-      toastManager.add({ type: "success", title: "Branch deleted" });
+      toastManager.add({ type: "success", title: t({ message: "Branch deleted" }) });
     }
     if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
@@ -723,7 +745,7 @@ export function PullRequestDetailPanel({
     });
     if (commentResult._tag === "Failure") {
       setPendingAction(null);
-      toastManager.add({ type: "error", title: "Could not post the comment" });
+      toastManager.add({ type: "error", title: t({ message: "Could not post the comment" }) });
       return { commentPosted: false };
     }
     const actionSucceeded = await finishAction(action);
@@ -778,11 +800,11 @@ export function PullRequestDetailPanel({
       writeHandoffToComposer(attachTarget, task);
       toastManager.add({
         type: "success",
-        title: "Added to the composer",
+        title: t({ message: "Added to the composer" }),
         description:
           task.prompt.length > 0
-            ? "The question is in the composer. Read it over, then send."
-            : `The ${terminology.singular} is in the composer. Type your question, then send.`,
+            ? t({ message: "The question is in the composer. Read it over, then send." })
+            : t`The ${terminology.singular} is in the composer. Type your question, then send.`,
       });
       return;
     }
@@ -809,18 +831,18 @@ export function PullRequestDetailPanel({
     if (opened === null) {
       toastManager.add({
         type: "error",
-        title: "Could not open a thread",
-        description: "Try again from the project, or open a thread first.",
+        title: t({ message: "Could not open a thread" }),
+        description: t({ message: "Try again from the project, or open a thread first." }),
       });
       return;
     }
     toastManager.add({
       type: "success",
-      title: "Asked in a thread",
+      title: t({ message: "Asked in a thread" }),
       description:
         task.prompt.length > 0
-          ? "The question is in the composer. Read it over, then send."
-          : `The ${terminology.singular} is in the composer. Type your question, then send.`,
+          ? t({ message: "The question is in the composer. Read it over, then send." })
+          : t`The ${terminology.singular} is in the composer. Type your question, then send.`,
     });
   };
 
@@ -834,8 +856,8 @@ export function PullRequestDetailPanel({
       writeHandoffToComposer(attachTarget, task);
       toastManager.add({
         type: "success",
-        title: "Added to the composer",
-        description: "The task is in the composer. Read it over, then send.",
+        title: t({ message: "Added to the composer" }),
+        description: t({ message: "The task is in the composer. Read it over, then send." }),
       });
       return;
     }
@@ -855,7 +877,7 @@ export function PullRequestDetailPanel({
     setHandoff(kind);
     const toastId = toastManager.add({
       type: "loading",
-      title: `Preparing the ${terminology.singular} checkout...`,
+      title: t`Preparing the ${terminology.singular} checkout...`,
     });
     const projectRef = scopeProjectRef(
       actingEnvironmentId,
@@ -870,8 +892,8 @@ export function PullRequestDetailPanel({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
+        title: t({ message: "Could not open a thread for the checkout" }),
+        description: t({ message: "Try again from the project, or open a thread first." }),
       });
       return;
     }
@@ -884,7 +906,7 @@ export function PullRequestDetailPanel({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: `Could not prepare the ${terminology.singular} checkout`,
+        title: t`Could not prepare the ${terminology.singular} checkout`,
         description: checkoutFailureDescription(
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
@@ -904,8 +926,8 @@ export function PullRequestDetailPanel({
       // Sending after failed rebinding would use the previous checkout.
       toastManager.update(toastId, {
         type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
+        title: t({ message: "Checked out, but the thread stayed where it was" }),
+        description: t`The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
       });
       return;
     }
@@ -916,11 +938,14 @@ export function PullRequestDetailPanel({
         prepared.value.isOnPullRequestHead
           ? {
               type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
+              title:
+                mode === "local"
+                  ? t({ message: "Checked out here" })
+                  : t({ message: "Checked out" }),
               description:
                 mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
+                  ? t`This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
+                  : t`The ${terminology.singular} is in its own worktree, with a thread open on it.`,
             }
           : offHeadPullRequestCheckoutToast(terminology),
       );
@@ -932,8 +957,8 @@ export function PullRequestDetailPanel({
       prepared.value.isOnPullRequestHead
         ? {
             type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
+            title: t({ message: "Checkout ready" }),
+            description: t({ message: "The task is in the composer. Read it over, then send." }),
           }
         : offHeadPullRequestCheckoutToast(terminology),
     );
@@ -1127,8 +1152,11 @@ export function PullRequestDetailPanel({
   const conflicting = isPullRequestConflicting(detail);
   const autoMergeArmed = detail?.state === "open" && detail.autoMergeEnabled === true;
   const armedMergeMethod = detail?.autoMergeMethod;
+  const PULLREQUESTMERGEMETHODLABELSArmedMergeMethodToLowerCaseText = armedMergeMethod
+    ? PULL_REQUEST_MERGE_METHOD_LABELS[armedMergeMethod].toLowerCase()
+    : undefined;
   const armedAutoMergeLabel = armedMergeMethod
-    ? `Auto-merge (${PULL_REQUEST_MERGE_METHOD_LABELS[armedMergeMethod].toLowerCase()})`
+    ? t`Auto-merge (${PULLREQUESTMERGEMETHODLABELSArmedMergeMethodToLowerCaseText})`
     : "Auto-merge";
   const workflowApprovalsRequired =
     detail?.state === "open" ? (detail.workflowApprovalsRequired ?? 0) : 0;
@@ -1272,6 +1300,20 @@ export function PullRequestDetailPanel({
     );
   }
 
+  const detailCommentCountToLocaleStringText =
+    detail && !(tab === "summary") && tab === "timeline" && !activityError
+      ? detail.commentCount.toLocaleString()
+      : undefined;
+
+  const detailCommitsLengthToLocaleStringText =
+    detail && !(tab === "summary") && tab === "timeline" && !activityError
+      ? detail.commits.length.toLocaleString()
+      : undefined;
+
+  const capitalizeTermText =
+    detailQuery.error && !detail && isPullRequestNotFound(detailQuery.failure)
+      ? capitalizeTerm(terminology.singular)
+      : undefined;
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
       {threadPickerOpen && detail ? (
@@ -1314,7 +1356,7 @@ export function PullRequestDetailPanel({
               ) : null}
               {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
-                  Retry stack lookup
+                  <Trans>Retry stack lookup</Trans>
                 </Button>
               ) : null}
               {nativeStack ? (
@@ -1455,7 +1497,7 @@ export function PullRequestDetailPanel({
                       iconClassName="size-3"
                     />
                     <ArrowLeftIcon
-                      aria-label="receives changes from"
+                      aria-label={t({ message: "receives changes from" })}
                       className="size-3 shrink-0 opacity-60"
                     />
                     <Tooltip>
@@ -1529,7 +1571,8 @@ export function PullRequestDetailPanel({
                 }
                 updated={
                   <span>
-                    updated <RelativeTime timestamp={detail.updatedAt} />
+                    <Trans>updated </Trans>
+                    <RelativeTime timestamp={detail.updatedAt} />
                   </span>
                 }
                 checkout={
@@ -1538,7 +1581,7 @@ export function PullRequestDetailPanel({
                       key={checkoutCommand}
                       value={checkoutCommand}
                       target={`${terminology.singular} checkout command`}
-                      copyLabel="Copy checkout command"
+                      copyLabel={t({ message: "Copy checkout command" })}
                       copiedLabel="Checkout command copied"
                       className="ml-auto font-mono"
                       tooltipSide="bottom"
@@ -1599,7 +1642,9 @@ export function PullRequestDetailPanel({
               ) : (
                 <PullRequestChecksStatusLine
                   className="text-muted-foreground"
-                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                  aria-label={
+                    checksSummary ? t`Checks: ${checksSummary}` : t({ message: "Checks" })
+                  }
                   icon={
                     checksState !== null ? (
                       <PullRequestChecksPopover
@@ -1627,10 +1672,11 @@ export function PullRequestDetailPanel({
                     className="inline-flex items-center gap-1"
                     aria-label={
                       activityError
-                        ? "Comments unavailable"
-                        : `${detail.commentCount.toLocaleString()} ${
-                            detail.commentCount === 1 ? "comment" : "comments"
-                          }`
+                        ? t({ message: "Comments unavailable" })
+                        : plural(detail.commentCount, {
+                            one: `${detailCommentCountToLocaleStringText} comment`,
+                            other: `${detailCommentCountToLocaleStringText} comments`,
+                          })
                     }
                   >
                     <MessageSquareIcon aria-hidden className="size-3" />
@@ -1644,10 +1690,11 @@ export function PullRequestDetailPanel({
                     className="inline-flex items-center gap-1"
                     aria-label={
                       activityError
-                        ? "Commits unavailable"
-                        : `${detail.commits.length.toLocaleString()} ${
-                            detail.commits.length === 1 ? "commit" : "commits"
-                          }`
+                        ? t({ message: "Commits unavailable" })
+                        : plural(detail.commits.length, {
+                            one: `${detailCommitsLengthToLocaleStringText} commit`,
+                            other: `${detailCommitsLengthToLocaleStringText} commits`,
+                          })
                     }
                   >
                     <GitCommitHorizontalIcon aria-hidden className="size-3" />
@@ -1667,7 +1714,7 @@ export function PullRequestDetailPanel({
                       <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
                       {approvalCount.toLocaleString()}
                       <span className="sr-only">
-                        {approvalCount === 1 ? "approval" : "approvals"}
+                        {approvalCount === 1 ? <Trans>approval</Trans> : <Trans>approvals</Trans>}
                       </span>
                     </span>
                   ) : null}
@@ -1677,15 +1724,19 @@ export function PullRequestDetailPanel({
                   variant="ghost-muted"
                   aria-label={
                     timelineOrder === "newest"
-                      ? "Show oldest activity first"
-                      : "Show newest activity first"
+                      ? t({ message: "Show oldest activity first" })
+                      : t({ message: "Show newest activity first" })
                   }
                   onClick={() =>
                     setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
                   }
                 >
                   <ArrowDownUpIcon aria-hidden className="size-3" />
-                  {timelineOrder === "newest" ? "Newest first" : "Oldest first"}
+                  {timelineOrder === "newest" ? (
+                    <Trans>Newest first</Trans>
+                  ) : (
+                    <Trans>Oldest first</Trans>
+                  )}
                 </Button>
               </div>
             ) : null}
@@ -1723,7 +1774,7 @@ export function PullRequestDetailPanel({
           <PullRequestsUnavailableState
             {...(isPullRequestNotFound(detailQuery.failure)
               ? {
-                  title: `${capitalizeTerm(terminology.singular)} #${reference.number} not found`,
+                  title: t`${capitalizeTermText} #${reference.number} not found`,
                   error: `It may be an issue rather than a ${terminology.singular}, or this account can't see it.`,
                 }
               : { error: detailQuery.error })}

@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { memo, type MouseEventHandler, type PointerEventHandler, type ReactNode } from "react";
 import { CheckIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
@@ -137,7 +139,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             onClick={() => {
               if (canOperateThread) onInterrupt();
             }}
-            aria-label="Stop generation"
+            aria-label={t({ message: "Stop generation" })}
           />
         }
       >
@@ -145,7 +147,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>Interrupt</TooltipPopup>
+      <TooltipPopup>
+        <Trans>Interrupt</Trans>
+      </TooltipPopup>
     </Tooltip>
   );
 
@@ -161,7 +165,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
-              aria-label="Previous question"
+              aria-label={t({ message: "Previous question" })}
             >
               <ChevronLeftIcon className="size-3.5" />
             </Button>
@@ -173,7 +177,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
             >
-              Previous
+              <Trans>Previous</Trans>
             </Button>
           )
         ) : null}
@@ -222,16 +226,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const compactsBeforeSend = compactTokens !== null && !keepFullHistory;
 
   const submitLabel = showResume
-    ? "Resume thread"
+    ? t({ message: "Resume thread" })
     : isEditingQueuedMessage
-      ? "Update queued message"
+      ? t({ message: "Update queued message" })
       : compactsBeforeSend
-        ? "Compact and send"
+        ? t({ message: "Compact and send" })
         : isQueuing
-          ? "Queue message"
+          ? t({ message: "Queue message" })
           : isRunning
-            ? "Steer message"
-            : "Submit message";
+            ? t({ message: "Steer message" })
+            : t({ message: "Submit message" });
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
@@ -242,12 +246,24 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             ? "Updating queued message"
             : "Submitting message"
           : null));
+  const isMacPlatformNavigatorPlatformText =
+    submitStatus == null && !compactsBeforeSend && isRunning && !isEditingQueuedMessage && canSteer
+      ? isMacPlatform(navigator.platform)
+        ? "⌘"
+        : "Ctrl"
+      : undefined;
+  const alternateShortcutLabelText =
+    submitStatus == null && !compactsBeforeSend && isRunning && !isEditingQueuedMessage && canSteer
+      ? alternateShortcutLabel
+        ? ` or ${alternateShortcutLabel}`
+        : ""
+      : undefined;
   const submitTooltip =
     submitStatus ??
     (compactsBeforeSend
-      ? `Summarize ${compactTokens} tokens of history, then send`
+      ? t`Summarize ${compactTokens} tokens of history, then send`
       : isRunning && !isEditingQueuedMessage && canSteer
-        ? `Click to ${followUpBehavior}, ${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
+        ? t`Click to ${followUpBehavior}, ${isMacPlatformNavigatorPlatformText}-click${alternateShortcutLabelText} to ${alternateAction}`
         : submitLabel);
 
   const sendButton = (
@@ -329,17 +345,25 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         >
           <Minimize2Icon aria-hidden="true" />
           <span className="@max-[480px]/composer-surface:hidden">
-            {keepFullHistory ? "Keep" : "Compact"}
+            {keepFullHistory ? <Trans>Keep</Trans> : <Trans>Compact</Trans>}
           </span>
           <span className="text-muted-foreground">{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
           <div>
-            {keepFullHistory
-              ? `Next send keeps all ${compactTokens} tokens.`
-              : `Next send compacts ${compactTokens} tokens first.`}
+            {keepFullHistory ? (
+              <Trans>Next send keeps all {compactTokens} tokens.</Trans>
+            ) : (
+              <Trans>Next send compacts {compactTokens} tokens first.</Trans>
+            )}
           </div>
-          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
+          <div>
+            {keepFullHistory ? (
+              <Trans>Click to compact first</Trans>
+            ) : (
+              <Trans>Click to keep full history</Trans>
+            )}
+          </div>
         </TooltipPopup>
       </Tooltip>
       {children}

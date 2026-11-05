@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { AssistantCitation } from "@t3tools/contracts";
 import {
   assistantCitationLabel,
@@ -152,7 +154,7 @@ export function AssistantCitationChip({
             render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
           >
             <ArrowUpRightIcon aria-hidden="true" />
-            Go to source
+            <Trans>Go to source</Trans>
           </PopoverClose>
         </div>
       </ContextChipPopover>
@@ -178,7 +180,11 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            aria-label={
+              citation.comment
+                ? t({ message: "Edit citation comment" })
+                : t({ message: "Add comment to citation" })
+            }
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
@@ -211,7 +217,7 @@ export function AssistantCitationChip({
                   : undefined
               }
               ref={commentPopupRef}
-              aria-label="Edit citation comment"
+              aria-label={t({ message: "Edit citation comment" })}
               width="md"
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}

@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t, plural } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { useState } from "react";
@@ -82,6 +84,7 @@ export function useAutoBalanceUpdateBanner(
   const status = running ? "running" : failed ? "failed" : "idle";
   const prefix = running ? "Updating" : failed ? "Could not update" : "Update available for";
   const title = `${prefix} ${count} ${count === 1 ? "machine" : "machines"}`;
+
   return {
     id: `auto-balance-server-updates-${dismissedNotices.size}`,
     variant: failed ? "error" : "default",
@@ -105,14 +108,18 @@ export function useAutoBalanceUpdateBanner(
                   <ServerUpdateProgress state={machine.state} />
                 ) : !machine.remoteUpdate ? (
                   <>
-                    <div className="text-muted-foreground">Manual update required</div>
+                    <div className="text-muted-foreground">
+                      <Trans>Manual update required</Trans>
+                    </div>
                     <ServerUpdateAction {...machine} />
                   </>
                 ) : (
                   <div className="text-muted-foreground">
-                    {machine.connected
-                      ? `Ready to update to ${machine.targetVersion}`
-                      : "Reconnect this machine to update"}
+                    {machine.connected ? (
+                      <Trans>Ready to update to {machine.targetVersion}</Trans>
+                    ) : (
+                      <Trans>Reconnect this machine to update</Trans>
+                    )}
                   </div>
                 )}
               </div>
@@ -122,7 +129,12 @@ export function useAutoBalanceUpdateBanner(
       </Popover>
     ),
     description:
-      manual > 0 ? `${manual} ${manual === 1 ? "needs" : "need"} a manual update` : undefined,
+      manual > 0
+        ? plural(manual, {
+            one: `${manual} needs a manual update`,
+            other: `${manual} need a manual update`,
+          })
+        : undefined,
     actions:
       running === 0 && targets.length > 0 ? (
         <ServerUpdatesAction
@@ -130,10 +142,13 @@ export function useAutoBalanceUpdateBanner(
           variant="ghost"
           label={
             failed > 0
-              ? "Retry"
+              ? t({ message: "Retry" })
               : targets.length === machines.length
-                ? "Update all"
-                : `Update ${targets.length} ${targets.length === 1 ? "machine" : "machines"}`
+                ? t({ message: "Update all" })
+                : plural(targets.length, {
+                    one: `Update ${targets.length} machine`,
+                    other: `Update ${targets.length} machines`,
+                  })
           }
         />
       ) : undefined,

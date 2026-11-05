@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -249,6 +251,12 @@ export function DeviceStreamView(props: {
     portraitAspect: Math.min(aspect, 1 / aspect),
   });
 
+  const inputStateDetailText =
+    status === "streaming" && !inputState.connected
+      ? inputState.detail
+        ? ` (${inputState.detail})`
+        : ""
+      : undefined;
   return (
     <div
       className={cn(
@@ -443,7 +451,7 @@ export function DeviceStreamView(props: {
               size="xs"
               aria-pressed={!!showPhone}
               disabled={!!phoneUnavailableReason}
-              title={phoneUnavailableReason ?? "Show 3D phone"}
+              title={phoneUnavailableReason ?? t({ message: "Show 3D phone" })}
               onClick={() => setPresentation("phone")}
             >
               3D
@@ -454,14 +462,14 @@ export function DeviceStreamView(props: {
               aria-pressed={!showPhone}
               onClick={() => setPresentation("flat")}
             >
-              Flat
+              <Trans>Flat</Trans>
             </Button>
           </div>
         ) : null}
         {status === "streaming" && !inputState.connected ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…
+              <Trans>Input disconnected{inputStateDetailText}, reconnecting…</Trans>
             </span>
           </div>
         ) : null}
@@ -469,7 +477,7 @@ export function DeviceStreamView(props: {
           // Shown only once the device has been silent for two seconds.
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2 transition-opacity delay-2000 duration-0 starting:opacity-0">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Waiting for device video…
+              <Trans>Waiting for device video…</Trans>
             </span>
           </div>
         ) : null}
@@ -492,7 +500,7 @@ export function DeviceStreamView(props: {
                     session?.reconnect();
                   }}
                 >
-                  Reconnect
+                  <Trans>Reconnect</Trans>
                 </Button>
               ) : null}
             </DeviceLoadingView>

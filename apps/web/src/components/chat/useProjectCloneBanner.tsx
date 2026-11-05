@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   isAtomCommandInterrupted,
@@ -42,7 +44,8 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         stackedThreadToast({
           type: "error",
           title,
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description:
+            error instanceof Error ? error.message : t({ message: "An error occurred." }),
         }),
       );
     }
@@ -78,7 +81,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         id: `project-clone:${projectId}`,
         variant: "info",
         icon: <DownloadIcon />,
-        title: `Cloning ${name}`,
+        title: t`Cloning ${name}`,
         description: projectCloneProgressSummary(activeProjectClone),
         actions: (
           <Button
@@ -90,7 +93,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
               )
             }
           >
-            Cancel
+            <Trans>Cancel</Trans>
           </Button>
         ),
       };
@@ -100,8 +103,10 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
       id: `project-clone:${projectId}`,
       variant: cancelled ? "warning" : "error",
       icon: <DownloadIcon />,
-      title: cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`,
-      description: cancelled ? "Retry to bring in the repository." : activeProjectClone.error,
+      title: cancelled ? t`Cancelled cloning ${name}` : t`Failed to clone ${name}`,
+      description: cancelled
+        ? t({ message: "Retry to bring in the repository." })
+        : activeProjectClone.error,
       actions: (
         <>
           <Button
@@ -109,7 +114,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
             variant="ghost"
             onClick={() => void removeClonedProject({ environmentId, projectId })}
           >
-            Remove project
+            <Trans>Remove project</Trans>
           </Button>
           <Button
             size="xs"
@@ -120,7 +125,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
               )
             }
           >
-            Retry
+            <Trans>Retry</Trans>
           </Button>
         </>
       ),

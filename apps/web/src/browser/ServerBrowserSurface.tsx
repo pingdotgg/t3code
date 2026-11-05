@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import {
   createPreviewFramePainter,
   createPreviewStreamClient,
@@ -110,9 +112,9 @@ async function copyPageText(text: string) {
   } catch {
     const id = toastManager.add({
       type: "info",
-      title: "The page copied text",
+      title: t({ message: "The page copied text" }),
       actionProps: {
-        children: "Copy",
+        children: <Trans>Copy</Trans>,
         onClick: () => {
           toastManager.close(id);
           void navigator.clipboard.writeText(text).catch(() => undefined);
@@ -125,9 +127,9 @@ async function copyPageText(text: string) {
 function offerDownload(download: PreviewStreamDownload) {
   const id = toastManager.add({
     type: "info",
-    title: `Downloaded ${download.fileName}`,
+    title: t`Downloaded ${download.fileName}`,
     actionProps: {
-      children: "Save",
+      children: <Trans>Save</Trans>,
       onClick: () => {
         toastManager.close(id);
         const anchor = document.createElement("a");
@@ -189,7 +191,7 @@ export function ServerBrowserSurface(props: {
     void uploadPreviewStreamFiles(chooser, files).catch((cause: unknown) =>
       toastManager.add({
         type: "error",
-        title: "Could not send the files to the page",
+        title: t({ message: "Could not send the files to the page" }),
         description: cause instanceof Error ? cause.message : undefined,
       }),
     );
@@ -740,6 +742,18 @@ export function ServerBrowserSurface(props: {
     resetInput(textarea);
   };
 
+  const fileChooserMultipleText =
+    fileChooser && control?.controller === "you"
+      ? fileChooser.multiple
+        ? "files"
+        : "a file"
+      : undefined;
+  const fileChooserMultipleText2 =
+    fileChooser && control?.controller === "you"
+      ? fileChooser.multiple
+        ? "files"
+        : "file"
+      : undefined;
   return (
     <div
       className={cn("relative flex flex-col overflow-hidden", className)}
@@ -764,7 +778,11 @@ export function ServerBrowserSurface(props: {
               send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
             }
           >
-            {control.controller === "you" ? "Release control" : "Take control"}
+            {control.controller === "you" ? (
+              <Trans>Release control</Trans>
+            ) : (
+              <Trans>Take control</Trans>
+            )}
           </Button>
         ) : null}
       </div>
@@ -773,7 +791,7 @@ export function ServerBrowserSurface(props: {
           <embed
             src={pdfUrl}
             type="application/pdf"
-            title="PDF document"
+            title={t({ message: "PDF document" })}
             className="absolute inset-0 z-10 size-full border-0"
           />
         ) : null}
@@ -796,7 +814,7 @@ export function ServerBrowserSurface(props: {
         {/* Pin top-left to avoid focus scrolling; 16px prevents iOS focus zoom. */}
         <textarea
           ref={inputRef}
-          aria-label="Browser page"
+          aria-label={t({ message: "Browser page" })}
           aria-description="Press Shift+Escape to leave the browser page."
           autoCapitalize="off"
           autoComplete="off"
@@ -826,10 +844,10 @@ export function ServerBrowserSurface(props: {
           <div
             className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
             role="dialog"
-            aria-label="Choose files for the page"
+            aria-label={t({ message: "Choose files for the page" })}
           >
             <p className="text-sm">
-              The page asks for {fileChooser.multiple ? "files" : "a file"}.
+              <Trans>The page asks for {fileChooserMultipleText}.</Trans>
             </p>
             <input
               ref={fileInputRef}
@@ -845,10 +863,10 @@ export function ServerBrowserSurface(props: {
             />
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => answerFileChooser([])}>
-                Cancel
+                <Trans>Cancel</Trans>
               </Button>
               <Button size="sm" onClick={() => fileInputRef.current?.click()}>
-                Choose {fileChooser.multiple ? "files" : "file"}
+                <Trans>Choose {fileChooserMultipleText2}</Trans>
               </Button>
             </div>
           </div>
@@ -857,14 +875,14 @@ export function ServerBrowserSurface(props: {
           <div
             className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
             role="dialog"
-            aria-label="Browser dialog"
+            aria-label={t({ message: "Browser dialog" })}
           >
             <p className="break-words text-sm">{control.dialog.message}</p>
             {control.controller === "you" ? (
               <>
                 {control.dialog.type === "prompt" ? (
                   <Input
-                    aria-label="Dialog response"
+                    aria-label={t({ message: "Dialog response" })}
                     value={promptText}
                     onChange={(event) => setPromptText(event.target.value)}
                   />
@@ -875,7 +893,7 @@ export function ServerBrowserSurface(props: {
                     size="sm"
                     onClick={() => send({ type: "dialog", accept: false })}
                   >
-                    Dismiss
+                    <Trans>Dismiss</Trans>
                   </Button>
                   <Button
                     size="sm"
@@ -887,12 +905,14 @@ export function ServerBrowserSurface(props: {
                       })
                     }
                   >
-                    Accept
+                    <Trans>Accept</Trans>
                   </Button>
                 </div>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">Take control to respond.</p>
+              <p className="text-xs text-muted-foreground">
+                <Trans>Take control to respond.</Trans>
+              </p>
             )}
           </div>
         ) : null}
@@ -904,7 +924,7 @@ export function ServerBrowserSurface(props: {
           </p>
           <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
           <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
-            Try again
+            <Trans>Try again</Trans>
           </Button>
         </div>
       ) : null}
@@ -912,7 +932,7 @@ export function ServerBrowserSurface(props: {
         // The page can be invisible beneath an empty or unreachable state; reconnect must remain reachable.
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-3 text-center">
           <p role="alert" className="text-xs text-muted-foreground">
-            Browser connection was refused.
+            <Trans>Browser connection was refused.</Trans>
           </p>
           <Button
             variant="outline"
@@ -923,7 +943,7 @@ export function ServerBrowserSurface(props: {
               refreshPreviewStreamAccess(environmentId);
             }}
           >
-            Reconnect
+            <Trans>Reconnect</Trans>
           </Button>
         </div>
       ) : null}

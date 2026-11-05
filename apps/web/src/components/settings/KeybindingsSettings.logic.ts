@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
@@ -210,17 +211,60 @@ export interface KeybindingGroup {
 const KEYBINDING_GROUPS = [
   {
     id: "navigation",
-    title: "Navigation",
+    get title() {
+      return t({ message: "Navigation" });
+    },
     prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
   },
-  { id: "threads", title: "Threads", prefixes: ["thread", "chat", "pullRequest"] },
-  { id: "composer", title: "Composer", prefixes: ["composer", "modelPicker"] },
-  { id: "terminal", title: "Terminal", prefixes: ["terminal"] },
-  { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
-  { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
-  { id: "scripts", title: "Project scripts", prefixes: ["script"] },
+  {
+    id: "threads",
+    get title() {
+      return t({ message: "Threads" });
+    },
+    prefixes: ["thread", "chat", "pullRequest"],
+  },
+  {
+    id: "composer",
+    get title() {
+      return t({ message: "Composer" });
+    },
+    prefixes: ["composer", "modelPicker"],
+  },
+  {
+    id: "terminal",
+    get title() {
+      return t({ message: "Terminal" });
+    },
+    prefixes: ["terminal"],
+  },
+  {
+    id: "preview",
+    get title() {
+      return t({ message: "Preview & diff" });
+    },
+    prefixes: ["preview", "diff"],
+  },
+  {
+    id: "appearance",
+    get title() {
+      return t({ message: "Appearance" });
+    },
+    prefixes: ["theme", "appearance", "themeEditor"],
+  },
+  {
+    id: "scripts",
+    get title() {
+      return t({ message: "Project scripts" });
+    },
+    prefixes: ["script"],
+  },
 ] as const;
-const OTHER_KEYBINDING_GROUP = { id: "other", title: "Other" } as const;
+const OTHER_KEYBINDING_GROUP = {
+  id: "other",
+  get title() {
+    return t({ message: "Other" });
+  },
+} as const;
 
 function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
   const prefix = String(command).split(".")[0] ?? "";

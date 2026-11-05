@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import type { ServerProvider } from "@t3tools/contracts";
 import { useId } from "react";

@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import { type ComponentProps, type ReactNode, type RefObject } from "react";
 
@@ -99,22 +100,32 @@ export function CommandPaletteContent({
               <Kbd>
                 <ArrowDownIcon />
               </Kbd>
-              <span>Navigate</span>
+              <span>
+                <Trans>Navigate</Trans>
+              </span>
             </KbdGroup>
             {footerActionLabel !== undefined ? (
               <KbdGroup>
-                <Kbd>Enter</Kbd>
+                <Kbd>
+                  <Trans>Enter</Trans>
+                </Kbd>
                 <span>{footerActionLabel}</span>
               </KbdGroup>
             ) : null}
             {showBackHint ? (
               <KbdGroup>
-                <Kbd>Backspace</Kbd>
-                <span>Back</span>
+                <Kbd>
+                  <Trans>Backspace</Trans>
+                </Kbd>
+                <span>
+                  <Trans>Back</Trans>
+                </span>
               </KbdGroup>
             ) : null}
             <KbdGroup>
-              <Kbd>Esc</Kbd>
+              <Kbd>
+                <Trans>Esc</Trans>
+              </Kbd>
               <span>{escapeLabel}</span>
             </KbdGroup>
           </div>

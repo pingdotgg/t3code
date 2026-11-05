@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   formatFilePathForClipboard,
   type MediaActionId,
@@ -141,19 +142,23 @@ export function MediaActions({
         typeof ClipboardItem !== "undefined";
       const items: ContextMenuItem<MediaActionId>[] = [];
       if (reference?.kind === "file") {
-        items.push({ id: "copy-full-path", label: "Copy full path" });
+        items.push({ id: "copy-full-path", label: t({ message: "Copy full path" }) });
         if (reference.relativePath)
-          items.push({ id: "copy-relative-path", label: "Copy relative path" });
+          items.push({ id: "copy-relative-path", label: t({ message: "Copy relative path" }) });
       } else if (reference?.kind === "url") {
-        items.push({ id: "copy-url", label: "Copy URL" });
+        items.push({ id: "copy-url", label: t({ message: "Copy URL" }) });
       }
       if (source.onOpenFile)
-        items.push({ id: "open-file", label: "Open in file viewer", disabled: !canReadMedia });
-      items.push({ id: "save", label: `Save ${noun}`, disabled: unavailable });
+        items.push({
+          id: "open-file",
+          label: t({ message: "Open in file viewer" }),
+          disabled: !canReadMedia,
+        });
+      items.push({ id: "save", label: t`Save ${noun}`, disabled: unavailable });
       if (source.kind === "image") {
         items.push({
           id: "copy-image",
-          label: "Copy image",
+          label: t({ message: "Copy image" }),
           disabled: unavailable || !canCopyImage,
         });
       }
@@ -175,7 +180,8 @@ export function MediaActions({
         await writeTextToClipboard(clipboardText, reference?.kind === "file" ? "file path" : "URL");
         toastManager.add({
           type: "success",
-          title: action === "copy-url" ? "URL copied" : "Path copied",
+          title:
+            action === "copy-url" ? t({ message: "URL copied" }) : t({ message: "Path copied" }),
         });
       } else if (action === "open-file") {
         assertCanReadMedia();
@@ -183,12 +189,14 @@ export function MediaActions({
       } else if (action === "save" || action === "copy-image") {
         progressToast = toastManager.add({
           type: "loading",
-          title: action === "save" ? `Preparing ${noun} download…` : "Copying image…",
+          title:
+            action === "save" ? t`Preparing ${noun} download…` : t({ message: "Copying image…" }),
         });
         await (action === "save" ? save() : copyImage());
         toastManager.update(progressToast, {
           type: "success",
-          title: action === "save" ? "Download started" : "Image copied",
+          title:
+            action === "save" ? t({ message: "Download started" }) : t({ message: "Image copied" }),
         });
       }
     });
@@ -197,7 +205,8 @@ export function MediaActions({
       const toast = stackedThreadToast({
         type: "error",
         title: failureTitle,
-        description: error instanceof Error ? error.message : "The media action failed.",
+        description:
+          error instanceof Error ? error.message : t({ message: "The media action failed." }),
       });
       if (progressToast) toastManager.update(progressToast, toast);
       else toastManager.add(toast);

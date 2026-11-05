@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
 
@@ -38,7 +39,7 @@ export function PullRequestDiffUnavailableState({
       <div className="flex flex-wrap justify-center gap-2">
         <Button size="sm" variant="default" onClick={onRetry}>
           <RefreshIcon />
-          Try again
+          <Trans>Try again</Trans>
         </Button>
         <Button
           size="sm"
@@ -46,12 +47,12 @@ export function PullRequestDiffUnavailableState({
           render={<a href={url} target="_blank" rel="noopener noreferrer" />}
         >
           <ExternalLinkIcon aria-hidden />
-          Open on {providerName}
+          <Trans>Open on {providerName}</Trans>
         </Button>
       </div>
       <details className="w-full max-w-lg text-xs text-muted-foreground">
         <summary className="mx-auto w-fit cursor-pointer rounded-sm -outline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-          Technical details
+          <Trans>Technical details</Trans>
         </summary>
         <pre className="scrollbar-gutter-both mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-left font-mono text-xs">
           {error}

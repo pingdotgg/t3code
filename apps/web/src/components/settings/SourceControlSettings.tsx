@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon } from "lucide-react";
 import * as Option from "effect/Option";
@@ -77,21 +79,21 @@ function authPresentation(auth: SourceControlProviderAuth): {
   readonly badge: "secondary" | null;
 } {
   if (auth.status === "authenticated") {
-    return { label: "Authenticated", badge: null };
+    return { label: t({ message: "Authenticated" }), badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return { label: "Not authenticated", badge: "secondary" };
+    return { label: t({ message: "Not authenticated" }), badge: "secondary" };
   }
-  return { label: "Status unknown", badge: null };
+  return { label: t({ message: "Status unknown" }), badge: null };
 }
 
 function RedactedAccount(props: { readonly account: string | null }) {
   return (
     <RedactedSensitiveText
       value={props.account}
-      ariaLabel="Toggle source control account visibility"
-      revealTooltip="Click to reveal account"
-      hideTooltip="Click to hide account"
+      ariaLabel={t({ message: "Toggle source control account visibility" })}
+      revealTooltip={t({ message: "Click to reveal account" })}
+      hideTooltip={t({ message: "Click to hide account" })}
     />
   );
 }
@@ -153,11 +155,19 @@ function itemSummary({
   readonly authAccount: string | null;
 }) {
   if (isVcsNotReady(item)) {
-    return <span>Support for {item.label} is coming soon.</span>;
+    return (
+      <span>
+        <Trans>Support for {item.label} is coming soon.</Trans>
+      </span>
+    );
   }
 
   if (item.status !== "available") {
-    return <span>Not available on this server: {item.installHint}</span>;
+    return (
+      <span>
+        <Trans>Not available on this server: {item.installHint}</Trans>
+      </span>
+    );
   }
 
   if (auth) {
@@ -165,10 +175,14 @@ function itemSummary({
       const authDetail = optionLabel(auth.detail);
       return (
         <>
-          <span>Authenticated</span>
+          <span>
+            <Trans>Authenticated</Trans>
+          </span>
           {authAccount ? (
             <>
-              <span aria-hidden>as</span>
+              <span aria-hidden>
+                <Trans>as</Trans>
+              </span>
               <RedactedAccount account={authAccount} />
             </>
           ) : null}
@@ -178,31 +192,48 @@ function itemSummary({
     }
 
     if (!item.executable && auth.status === "unauthenticated") {
-      return <span>Available. {item.installHint}</span>;
+      return (
+        <span>
+          <Trans>Available. {item.installHint}</Trans>
+        </span>
+      );
     }
 
     if (auth.status === "unauthenticated" && auth.accounts?.some((entry) => entry.authenticated)) {
-      return <span>{optionLabel(auth.detail) ?? `Every ${item.label} host is turned off.`}</span>;
+      return (
+        <span>
+          {optionLabel(auth.detail) ?? <Trans>Every {item.label} host is turned off.</Trans>}
+        </span>
+      );
     }
 
     if (auth.status === "unauthenticated") {
       return (
         <span>
-          {item.label} is not authenticated on this server. Sign in or configure credentials using
-          the <code className="rounded bg-muted px-1 py-px text-2xs">{item.executable}</code> tool
-          on the server host to enable change request features.
+          <Trans>
+            {item.label} is not authenticated on this server. Sign in or configure credentials using
+            the <code className="rounded bg-muted px-1 py-px text-2xs">{item.executable}</code> tool
+            on the server host to enable change request features.
+          </Trans>
         </span>
       );
     }
     const authDetail = optionLabel(auth.detail);
+    const authDetailText = authDetail ?? item.installHint;
     return (
       <span>
-        Could not verify {item.label}. {authDetail ?? item.installHint}
+        <Trans>
+          Could not verify {item.label}. {authDetailText}
+        </Trans>
       </span>
     );
   }
 
-  return <span>Available</span>;
+  return (
+    <span>
+      <Trans>Available</Trans>
+    </span>
+  );
 }
 
 function DiscoveryItemRow({
@@ -245,7 +276,7 @@ function DiscoveryItemRow({
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
-                  Coming Soon
+                  <Trans>Coming Soon</Trans>
                 </Badge>
               ) : null}
               {authStatus?.badge ? (
@@ -340,25 +371,37 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+    <SettingsSection
+      id={searchableSetting("source-control").id}
+      title={t({ message: "Server environment" })}
+    >
       <Empty>
         <EmptyMedia variant="icon">
           <PullRequestGlyph.pullRequest />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
-            {hasError ? "Could not scan the server environment" : "Nothing detected yet"}
+            {hasError ? (
+              <Trans>Could not scan the server environment</Trans>
+            ) : (
+              <Trans>Nothing detected yet</Trans>
+            )}
           </EmptyTitle>
           <EmptyDescription>
-            {hasError
-              ? error
-              : "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan."}
+            {hasError ? (
+              error
+            ) : (
+              <Trans>
+                Install Git on the server, add optional hosting integrations or credentials your
+                workspace needs, then rescan.
+              </Trans>
+            )}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
             <RefreshIcon size="sm" refreshing={isPending} />
-            Scan
+            <Trans>Scan</Trans>
           </Button>
         </EmptyContent>
       </Empty>
@@ -408,9 +451,11 @@ export function SourceControlSettingsPanel() {
             ) : null}
             {credentials.appSignIn && item.appSignIn === true ? (
               <div className="flex items-center gap-3 text-2xs text-muted-foreground">
-                <span aria-hidden className="h-px flex-1 bg-border" />
-                Or use your own credentials
-                <span aria-hidden className="h-px flex-1 bg-border" />
+                <Trans>
+                  <span aria-hidden className="h-px flex-1 bg-border" />
+                  Or use your own credentials
+                  <span aria-hidden className="h-px flex-1 bg-border" />
+                </Trans>
               </div>
             ) : null}
             <SourceControlTokenSettings
@@ -454,13 +499,15 @@ export function SourceControlSettingsPanel() {
             variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
-            aria-label="Rescan server environment"
+            aria-label={t({ message: "Rescan server environment" })}
           >
             <RefreshIcon refreshing={discovery.isPending} />
           </Button>
         }
       />
-      <TooltipPopup side="top">Rescan Git and hosting integrations</TooltipPopup>
+      <TooltipPopup side="top">
+        <Trans>Rescan Git and hosting integrations</Trans>
+      </TooltipPopup>
     </Tooltip>
   );
 
@@ -468,9 +515,14 @@ export function SourceControlSettingsPanel() {
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
-        <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+        <SettingsSection
+          id={searchableSetting("source-control").id}
+          title={t({ message: "Server environment" })}
+        >
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Connect an environment to inspect its version control tools and hosting integrations.
+            <Trans>
+              Connect an environment to inspect its version control tools and hosting integrations.
+            </Trans>
           </p>
         </SettingsSection>
       ) : isInitialScanPending ? (
@@ -479,7 +531,7 @@ export function SourceControlSettingsPanel() {
             title={`Version Control${environmentSuffix}`}
             headerAction={scanButton}
           />
-          <SourceControlSectionSkeleton title="Source control providers" />
+          <SourceControlSectionSkeleton title={t({ message: "Source control providers" })} />
         </>
       ) : hasDiscoveryItems ? (
         <>
@@ -500,8 +552,8 @@ export function SourceControlSettingsPanel() {
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
               title={
                 hasVersionControlSystems
-                  ? "Source control providers"
-                  : `Source control providers${environmentSuffix}`
+                  ? t({ message: "Source control providers" })
+                  : t`Source control providers${environmentSuffix}`
               }
               headerAction={hasVersionControlSystems ? null : scanButton}
             >

@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
@@ -21,7 +22,9 @@ export interface CommandPaletteProjectLocation {
 
 const UNKNOWN_PROJECT_LOCATION: CommandPaletteProjectLocation = {
   kind: "remote",
-  label: "Remote",
+  get label() {
+    return t({ message: "Remote" });
+  },
   machine: "server",
 };
 

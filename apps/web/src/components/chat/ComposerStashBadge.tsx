@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { BookmarkIcon } from "lucide-react";
 import { memo } from "react";
 
@@ -54,7 +55,9 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         <ComposerBanner.Icon>
           <BookmarkIcon />
         </ComposerBanner.Icon>
-        <ComposerBanner.Content>Stash</ComposerBanner.Content>
+        <ComposerBanner.Content>
+          <Trans>Stash</Trans>
+        </ComposerBanner.Content>
         <ComposerBanner.Actions>{count}</ComposerBanner.Actions>
       </ComposerBanner.Row>
     </ComposerBanner.Root>

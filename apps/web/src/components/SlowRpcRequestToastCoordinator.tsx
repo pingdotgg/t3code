@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { type SlowRpcAckRequest, subscribeSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import { toastManager } from "./ui/toast";
 
@@ -13,17 +15,22 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
   return (
     <ul className="space-y-2.5 text-xs text-muted-foreground">
-      {requests.map((request) => (
-        <li
-          className="min-w-0 border-border/50 border-b pb-2 last:border-b-0 last:pb-0"
-          key={request.requestId}
-        >
-          <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
-          <div className="mt-0.5 text-3xs opacity-75">
-            Started {new Date(request.startedAt).toLocaleTimeString()}
-          </div>
-        </li>
-      ))}
+      {requests.map((request) => {
+        const newDateRequestStartedAtToLocaleTimeStringText = new Date(
+          request.startedAt,
+        ).toLocaleTimeString();
+        return (
+          <li
+            className="min-w-0 border-border/50 border-b pb-2 last:border-b-0 last:pb-0"
+            key={request.requestId}
+          >
+            <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
+            <div className="mt-0.5 text-3xs opacity-75">
+              <Trans>Started {newDateRequestStartedAtToLocaleTimeStringText}</Trans>
+            </div>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -49,7 +56,7 @@ export function startSlowRpcRequestToasts(): () => void {
       },
       description: describeSlowRequests(slowRequests),
       timeout: 0,
-      title: "Some requests are slow",
+      title: t({ message: "Some requests are slow" }),
       type: "warning" as const,
     };
 

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   codexFeedbackNotice,
   type CodexFeedbackSubmission,
@@ -31,14 +33,15 @@ export function feedbackBannerItem(
               (error: unknown) => {
                 toastManager.add({
                   type: "error",
-                  title: "Could not copy thread ID",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: t({ message: "Could not copy thread ID" }),
+                  description:
+                    error instanceof Error ? error.message : t({ message: "An error occurred." }),
                 });
               },
             );
           }}
         >
-          Copy ID
+          <Trans>Copy ID</Trans>
         </Button>
       ) : undefined,
     ...(submission.status !== "uploading"

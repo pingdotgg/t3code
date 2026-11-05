@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
@@ -37,7 +39,9 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />
-      <span className="max-sm:sr-only">Restore device defaults</span>
+      <span className="max-sm:sr-only">
+        <Trans>Restore device defaults</Trans>
+      </span>
     </Button>
   );
 }
@@ -62,9 +66,16 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         targetId={hash}
         eligibleEnvironmentIds={autoSettlementAvailability.eligibleEnvironmentIds}
       >
-        {autoSettlementAvailability.eligibleEnvironmentIds.length > 0
-          ? `${searchTarget.title} requires a supporting environment. Choose one to continue.`
-          : `${searchTarget.title} requires a supporting environment. Connect or update an environment to continue.`}
+        {autoSettlementAvailability.eligibleEnvironmentIds.length > 0 ? (
+          <Trans>
+            {searchTarget.title} requires a supporting environment. Choose one to continue.
+          </Trans>
+        ) : (
+          <Trans>
+            {searchTarget.title} requires a supporting environment. Connect or update an environment
+            to continue.
+          </Trans>
+        )}
       </SettingsScopeNotice>
     );
   }
@@ -81,7 +92,12 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         : "all";
     return (
       <SettingsScopeNotice target={target} targetId={hash}>
-        {`${searchTarget.title} is not available for the selected target. Choose its owning scope to continue.`}
+        {
+          <Trans>
+            {searchTarget.title} is not available for the selected target. Choose its owning scope
+            to continue.
+          </Trans>
+        }
       </SettingsScopeNotice>
     );
   }
@@ -98,7 +114,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          <Trans>Reconnect {scope.label} to change its settings.</Trans>
         </p>
       </SettingsPageContainer>
     );
@@ -117,7 +133,7 @@ function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal label="Settings">
+    <AppRouteModal label={t({ message: "Settings" })}>
       <div className="relative flex min-h-0 flex-1">
         <SettingsSidebarNav pathname={location.pathname} />
         <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">

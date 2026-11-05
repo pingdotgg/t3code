@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
@@ -395,8 +396,10 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "info",
-          title: "Annotation attached to draft",
-          description: "Sending is unavailable right now. Finish the current action, then send.",
+          title: t({ message: "Annotation attached to draft" }),
+          description: t({
+            message: "Sending is unavailable right now. Finish the current action, then send.",
+          }),
         }),
       );
     };
@@ -435,8 +438,10 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add({
         ...stackedThreadToast({
           type: "warning",
-          title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
+          title: t({ message: "Not connected: message not sent" }),
+          description: t({
+            message: "Reconnecting to the environment. Try again once it is connected.",
+          }),
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
@@ -455,7 +460,7 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Side chat not started",
+          title: t({ message: "Side chat not started" }),
           description: sideChatDisabledReason,
         }),
       );
@@ -474,8 +479,8 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: "Side chats take text only",
-            description: "Remove the attachments and context, then send it again.",
+            title: t({ message: "Side chats take text only" }),
+            description: t({ message: "Remove the attachments and context, then send it again." }),
           }),
         );
         return;
@@ -530,9 +535,11 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Choose models and a base branch",
-          description:
-            "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+          title: t({ message: "Choose models and a base branch" }),
+          description: t({
+            message:
+              "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+          }),
         }),
       );
       return;
@@ -578,8 +585,8 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Attached thread is on another machine",
-          description: `This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
+          title: t({ message: "Attached thread is on another machine" }),
+          description: t`This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
         }),
       );
       return;
@@ -633,8 +640,8 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: "Start a Codex thread first",
-            description: "Send a message before you submit feedback.",
+            title: t({ message: "Start a Codex thread first" }),
+            description: t({ message: "Send a message before you submit feedback." }),
           }),
         );
         return;
@@ -711,8 +718,8 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Choose a project first",
-          description: "This draft no longer points to an available project.",
+          title: t({ message: "Choose a project first" }),
+          description: t({ message: "This draft no longer points to an available project." }),
         }),
       );
       return;
@@ -1021,7 +1028,7 @@ export function useComposerSend(input: ComposerSendInput) {
           toastManager.add({
             type: "info",
             title: notice,
-            description: "Send again when it's ready.",
+            description: t({ message: "Send again when it's ready." }),
           });
         }
         return;
@@ -1261,7 +1268,7 @@ export function useComposerSend(input: ComposerSendInput) {
           toastManager.add(
             stackedThreadToast({
               type: "warning",
-              title: "Could not open a fresh composer",
+              title: t({ message: "Could not open a fresh composer" }),
               description: error instanceof Error ? error.message : undefined,
             }),
           );
@@ -1292,7 +1299,7 @@ export function useComposerSend(input: ComposerSendInput) {
             toastManager.add(
               stackedThreadToast({
                 type: "success",
-                title: "Started in background",
+                title: t({ message: "Started in background" }),
                 timeout: 5_000,
                 actionProps: {
                   children: "Open",
@@ -1366,9 +1373,10 @@ export function useComposerSend(input: ComposerSendInput) {
               type: "error",
               title:
                 submissionIntent === "background"
-                  ? "Background task failed"
-                  : "Could not start thread",
-              description: error instanceof Error ? error.message : "Failed to send message.",
+                  ? t({ message: "Background task failed" })
+                  : t({ message: "Could not start thread" }),
+              description:
+                error instanceof Error ? error.message : t({ message: "Failed to send message." }),
               actionProps: {
                 children: "Open draft",
                 onClick: () => {

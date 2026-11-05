@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 /* oxlint-disable react/no-array-index-key -- Spreadsheet rows and columns retain their source positions. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
@@ -160,9 +162,11 @@ function ExtendedOfficeViewer(props: {
         role="alert"
         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
       >
-        <p className="text-sm font-medium">No preview for this file</p>
+        <p className="text-sm font-medium">
+          <Trans>No preview for this file</Trans>
+        </p>
         <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-          {error} Save it or open it in another app.
+          <Trans>{error} Save it or open it in another app.</Trans>
         </p>
       </div>
     );
@@ -180,6 +184,33 @@ function ExtendedOfficeViewer(props: {
     navigation === "chapter"
       ? `Chapter ${page + 1} of ${documentCount}`
       : `${documentCount} ${navigation}${documentCount === 1 ? "" : "s"}`;
+  const navigationSlideText =
+    count > 0 && !workbook && !(previewDocument?.navigation === "chapter")
+      ? navigation === "slide"
+        ? "Slide"
+        : "Page"
+      : undefined;
+  const pageText =
+    count > 0 && !workbook && !(previewDocument?.navigation === "chapter") ? page + 1 : undefined;
+  const pageText2 = props.kind === "ods" && sheet ? page + 1 : undefined;
+  const sheetRowCountToLocaleStringText =
+    props.kind === "ods" && sheet ? sheet.rowCount.toLocaleString() : undefined;
+  const sheetColumnsToLocaleStringText =
+    props.kind === "ods" && sheet ? sheet.columns.toLocaleString() : undefined;
+  const fileSizeUndefinedText =
+    props.kind === "ods" && sheet
+      ? fileSize !== undefined
+        ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}`
+        : ""
+      : undefined;
+  const sheetTruncatedText =
+    !documentPage && sheet
+      ? sheet.truncated
+        ? props.kind === "ods"
+          ? " Limited to 500 rows and 50 columns."
+          : " Preview limited to 250,000 rows, 1,024 columns, and bounded cell text."
+        : ""
+      : undefined;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {count > 0 ? (
@@ -199,7 +230,7 @@ function ExtendedOfficeViewer(props: {
                   if (value !== null) selectPage(value);
                 }}
               >
-                <SelectTrigger aria-label="Sheet" size="xs">
+                <SelectTrigger aria-label={t({ message: "Sheet" })} size="xs">
                   <SelectValue>{sheet?.name}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -219,7 +250,7 @@ function ExtendedOfficeViewer(props: {
                   if (value !== null) selectPage(value);
                 }}
               >
-                <SelectTrigger aria-label="Chapter" size="xs">
+                <SelectTrigger aria-label={t({ message: "Chapter" })} size="xs">
                   <SelectValue>{documentPage?.title}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -233,7 +264,9 @@ function ExtendedOfficeViewer(props: {
             </div>
           ) : (
             <span className="flex-1 text-center tabular-nums" aria-live="polite">
-              {navigation === "slide" ? "Slide" : "Page"} {page + 1} of {count}
+              <Trans>
+                {navigationSlideText} {pageText} of {count}
+              </Trans>
             </span>
           )}
           <FileSurfaceAction
@@ -250,18 +283,20 @@ function ExtendedOfficeViewer(props: {
           className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
           role="status"
         >
-          Sheet {page + 1} of {count} · {sheet.rowCount.toLocaleString()} rows ·{" "}
-          {sheet.columns.toLocaleString()} columns
-          {fileSize !== undefined
-            ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}`
-            : ""}
+          <Trans>
+            Sheet {pageText2} of {count} · {sheetRowCountToLocaleStringText} rows ·{" "}
+            {sheetColumnsToLocaleStringText} columns
+            {fileSizeUndefinedText}
+          </Trans>
         </div>
       ) : null}
       {documentPage ? (
         <>
           {props.kind !== "epub" ? (
             <FileSurfaceNotice>
-              Text and images. Layout and embedded objects may differ from the original.
+              <Trans>
+                Text and images. Layout and embedded objects may differ from the original.
+              </Trans>
             </FileSurfaceNotice>
           ) : null}
           <Suspense fallback={<FileSurfaceLoading />}>
@@ -275,15 +310,15 @@ function ExtendedOfficeViewer(props: {
       ) : sheet ? (
         <>
           <FileSurfaceNotice>
-            Cell values only. Charts, images, and formatting are not shown.
-            {sheet.truncated
-              ? props.kind === "ods"
-                ? " Limited to 500 rows and 50 columns."
-                : " Preview limited to 250,000 rows, 1,024 columns, and bounded cell text."
-              : ""}
+            <Trans>
+              Cell values only. Charts, images, and formatting are not shown.
+              {sheetTruncatedText}
+            </Trans>
           </FileSurfaceNotice>
           {sheet.rowCount === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">This sheet is empty.</p>
+            <p className="p-6 text-xs text-muted-foreground">
+              <Trans>This sheet is empty.</Trans>
+            </p>
           ) : (
             <VirtualTablePreview
               key={page}

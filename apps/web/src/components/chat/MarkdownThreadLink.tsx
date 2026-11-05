@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   formatHostedThreadLink,

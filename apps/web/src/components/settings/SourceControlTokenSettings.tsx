@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   isSecretReference,
   type EnvironmentId,
@@ -38,7 +40,7 @@ export function SourceControlTokenSettings({
     readHostCredentialSettings(settings, definition.kind),
   );
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: `save ${definition.label} token`,
+    label: t`save ${definition.label} token`,
   });
   const defaultHost = definition.publicHost ?? "";
   const [host, setHost] = useState(defaultHost);
@@ -77,6 +79,22 @@ export function SourceControlTokenSettings({
     }
   };
 
+  const normalizedHostDefaultHostText =
+    normalizedHost || defaultHost ? (
+      <InlineButton
+        render={
+          <a
+            href={credentials.newTokenUrl(normalizedHost || defaultHost)}
+            target="_blank"
+            rel="noreferrer noopener"
+          />
+        }
+      >
+        <Trans>Create a token</Trans>
+        <ExternalLinkIcon aria-hidden className="size-3" />
+      </InlineButton>
+    ) : null;
+  const savedHostsJoinText = !(savedHosts.length === 0) ? savedHosts.join(", ") : undefined;
   return (
     <form
       className="grid gap-3"
@@ -88,30 +106,20 @@ export function SourceControlTokenSettings({
       {/* Locked while saving: a successful save clears the draft, which would drop edits made mid-request. */}
       <fieldset disabled={saving} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          A token saved here is used before{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.tokenEnvVar}</code>{" "}
-          and the{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.cliName}</code> login,
-          so {definition.label} works without the {credentials.cliLabel}. Give it{" "}
-          {credentials.tokenAccess}.{" "}
-          {normalizedHost || defaultHost ? (
-            <InlineButton
-              render={
-                <a
-                  href={credentials.newTokenUrl(normalizedHost || defaultHost)}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                />
-              }
-            >
-              Create a token
-              <ExternalLinkIcon aria-hidden className="size-3" />
-            </InlineButton>
-          ) : null}
+          <Trans>
+            A token saved here is used before{" "}
+            <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.tokenEnvVar}</code>{" "}
+            and the{" "}
+            <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.cliName}</code>{" "}
+            login, so {definition.label} works without the {credentials.cliLabel}. Give it{" "}
+            {credentials.tokenAccess}. {normalizedHostDefaultHostText}
+          </Trans>
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>Host</Label>
+            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>
+              <Trans>Host</Trans>
+            </Label>
             <Input
               id={`${definition.kind}-token-host-${environmentId}`}
               autoComplete="off"
@@ -122,7 +130,9 @@ export function SourceControlTokenSettings({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>Token</Label>
+            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>
+              <Trans>Token</Trans>
+            </Label>
             <SecretSourceInput
               id={`${definition.kind}-token-${environmentId}`}
               size="sm"
@@ -137,9 +147,14 @@ export function SourceControlTokenSettings({
         </div>
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
-            {savedHosts.length === 0
-              ? `No token saved; the server uses ${credentials.tokenEnvVar} or the ${credentials.cliName} login.`
-              : `Saved for ${savedHosts.join(", ")}.`}
+            {savedHosts.length === 0 ? (
+              <Trans>
+                No token saved; the server uses {credentials.tokenEnvVar} or the{" "}
+                {credentials.cliName} login.
+              </Trans>
+            ) : (
+              <Trans>Saved for {savedHostsJoinText}.</Trans>
+            )}
           </p>
           <div className="flex shrink-0 gap-2">
             {isSaved ? (
@@ -149,7 +164,7 @@ export function SourceControlTokenSettings({
                 disabled={saving}
                 onClick={() => void save(normalizedHost, "")}
               >
-                Remove
+                <Trans>Remove</Trans>
               </Button>
             ) : null}
             <Button
@@ -157,7 +172,7 @@ export function SourceControlTokenSettings({
               size="xs"
               disabled={!normalizedHost || submission === "" || saving}
             >
-              Save
+              <Trans>Save</Trans>
             </Button>
           </div>
         </div>

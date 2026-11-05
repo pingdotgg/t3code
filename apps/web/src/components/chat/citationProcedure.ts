@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { type AtomCommandSuccess, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { Atom, type AtomRegistry } from "effect/reactivity";
@@ -38,15 +39,27 @@ const MAX_CITATION_PAGES = 20;
 
 const COULD_NOT_LOAD = {
   _tag: "failed",
-  title: "Could not load the cited response",
-  description:
-    "Load earlier turns, then click the citation to try again. Your saved quote is unchanged.",
+  get title() {
+    return t({ message: "Could not load the cited response" });
+  },
+  get description() {
+    return t({
+      message:
+        "Load earlier turns, then click the citation to try again. Your saved quote is unchanged.",
+    });
+  },
 } as const;
 
 const UNAVAILABLE = {
   _tag: "failed",
-  title: "The cited response is unavailable",
-  description: "It may have been removed. The selected text is still saved in your citation.",
+  get title() {
+    return t({ message: "The cited response is unavailable" });
+  },
+  get description() {
+    return t({
+      message: "It may have been removed. The selected text is still saved in your citation.",
+    });
+  },
 } as const;
 
 /**
@@ -68,8 +81,8 @@ export async function loadCitedHistory(input: {
     if (thread.message === "other") {
       return {
         _tag: "failed",
-        title: "The citation does not refer to an assistant response",
-        description: "The selected text is still saved in your citation.",
+        title: t({ message: "The citation does not refer to an assistant response" }),
+        description: t({ message: "The selected text is still saved in your citation." }),
       };
     }
     if (!thread.hasMoreHistory) return UNAVAILABLE;
@@ -202,7 +215,7 @@ const citedHistoryAtom = Atom.family(
             get.registry,
             threadEnvironment.loadEarlierHistory,
             { environmentId, input: { threadId, throughEntryId: messageId } },
-            { label: "load cited thread history", reportFailure: false },
+            { label: t({ message: "load cited thread history" }), reportFailure: false },
           );
           return result._tag === "Success"
             ? result.value

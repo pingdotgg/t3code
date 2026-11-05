@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   EDITORS,
   type ContextMenuItem,
@@ -63,7 +64,7 @@ function buildFileContextMenuItems(input: {
   if (!input.hasAbsolutePath) return [];
   const items: ContextMenuItem<FileContextMenuAction>[] = [];
   if (input.capabilities.canOpenDefault) {
-    items.push({ id: "open", label: "Open", icon: "pencil" });
+    items.push({ id: "open", label: t({ message: "Open" }), icon: "pencil" });
   }
   if (input.capabilities.revealLabel !== undefined) {
     items.push({
@@ -76,7 +77,7 @@ function buildFileContextMenuItems(input: {
   if (editorIds.length > 0) {
     items.push({
       id: "open-with",
-      label: "Open with",
+      label: t({ message: "Open with" }),
       children: editorIds.map((editorId) => ({
         id: `editor:${editorId}` as FileContextMenuAction,
         label: EDITOR_LABEL_BY_ID.get(editorId) ?? editorId,
@@ -124,14 +125,16 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },
     });
     if (result._tag !== "Failure") return;
+    const EDITORLABELBYIDGetEditorText =
+      !(action === "open") && !reveal ? (EDITOR_LABEL_BY_ID.get(editor) ?? editor) : undefined;
     toastManager.add({
       type: "error",
       title:
         action === "open"
-          ? "Could not open file"
+          ? t({ message: "Could not open file" })
           : reveal
-            ? "Unable to reveal file"
-            : `Could not open in ${EDITOR_LABEL_BY_ID.get(editor) ?? editor}`,
+            ? t({ message: "Unable to reveal file" })
+            : t`Could not open in ${EDITORLABELBYIDGetEditorText}`,
       description: absolutePath,
     });
   };

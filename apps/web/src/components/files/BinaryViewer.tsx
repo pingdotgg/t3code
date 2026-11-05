@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 /* oxlint-disable react/no-array-index-key -- Read-only cells retain their database row and column positions. */
 import {
   decodeFilePreviewText,
@@ -63,12 +65,16 @@ function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<
     return url ? <PreviewImage key={url} src={url} name={props.path} /> : <FileSurfaceLoading />;
   if (!text)
     return (
-      <FileSurfaceFailure message="Only UTF-8 text and images can be opened inside an archive." />
+      <FileSurfaceFailure
+        message={t({ message: "Only UTF-8 text and images can be opened inside an archive." })}
+      />
     );
   return (
     <>
       {text.truncated ? (
-        <FileSurfaceNotice>Preview limited to the first 1 MB.</FileSurfaceNotice>
+        <FileSurfaceNotice>
+          <Trans>Preview limited to the first 1 MB.</Trans>
+        </FileSurfaceNotice>
       ) : null}
       <Suspense fallback={<FileSurfaceLoading />}>
         <SourcePreview name={props.path} text={text.text} />
@@ -190,12 +196,40 @@ export default function BinaryViewer(props: {
     if (previous) previous.size += item.size;
     else children.set(key, { path, directory, size: item.size, modified: item.modified });
   }
+  const archiveEntriesLengthToLocaleStringText = archive
+    ? archive.entries.length.toLocaleString()
+    : undefined;
+  const sizeBytesNullText = archive
+    ? sizeBytes !== null
+      ? ` · ${formatAttachmentSize(sizeBytes)}`
+      : ""
+    : undefined;
+  const tableCountToLocaleStringText = database && table ? table.count.toLocaleString() : undefined;
+  const pageSQLITEPAGESIZEText =
+    database && table && !(table.count === 0) ? page * SQLITE_PAGE_SIZE + 1 : undefined;
+  const MathMinText =
+    database && table && !(table.count === 0)
+      ? Math.min(table.count, (page + 1) * SQLITE_PAGE_SIZE)
+      : undefined;
+  const tableCountToLocaleStringText2 =
+    database && table && !(table.count === 0) ? table.count.toLocaleString() : undefined;
+  const tableCountToLocaleStringText3 =
+    database && table ? table.count.toLocaleString() : undefined;
+  const rowsColumnsLengthText = database && table ? (rows?.columns.length ?? "…") : undefined;
+  const sizeBytesNullText2 =
+    database && table
+      ? sizeBytes !== null
+        ? ` · ${formatAttachmentSize(sizeBytes)}`
+        : ""
+      : undefined;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {archive ? (
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs">
           <FileSurfaceAction
-            label={selectedPath ? "Back to archive" : "Parent folder"}
+            label={
+              selectedPath ? t({ message: "Back to archive" }) : t({ message: "Parent folder" })
+            }
             disabled={!selectedPath && !folder}
             onPress={() => {
               setError(null);
@@ -210,8 +244,10 @@ export default function BinaryViewer(props: {
             {selectedPath ?? (folder || "Archive contents")}
           </span>
           <span className="shrink-0 text-muted-foreground">
-            {archive.entries.length.toLocaleString()} entries
-            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
+            <Trans>
+              {archiveEntriesLengthToLocaleStringText} entries
+              {sizeBytesNullText}
+            </Trans>
           </span>
         </div>
       ) : null}
@@ -225,34 +261,50 @@ export default function BinaryViewer(props: {
                   if (!busy && value !== null) selectPage(0, value);
                 }}
               >
-                <SelectTrigger aria-label="Table" aria-disabled={busy} aria-busy={busy} size="xs">
+                <SelectTrigger
+                  aria-label={t({ message: "Table" })}
+                  aria-disabled={busy}
+                  aria-busy={busy}
+                  size="xs"
+                >
                   <SelectValue>
-                    {table.name} ({table.count.toLocaleString()} rows)
+                    <Trans>
+                      {table.name} ({tableCountToLocaleStringText} rows)
+                    </Trans>
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  {database.tables.map((item) => (
-                    <SelectItem key={item.name} value={item.name}>
-                      {item.name} ({item.count.toLocaleString()} rows)
-                    </SelectItem>
-                  ))}
+                  {database.tables.map((item) => {
+                    const itemCountToLocaleStringText = item.count.toLocaleString();
+                    return (
+                      <SelectItem key={item.name} value={item.name}>
+                        <Trans>
+                          {item.name} ({itemCountToLocaleStringText} rows)
+                        </Trans>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectPopup>
               </Select>
             </div>
             <FileSurfaceAction
-              label="Previous rows"
+              label={t({ message: "Previous rows" })}
               disabled={busy || page === 0}
               onPress={() => selectPage(page - 1)}
             >
               <ChevronLeftIcon className="size-3.5" />
             </FileSurfaceAction>
             <span className="shrink-0 tabular-nums" aria-live="polite">
-              {table.count === 0
-                ? "0 rows"
-                : `${page * SQLITE_PAGE_SIZE + 1}–${Math.min(table.count, (page + 1) * SQLITE_PAGE_SIZE)} of ${table.count.toLocaleString()}`}
+              {table.count === 0 ? (
+                <Trans>0 rows</Trans>
+              ) : (
+                <Trans>
+                  {pageSQLITEPAGESIZEText}–{MathMinText} of {tableCountToLocaleStringText2}
+                </Trans>
+              )}
             </span>
             <FileSurfaceAction
-              label="Next rows"
+              label={t({ message: "Next rows" })}
               disabled={busy || (page + 1) * SQLITE_PAGE_SIZE >= table.count}
               onPress={() => selectPage(page + 1)}
             >
@@ -263,11 +315,15 @@ export default function BinaryViewer(props: {
             className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
             role="status"
           >
-            {table.count.toLocaleString()} rows · {rows?.columns.length ?? "…"} columns
-            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
+            <Trans>
+              {tableCountToLocaleStringText3} rows · {rowsColumnsLengthText} columns
+              {sizeBytesNullText2}
+            </Trans>
           </div>
           <FileSurfaceNotice>
-            Read-only. Up to 50 columns and 1,024 characters per cell. Blob contents are omitted.
+            <Trans>
+              Read-only. Up to 50 columns and 1,024 characters per cell. Blob contents are omitted.
+            </Trans>
           </FileSurfaceNotice>
         </>
       ) : null}
@@ -285,19 +341,19 @@ export default function BinaryViewer(props: {
       ) : archive ? (
         <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
           <table
-            aria-label="Archive entries"
+            aria-label={t({ message: "Archive entries" })}
             className="w-full border-separate border-spacing-0 text-xs"
           >
             <thead className="sticky top-0 bg-background text-muted-foreground">
               <tr>
                 <th scope="col" className="px-3 py-2 text-left font-normal">
-                  Name
+                  <Trans>Name</Trans>
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-normal">
-                  Size
+                  <Trans>Size</Trans>
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-normal">
-                  Modified
+                  <Trans>Modified</Trans>
                 </th>
               </tr>
             </thead>
@@ -344,7 +400,9 @@ export default function BinaryViewer(props: {
             </tbody>
           </table>
           {children.size === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">This folder is empty.</p>
+            <p className="p-6 text-xs text-muted-foreground">
+              <Trans>This folder is empty.</Trans>
+            </p>
           ) : null}
         </div>
       ) : rows ? (
@@ -382,11 +440,15 @@ export default function BinaryViewer(props: {
             </tbody>
           </table>
           {rows.rows.length === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">This table is empty.</p>
+            <p className="p-6 text-xs text-muted-foreground">
+              <Trans>This table is empty.</Trans>
+            </p>
           ) : null}
         </div>
       ) : (
-        <p className="p-6 text-xs text-muted-foreground">This database has no readable tables.</p>
+        <p className="p-6 text-xs text-muted-foreground">
+          <Trans>This database has no readable tables.</Trans>
+        </p>
       )}
     </div>
   );

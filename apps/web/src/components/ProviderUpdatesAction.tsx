@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
@@ -96,7 +97,7 @@ export function ProviderUpdatesAction() {
             disabled={isPending}
             onClick={() => void handleUpdate()}
           >
-            {isPending ? "Updating…" : "Update all"}
+            {isPending ? <Trans>Updating…</Trans> : <Trans>Update all</Trans>}
           </Button>
         }
       />

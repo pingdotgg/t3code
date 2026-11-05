@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { ReactNode } from "react";
 import type { DeviceToolVersions as ToolVersions } from "@t3tools/contracts";
 import { InlineButton } from "~/components/ui/button";
@@ -24,29 +26,37 @@ export function DeviceToolVersions({
       : selected?.installedVersions
           .toSorted((a, b) => a.localeCompare(b, undefined, { numeric: true }))
           .at(-1));
-  const label = kind === "hub" ? "Device hub" : "Agent device";
+  const label = kind === "hub" ? t({ message: "Device hub" }) : t({ message: "Agent device" });
+  const ownerText = owner ? `Managed by ${owner}. ` : "";
+  const versionText = kind
+    ? version
+      ? `version ${version}`
+      : selected
+        ? "not installed"
+        : "version unknown"
+    : undefined;
   return (
     <Popover>
       <PopoverTrigger
-        aria-label={
-          kind
-            ? `${label}: ${version ? `version ${version}` : selected ? "not installed" : "version unknown"}. Show details`
-            : undefined
-        }
+        aria-label={kind ? t`${label}: ${versionText}. Show details` : undefined}
         render={<InlineButton tone="muted" />}
       >
-        {kind
-          ? version
-            ? `v${version}`
-            : selected
-              ? "Not installed"
-              : "Version unknown"
-          : error
-            ? "Versions unavailable"
-            : "Versions"}
+        {kind ? (
+          version ? (
+            <Trans>v{version}</Trans>
+          ) : selected ? (
+            <Trans>Not installed</Trans>
+          ) : (
+            <Trans>Version unknown</Trans>
+          )
+        ) : error ? (
+          <Trans>Versions unavailable</Trans>
+        ) : (
+          <Trans>Versions</Trans>
+        )}
       </PopoverTrigger>
       <PopoverPopup align="end" width="md">
-        <PopoverTitle>{kind ? label : "Device tools"}</PopoverTitle>
+        <PopoverTitle>{kind ? label : <Trans>Device tools</Trans>}</PopoverTitle>
         {tools ? (
           <div className="mt-4 divide-y divide-border/50">
             {(
@@ -60,23 +70,33 @@ export function DeviceToolVersions({
                 <div key={name} className="space-y-2 py-3 first:pt-0 last:pb-0">
                   {!kind ? <p className="text-xs font-medium">{name}</p> : null}
                   <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-xs">
-                    <dt className="text-muted-foreground">Running</dt>
-                    <dd className="text-right font-mono">{tool.runningVersion ?? "Not running"}</dd>
-                    <dt className="text-muted-foreground">Required</dt>
+                    <dt className="text-muted-foreground">
+                      <Trans>Running</Trans>
+                    </dt>
+                    <dd className="text-right font-mono">
+                      {tool.runningVersion ?? <Trans>Not running</Trans>}
+                    </dd>
+                    <dt className="text-muted-foreground">
+                      <Trans>Required</Trans>
+                    </dt>
                     <dd className="text-right font-mono">{tool.requiredVersion}</dd>
-                    <dt className="text-muted-foreground">Installed</dt>
+                    <dt className="text-muted-foreground">
+                      <Trans>Installed</Trans>
+                    </dt>
                     <dd className="text-right font-mono break-words">
-                      {tool.installedVersions.join(", ") || "None"}
+                      {tool.installedVersions.join(", ") || <Trans>None</Trans>}
                     </dd>
                   </dl>
                 </div>
               ))}
           </div>
         ) : (
-          <p className="mt-3 text-xs text-muted-foreground">Versions have not been checked.</p>
+          <p className="mt-3 text-xs text-muted-foreground">
+            <Trans>Versions have not been checked.</Trans>
+          </p>
         )}
         <p className="mt-4 border-t border-border/50 pt-3 text-xs text-muted-foreground">
-          {owner ? `Managed by ${owner}. ` : ""}Tools update automatically on this host when needed.
+          <Trans>{ownerText}Tools update automatically on this host when needed.</Trans>
         </p>
         {error ? (
           <p role="status" className="mt-2 text-xs text-destructive">

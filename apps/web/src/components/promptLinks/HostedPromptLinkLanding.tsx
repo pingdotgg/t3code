@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans, Plural } from "@palamedes/react/macro";
 import {
   type LinkedPrompt,
   parseNewThreadLink,
@@ -30,8 +32,12 @@ interface LinkSummary {
 }
 
 const PROMPT_HEADER = {
-  title: "Open this prompt",
-  description: "It opens as a draft. Nothing runs until you press Send.",
+  get title() {
+    return t({ message: "Open this prompt" });
+  },
+  get description() {
+    return t({ message: "It opens as a draft. Nothing runs until you press Send." });
+  },
 };
 
 function summarize(
@@ -46,8 +52,10 @@ function summarize(
       value:
         prompt.value === null
           ? {
-              title: "Open this thread",
-              description: "It opens in T3 Code if you're connected to the machine it runs on.",
+              title: t({ message: "Open this thread" }),
+              description: t({
+                message: "It opens in T3 Code if you're connected to the machine it runs on.",
+              }),
               prompt: null,
               details: [],
             }
@@ -136,21 +144,30 @@ function HostedPromptLinkLanding({
   if (!summary.ok) {
     return (
       <StandalonePage>
-        <StandalonePageHeader title="Could not open the link" description={summary.error} />
+        <StandalonePageHeader
+          title={t({ message: "Could not open the link" })}
+          description={summary.error}
+        />
       </StandalonePage>
     );
   }
 
   const { title, description, prompt, details } = summary.value;
+
   return (
     <StandalonePage>
       <StandalonePageHeader title={title} description={description} />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">
-          <AlertTitle>This prompt had hidden characters, it may be malicious</AlertTitle>
+          <AlertTitle>
+            <Trans>This prompt had hidden characters, it may be malicious</Trans>
+          </AlertTitle>
           <AlertDescription>
-            T3 Code removed {prompt.hiddenCharacters} hidden character
-            {prompt.hiddenCharacters === 1 ? "" : "s"}. Read the prompt before you send it.
+            <Plural
+              value={prompt.hiddenCharacters}
+              one={`T3 Code removed ${prompt.hiddenCharacters} hidden character. Read the prompt before you send it.`}
+              other={`T3 Code removed ${prompt.hiddenCharacters} hidden characters. Read the prompt before you send it.`}
+            />
           </AlertDescription>
         </Alert>
       ) : null}
@@ -164,20 +181,20 @@ function HostedPromptLinkLanding({
       ) : null}
       <div className="mt-6 flex flex-wrap gap-2">
         <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
-          {onPhone ? "Open in app" : "Open in desktop app"}
+          {onPhone ? <Trans>Open in app</Trans> : <Trans>Open in desktop app</Trans>}
         </Button>
         {canContinue ? (
           <Button variant="outline" onClick={() => onChoose("browser", remember)}>
-            Continue here
+            <Trans>Continue here</Trans>
           </Button>
         ) : null}
         <Button variant="ghost" render={<a href={DESKTOP_DOWNLOAD_URL} />}>
-          Get T3 Code
+          <Trans>Get T3 Code</Trans>
         </Button>
       </div>
       <label className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
         <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked === true)} />
-        Remember my choice
+        <Trans>Remember my choice</Trans>
       </label>
     </StandalonePage>
   );

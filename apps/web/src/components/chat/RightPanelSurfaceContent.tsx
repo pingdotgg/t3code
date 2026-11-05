@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type {
   EditorId,
   EnvironmentId,
@@ -123,7 +124,7 @@ export function RightPanelSurfaceContent(props: {
       if (!pullRequest.supported) {
         return (
           <PullRequestsUnavailableState
-            title="Pull requests unavailable"
+            title={t({ message: "Pull requests unavailable" })}
             error="Update this environment's T3 Code server to browse pull requests."
           />
         );

@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, LayersIcon } from "lucide-react";
@@ -34,7 +35,7 @@ export function SettingsScopeNotice({
   eligibleEnvironmentIds,
   inline = false,
 }: {
-  children: string;
+  children: ReactNode;
   /** Renders inside a section instead of as its own page. */
   inline?: boolean;
   target: "environment" | "all" | "project" | "checkout";
@@ -114,7 +115,7 @@ export function SettingsScopeNotice({
               })
           : [
               {
-                label: "Open all environments",
+                label: t({ message: "Open all environments" }),
                 icon: <LayersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />,
                 search: {},
               },

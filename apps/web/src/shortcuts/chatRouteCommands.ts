@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { AuthPreviewOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 
@@ -147,8 +148,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: "Preview is desktop-only",
-              description: "Open T3 Code in the desktop app to use the in-app preview.",
+              title: t({ message: "Preview is desktop-only" }),
+              description: t({
+                message: "Open T3 Code in the desktop app to use the in-app preview.",
+              }),
             }),
           );
           return;

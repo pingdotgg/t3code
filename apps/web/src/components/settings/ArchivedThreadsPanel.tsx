@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { Spinner } from "~/components/ui/spinner";
 import { ArchiveIcon, ArchiveX, Trash2Icon } from "lucide-react";
@@ -201,17 +203,19 @@ export function ArchivedThreadsPanel() {
                 ) : (
                   <ArchiveIcon className="size-3.5 text-muted-foreground" />
                 )}
-                {isLoadingArchive
-                  ? "Loading archived threads"
-                  : archiveError
-                    ? "Could not load archived threads"
-                    : "No archived threads"}
+                {isLoadingArchive ? (
+                  <Trans>Loading archived threads</Trans>
+                ) : archiveError ? (
+                  <Trans>Could not load archived threads</Trans>
+                ) : (
+                  <Trans>No archived threads</Trans>
+                )}
               </span>
             }
             description={
               isLoadingArchive
-                ? "Checking connected environments."
-                : (archiveError ?? "Archived threads will appear here.")
+                ? t({ message: "Checking connected environments." })
+                : (archiveError ?? t({ message: "Archived threads will appear here." }))
             }
           />
         </SettingsSection>

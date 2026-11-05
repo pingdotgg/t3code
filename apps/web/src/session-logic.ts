@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
@@ -303,8 +304,8 @@ export function providerErrorPresentation(
     return {
       label:
         item.failure.class === "usage_limit"
-          ? "Usage limit reached"
-          : item.title?.trim() || "Provider error",
+          ? t({ message: "Usage limit reached" })
+          : item.title?.trim() || t({ message: "Provider error" }),
       detail: item.failure.message,
     };
   }
@@ -312,14 +313,20 @@ export function providerErrorPresentation(
     item.retry.maxAttempts === null
       ? `${item.retry.attempt}`
       : `${item.retry.attempt}/${item.retry.maxAttempts}`;
+  const itemFailureClassUsageLimitText =
+    !(item.status === "running") && !(item.status === "completed") && item.status === "failed"
+      ? item.failure.class === "usage_limit"
+        ? "Usage limit reached"
+        : "Provider error"
+      : undefined;
   const label =
     item.status === "running"
-      ? `Retrying provider (${progress})`
+      ? t`Retrying provider (${progress})`
       : item.status === "completed"
-        ? `Provider recovered (${progress} retries)`
+        ? t`Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
-          : `Provider retry stopped (${progress})`;
+          ? t`${itemFailureClassUsageLimitText} after ${progress} retries`
+          : t`Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
       ? item.retry.retryDelayMs < 1_000
@@ -351,7 +358,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "thread_created":
       return {
         ...common,
-        label: "Created thread",
+        label: t({ message: "Created thread" }),
       };
     case "compaction":
       return {
@@ -363,13 +370,13 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "reasoning":
       return {
         ...common,
-        label: title ?? "Thinking",
+        label: title ?? t({ message: "Thinking" }),
         ...(item.text ? { detail: item.text } : {}),
       };
     case "command_execution":
       return {
         ...common,
-        label: title ?? "Ran command",
+        label: title ?? t({ message: "Ran command" }),
         command: item.input,
         rawCommand: item.input,
         toolTitle: title ?? "Command",
@@ -381,8 +388,8 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         label:
           title ??
           (item.changes !== undefined && item.changes.length > 1
-            ? `Changed ${item.changes.length} files`
-            : `Changed ${item.fileName}`),
+            ? t`Changed ${item.changes.length} files`
+            : t`Changed ${item.fileName}`),
         changedFiles: item.changes?.map((change) => change.path) ?? [item.fileName],
         toolTitle: title ?? "File change",
         toolData: item,
@@ -391,7 +398,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "file_search":
       return {
         ...common,
-        label: title ?? formatSearchToolLabel(item) ?? "Searched files",
+        label: title ?? formatSearchToolLabel(item) ?? t({ message: "Searched files" }),
         ...(item.pattern ? { detail: item.pattern } : {}),
         toolTitle: title ?? "File search",
         toolData: item,
@@ -399,7 +406,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "web_search":
       return {
         ...common,
-        label: title ?? "Searched the web",
+        label: title ?? t({ message: "Searched the web" }),
         ...(item.patterns?.length ? { detail: item.patterns.join(", ") } : {}),
         toolTitle: title ?? "Web search",
         toolData: item,
@@ -407,7 +414,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "checkpoint":
       return {
         ...common,
-        label: title ?? "Checkpoint captured",
+        label: title ?? t({ message: "Checkpoint captured" }),
         changedFiles: item.files.map((file) => file.path),
         toolData: item,
       };
@@ -443,8 +450,10 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
           (classified === "read"
             ? formatReadToolLabel(readPath ?? "")
             : classified === "search"
-              ? (formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call")
-              : (item.toolName ?? "Tool call")),
+              ? (formatSearchToolLabel({ input: item.input }) ??
+                item.toolName ??
+                t({ message: "Tool call" }))
+              : (item.toolName ?? t({ message: "Tool call" }))),
         toolTitle: title ?? item.toolName ?? "Tool",
         toolData: { input: item.input, output: item.output },
       };
@@ -455,22 +464,27 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       const current =
         item.steps.find((step) => step.status === "running") ??
         item.steps.find((step) => step.status === "pending");
+      const currentText = current ? ` · ${current.text}` : "";
       return {
         ...common,
-        label: `Tasks ${done}/${item.steps.length}${current ? ` · ${current.text}` : ""}`,
+        label: t`Tasks ${done}/${item.steps.length}${currentText}`,
       };
     }
     case "approval_request":
       return {
         ...common,
-        label: title ?? "Approval requested",
+        label: title ?? t({ message: "Approval requested" }),
         detail: item.prompt ?? item.requestKind,
         toolData: item,
       };
     case "user_input_request":
       return {
         ...common,
-        label: title ?? (item.questionAnswer ? "Answered questions" : "Input requested"),
+        label:
+          title ??
+          (item.questionAnswer
+            ? t({ message: "Answered questions" })
+            : t({ message: "Input requested" })),
         ...(item.questionAnswer ? { questionAnswer: item.questionAnswer } : {}),
         toolData: item,
       };

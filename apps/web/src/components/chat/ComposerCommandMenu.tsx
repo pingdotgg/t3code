@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
@@ -165,18 +166,22 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         ) : (
           <div className="px-5 pt-3.5 pb-7">
             <p className="text-secondary-label text-xs">
-              {props.isLoading
-                ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
-                  ? "Searching workspace skills..."
-                  : props.triggerKind === "pull-request"
-                    ? "Finding pull request..."
-                    : "Searching workspace files..."
-                : (props.emptyStateText ??
-                  (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
-                    : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+              {props.isLoading ? (
+                props.triggerKind === "skill" || props.triggerKind === "slash-command" ? (
+                  <Trans>Searching workspace skills...</Trans>
+                ) : props.triggerKind === "pull-request" ? (
+                  <Trans>Finding pull request...</Trans>
+                ) : (
+                  <Trans>Searching workspace files...</Trans>
+                )
+              ) : (
+                (props.emptyStateText ??
+                (props.triggerKind === "skill"
+                  ? "No skills found. Try / to browse provider commands."
+                  : props.triggerKind === "path"
+                    ? "No matching files or folders."
+                    : "No matching command."))
+              )}
             </p>
           </div>
         )}
@@ -256,7 +261,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
           {isSlashSkill ? (
             <>
-              <span className="text-secondary-label">/skill:</span>
+              <span className="text-secondary-label">
+                <Trans>/skill:</Trans>
+              </span>
               {formatProviderSkillDisplayName(isSlashSkill)}
             </>
           ) : (
@@ -313,7 +320,7 @@ function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffi
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
       {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
-      {props.showSkillSuffix ? " Skill" : null}
+      {props.showSkillSuffix ? <Trans> Skill</Trans> : null}
     </Badge>
   );
 }

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
@@ -175,8 +177,9 @@ export function UsagePriceOverrides({
   const locked = pending || failedDestinations.length > 0;
   const hasChanges = stagedDrafts.length > 0;
   const destinationLabel =
-    selected.length === 1 ? selected[0]!.label : `${selected.length} environments`;
-  const selectionLabel = selectedIds === null ? "All environments" : destinationLabel;
+    selected.length === 1 ? selected[0]!.label : t`${selected.length} environments`;
+  const selectionLabel =
+    selectedIds === null ? t({ message: "All environments" }) : destinationLabel;
   const discard = () => {
     setDrafts([]);
     setAttempt(null);
@@ -266,6 +269,11 @@ export function UsagePriceOverrides({
     if (!failed) setDrafts([]);
   };
 
+  const selectedLength1Text = !(selected.length === 0)
+    ? selected.length > 1
+      ? " Mixed cells keep each environment’s rate until you edit them."
+      : ""
+    : undefined;
   return (
     <Dialog
       open
@@ -275,16 +283,20 @@ export function UsagePriceOverrides({
     >
       <DialogPopup className="max-w-4xl">
         <DialogHeader>
-          <DialogTitle>Custom model prices</DialogTitle>
+          <DialogTitle>
+            <Trans>Custom model prices</Trans>
+          </DialogTitle>
           <DialogDescription>
-            Prices and mappings apply to all past and future usage on the environments you select.
+            <Trans>
+              Prices and mappings apply to all past and future usage on the environments you select.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <Label id="usage-prices-apply-label" className="shrink-0">
-                Apply to
+                <Trans>Apply to</Trans>
               </Label>
               <Menu>
                 <MenuTrigger
@@ -303,7 +315,7 @@ export function UsagePriceOverrides({
                     closeOnClick={false}
                     onCheckedChange={(checked) => selectEnvironments(checked ? null : new Set())}
                   >
-                    All environments
+                    <Trans>All environments</Trans>
                   </MenuCheckboxItem>
                   <MenuSeparator />
                   {environments.map((environment) => (
@@ -331,18 +343,25 @@ export function UsagePriceOverrides({
                 </MenuPopup>
               </Menu>
             </div>
-            <span className="text-xs text-muted-foreground">USD / million tokens</span>
+            <span className="text-xs text-muted-foreground">
+              <Trans>USD / million tokens</Trans>
+            </span>
           </div>
           {selected.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {environments.length === 0
-                ? "Connect an environment to set model prices."
-                : "Select an environment to see and change its model prices."}
+              {environments.length === 0 ? (
+                <Trans>Connect an environment to set model prices.</Trans>
+              ) : (
+                <Trans>Select an environment to see and change its model prices.</Trans>
+              )}
             </p>
           ) : (
             <>
               <div className="min-w-0 overflow-hidden rounded-lg border border-border">
-                <Table className="min-w-180 table-fixed" aria-label="Custom model prices">
+                <Table
+                  className="min-w-180 table-fixed"
+                  aria-label={t({ message: "Custom model prices" })}
+                >
                   <colgroup>
                     <col className="w-[22%]" />
                     <col className="w-[18%]" />
@@ -353,8 +372,12 @@ export function UsagePriceOverrides({
                   </colgroup>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Model ID</TableHead>
-                      <TableHead>Map to</TableHead>
+                      <TableHead>
+                        <Trans>Model ID</Trans>
+                      </TableHead>
+                      <TableHead>
+                        <Trans>Map to</Trans>
+                      </TableHead>
                       {USAGE_PRICE_FIELDS.map((field) => (
                         <TableHead key={field.key}>{field.label}</TableHead>
                       ))}
@@ -362,7 +385,7 @@ export function UsagePriceOverrides({
                         <Button
                           size="icon-xs"
                           variant="ghost"
-                          aria-label="Add model price"
+                          aria-label={t({ message: "Add model price" })}
                           disabled={locked}
                           onClick={() => {
                             const id = `new:${nextRowId.current++}`;
@@ -380,9 +403,11 @@ export function UsagePriceOverrides({
                       <TableRow>
                         <TableCell colSpan={7} className="text-center whitespace-normal">
                           <p className="py-6 text-muted-foreground">
-                            {selected.some((environment) => environment.prices === null)
-                              ? "Some environment prices are unavailable."
-                              : "No custom prices or mappings. Add a row to set one."}
+                            {selected.some((environment) => environment.prices === null) ? (
+                              <Trans>Some environment prices are unavailable.</Trans>
+                            ) : (
+                              <Trans>No custom prices or mappings. Add a row to set one.</Trans>
+                            )}
                           </p>
                         </TableCell>
                       </TableRow>
@@ -403,12 +428,12 @@ export function UsagePriceOverrides({
                                       focusRowRef.current = null;
                                     }
                                   }}
-                                  aria-label="New model ID"
+                                  aria-label={t({ message: "New model ID" })}
                                   aria-invalid={
                                     (row.model.trim() !== "" && errors.has(row.id)) || undefined
                                   }
                                   list="usage-price-models"
-                                  placeholder="Model ID"
+                                  placeholder={t({ message: "Model ID" })}
                                   autoComplete="off"
                                   spellCheck={false}
                                   disabled={locked}
@@ -437,7 +462,7 @@ export function UsagePriceOverrides({
                             {row.removed ? (
                               <TableCell colSpan={5}>
                                 <span className="text-muted-foreground">
-                                  Automatic pricing after saving
+                                  <Trans>Automatic pricing after saving</Trans>
                                 </span>
                               </TableCell>
                             ) : (
@@ -447,7 +472,9 @@ export function UsagePriceOverrides({
                                   value={row.alias ?? aliasCell.value}
                                   aria-label={`Map ${row.model || "new model"} to model`}
                                   list="usage-alias-models"
-                                  placeholder={row.isNew ? "Optional" : aliasCell.placeholder}
+                                  placeholder={
+                                    row.isNew ? t({ message: "Optional" }) : aliasCell.placeholder
+                                  }
                                   autoComplete="off"
                                   spellCheck={false}
                                   disabled={locked}
@@ -458,7 +485,7 @@ export function UsagePriceOverrides({
                             {row.removed ? null : alias !== "" ? (
                               <TableCell colSpan={4} className="whitespace-normal">
                                 <span className="break-all text-muted-foreground">
-                                  Counted as {alias}
+                                  <Trans>Counted as {alias}</Trans>
                                 </span>
                               </TableCell>
                             ) : (
@@ -476,7 +503,7 @@ export function UsagePriceOverrides({
                                       placeholder={
                                         row.isNew
                                           ? field.optional
-                                            ? "Input rate"
+                                            ? t({ message: "Input rate" })
                                             : "0.00"
                                           : cell.placeholder
                                       }
@@ -499,10 +526,10 @@ export function UsagePriceOverrides({
                                   disabled={locked}
                                   aria-label={
                                     row.removed
-                                      ? `Undo reset for ${row.model}`
+                                      ? t`Undo reset for ${row.model}`
                                       : row.isNew
-                                        ? "Remove new model"
-                                        : `Reset price for ${row.model} to automatic`
+                                        ? t({ message: "Remove new model" })
+                                        : t`Reset price for ${row.model} to automatic`
                                   }
                                   onClick={() => {
                                     if (row.isNew)
@@ -521,11 +548,13 @@ export function UsagePriceOverrides({
                                   )}
                                 </TooltipTrigger>
                                 <TooltipPopup>
-                                  {row.removed
-                                    ? "Undo reset"
-                                    : row.isNew
-                                      ? "Remove row"
-                                      : "Reset to automatic"}
+                                  {row.removed ? (
+                                    <Trans>Undo reset</Trans>
+                                  ) : row.isNew ? (
+                                    <Trans>Remove row</Trans>
+                                  ) : (
+                                    <Trans>Reset to automatic</Trans>
+                                  )}
                                 </TooltipPopup>
                               </Tooltip>
                             </TableCell>
@@ -555,11 +584,11 @@ export function UsagePriceOverrides({
                   ))}
               </datalist>
               <p className="text-xs text-muted-foreground">
-                Blank cache rates use the input price. Enter 0 for free tokens. A mapped model’s
-                usage counts as the model it maps to.
-                {selected.length > 1
-                  ? " Mixed cells keep each environment’s rate until you edit them."
-                  : ""}
+                <Trans>
+                  Blank cache rates use the input price. Enter 0 for free tokens. A mapped model’s
+                  usage counts as the model it maps to.
+                  {selectedLength1Text}
+                </Trans>
               </p>
             </>
           )}
@@ -577,11 +606,13 @@ export function UsagePriceOverrides({
                           : "text-muted-foreground"
                       }
                     >
-                      {result?.status === "failed"
-                        ? `Not saved · ${result.error}`
-                        : result?.status === "saved"
-                          ? "Saved"
-                          : "Saving…"}
+                      {result?.status === "failed" ? (
+                        <Trans>Not saved · {result.error}</Trans>
+                      ) : result?.status === "saved" ? (
+                        <Trans>Saved</Trans>
+                      ) : (
+                        <Trans>Saving…</Trans>
+                      )}
                     </span>
                   </div>
                 );
@@ -591,12 +622,16 @@ export function UsagePriceOverrides({
         </DialogPanel>
         <DialogFooter variant="bare" className="items-center sm:justify-between">
           <span className="text-xs text-muted-foreground">
-            {hasChanges ? `Changes apply to ${destinationLabel}` : ""}
+            {hasChanges ? <Trans>Changes apply to {destinationLabel}</Trans> : ""}
           </span>
           <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto">
             {hasChanges ? (
               <Button variant="ghost" disabled={pending} onClick={discard}>
-                {failedDestinations.length > 0 ? "Discard pending changes" : "Discard changes"}
+                {failedDestinations.length > 0 ? (
+                  <Trans>Discard pending changes</Trans>
+                ) : (
+                  <Trans>Discard changes</Trans>
+                )}
               </Button>
             ) : null}
             <Button
@@ -607,11 +642,13 @@ export function UsagePriceOverrides({
               }
               onClick={() => void save(failedDestinations.length > 0)}
             >
-              {pending
-                ? "Saving…"
-                : failedDestinations.length > 0
-                  ? "Retry failed saves"
-                  : "Save changes"}
+              {pending ? (
+                <Trans>Saving…</Trans>
+              ) : failedDestinations.length > 0 ? (
+                <Trans>Retry failed saves</Trans>
+              ) : (
+                <Trans>Save changes</Trans>
+              )}
             </Button>
           </div>
         </DialogFooter>

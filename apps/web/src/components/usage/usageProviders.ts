@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
@@ -17,12 +18,16 @@ export const PROVIDER_PRESENTATION = {
     driverKind: ProviderDriverKind.make("codex"),
   },
   claude: {
-    label: "Claude Code",
+    get label() {
+      return t({ message: "Claude Code" });
+    },
     color: "#d97757",
     driverKind: ProviderDriverKind.make("claudeAgent"),
   },
   grok: {
-    label: "Grok Build",
+    get label() {
+      return t({ message: "Grok Build" });
+    },
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     driverKind: ProviderDriverKind.make("grok"),
   },
@@ -33,17 +38,23 @@ export const PROVIDER_PRESENTATION = {
     driverKind: ProviderDriverKind.make("opencode"),
   },
   antigravity: {
-    label: "Antigravity",
+    get label() {
+      return t({ message: "Antigravity" });
+    },
     color: "#8c7bd1",
     driverKind: ProviderDriverKind.make("antigravity"),
   },
   pi: {
-    label: "Pi",
+    get label() {
+      return t({ message: "Pi" });
+    },
     color: "#4d9f8a",
     driverKind: ProviderDriverKind.make("pi"),
   },
   muse: {
-    label: "Muse Code",
+    get label() {
+      return t({ message: "Muse Code" });
+    },
     color: "#0866ff",
     driverKind: ProviderDriverKind.make("muse"),
   },

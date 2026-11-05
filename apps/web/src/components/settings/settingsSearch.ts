@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
@@ -90,13 +91,27 @@ export interface SettingsSearchAvailability {
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
-  "/settings/diagnostics": "Diagnostics",
-  "/settings/projects": "Projects",
-  "/settings/general": "General",
-  "/settings/appearance": "Appearance",
-  "/settings/chat": "Chat",
-  "/settings/diffs": "Diffs & pull requests",
-  "/settings/keybindings": "Keybindings",
+  get "/settings/diagnostics"() {
+    return t({ message: "Diagnostics" });
+  },
+  get "/settings/projects"() {
+    return t({ message: "Projects" });
+  },
+  get "/settings/general"() {
+    return t({ message: "General" });
+  },
+  get "/settings/appearance"() {
+    return t({ message: "Appearance" });
+  },
+  get "/settings/chat"() {
+    return t({ message: "Chat" });
+  },
+  get "/settings/diffs"() {
+    return t({ message: "Diffs & pull requests" });
+  },
+  get "/settings/keybindings"() {
+    return t({ message: "Keybindings" });
+  },
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/threads": "Threads",
@@ -133,7 +148,9 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: "Agents",
+    get heading() {
+      return t({ message: "Agents" });
+    },
     paths: [
       "/settings/providers",
       "/settings/threads",
@@ -143,11 +160,15 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: "Code",
+    get heading() {
+      return t({ message: "Code" });
+    },
     paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
   },
   {
-    heading: "Connections",
+    get heading() {
+      return t({ message: "Connections" });
+    },
     paths: [
       "/settings/connections",
       "/settings/access",
@@ -198,8 +219,8 @@ export function sourceControlHostSearchItems(
       {
         id: sourceControlHostSettingsSearchId(definition.kind),
         title: credentials
-          ? `${definition.label} accounts and token`
-          : `${definition.label} credentials`,
+          ? t`${definition.label} accounts and token`
+          : t`${definition.label} credentials`,
         to: "/settings/source-control" as const,
         searchTerms: [
           credentials
@@ -225,258 +246,414 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
-    title: "Keep worktrees with local changes",
+    get title() {
+      return t({ message: "Keep worktrees with local changes" });
+    },
     to: "/settings/worktrees",
     scope: "project-defaults",
     searchTerms: [
+      "Keep worktrees with local changes",
+      "Worktrees",
       "any local files uncommitted changes edited tracked files ignored env build output cleanup",
     ],
   },
   {
     id: "storage-delete-now",
-    title: "Delete now",
+    get title() {
+      return t({ message: "Delete now" });
+    },
     to: "/settings/maintenance",
     scope: "environment-defaults",
-    searchTerms: ["storage cleanup run now results report removed kept failed"],
+    searchTerms: [
+      "Delete now",
+      "Maintenance",
+      "storage cleanup run now results report removed kept failed",
+    ],
   },
   {
     id: "storage-worktrees",
-    title: "Worktree cleanup",
+    get title() {
+      return t({ message: "Worktree cleanup" });
+    },
     to: "/settings/worktrees",
     scope: "project-defaults",
     searchTerms: [
+      "Worktree cleanup",
+      "Worktrees",
       "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom",
     ],
   },
   {
     id: "storage-worktrees-location",
-    title: "Worktree location",
+    get title() {
+      return t({ message: "Worktree location" });
+    },
     to: "/settings/worktrees",
     scope: "environment-defaults",
-    searchTerms: ["worktree location folder directory path drive external disk"],
+    searchTerms: [
+      "Worktree location",
+      "Worktrees",
+      "worktree location folder directory path drive external disk",
+    ],
   },
   {
     id: "storage-artifacts",
-    title: "Artifacts and logs",
+    get title() {
+      return t({ message: "Artifacts and logs" });
+    },
     to: "/settings/maintenance",
     scope: "environment-defaults",
     searchTerms: [
+      "Artifacts and logs",
+      "Maintenance",
       "disk storage delete old browser artifacts screenshots captures rotated logs cleanup retention",
     ],
   },
   {
     id: "project-defaults",
-    title: "Project defaults and overrides",
+    get title() {
+      return t({ message: "Project defaults and overrides" });
+    },
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: ["model workspace environments projects inheritance checkout"],
+    searchTerms: [
+      "Project defaults and overrides",
+      "Threads",
+      "model workspace environments projects inheritance checkout",
+    ],
   },
   {
     id: "project-overview",
-    title: "Project overview",
+    get title() {
+      return t({ message: "Project overview" });
+    },
     to: "/settings/projects",
-    searchTerms: ["name icon emoji image checkout remove delete"],
+    searchTerms: ["Project overview", "Projects", "name icon emoji image checkout remove delete"],
   },
   {
     id: "default-model",
-    title: "Default model",
+    get title() {
+      return t({ message: "Default model" });
+    },
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: ["new thread project provider reasoning effort"],
+    searchTerms: ["Default model", "Threads", "new thread project provider reasoning effort"],
   },
   {
     id: "fallback-model",
-    title: "Fallback model",
+    get title() {
+      return t({ message: "Fallback model" });
+    },
     to: "/settings/threads",
     scope: "environment-defaults",
-    searchTerms: ["fallback agent provider out of usage new threads"],
+    searchTerms: ["Fallback model", "Threads", "fallback agent provider out of usage new threads"],
     environmentOnly: true,
   },
   {
     id: "default-permissions",
-    title: "Permissions",
+    get title() {
+      return t({ message: "Permissions" });
+    },
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [
+      "Permissions",
+      "Threads",
       "new thread default runtime mode supervised approvals auto accept edits full access",
     ],
   },
   {
     id: "color-scheme",
-    title: "Color scheme",
+    get title() {
+      return t({ message: "Color scheme" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["appearance light dark system mode"],
+    searchTerms: ["Color scheme", "Appearance", "appearance light dark system mode"],
     targetId: "appearance",
   },
   {
     id: "theme",
-    title: "Themes",
+    get title() {
+      return t({ message: "Themes" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["appearance colors palette custom import"],
+    searchTerms: ["Themes", "Appearance", "appearance colors palette custom import"],
     targetId: "appearance",
   },
   {
     id: "interface-language",
-    title: "Interface language",
+    get title() {
+      return t({ message: "Interface language" });
+    },
     to: "/settings/appearance",
     targetId: "language",
     searchTerms: [
+      "Interface language",
+      "Appearance",
       "locale language translation Sprache Deutsch English langue français idioma español 中文 语言 简体中文",
     ],
   },
   {
     // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
-    title: "Contrast",
+    get title() {
+      return t({ message: "Contrast" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["colors borders interface"],
+    searchTerms: ["Contrast", "Appearance", "colors borders interface"],
   },
   {
     // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
-    title: "Glass opacity",
+    get title() {
+      return t({ message: "Glass opacity" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["transparent transparency solid menus dialogs composer"],
+    searchTerms: [
+      "Glass opacity",
+      "Appearance",
+      "transparent transparency solid menus dialogs composer",
+    ],
   },
   {
     id: "diff-color-scheme",
-    title: "Diff colors",
+    get title() {
+      return t({ message: "Diff colors" });
+    },
     to: "/settings/diffs",
-    searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
+    searchTerms: [
+      "Diff colors",
+      "Diffs & pull requests",
+      "red green blue orange additions deletions changes counts palette colorblind",
+    ],
   },
   {
     id: "chat-width",
-    title: "Chat width",
+    get title() {
+      return t({ message: "Chat width" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["wide full width column layout messages composer monitor"],
+    searchTerms: [
+      "Chat width",
+      "Appearance",
+      "wide full width column layout messages composer monitor",
+    ],
   },
   {
     id: "thread-details-items",
-    title: "Thread details",
+    get title() {
+      return t({ message: "Thread details" });
+    },
     to: "/settings/appearance",
     searchTerms: [
+      "Thread details",
+      "Appearance",
       "customize show hide panel card environment editor scripts branch pull request git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
     ],
   },
   {
     id: "effort-display",
-    title: "Effort display",
+    get title() {
+      return t({ message: "Effort display" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["reasoning effort thinking bars graph word label level composer"],
+    searchTerms: [
+      "Effort display",
+      "Appearance",
+      "reasoning effort thinking bars graph word label level composer",
+    ],
   },
   {
     id: "math-rendering",
-    title: "Render math",
+    get title() {
+      return t({ message: "Render math" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["latex tex katex equations formulas markdown"],
+    searchTerms: ["Render math", "Appearance", "latex tex katex equations formulas markdown"],
   },
   {
+    searchTerms: ["Panel animations", "Appearance"],
+
     id: "panel-animations",
-    title: "Panel animations",
+    get title() {
+      return t({ message: "Panel animations" });
+    },
     to: "/settings/appearance",
   },
   {
     id: "environment-identification",
-    title: "Environment identification",
+    get title() {
+      return t({ message: "Environment identification" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["dev nightly latest channel artwork pill label hide none"],
+    searchTerms: [
+      "Environment identification",
+      "Appearance",
+      "dev nightly latest channel artwork pill label hide none",
+    ],
     targetId: "appearance-interface",
   },
   {
     id: "interface-font",
-    title: "Interface font",
+    get title() {
+      return t({ message: "Interface font" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["typography family size system sans"],
+    searchTerms: ["Interface font", "Appearance", "typography family size system sans"],
   },
   {
     id: "prompt-font",
-    title: "Prompt font",
+    get title() {
+      return t({ message: "Prompt font" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["typography family size composer input"],
+    searchTerms: ["Prompt font", "Appearance", "typography family size composer input"],
   },
   {
     id: "code-font",
-    title: "Code font",
+    get title() {
+      return t({ message: "Code font" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["typography family size monospace code blocks diffs file previews"],
+    searchTerms: [
+      "Code font",
+      "Appearance",
+      "typography family size monospace code blocks diffs file previews",
+    ],
   },
   {
     id: "terminal-font",
-    title: "Terminal font",
+    get title() {
+      return t({ message: "Terminal font" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["typography family size monospace output"],
+    searchTerms: ["Terminal font", "Appearance", "typography family size monospace output"],
   },
   {
     id: "separate-fonts",
-    title: "Separate fonts",
+    get title() {
+      return t({ message: "Separate fonts" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["typography advanced prompt code terminal font family size individually"],
+    searchTerms: [
+      "Separate fonts",
+      "Appearance",
+      "typography advanced prompt code terminal font family size individually",
+    ],
   },
   {
     id: "font-smoothing",
-    title: "Font smoothing",
+    get title() {
+      return t({ message: "Font smoothing" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["typography text grayscale anti aliasing macos thin"],
+    searchTerms: [
+      "Font smoothing",
+      "Appearance",
+      "typography text grayscale anti aliasing macos thin",
+    ],
     macOnly: true,
   },
   {
     id: "word-wrap",
-    title: "Word wrap",
+    get title() {
+      return t({ message: "Word wrap" });
+    },
     to: "/settings/appearance",
-    searchTerms: ["long lines code blocks diffs file previews"],
+    searchTerms: ["Word wrap", "Appearance", "long lines code blocks diffs file previews"],
   },
   {
+    searchTerms: ["Composer context", "Appearance"],
+
     id: "composer-context",
-    title: "Composer context",
+    get title() {
+      return t({ message: "Composer context" });
+    },
     to: "/settings/appearance",
   },
   {
     id: "project-grouping",
-    title: "Project grouping",
+    get title() {
+      return t({ message: "Project grouping" });
+    },
     to: "/settings/general",
-    searchTerms: ["combine matching repositories environments sidebar"],
+    searchTerms: [
+      "Project grouping",
+      "General",
+      "combine matching repositories environments sidebar",
+    ],
   },
   {
     id: "project-order",
-    title: "Project order",
+    get title() {
+      return t({ message: "Project order" });
+    },
     to: "/settings/general",
-    searchTerms: ["sort projects sidebar manual created recent"],
+    searchTerms: ["Project order", "General", "sort projects sidebar manual created recent"],
   },
   {
     id: "snooze-options",
-    title: "Snooze options",
+    get title() {
+      return t({ message: "Snooze options" });
+    },
     to: "/settings/threads",
-    searchTerms: ["snooze presets times later tonight tomorrow next week remind"],
+    searchTerms: [
+      "Snooze options",
+      "Threads",
+      "snooze presets times later tonight tomorrow next week remind",
+    ],
     environmentOnly: true,
     scope: "environment-defaults",
   },
   {
     id: "snooze-limited-threads",
-    title: "Snooze until limits reset",
+    get title() {
+      return t({ message: "Snooze until limits reset" });
+    },
     to: "/settings/threads",
-    searchTerms: ["usage quota rate limit reset wake recover continue"],
+    searchTerms: [
+      "Snooze until limits reset",
+      "Threads",
+      "usage quota rate limit reset wake recover continue",
+    ],
   },
   {
     id: "auto-resume-limited-threads",
-    title: "Resume after usage limits",
+    get title() {
+      return t({ message: "Resume after usage limits" });
+    },
     to: "/settings/threads",
-    searchTerms: ["usage quota rate limit reset recover continue"],
+    searchTerms: [
+      "Resume after usage limits",
+      "Threads",
+      "usage quota rate limit reset recover continue",
+    ],
   },
   {
     id: "working-shelf",
-    title: "Working section",
+    get title() {
+      return t({ message: "Working section" });
+    },
     to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
+    searchTerms: [
+      "Working section",
+      "General",
+      "hide fold running monitoring threads inbox sidebar shelf",
+    ],
   },
   {
     id: "boring-sidebar",
-    title: "Boring sidebar (group by project)",
+    get title() {
+      return t({ message: "Boring sidebar (group by project)" });
+    },
     to: "/settings/labs",
     searchTerms: ["beta folders project tree classic sidebar"],
   },
   {
     id: "boring-sidebar-multiline",
-    title: "Two-line folder rows",
+    get title() {
+      return t({ message: "Two-line folder rows" });
+    },
     to: "/settings/labs",
     // Shown inside the boring sidebar row only while it is on, so search lands on the parent.
     targetId: "boring-sidebar",
@@ -492,17 +669,29 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "guest-links",
-    title: "Guest links",
+    get title() {
+      return t({ message: "Guest links" });
+    },
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: ["beta share guest invite link teammate watch t3 connect tunnel"],
+    searchTerms: [
+      "Guest links",
+      "Labs",
+      "beta share guest invite link teammate watch t3 connect tunnel",
+    ],
   },
   {
     id: "linked-environments-beta",
-    title: "Linked environments",
+    get title() {
+      return t({ message: "Linked environments" });
+    },
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: ["beta link another machine vps peer agents work there delegate"],
+    searchTerms: [
+      "Linked environments",
+      "Labs",
+      "beta link another machine vps peer agents work there delegate",
+    ],
   },
   {
     id: "prompt-suggestions-beta",
@@ -513,10 +702,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "simlock-hosts",
-    title: "Simlock device hosts (alpha)",
+    get title() {
+      return t({ message: "Simlock device hosts (alpha)" });
+    },
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
+    searchTerms: [
+      "Simlock device hosts (alpha)",
+      "Labs",
+      "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
+    ],
   },
   {
     id: "worktree-fast-checkout",
@@ -626,275 +821,475 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-settle-inactive-threads",
-    title: "Auto-settle inactive threads",
+    get title() {
+      return t({ message: "Auto-settle inactive threads" });
+    },
     to: "/settings/threads",
-    searchTerms: ["sidebar inactivity days no activity automatically"],
+    searchTerms: [
+      "Auto-settle inactive threads",
+      "Threads",
+      "sidebar inactivity days no activity automatically",
+    ],
     requiresThreadAutoSettlement: true,
     scope: "project-defaults",
   },
   {
     id: "compact-idle-threads",
-    title: "Compact idle threads",
+    get title() {
+      return t({ message: "Compact idle threads" });
+    },
     to: "/settings/providers",
     scope: "environment-defaults",
-    searchTerms: ["claude context compaction idle cache tokens usage summary resume"],
+    searchTerms: [
+      "Compact idle threads",
+      "Providers",
+      "claude context compaction idle cache tokens usage summary resume",
+    ],
   },
   {
     id: "auto-settle-merged-threads",
-    title: "Auto-settle merged threads",
+    get title() {
+      return t({ message: "Auto-settle merged threads" });
+    },
     to: "/settings/threads",
-    searchTerms: ["pull request merge closed automatically sidebar"],
+    searchTerms: [
+      "Auto-settle merged threads",
+      "Threads",
+      "pull request merge closed automatically sidebar",
+    ],
     requiresThreadAutoSettlement: true,
     scope: "project-defaults",
   },
   {
     id: "keep-threads-with-pull-requests",
-    title: "Keep threads with a PR",
+    get title() {
+      return t({ message: "Keep threads with a PR" });
+    },
     to: "/settings/threads",
     targetId: "auto-settle-inactive-threads",
-    searchTerms: ["pull request inactivity auto-settle merge close sidebar"],
+    searchTerms: [
+      "Keep threads with a PR",
+      "Threads",
+      "pull request inactivity auto-settle merge close sidebar",
+    ],
     requiresThreadAutoSettlement: true,
     scope: "project-defaults",
   },
   {
     id: "days-before-auto-settle",
-    title: "Days of inactivity before auto-settle",
+    get title() {
+      return t({ message: "Days of inactivity before auto-settle" });
+    },
     to: "/settings/threads",
     targetId: "auto-settle-inactive-threads",
-    searchTerms: ["thread timeout activity sidebar"],
+    searchTerms: [
+      "Days of inactivity before auto-settle",
+      "Threads",
+      "thread timeout activity sidebar",
+    ],
     requiresThreadAutoSettlement: true,
     scope: "project-defaults",
   },
   {
     id: "thread-notifications",
-    title: "Thread notifications",
+    get title() {
+      return t({ message: "Thread notifications" });
+    },
     to: "/settings/general",
-    searchTerms: ["notification sound alert completion input approval desktop"],
+    searchTerms: [
+      "Thread notifications",
+      "General",
+      "notification sound alert completion input approval desktop",
+    ],
   },
   {
     id: "in-app-notifications",
-    title: "In-app notifications",
+    get title() {
+      return t({ message: "In-app notifications" });
+    },
     to: "/settings/general",
-    searchTerms: ["notification toast popup completion input approval failure"],
+    searchTerms: [
+      "In-app notifications",
+      "General",
+      "notification toast popup completion input approval failure",
+    ],
   },
   {
     id: "time-format",
-    title: "Time format",
+    get title() {
+      return t({ message: "Time format" });
+    },
     to: "/settings/general",
-    searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
+    searchTerms: [
+      "Time format",
+      "General",
+      "timestamp clock locale system browser os 12 hour 24 hour",
+    ],
   },
   {
     id: "response-streaming",
-    title: "Response streaming",
+    get title() {
+      return t({ message: "Response streaming" });
+    },
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: ["output token paragraph buffered wait turn legacy"],
+    searchTerms: [
+      "Response streaming",
+      "Threads",
+      "output token paragraph buffered wait turn legacy",
+    ],
   },
   {
     id: "hide-whitespace-changes",
-    title: "Hide whitespace changes",
+    get title() {
+      return t({ message: "Hide whitespace changes" });
+    },
     to: "/settings/diffs",
-    searchTerms: ["diff ignore spaces edits default"],
+    searchTerms: [
+      "Hide whitespace changes",
+      "Diffs & pull requests",
+      "diff ignore spaces edits default",
+    ],
   },
   {
     id: "default-diff-file-state",
-    title: "Default diff file state",
+    get title() {
+      return t({ message: "Default diff file state" });
+    },
     to: "/settings/diffs",
-    searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
+    searchTerms: [
+      "Default diff file state",
+      "Diffs & pull requests",
+      "collapsed expanded collapse expand files pull request pr code tab",
+    ],
   },
   {
     id: "diff-layout",
-    title: "Diff layout",
+    get title() {
+      return t({ message: "Diff layout" });
+    },
     to: "/settings/diffs",
-    searchTerms: ["stacked split side by side unified inline view"],
+    searchTerms: [
+      "Diff layout",
+      "Diffs & pull requests",
+      "stacked split side by side unified inline view",
+    ],
   },
   {
     id: "proactive-panels",
-    title: "Open pull requests and changes panels proactively",
+    get title() {
+      return t({ message: "Open pull requests and changes panels proactively" });
+    },
     to: "/settings/diffs",
-    searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
+    searchTerms: [
+      "Open pull requests and changes panels proactively",
+      "Diffs & pull requests",
+      "proactive automatically open diff pull request pr right panel agent completion",
+    ],
   },
   {
     id: "skills-in-slash-menu",
-    title: "Show skills in slash menu",
+    get title() {
+      return t({ message: "Show skills in slash menu" });
+    },
     to: "/settings/chat",
-    searchTerms: ["command menu dollar $ slash /"],
+    searchTerms: ["Show skills in slash menu", "Chat", "command menu dollar $ slash /"],
   },
   {
     id: "composer-rich-text",
-    title: "Rich text composer",
+    get title() {
+      return t({ message: "Rich text composer" });
+    },
     to: "/settings/chat",
-    searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
+    searchTerms: [
+      "Rich text composer",
+      "Chat",
+      "composer rich text tiptap bold italic markdown styled wysiwyg",
+    ],
   },
   {
     id: "send-shortcut",
-    title: "Send shortcut",
+    get title() {
+      return t({ message: "Send shortcut" });
+    },
     to: "/settings/chat",
-    searchTerms: ["enter return command ctrl multiline prompt new line composer"],
+    searchTerms: [
+      "Send shortcut",
+      "Chat",
+      "enter return command ctrl multiline prompt new line composer",
+    ],
   },
   {
     id: "follow-up-behavior",
-    title: "Follow-up behavior",
+    get title() {
+      return t({ message: "Follow-up behavior" });
+    },
     to: "/settings/chat",
-    searchTerms: ["queue steer running turn send default behavior composer"],
+    searchTerms: [
+      "Follow-up behavior",
+      "Chat",
+      "queue steer running turn send default behavior composer",
+    ],
   },
   {
     id: "provider-update-checks",
-    title: "Provider update checks",
+    get title() {
+      return t({ message: "Provider update checks" });
+    },
     to: "/settings/maintenance",
     searchTerms: [
+      "Provider update checks",
+      "Maintenance",
       "installed cli versions newer available codex claude cursor grok fx kiro opencode",
     ],
     scope: "environment-defaults",
   },
   {
     id: "continue-threads-after-server-update",
-    title: "Continue threads after restarts",
+    get title() {
+      return t({ message: "Continue threads after restarts" });
+    },
     to: "/settings/maintenance",
     scope: "project-defaults",
     searchTerms: [
+      "Continue threads after restarts",
+      "Maintenance",
       "resume running active interrupted work restart reboot machine crash desktop update automatically",
     ],
   },
   {
     id: "background-activity",
-    title: "Background activity",
+    get title() {
+      return t({ message: "Background activity" });
+    },
     to: "/settings/maintenance",
     scope: "environment-defaults",
     searchTerms: [
+      "Background activity",
+      "Maintenance",
       "balanced performance battery saver advanced git fetch provider health refresh host power monitor idle policy",
     ],
   },
   {
     id: "new-threads",
-    title: "New threads",
+    get title() {
+      return t({ message: "New threads" });
+    },
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: ["default workspace mode draft local worktree"],
+    searchTerms: ["New threads", "Threads", "default workspace mode draft local worktree"],
   },
   {
     id: "worktree-submodules",
-    title: "Submodules",
+    get title() {
+      return t({ message: "Submodules" });
+    },
     to: "/settings/worktrees",
     scope: "project-defaults",
-    searchTerms: ["git submodule init recursive top-level none worktree t3.json"],
+    searchTerms: [
+      "Submodules",
+      "Worktrees",
+      "git submodule init recursive top-level none worktree t3.json",
+    ],
   },
   {
     id: "start-from-origin",
-    title: "Start from remote",
+    get title() {
+      return t({ message: "Start from remote" });
+    },
     to: "/settings/worktrees",
     scope: "project-defaults",
-    searchTerms: ["new worktrees start remote origin latest fetched branch local"],
+    searchTerms: [
+      "Start from remote",
+      "Worktrees",
+      "new worktrees start remote origin latest fetched branch local",
+    ],
   },
   {
     id: "add-project-starts-in",
-    title: "Add project starts in",
+    get title() {
+      return t({ message: "Add project starts in" });
+    },
     to: "/settings/threads",
     scope: "environment-defaults",
-    searchTerms: ["base directory folder browser path home"],
+    searchTerms: ["Add project starts in", "Threads", "base directory folder browser path home"],
   },
   {
     id: "ghq-clone-layout",
-    title: "Clone into host folders",
+    get title() {
+      return t({ message: "Clone into host folders" });
+    },
     to: "/settings/threads",
     scope: "environment-defaults",
-    searchTerms: ["ghq clone destination host owner repository root layout"],
+    searchTerms: [
+      "Clone into host folders",
+      "Threads",
+      "ghq clone destination host owner repository root layout",
+    ],
   },
   {
     id: "unpin-confirmation",
-    title: "Unpin confirmation",
+    get title() {
+      return t({ message: "Unpin confirmation" });
+    },
     to: "/settings/general",
-    searchTerms: ["ask before thread pinned section"],
+    searchTerms: ["Unpin confirmation", "General", "ask before thread pinned section"],
   },
   {
     id: "archive-confirmation",
-    title: "Archive confirmation",
+    get title() {
+      return t({ message: "Archive confirmation" });
+    },
     to: "/settings/general",
-    searchTerms: ["ask before thread second click inline action"],
+    searchTerms: [
+      "Archive confirmation",
+      "General",
+      "ask before thread second click inline action",
+    ],
   },
   {
     id: "delete-confirmation",
-    title: "Delete confirmation",
+    get title() {
+      return t({ message: "Delete confirmation" });
+    },
     to: "/settings/general",
-    searchTerms: ["ask before thread chat history"],
+    searchTerms: ["Delete confirmation", "General", "ask before thread chat history"],
   },
   {
     id: "quit-confirmation",
-    title: "Quit shortcut",
+    get title() {
+      return t({ message: "Quit shortcut" });
+    },
     to: "/settings/general",
-    searchTerms: ["confirmation desktop app exit direct hold double click press twice"],
+    searchTerms: [
+      "Quit shortcut",
+      "General",
+      "confirmation desktop app exit direct hold double click press twice",
+    ],
     desktopOnly: true,
   },
   {
     id: "text-generation-model",
-    title: "Text generation model",
+    get title() {
+      return t({ message: "Text generation model" });
+    },
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: ["generated thread titles source control content default provider"],
+    searchTerms: [
+      "Text generation model",
+      "Threads",
+      "generated thread titles source control content default provider",
+    ],
   },
   {
     id: "thread-title-instructions",
-    title: "Thread title instructions",
+    get title() {
+      return t({ message: "Thread title instructions" });
+    },
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: ["generated thread titles prompt custom style naming rename regenerate"],
+    searchTerms: [
+      "Thread title instructions",
+      "Threads",
+      "generated thread titles prompt custom style naming rename regenerate",
+    ],
   },
   {
     id: "app-version",
-    title: "Version",
+    get title() {
+      return t({ message: "Version" });
+    },
     to: "/settings/about",
-    searchTerms: ["about check for updates download install upgrade release"],
+    searchTerms: ["Version", "About", "about check for updates download install upgrade release"],
   },
   {
     id: "update-track",
-    title: "Update track",
+    get title() {
+      return t({ message: "Update track" });
+    },
     to: "/settings/about",
-    searchTerms: ["release channel stable latest nightly prerelease"],
+    searchTerms: ["Update track", "About", "release channel stable latest nightly prerelease"],
     releaseChannelOnly: true,
   },
   {
     id: "cli-command",
-    title: "t3 command",
+    get title() {
+      return t({ message: "t3 command" });
+    },
     to: "/settings/about",
-    searchTerms: ["cli terminal shell path install command line"],
+    searchTerms: ["t3 command", "About", "cli terminal shell path install command line"],
     desktopOnly: true,
   },
   {
     id: "mobile-app",
-    title: "Mobile app",
+    get title() {
+      return t({ message: "Mobile app" });
+    },
     to: "/settings/about",
-    searchTerms: ["phone tablet iPhone iPad iOS Android App Store Google Play QR"],
+    searchTerms: [
+      "Mobile app",
+      "About",
+      "phone tablet iPhone iPad iOS Android App Store Google Play QR",
+    ],
   },
   {
     id: "privacy-policy",
-    title: "Privacy policy",
+    get title() {
+      return t({ message: "Privacy policy" });
+    },
     to: "/settings/about",
-    searchTerms: ["telemetry analytics usage data tracking legal opt out"],
+    searchTerms: [
+      "Privacy policy",
+      "About",
+      "telemetry analytics usage data tracking legal opt out",
+    ],
   },
   {
     id: "telemetry-export",
-    title: "OpenTelemetry export",
+    get title() {
+      return t({ message: "OpenTelemetry export" });
+    },
     to: "/settings/diagnostics",
     targetId: "telemetry-export",
     scope: "environment",
-    searchTerms: ["OTel OTLP telemetry export endpoints logs traces metrics Grafana"],
+    searchTerms: [
+      "OpenTelemetry export",
+      "Diagnostics",
+      "OTel OTLP telemetry export endpoints logs traces metrics Grafana",
+    ],
   },
   {
     id: "diagnostics",
-    title: "Diagnostics",
+    get title() {
+      return t({ message: "Diagnostics" });
+    },
     to: "/settings/maintenance",
-    searchTerms: ["logs traces processes resource history failures spans cpu memory"],
+    searchTerms: [
+      "Diagnostics",
+      "Maintenance",
+      "logs traces processes resource history failures spans cpu memory",
+    ],
   },
   {
+    searchTerms: ["Open source licenses", "About"],
+
     id: "open-source-licenses",
-    title: "Open source licenses",
+    get title() {
+      return t({ message: "Open source licenses" });
+    },
     to: "/settings/about",
   },
   {
     id: "keybindings",
-    title: "Keybindings",
+    get title() {
+      return t({ message: "Keybindings" });
+    },
     to: "/settings/keybindings",
-    searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
+    searchTerms: [
+      "Keybindings",
+      "Keybindings",
+      "keyboard shortcuts hotkeys commands bindings json",
+    ],
   },
   ...KEYBINDING_SEARCH_ITEMS,
   {
@@ -905,50 +1300,78 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "snap-shot-accessibility",
-    title: "Include app text",
+    get title() {
+      return t({ message: "Include app text" });
+    },
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
     searchTerms: [
+      "Include app text",
+      "SnapShots",
       "capture accessibility data text UI structure elements privacy omit agent context",
     ],
   },
   {
+    searchTerms: ["Capture shortcut", "SnapShots"],
+
     id: "snap-shot-shortcut",
-    title: "Capture shortcut",
+    get title() {
+      return t({ message: "Capture shortcut" });
+    },
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
+    searchTerms: ["Capture sound", "SnapShots"],
+
     id: "snap-shot-sound",
-    title: "Capture sound",
+    get title() {
+      return t({ message: "Capture sound" });
+    },
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
+    searchTerms: ["Capture flash", "SnapShots"],
+
     id: "snap-shot-flash",
-    title: "Capture flash",
+    get title() {
+      return t({ message: "Capture flash" });
+    },
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
+    searchTerms: ["Capture animations", "SnapShots"],
+
     id: "snap-shot-animations",
-    title: "Capture animations",
+    get title() {
+      return t({ message: "Capture animations" });
+    },
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
     id: "providers",
-    title: "Providers",
+    get title() {
+      return t({ message: "Providers" });
+    },
     to: "/settings/providers",
     searchTerms: [
+      "Providers",
+      "Providers",
       "agents cli codex claude cursor grok fx kiro opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
     ],
   },
   {
     id: "usage-providers",
-    title: "Usage providers",
+    get title() {
+      return t({ message: "Usage providers" });
+    },
     to: "/settings/providers",
     searchTerms: [
+      "Usage providers",
+      "Providers",
       "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
     ],
     providerSettingsOnly: true,
@@ -965,158 +1388,272 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "provider-health-check-interval",
-    title: "Health check interval",
+    get title() {
+      return t({ message: "Health check interval" });
+    },
     to: "/settings/providers",
-    searchTerms: ["refresh availability versions auth state models background probes seconds off"],
+    searchTerms: [
+      "Health check interval",
+      "Providers",
+      "refresh availability versions auth state models background probes seconds off",
+    ],
     providerSettingsOnly: true,
   },
   {
     id: "agent-browser-access",
-    title: "Agent browser access",
+    get title() {
+      return t({ message: "Agent browser access" });
+    },
     to: "/settings/browser",
     scope: "project-defaults",
-    searchTerms: ["allow disable enable open drive preview tools sessions project override"],
+    searchTerms: [
+      "Agent browser access",
+      "Browser",
+      "allow disable enable open drive preview tools sessions project override",
+    ],
   },
   {
     id: "device-sources",
-    title: "Device sources",
+    get title() {
+      return t({ message: "Device sources" });
+    },
     to: "/settings/devices",
     searchTerms: [
+      "Device sources",
+      "Devices",
       "device hosts ssh remote mac mini identity key connection eas expo cloud simlock pool gateway local simulators",
     ],
   },
   {
     id: "agent-device-access",
-    title: "Agents can use devices",
+    get title() {
+      return t({ message: "Agents can use devices" });
+    },
     to: "/settings/devices",
     targetId: "devices",
-    searchTerms: ["allow simulator emulator ios android drive tools sessions"],
+    searchTerms: [
+      "Agents can use devices",
+      "Devices",
+      "allow simulator emulator ios android drive tools sessions",
+    ],
   },
   {
     id: "device-hub",
-    title: "Use devices",
+    get title() {
+      return t({ message: "Use devices" });
+    },
     to: "/settings/devices",
     targetId: "devices",
-    searchTerms: ["device hub simulator emulator ios android install start version"],
+    searchTerms: [
+      "Use devices",
+      "Devices",
+      "device hub simulator emulator ios android install start version",
+    ],
   },
   {
     id: "device-platform-support",
-    title: "Local simulators",
+    get title() {
+      return t({ message: "Local simulators" });
+    },
     to: "/settings/devices",
     targetId: "device-sources",
-    searchTerms: ["simulator support xcode android studio sdk avd runtime"],
+    searchTerms: [
+      "Local simulators",
+      "Devices",
+      "simulator support xcode android studio sdk avd runtime",
+    ],
   },
   {
+    searchTerms: ["Browser profiles", "Browser"],
+
     id: "browser-profiles",
-    title: "Browser profiles",
+    get title() {
+      return t({ message: "Browser profiles" });
+    },
     to: "/settings/browser",
     targetId: "browser",
   },
   {
+    searchTerms: ["Default browser profile", "Browser"],
+
     id: "browser-default-profile",
-    title: "Default browser profile",
+    get title() {
+      return t({ message: "Default browser profile" });
+    },
     to: "/settings/browser",
     targetId: "browser-profiles",
   },
   {
     id: "browser-default-viewport",
-    title: "Default browser viewport",
+    get title() {
+      return t({ message: "Default browser viewport" });
+    },
     to: "/settings/browser",
-    searchTerms: ["preview size width height device desktop mobile rotate"],
+    searchTerms: [
+      "Default browser viewport",
+      "Browser",
+      "preview size width height device desktop mobile rotate",
+    ],
   },
   {
     id: "browser-default-zoom",
-    title: "Default browser zoom",
+    get title() {
+      return t({ message: "Default browser zoom" });
+    },
     to: "/settings/browser",
-    searchTerms: ["preview page scale tabs percent"],
+    searchTerms: ["Default browser zoom", "Browser", "preview page scale tabs percent"],
   },
   {
     id: "browser-default-appearance",
-    title: "Default browser appearance",
+    get title() {
+      return t({ message: "Default browser appearance" });
+    },
     to: "/settings/browser",
-    searchTerms: ["preview color scheme light dark system os"],
+    searchTerms: [
+      "Default browser appearance",
+      "Browser",
+      "preview color scheme light dark system os",
+    ],
   },
   {
+    searchTerms: ["Browser recording frame rate", "Browser"],
+
     id: "browser-recording-frame-rate",
-    title: "Browser recording frame rate",
+    get title() {
+      return t({ message: "Browser recording frame rate" });
+    },
     to: "/settings/browser",
   },
   {
     id: "browser-recording-key-presses",
-    title: "Show key presses in recordings",
+    get title() {
+      return t({ message: "Show key presses in recordings" });
+    },
     to: "/settings/browser",
-    searchTerms: ["browser preview keyboard shortcuts keystrokes overlay capture"],
+    searchTerms: [
+      "Show key presses in recordings",
+      "Browser",
+      "browser preview keyboard shortcuts keystrokes overlay capture",
+    ],
   },
   {
     id: "browser-recording-mouse-presses",
-    title: "Show mouse presses in recordings",
+    get title() {
+      return t({ message: "Show mouse presses in recordings" });
+    },
     to: "/settings/browser",
-    searchTerms: ["browser preview clicks buttons drag overlay capture"],
+    searchTerms: [
+      "Show mouse presses in recordings",
+      "Browser",
+      "browser preview clicks buttons drag overlay capture",
+    ],
   },
   {
     id: "browser-link-target",
-    title: "Open links in",
+    get title() {
+      return t({ message: "Open links in" });
+    },
     to: "/settings/browser",
-    searchTerms: ["links default browser in-app browser external open"],
+    searchTerms: ["Open links in", "Browser", "links default browser in-app browser external open"],
   },
   {
     id: "browser-search-engine",
-    title: "Search engine",
+    get title() {
+      return t({ message: "Search engine" });
+    },
     to: "/settings/browser",
-    searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom url"],
+    searchTerms: [
+      "Search engine",
+      "Browser",
+      "address bar duckduckgo google bing brave kagi ecosia custom url",
+    ],
   },
   {
     id: "pull-request-links-open-in-app",
-    title: "Open pull requests in T3 Code",
+    get title() {
+      return t({ message: "Open pull requests in T3 Code" });
+    },
     to: "/settings/diffs",
     searchTerms: [
+      "Open pull requests in T3 Code",
+      "Diffs & pull requests",
       `pr commit links ${SOURCE_CONTROL_HOST_LABELS} browser external click default pull request view panel`,
     ],
   },
   {
     id: "browser-auto-show-floating-preview",
-    title: "Auto-show floating preview",
+    get title() {
+      return t({ message: "Auto-show floating preview" });
+    },
     to: "/settings/browser",
-    searchTerms: ["agent opens browser device simulator pop into view hide"],
+    searchTerms: [
+      "Auto-show floating preview",
+      "Browser",
+      "agent opens browser device simulator pop into view hide",
+    ],
   },
   {
     id: "automatic-pull",
-    title: "Automatically pull",
-    to: "/settings/source-control",
-    scope: "project-defaults",
-    searchTerms: ["auto pull default branch current checkout fast forward upstream"],
-  },
-  {
-    id: "remove-agent-credits-on-merge",
-    title: "Remove agent credits when merging",
+    get title() {
+      return t({ message: "Automatically pull" });
+    },
     to: "/settings/source-control",
     scope: "project-defaults",
     searchTerms: [
+      "Automatically pull",
+      "Source control",
+      "auto pull default branch current checkout fast forward upstream",
+    ],
+  },
+  {
+    id: "remove-agent-credits-on-merge",
+    get title() {
+      return t({ message: "Remove agent credits when merging" });
+    },
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: [
+      "Remove agent credits when merging",
+      "Source control",
       `pull request ${SOURCE_CONTROL_HOST_LABELS} squash co-authored-by attribution claude codex generated`,
     ],
   },
   {
     id: "pull-request-merge-method",
-    title: "Default merge method",
+    get title() {
+      return t({ message: "Default merge method" });
+    },
     to: "/settings/source-control",
     scope: "project-defaults",
-    searchTerms: ["pull request merge squash rebase last selected"],
+    searchTerms: [
+      "Default merge method",
+      "Source control",
+      "pull request merge squash rebase last selected",
+    ],
   },
   {
     id: "source-control",
-    title: "Source control",
+    get title() {
+      return t({ message: "Source control" });
+    },
     to: "/settings/source-control",
     scope: "environment-defaults",
     searchTerms: [
+      "Source control",
+      "Source control",
       `version control git ${SOURCE_CONTROL_HOST_TERMS} hosting integrations credentials scan server environment`,
     ],
   },
   {
     id: "git-fetch-interval",
-    title: "Git fetch interval",
+    get title() {
+      return t({ message: "Git fetch interval" });
+    },
     to: "/settings/maintenance",
     targetId: "background-activity",
     searchTerms: [
+      "Git fetch interval",
+      "Maintenance",
       "automatic remote branch refresh background credentials security keys seconds off",
     ],
     environmentOnly: true,
@@ -1124,34 +1661,54 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-branch-naming",
-    title: "Worktree branch naming",
+    get title() {
+      return t({ message: "Worktree branch naming" });
+    },
     to: "/settings/worktrees",
-    searchTerms: ["static semantic prefix custom prompt instructions feat fix refactor chore"],
+    searchTerms: [
+      "Worktree branch naming",
+      "Worktrees",
+      "static semantic prefix custom prompt instructions feat fix refactor chore",
+    ],
     environmentOnly: true,
     scope: "project-defaults",
   },
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
     id: "source-control-writing-style",
-    title: "Source control writing style",
+    get title() {
+      return t({ message: "Source control writing style" });
+    },
     to: "/settings/source-control",
     searchTerms: [
+      "Source control writing style",
+      "Source control",
       "repository conventions conventional commits custom instructions change descriptions request titles",
     ],
     environmentOnly: true,
   },
   {
     id: "follow-change-request-templates",
-    title: "Follow change request templates",
+    get title() {
+      return t({ message: "Follow change request templates" });
+    },
     to: "/settings/source-control",
-    searchTerms: ["repository pr pull request description structure"],
+    searchTerms: [
+      "Follow change request templates",
+      "Source control",
+      "repository pr pull request description structure",
+    ],
     environmentOnly: true,
   },
   {
     id: "source-control-writer-model",
-    title: "Source control writer model",
+    get title() {
+      return t({ message: "Source control writer model" });
+    },
     to: "/settings/source-control",
     searchTerms: [
+      "Source control writer model",
+      "Source control",
       "override generated commit change request pr titles descriptions branch bookmark",
     ],
     environmentOnly: true,
@@ -1159,72 +1716,124 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guides",
-    title: "Review guides (beta)",
+    get title() {
+      return t({ message: "Review guides (beta)" });
+    },
     to: "/settings/source-control",
-    searchTerms: ["pull request pr guided review guide tour beta experimental"],
+    searchTerms: [
+      "Review guides (beta)",
+      "Source control",
+      "pull request pr guided review guide tour beta experimental",
+    ],
     environmentOnly: true,
   },
   {
     id: "review-guide-model",
-    title: "Review guide model",
+    get title() {
+      return t({ message: "Review guide model" });
+    },
     to: "/settings/source-control",
     // Hidden until review guides are on, so a search lands on the switch that shows it.
     targetId: "review-guides",
-    searchTerms: ["pull request pr guided review guide brief maintainer"],
+    searchTerms: [
+      "Review guide model",
+      "Source control",
+      "pull request pr guided review guide brief maintainer",
+    ],
     environmentOnly: true,
     scope: "project-defaults",
   },
   {
     id: "review-guide-instructions",
-    title: "Review guide instructions",
+    get title() {
+      return t({ message: "Review guide instructions" });
+    },
     to: "/settings/source-control",
     targetId: "review-guides",
-    searchTerms: ["pull request pr guided review guide preferences taste prompt custom"],
+    searchTerms: [
+      "Review guide instructions",
+      "Source control",
+      "pull request pr guided review guide preferences taste prompt custom",
+    ],
     environmentOnly: true,
     scope: "project-defaults",
   },
   {
     id: "project-actions",
-    title: "Actions",
+    get title() {
+      return t({ message: "Actions" });
+    },
     to: "/settings/projects",
-    searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
+    searchTerms: [
+      "Actions",
+      "Projects",
+      "commands scripts setup run dev server checkout worktree t3.json import",
+    ],
   },
   {
     id: "environment-icon",
-    title: "Environment icon",
+    get title() {
+      return t({ message: "Environment icon" });
+    },
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["machine glyph sidebar mac mini studio laptop desktop server cloud vm"],
+    searchTerms: [
+      "Environment icon",
+      "Sharing & access",
+      "machine glyph sidebar mac mini studio laptop desktop server cloud vm",
+    ],
   },
   {
     id: "local-environment",
-    title: "Local environment",
+    get title() {
+      return t({ message: "Local environment" });
+    },
     to: "/settings/connections",
-    searchTerms: ["turn off on disable enable local server agents remote only restart"],
+    searchTerms: [
+      "Local environment",
+      "Environments",
+      "turn off on disable enable local server agents remote only restart",
+    ],
     desktopOnly: true,
   },
   {
     id: "network-access",
-    title: "Network access",
+    get title() {
+      return t({ message: "Network access" });
+    },
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["expose backend remote pairing local machine interfaces host restart"],
+    searchTerms: [
+      "Network access",
+      "Sharing & access",
+      "expose backend remote pairing local machine interfaces host restart",
+    ],
     localBackendManagementOnly: true,
   },
   {
     id: "tailscale-https",
-    title: "Tailscale HTTPS",
+    get title() {
+      return t({ message: "Tailscale HTTPS" });
+    },
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["serve magicdns endpoint remote secure network"],
+    searchTerms: [
+      "Tailscale HTTPS",
+      "Sharing & access",
+      "serve magicdns endpoint remote secure network",
+    ],
     desktopOnly: true,
     localBackendManagementOnly: true,
   },
   {
     id: "wsl-backend",
-    title: "WSL backend",
+    get title() {
+      return t({ message: "WSL backend" });
+    },
     to: "/settings/access",
     searchTerms: [
+      "WSL backend",
+      "Sharing & access",
       "windows subsystem linux distro second server projects stop windows backend restart wsl only",
     ],
     desktopOnly: true,
@@ -1235,90 +1844,138 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "t3-connect",
     localEnvironmentOnly: true,
-    title: "T3 Connect",
+    get title() {
+      return t({ message: "T3 Connect" });
+    },
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["managed tunnel cloud other devices remote tunnels limit t3 chat"],
+    searchTerms: [
+      "T3 Connect",
+      "Sharing & access",
+      "managed tunnel cloud other devices remote tunnels limit t3 chat",
+    ],
     desktopOnly: true,
     cloudOnly: true,
   },
   {
     id: "hold-webhooks-while-offline",
     localEnvironmentOnly: true,
-    title: "Hold webhooks while offline",
+    get title() {
+      return t({ message: "Hold webhooks while offline" });
+    },
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["webhook automations offline queue mailbox t3 connect"],
+    searchTerms: [
+      "Hold webhooks while offline",
+      "Sharing & access",
+      "webhook automations offline queue mailbox t3 connect",
+    ],
     cloudOnly: true,
     managedTunnelOnly: true,
   },
   {
     id: "publish-agent-activity",
     localEnvironmentOnly: true,
-    title: "Publish agent activity",
+    get title() {
+      return t({ message: "Publish agent activity" });
+    },
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["mobile push notifications live activities cloud tunnel"],
+    searchTerms: [
+      "Publish agent activity",
+      "Sharing & access",
+      "mobile push notifications live activities cloud tunnel",
+    ],
     cloudOnly: true,
   },
   {
     id: "connections-environment",
-    title: "This machine",
+    get title() {
+      return t({ message: "This machine" });
+    },
     to: "/settings/access",
     searchTerms: [
+      "This machine",
+      "Sharing & access",
       "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
     ],
   },
   {
     id: "linked-environments",
     peerLinksOnly: true,
-    title: "Linked environments",
+    get title() {
+      return t({ message: "Linked environments" });
+    },
     to: "/settings/connections",
     targetId: "linked-environments",
-    searchTerms: ["link peer another machine vps agents work there handoff pairing code"],
+    searchTerms: [
+      "Linked environments",
+      "Environments",
+      "link peer another machine vps agents work there handoff pairing code",
+    ],
   },
   {
     id: "remote-environments",
-    title: "Environments",
+    get title() {
+      return t({ message: "Environments" });
+    },
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: [
+      "Environments",
+      "Environments",
+      "add pair backend host code ssh config agent tunnel saved t3 connect",
+    ],
   },
   {
     id: "load-balancing",
-    title: "Load balancing",
+    get title() {
+      return t({ message: "Load balancing" });
+    },
     to: "/settings/connections",
     searchTerms: [
+      "Load balancing",
+      "Environments",
       "automatic machine environment resources cpu memory capacity preference weight shared projects",
     ],
   },
   {
     id: "pull-request-routing",
-    title: "Pull request sharing",
+    get title() {
+      return t({ message: "Pull request sharing" });
+    },
     to: "/settings/connections",
     searchTerms: [
+      "Pull request sharing",
+      "Environments",
       `pull request routing trusted environments shared credentials permissions read actions source control ${SOURCE_CONTROL_HOST_LABELS}`,
     ],
   },
   {
     id: "secret-providers",
-    title: "Secret providers",
+    get title() {
+      return t({ message: "Secret providers" });
+    },
     to: "/settings/secrets",
-    searchTerms: ["1password vault credentials api key"],
+    searchTerms: ["Secret providers", "Secrets", "1password vault credentials api key"],
     secretsFeatureOnly: true,
   },
   {
     id: "secret-providers-add",
-    title: "Add secret provider",
+    get title() {
+      return t({ message: "Add secret provider" });
+    },
     to: "/settings/secrets",
     targetId: "secret-providers",
-    searchTerms: ["new 1password vault op cli account"],
+    searchTerms: ["Add secret provider", "Secrets", "new 1password vault op cli account"],
     secretsFeatureOnly: true,
   },
   {
     id: "archive",
-    title: "Archived threads",
+    get title() {
+      return t({ message: "Archived threads" });
+    },
     to: "/settings/archived",
-    searchTerms: ["restore reopen deleted history projects"],
+    searchTerms: ["Archived threads", "Archive", "restore reopen deleted history projects"],
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 

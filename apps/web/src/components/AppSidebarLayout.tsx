@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -371,6 +373,7 @@ function SidebarControl() {
       node === null ? undefined : registerAppShellCommands(router, node),
   );
 
+  const shortcutLabelText = shortcutLabel ? ` (${shortcutLabel})` : "";
   return (
     <div
       ref={appShellCommandsRef}
@@ -389,12 +392,12 @@ function SidebarControl() {
                 "pointer-events-auto",
                 isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
               )}
-              aria-label="Toggle main sidebar"
+              aria-label={t({ message: "Toggle main sidebar" })}
             />
           }
         />
         <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          <Trans>Toggle main sidebar{shortcutLabelText}</Trans>
         </TooltipPopup>
       </Tooltip>
     </div>
@@ -457,7 +460,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           data-app-sidebar=""
           {...sidebarArea}
           role="navigation"
-          aria-label="Threads"
+          aria-label={t({ message: "Threads" })}
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: sidebarMinimumWidth,

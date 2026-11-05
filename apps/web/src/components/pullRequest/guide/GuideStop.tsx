@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import type {
   PullRequestReviewGuideAttention,
@@ -31,11 +33,21 @@ import { GuideProse } from "./GuideProse";
 import { letterStopNotes } from "@t3tools/client-runtime/review-guide-tour";
 
 const ATTENTION_LABELS = {
-  tradeoff: "A tradeoff to weigh",
-  contract: "A contract to check",
-  product: "A product call",
-  risk: "A risk to judge",
-  accessibility: "An accessibility call",
+  get tradeoff() {
+    return t({ message: "A tradeoff to weigh" });
+  },
+  get contract() {
+    return t({ message: "A contract to check" });
+  },
+  get product() {
+    return t({ message: "A product call" });
+  },
+  get risk() {
+    return t({ message: "A risk to judge" });
+  },
+  get accessibility() {
+    return t({ message: "An accessibility call" });
+  },
 } as const satisfies Record<PullRequestReviewGuideAttention["kind"], string>;
 
 export function GuideStop({
@@ -77,6 +89,8 @@ export function GuideStop({
 
   const hasNotes = lettered.length > 0;
 
+  const indexText = index + 1;
+  const indexText2 = index + 1;
   return (
     <div
       className={cn("grid gap-8", hasNotes && "@min-[90rem]/guide:grid-cols-[minmax(0,1fr)_20rem]")}
@@ -85,7 +99,9 @@ export function GuideStop({
         <Collapsible open={railOpen} onOpenChange={onRailOpenChange}>
           <header className="flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
-              Stop {index + 1} of {stopCount}
+              <Trans>
+                Stop {indexText} of {stopCount}
+              </Trans>
             </p>
             <CollapsibleTrigger
               render={
@@ -93,7 +109,9 @@ export function GuideStop({
               }
             >
               <span className="tabular-nums">
-                Stop {index + 1} of {stopCount}
+                <Trans>
+                  Stop {indexText2} of {stopCount}
+                </Trans>
               </span>
               <ChevronDownIcon aria-hidden className={cn(railOpen && "rotate-180")} />
             </CollapsibleTrigger>
@@ -101,7 +119,7 @@ export function GuideStop({
               <Button
                 size="icon-xs"
                 variant="outline"
-                aria-label="Previous stop"
+                aria-label={t({ message: "Previous stop" })}
                 disabled={index === 0}
                 onClick={() => onStep(-1)}
               >
@@ -110,7 +128,7 @@ export function GuideStop({
               <Button
                 size="icon-xs"
                 variant="outline"
-                aria-label="Next stop"
+                aria-label={t({ message: "Next stop" })}
                 disabled={index === stopCount - 1}
                 onClick={() => onStep(1)}
               >
@@ -174,7 +192,11 @@ export function GuideStop({
         {otherFiles.length > 0 ? (
           <section className="flex flex-col gap-1.5">
             <h3 className="text-xs font-medium text-muted-foreground">
-              {stop.excerpts.length > 0 ? "Also in this stop" : "Files in this stop"}
+              {stop.excerpts.length > 0 ? (
+                <Trans>Also in this stop</Trans>
+              ) : (
+                <Trans>Files in this stop</Trans>
+              )}
             </h3>
             <DiffWorkerPoolProvider>
               <ul className="flex flex-col overflow-hidden rounded-lg border border-border/60">
@@ -214,9 +236,11 @@ export function GuideStop({
                             <GuideFileDiff file={diff} loadDiffFiles={loadDiffFiles} />
                           ) : (
                             <p className="px-3 py-2 text-xs text-muted-foreground">
-                              {diffLoading
-                                ? "Loading the diff..."
-                                : "This file is not in the loaded diff."}
+                              {diffLoading ? (
+                                <Trans>Loading the diff...</Trans>
+                              ) : (
+                                <Trans>This file is not in the loaded diff.</Trans>
+                              )}
                             </p>
                           )}
                         </CollapsiblePanel>
@@ -232,7 +256,9 @@ export function GuideStop({
         {stop.questions.length > 0 || onAsk !== null ? (
           <section className="flex flex-col gap-1.5">
             {stop.questions.length > 0 ? (
-              <h3 className="text-xs font-medium text-muted-foreground">Questions to consider</h3>
+              <h3 className="text-xs font-medium text-muted-foreground">
+                <Trans>Questions to consider</Trans>
+              </h3>
             ) : null}
             <div className="flex flex-col items-start gap-1.5">
               {stop.questions.map((question) =>
@@ -251,7 +277,9 @@ export function GuideStop({
                       aria-hidden
                       className="size-3.5 h-lh shrink-0 text-muted-foreground"
                     />
-                    <span className="sr-only">Ask an agent: </span>
+                    <span className="sr-only">
+                      <Trans>Ask an agent: </Trans>
+                    </span>
                     <span>
                       <GuideProse text={question} plain />
                     </span>
@@ -261,7 +289,7 @@ export function GuideStop({
               {onAsk !== null ? (
                 <Button size="sm" variant="ghost-muted" onClick={() => onAsk("")}>
                   <MessageCircleQuestionIcon aria-hidden />
-                  Ask about this stop
+                  <Trans>Ask about this stop</Trans>
                 </Button>
               ) : null}
             </div>
@@ -271,13 +299,15 @@ export function GuideStop({
         <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 pt-4">
           {nextTitle !== null ? (
             <Button size="multiline" className="max-w-full" onClick={() => onStep(1)}>
-              <span className="min-w-0 break-words">Next: {nextTitle}</span>
+              <span className="min-w-0 break-words">
+                <Trans>Next: {nextTitle}</Trans>
+              </span>
               <ArrowRightIcon aria-hidden />
             </Button>
           ) : onFinish !== null ? (
             <Button onClick={onFinish}>
               <MessageSquareIcon aria-hidden />
-              Finish review
+              <Trans>Finish review</Trans>
             </Button>
           ) : null}
         </footer>

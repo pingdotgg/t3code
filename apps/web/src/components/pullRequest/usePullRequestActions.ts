@@ -1,3 +1,4 @@
+import { t, plural } from "@palamedes/core/macro";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -227,12 +228,16 @@ export function usePullRequestCloseBatch(
       }),
     );
     const closed = outcomes.filter(Boolean).length;
+
     toastManager.add({
       type: failures.length > 0 ? "error" : "success",
       title:
         failures.length > 0
-          ? `Closed ${closed} of ${batch.length} pull requests`
-          : `Closed ${closed} pull request${closed === 1 ? "" : "s"}`,
+          ? t`Closed ${closed} of ${batch.length} pull requests`
+          : plural(closed, {
+              one: `Closed ${closed} pull request`,
+              other: `Closed ${closed} pull requests`,
+            }),
       ...(failures.length > 0 ? { description: failures.slice(0, 3).join("\n") } : {}),
     });
   };
@@ -310,18 +315,18 @@ export function usePullRequestHandoffs({
     if (opened === null) {
       toastManager.add({
         type: "error",
-        title: "Could not open a thread",
-        description: "Try again from the project, or open a thread first.",
+        title: t({ message: "Could not open a thread" }),
+        description: t({ message: "Try again from the project, or open a thread first." }),
       });
       return;
     }
     toastManager.add({
       type: "success",
-      title: "Asked in a thread",
+      title: t({ message: "Asked in a thread" }),
       description:
         task.prompt.length > 0
-          ? "The question is in the composer. Read it over, then send."
-          : `The ${terminology.singular} is in the composer. Type your question, then send.`,
+          ? t({ message: "The question is in the composer. Read it over, then send." })
+          : t`The ${terminology.singular} is in the composer. Type your question, then send.`,
     });
   };
 
@@ -335,7 +340,7 @@ export function usePullRequestHandoffs({
     // Explicit timeouts survive toast updates and would pin the result after loading.
     const toastId = toastManager.add({
       type: "loading",
-      title: `Preparing the ${terminology.singular} checkout...`,
+      title: t`Preparing the ${terminology.singular} checkout...`,
     });
     const projectRef = scopeProjectRef(environmentId, detail.projectId);
     // Checkout setup requires the thread to exist first.
@@ -347,8 +352,8 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
+        title: t({ message: "Could not open a thread for the checkout" }),
+        description: t({ message: "Try again from the project, or open a thread first." }),
       });
       return;
     }
@@ -361,7 +366,7 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: `Could not prepare the ${terminology.singular} checkout`,
+        title: t`Could not prepare the ${terminology.singular} checkout`,
         description: checkoutFailureDescription(
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
@@ -380,8 +385,8 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
+        title: t({ message: "Checked out, but the thread stayed where it was" }),
+        description: t`The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
       });
       return;
     }
@@ -392,11 +397,14 @@ export function usePullRequestHandoffs({
         prepared.value.isOnPullRequestHead
           ? {
               type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
+              title:
+                mode === "local"
+                  ? t({ message: "Checked out here" })
+                  : t({ message: "Checked out" }),
               description:
                 mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
+                  ? t`This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
+                  : t`The ${terminology.singular} is in its own worktree, with a thread open on it.`,
             }
           : offHeadPullRequestCheckoutToast(terminology),
       );
@@ -408,8 +416,8 @@ export function usePullRequestHandoffs({
       prepared.value.isOnPullRequestHead
         ? {
             type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
+            title: t({ message: "Checkout ready" }),
+            description: t({ message: "The task is in the composer. Read it over, then send." }),
           }
         : offHeadPullRequestCheckoutToast(terminology),
     );

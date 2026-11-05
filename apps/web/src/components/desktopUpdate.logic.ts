@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
@@ -161,6 +162,6 @@ export function getDesktopUpdateIdleTooltip(
 ) {
   const disabledReason = getDesktopUpdateDisabledReason(state, managedDenial);
   return disabledReason
-    ? { title: "Updates unavailable", detail: disabledReason }
-    : { title: "Check for updates", detail: null };
+    ? { title: t({ message: "Updates unavailable" }), detail: disabledReason }
+    : { title: t({ message: "Check for updates" }), detail: null };
 }

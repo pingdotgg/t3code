@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
@@ -96,7 +98,7 @@ export function PullRequestCommentForm({
     });
     if (result._tag === "Failure") {
       setSubmitting(null);
-      toastManager.add({ type: "error", title: "Could not post the comment" });
+      toastManager.add({ type: "error", title: t({ message: "Could not post the comment" }) });
       return;
     }
     setBody("");
@@ -119,7 +121,7 @@ export function PullRequestCommentForm({
         readOnly={speech.freezesEditor}
         value={body}
         rows={3}
-        placeholder="Leave a comment"
+        placeholder={t({ message: "Leave a comment" })}
         aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}
         onValueChange={setBody}
         onKeyDown={(event) => {
@@ -158,14 +160,16 @@ export function PullRequestCommentForm({
               // The longest label holds the width, so the confirming click lands on the button.
               <span className="inline-grid">
                 <span aria-hidden className="invisible col-start-1 row-start-1">
-                  Close with comment
+                  <Trans>Close with comment</Trans>
                 </span>
                 <span className="col-start-1 row-start-1">
-                  {submitting === "close"
-                    ? "Closing..."
-                    : inlineConfirm.isArmed("close")
-                      ? "Confirm close?"
-                      : "Close with comment"}
+                  {submitting === "close" ? (
+                    <Trans>Closing...</Trans>
+                  ) : inlineConfirm.isArmed("close") ? (
+                    <Trans>Confirm close?</Trans>
+                  ) : (
+                    <Trans>Close with comment</Trans>
+                  )}
                 </span>
               </span>
             ) : submitting === "reopen" ? (
@@ -182,7 +186,7 @@ export function PullRequestCommentForm({
           onClick={() => submitAfterDictation("comment")}
         >
           <SendIcon className="size-3.5" />
-          {submitting === "comment" ? "Posting..." : "Comment"}
+          {submitting === "comment" ? <Trans>Posting...</Trans> : <Trans>Comment</Trans>}
         </Button>
       </div>
     </div>

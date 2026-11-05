@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -192,8 +193,8 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Thread deleted, but navigation failed",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: t({ message: "Thread deleted, but navigation failed" }),
+        description: error instanceof Error ? error.message : t({ message: "An error occurred." }),
       }),
     );
   }
@@ -628,21 +629,24 @@ export function useThreadActions() {
     if (cleanupFailure) {
       const removalFailed = removeResult._tag === "Failure";
       const error = squashAtomCommandFailure(cleanupFailure);
-      const message = error instanceof Error ? error.message : "An error occurred.";
+      const message = error instanceof Error ? error.message : t({ message: "An error occurred." });
       console.error("Worktree cleanup failed after thread deletion", {
         threadId: threadRef.threadId,
         projectCwd: threadProject.workspaceRoot,
         worktreePath: orphanedWorktreePath,
         error,
       });
+      const displayWorktreePathText = removalFailed
+        ? (displayWorktreePath ?? orphanedWorktreePath)
+        : undefined;
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: removalFailed
-            ? "Failed to delete worktree"
-            : "Worktree deleted, but Git status refresh failed",
+            ? t({ message: "Failed to delete worktree" })
+            : t({ message: "Worktree deleted, but Git status refresh failed" }),
           description: removalFailed
-            ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
+            ? t`Could not remove ${displayWorktreePathText}. ${message}`
             : message,
         }),
       );
@@ -791,7 +795,7 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
     const confirmationResult = await requestThreadUnpinConfirmation({
       enabled: confirmThreadUnpin,
-      title: resolved?.thread.title ?? "this thread",
+      title: resolved?.thread.title ?? t({ message: "this thread" }),
       confirm: localApi ? (message) => localApi.dialogs.confirm(message) : null,
     });
     if (confirmationResult._tag === "Failure") {

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
@@ -411,8 +413,10 @@ function terminalSelectionMenuItems(options?: {
   return [
     ...(options?.canAddToChat === false
       ? []
-      : ([{ id: "add-to-chat", label: "Add to chat" }] satisfies ContextMenuItem<"add-to-chat">[])),
-    { id: "copy", label: "Copy" },
+      : ([
+          { id: "add-to-chat", label: t({ message: "Add to chat" }) },
+        ] satisfies ContextMenuItem<"add-to-chat">[])),
+    { id: "copy", label: t({ message: "Copy" }) },
   ];
 }
 
@@ -427,9 +431,13 @@ function terminalContextMenuItems(options: {
       ...item,
       disabled: !hasSelection,
     })),
-    { id: "paste", label: "Paste", ...(options.readOnly ? { disabled: true } : {}) },
-    { id: "select-all", label: "Select all" },
-    { id: "scroll-to-bottom", label: "Jump to latest" },
+    {
+      id: "paste",
+      label: t({ message: "Paste" }),
+      ...(options.readOnly ? { disabled: true } : {}),
+    },
+    { id: "select-all", label: t({ message: "Select all" }) },
+    { id: "scroll-to-bottom", label: t({ message: "Jump to latest" }) },
   ];
 }
 
@@ -1068,8 +1076,9 @@ function TerminalSessionViewport({
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Unable to open link",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: t({ message: "Unable to open link" }),
+                  description:
+                    error instanceof Error ? error.message : t({ message: "An error occurred." }),
                 }),
               );
             },
@@ -1173,7 +1182,9 @@ function TerminalSessionViewport({
         setupTerminal = null;
         if (cancelled) return;
         const message =
-          error instanceof Error ? error.message : "Unable to initialize libghostty-vt";
+          error instanceof Error
+            ? error.message
+            : t({ message: "Unable to initialize libghostty-vt" });
         mount.textContent = `${message}. Close and reopen the terminal to retry.`;
       });
 
@@ -1408,10 +1419,10 @@ function TerminalSidebarGroup({
   const terminalCount = terminalGroup.terminalIds.length;
   const isSplitGroup = terminalCount > 1;
   const groupLabel = !isSplitGroup
-    ? "Single"
+    ? t({ message: "Single" })
     : terminalGroup.splitDirection === "vertical"
-      ? "Stacked"
-      : "Side by side";
+      ? t({ message: "Stacked" })
+      : t({ message: "Side by side" });
   const GroupIcon = !isSplitGroup
     ? Square
     : terminalGroup.splitDirection === "vertical"
@@ -1439,7 +1450,7 @@ function TerminalSidebarGroup({
       <div className="flex flex-col gap-0.5">
         {terminalGroup.terminalIds.map((terminalId) => {
           const isActive = terminalId === activeTerminalId;
-          const terminalLabel = terminalLabelById.get(terminalId) ?? "Terminal";
+          const terminalLabel = terminalLabelById.get(terminalId) ?? t({ message: "Terminal" });
           const closeTerminalLabel = `Close ${terminalLabel}${
             isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
           }`;
@@ -1661,21 +1672,21 @@ export default function ThreadTerminalDrawer({
       ...(runtimeEnv ? { runtimeEnv } : {}),
     };
   const splitTerminalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    ? t`Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
-      ? `Split Terminal Horizontally (${splitShortcutLabel})`
-      : "Split Terminal Horizontally";
+      ? t`Split Terminal Horizontally (${splitShortcutLabel})`
+      : t({ message: "Split Terminal Horizontally" });
   const splitTerminalVerticalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Vertically (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    ? t`Split Terminal Vertically (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitVerticalShortcutLabel
-      ? `Split Terminal Vertically (${splitVerticalShortcutLabel})`
-      : "Split Terminal Vertically";
+      ? t`Split Terminal Vertically (${splitVerticalShortcutLabel})`
+      : t({ message: "Split Terminal Vertically" });
   const newTerminalActionLabel = newShortcutLabel
-    ? `New Terminal (${newShortcutLabel})`
-    : "New Terminal";
+    ? t`New Terminal (${newShortcutLabel})`
+    : t({ message: "New Terminal" });
   const closeTerminalActionLabel = closeShortcutLabel
-    ? `Close Terminal (${closeShortcutLabel})`
-    : "Close Terminal";
+    ? t`Close Terminal (${closeShortcutLabel})`
+    : t({ message: "Close Terminal" });
   const onSplitTerminalAction = () => {
     if (!canOperateTerminal || hasReachedSplitLimit) return;
     onSplitTerminal();
@@ -1814,7 +1825,9 @@ export default function ThreadTerminalDrawer({
           />
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
-          <p>No terminal sessions for this thread yet.</p>
+          <p>
+            <Trans>No terminal sessions for this thread yet.</Trans>
+          </p>
           <Button
             size="xs"
             variant="outline"

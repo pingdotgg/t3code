@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -1078,7 +1080,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane pt-1 sm:pt-2">
           <TimelineSystemDivider
-            label={parentThreadLink.sideChat ? "Context from" : "Subagent of"}
+            label={
+              parentThreadLink.sideChat
+                ? t({ message: "Context from" })
+                : t({ message: "Subagent of" })
+            }
             detail={
               parentThreadLink.environmentLabel === undefined
                 ? parentThreadLink.title
@@ -1087,7 +1093,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
             icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
             {...(parentThreadLink.open === undefined
               ? {}
-              : { actionLabel: "Open parent thread", onAction: parentThreadLink.open })}
+              : {
+                  actionLabel: t({ message: "Open parent thread" }),
+                  onAction: parentThreadLink.open,
+                })}
           />
         </div>
       </div>
@@ -1262,7 +1271,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
           className="flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
           style={{ paddingBottom: emptyPlaceholderInset }}
         >
-          <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
+          <p className="text-sm text-muted-foreground">
+            <Trans>Send a message to start the conversation.</Trans>
+          </p>
         </div>
       </>
     );
@@ -1364,13 +1375,17 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
           <button
             type="button"
             disabled={props.loading}
-            aria-label="Load earlier turns"
+            aria-label={t({ message: "Load earlier turns" })}
             onClick={() => props.onLoadEarlier()}
             className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
           >
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
             <span className="shrink-0">
-              {props.loading ? "Loading earlier turns…" : "Load earlier turns"}
+              {props.loading ? (
+                <Trans>Loading earlier turns…</Trans>
+              ) : (
+                <Trans>Load earlier turns</Trans>
+              )}
             </span>
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
           </button>
@@ -1528,22 +1543,24 @@ function ContextCompactionTimelineRow({
       )}
       {row.tokenCounts ? (
         <>
-          {row.title ?? "Context compacted"} {row.tokenCounts.before}
+          {row.title ?? <Trans>Context compacted</Trans>} {row.tokenCounts.before}
           <ArrowRightIcon aria-hidden="true" className="size-3" />
-          {row.tokenCounts.after} tokens
+          <Trans>{row.tokenCounts.after} tokens</Trans>
         </>
       ) : (
         label
       )}
       {row.failure ? (
-        <span className="min-w-0 truncate opacity-80">&middot; {row.failure}</span>
+        <span className="min-w-0 truncate opacity-80">
+          <Trans>&middot; {row.failure}</Trans>
+        </span>
       ) : null}
     </span>
   );
   return (
     <div
       role="separator"
-      aria-label={row.failure ? `${label}: ${row.failure}` : label}
+      aria-label={row.failure ? t`${label}: ${row.failure}` : label}
       className={cn(
         "mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-xs",
         row.failed ? "text-destructive" : "text-muted-foreground",
@@ -1590,7 +1607,7 @@ function useDeferredWorkLoading(
   useEffect(() => {
     if (row.expanded && anchorsKey && environmentId && threadId) loadOnExpand();
   }, [row.expanded, anchorsKey, environmentId, threadId]);
-  const error = anchorsKey && failed ? "Couldn't load work. Click to retry." : null;
+  const error = anchorsKey && failed ? t({ message: "Couldn't load work. Click to retry." }) : null;
   const loading = ref !== null && row.expanded && anchorsKey !== "" && !failed;
   const toggle = () => {
     setFailed(false);
@@ -1603,7 +1620,11 @@ function useDeferredWorkLoading(
 
 function WorkHistorySkeleton() {
   return (
-    <div role="status" aria-label="Loading work history" className="space-y-2 px-1 pb-1 pt-3">
+    <div
+      role="status"
+      aria-label={t({ message: "Loading work history" })}
+      className="space-y-2 px-1 pb-1 pt-3"
+    >
       {[0, 1, 2].map((index) => (
         <div key={index} className="flex items-center gap-2" aria-hidden="true">
           <Skeleton className="size-3 shrink-0" />
@@ -1636,7 +1657,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         >
           <span>
             {row.label}
-            {error ? ` · ${error}` : ""}
+            {error ? <Trans> · {error}</Trans> : ""}
           </span>
           <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
         </button>
@@ -1674,9 +1695,11 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         />
         <span className="text-xs font-medium text-foreground/80">
           {row.label}
-          {error ? ` · ${error}` : ""}
+          {error ? <Trans> · {error}</Trans> : ""}
         </span>
-        <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
+        <span className="text-2xs text-muted-foreground">
+          <Trans>Cut off by a steer</Trans>
+        </span>
       </button>
       {loading ? <WorkHistorySkeleton /> : null}
     </div>

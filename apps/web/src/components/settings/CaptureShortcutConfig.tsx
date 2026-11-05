@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   isModifierPairShortcut,
   type DesktopCaptureConfigApplied,
@@ -121,8 +123,8 @@ export function CaptureShortcutConfig({
       if (!applied.warning && preview.operation === "install" && onComplete) {
         toastManager.add({
           type: "success",
-          title: "Shortcut saved",
-          description: `Use ${preview.shortcut} from another app.`,
+          title: t({ message: "Shortcut saved" }),
+          description: t`Use ${preview.shortcut} from another app.`,
         });
         await onComplete();
       }
@@ -138,42 +140,58 @@ export function CaptureShortcutConfig({
     end();
   };
 
+  const niriText = niri
+    ? "A custom --config or NIRI_CONFIG can change its location."
+    : "On Omarchy, use your own bindings file, not its defaults.";
+  const niriText2 = niri
+    ? "Paste this inside binds { … } in your Niri config, then save."
+    : "Add this binding to your Hyprland config, then save.";
+  const messageText =
+    result && !result.warning && !(preview?.operation === "remove") ? preview?.shortcut : undefined;
   return (
     <div className="space-y-4 text-sm">
       {!result ? (
         <div className="flex items-center justify-between gap-3">
-          <span>Shortcut</span>
+          <span>
+            <Trans>Shortcut</Trans>
+          </span>
           {recorder.input}
         </div>
       ) : null}
       {recorder.recording ? (
         <p role="status" className="text-xs text-muted-foreground">
-          Press your shortcut. Esc cancels.
+          <Trans>Press your shortcut. Esc cancels.</Trans>
         </p>
       ) : null}
       {result ? (
         <p role="status">
-          {result.warning
-            ? "Saved, but the shortcut needs attention. Check Advanced for help."
-            : preview?.operation === "remove"
-              ? "Shortcut removed."
-              : `Use ${preview?.shortcut} from another app to capture a window.`}
+          {result.warning ? (
+            <Trans>Saved, but the shortcut needs attention. Check Advanced for help.</Trans>
+          ) : preview?.operation === "remove" ? (
+            <Trans>Shortcut removed.</Trans>
+          ) : (
+            <Trans>Use {messageText} from another app to capture a window.</Trans>
+          )}
         </p>
       ) : preview ? (
         <>
           <p className="text-muted-foreground">
-            {changed
-              ? preview.operation === "remove"
-                ? "Review the change below to remove your shortcut."
-                : "Review the change below, then save your shortcut."
-              : preview.operation === "remove"
-                ? "There's no capture shortcut to remove."
-                : "This shortcut is already set up."}
+            {changed ? (
+              preview.operation === "remove" ? (
+                <Trans>Review the change below to remove your shortcut.</Trans>
+              ) : (
+                <Trans>Review the change below, then save your shortcut.</Trans>
+              )
+            ) : preview.operation === "remove" ? (
+              <Trans>There's no capture shortcut to remove.</Trans>
+            ) : (
+              <Trans>This shortcut is already set up.</Trans>
+            )}
           </p>
           {diff ? (
             <div
               className="max-h-80 overflow-auto rounded-lg border text-xs"
-              aria-label="Shortcut changes"
+              aria-label={t({ message: "Shortcut changes" })}
             >
               <FileDiff
                 fileDiff={diff}
@@ -188,7 +206,7 @@ export function CaptureShortcutConfig({
           ) : null}
           {changed ? (
             <p className="text-xs text-muted-foreground">
-              Only these changes will be saved. We'll keep a backup.
+              <Trans>Only these changes will be saved. We'll keep a backup.</Trans>
             </p>
           ) : null}
           <div className="flex gap-2">
@@ -201,32 +219,42 @@ export function CaptureShortcutConfig({
                 aria-busy={working === "writing"}
                 onClick={() => void apply()}
               >
-                {working === "writing"
-                  ? "Saving…"
-                  : changed
-                    ? preview.operation === "install"
-                      ? "Save shortcut"
-                      : "Remove shortcut"
-                    : "Done"}
+                {working === "writing" ? (
+                  <Trans>Saving…</Trans>
+                ) : changed ? (
+                  preview.operation === "install" ? (
+                    <Trans>Save shortcut</Trans>
+                  ) : (
+                    <Trans>Remove shortcut</Trans>
+                  )
+                ) : (
+                  <Trans>Done</Trans>
+                )}
               </Button>
             ) : null}
             <Button variant="ghost" disabled={actionBusy} onClick={() => setPreview(null)}>
-              Cancel
+              <Trans>Cancel</Trans>
             </Button>
           </div>
         </>
       ) : (
         <>
           <p className="text-muted-foreground">
-            Allow T3 Code to read your desktop settings. You'll review any changes here before
-            saving.
+            <Trans>
+              Allow T3 Code to read your desktop settings. You'll review any changes here before
+              saving.
+            </Trans>
           </p>
           <Button
             disabled={actionBusy || !bridge}
             aria-busy={working === "reading"}
             onClick={() => void read()}
           >
-            {working === "reading" ? "Preparing changes…" : "Review changes"}
+            {working === "reading" ? (
+              <Trans>Preparing changes…</Trans>
+            ) : (
+              <Trans>Review changes</Trans>
+            )}
           </Button>
         </>
       )}
@@ -237,30 +265,44 @@ export function CaptureShortcutConfig({
       ) : null}
       {state.shortcutActionRegistered === false && state.shortcutMessage ? (
         <p role="status" className="text-muted-foreground">
-          {state.shortcutPending
-            ? "Connecting to your desktop…"
-            : "Restart T3 Code to finish connecting your shortcut."}
+          {state.shortcutPending ? (
+            <Trans>Connecting to your desktop…</Trans>
+          ) : (
+            <Trans>Restart T3 Code to finish connecting your shortcut.</Trans>
+          )}
         </p>
       ) : null}
       <details className="text-xs text-muted-foreground">
-        <summary className="cursor-pointer">Advanced</summary>
+        <summary className="cursor-pointer">
+          <Trans>Advanced</Trans>
+        </summary>
         <div className="mt-3 space-y-3">
           {error?.detail || result?.warning ? (
             <div className="space-y-1">
-              <p className="font-medium text-foreground">Troubleshooting</p>
+              <p className="font-medium text-foreground">
+                <Trans>Troubleshooting</Trans>
+              </p>
               <p className="break-words">{error?.detail ?? result?.warning}</p>
             </div>
           ) : null}
           <div className="space-y-1">
-            <p className="font-medium text-foreground">Settings file</p>
+            <p className="font-medium text-foreground">
+              <Trans>Settings file</Trans>
+            </p>
             <p className="break-all font-mono">
               {preview?.path ??
                 state.shortcutConfigPath ??
                 (niri ? "~/.config/niri/config.kdl" : "~/.config/hypr/hyprland.conf")}
             </p>
-            {niri ? <p>T3 Code also reads any files included by this file.</p> : null}
+            {niri ? (
+              <p>
+                <Trans>T3 Code also reads any files included by this file.</Trans>
+              </p>
+            ) : null}
             {preview && preview.resolvedPath !== preview.path ? (
-              <p className="break-all">Linked to {preview.resolvedPath}. The link will be kept.</p>
+              <p className="break-all">
+                <Trans>Linked to {preview.resolvedPath}. The link will be kept.</Trans>
+              </p>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
@@ -270,7 +312,7 @@ export function CaptureShortcutConfig({
               disabled={actionBusy || !bridge}
               onClick={() => void read(true)}
             >
-              Choose a different file…
+              <Trans>Choose a different file…</Trans>
             </Button>
             <Button
               size="sm"
@@ -278,7 +320,7 @@ export function CaptureShortcutConfig({
               disabled={actionBusy || !bridge}
               onClick={() => void read(customFile, "remove")}
             >
-              Remove shortcut…
+              <Trans>Remove shortcut…</Trans>
             </Button>
             {result ? (
               <Button
@@ -287,23 +329,23 @@ export function CaptureShortcutConfig({
                 disabled={actionBusy || !bridge}
                 onClick={() => void read()}
               >
-                Review changes
+                <Trans>Review changes</Trans>
               </Button>
             ) : null}
           </div>
           <p>
-            Use your desktop's shortcut settings file.{" "}
-            {niri
-              ? "A custom --config or NIRI_CONFIG can change its location."
-              : "On Omarchy, use your own bindings file, not its defaults."}
+            <Trans>Use your desktop's shortcut settings file. {niriText}</Trans>
           </p>
-          {result?.backupPath ? <p className="break-all">Backup: {result.backupPath}</p> : null}
-          <p className="font-medium text-foreground">Manual setup</p>
+          {result?.backupPath ? (
+            <p className="break-all">
+              <Trans>Backup: {result.backupPath}</Trans>
+            </p>
+          ) : null}
+          <p className="font-medium text-foreground">
+            <Trans>Manual setup</Trans>
+          </p>
           <p>
-            {niri
-              ? "Paste this inside binds { … } in your Niri config, then save."
-              : "Add this binding to your Hyprland config, then save."}{" "}
-            Change the keys if needed.
+            <Trans>{niriText2} Change the keys if needed.</Trans>
           </p>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-3">
             {state.shortcutBinding}
@@ -316,11 +358,13 @@ export function CaptureShortcutConfig({
               if (state.shortcutBinding) copyToClipboard(state.shortcutBinding);
             }}
           >
-            {isCopied ? "Copied" : "Copy shortcut"}
+            {isCopied ? <Trans>Copied</Trans> : <Trans>Copy shortcut</Trans>}
           </Button>
           <p>
-            Turn capture off in T3 Code to stop it. Remove the shortcut from {desktop} to free up
-            the keys.
+            <Trans>
+              Turn capture off in T3 Code to stop it. Remove the shortcut from {desktop} to free up
+              the keys.
+            </Trans>
           </p>
           {state.shortcutActionRegistered === false ? (
             <p role="status">{state.shortcutMessage}</p>
@@ -332,7 +376,7 @@ export function CaptureShortcutConfig({
               disabled={actionBusy || state.shortcutActionRegistered === false}
               onClick={() => void onComplete()}
             >
-              I've added the shortcut
+              <Trans>I've added the shortcut</Trans>
             </Button>
           ) : null}
         </div>

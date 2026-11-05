@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
@@ -236,7 +237,7 @@ export function useComposerMenuItems({
           type: "slash-command",
           command: "model",
           label: "/model",
-          description: "Switch response model for this thread",
+          description: t({ message: "Switch response model for this thread" }),
         },
         ...(sideChatAvailable
           ? ([
@@ -245,14 +246,16 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "side",
                 label: "/side",
-                description: sideChatDisabledReason ?? "Ask a side question in a new side chat",
+                description:
+                  sideChatDisabledReason ??
+                  t({ message: "Ask a side question in a new side chat" }),
               },
               {
                 id: "slash:btw",
                 type: "slash-command",
                 command: "btw",
                 label: "/btw",
-                description: sideChatDisabledReason ?? "Same as /side",
+                description: sideChatDisabledReason ?? t({ message: "Same as /side" }),
               },
             ] as const)
           : []),
@@ -280,8 +283,9 @@ export function useComposerMenuItems({
         type: "provider-slash-command" as const,
         provider: selectedProvider,
         command,
-        label: `/${command.name}`,
-        description: command.description ?? command.input?.hint ?? "Run provider command",
+        label: t`/${command.name}`,
+        description:
+          command.description ?? command.input?.hint ?? t({ message: "Run provider command" }),
       }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
@@ -289,11 +293,11 @@ export function useComposerMenuItems({
         type: "skill" as const,
         provider: selectedProvider,
         skill,
-        label: `/skill:${skill.name}`,
+        label: t`/skill:${skill.name}`,
         description:
           skill.shortDescription ??
           skill.description ??
-          (skill.scope ? `${skill.scope} skill` : ""),
+          (skill.scope ? t`${skill.scope} skill` : ""),
       }));
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
@@ -317,7 +321,7 @@ export function useComposerMenuItems({
         description:
           skill.shortDescription ??
           skill.description ??
-          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+          (skill.scope ? t`${skill.scope} skill` : t({ message: "Run provider skill" })),
       }));
     }
     if (
@@ -374,11 +378,11 @@ export function useComposerMenuItems({
           state: pullRequest.state,
           isDraft: pullRequest.isDraft,
         },
-        label: `#${pullRequest.number}`,
+        label: t`#${pullRequest.number}`,
         description:
           pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
             ? pullRequest.title
-            : `${pullRequest.repository} · ${pullRequest.title}`,
+            : t`${pullRequest.repository} · ${pullRequest.title}`,
       }));
     }
     return [];

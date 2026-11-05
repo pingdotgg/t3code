@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -78,7 +80,7 @@ export function V2LifecycleRow(props: {
   if (item.type === "run_interrupt_result") {
     return (
       <TimelineSystemDivider
-        label="Run interrupted"
+        label={t({ message: "Run interrupted" })}
         detail={item.message}
         icon={CircleStopIcon}
         wrapDetail
@@ -98,9 +100,17 @@ export function V2LifecycleRow(props: {
     const relatedThreadId = item.source.type === "run" ? item.source.threadId : item.targetThreadId;
     return (
       <TimelineSystemDivider
-        label={item.source.type === "run" ? "Forked from conversation" : "Conversation fork"}
+        label={
+          item.source.type === "run"
+            ? t({ message: "Forked from conversation" })
+            : t({ message: "Conversation fork" })
+        }
         icon={GitForkIcon}
-        actionLabel={item.source.type === "run" ? "Open source conversation" : "Open fork"}
+        actionLabel={
+          item.source.type === "run"
+            ? t({ message: "Open source conversation" })
+            : t({ message: "Open fork" })
+        }
         onAction={() => props.onOpenThread(relatedThreadId)}
       />
     );
@@ -116,7 +126,7 @@ export function V2LifecycleRow(props: {
             <MessageSquareIcon className="size-4 text-secondary-label" aria-hidden />
           </span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
-            {item.title ?? "Created thread"}
+            {item.title ?? <Trans>Created thread</Trans>}
           </span>
           <Button
             size="xs"
@@ -124,22 +134,27 @@ export function V2LifecycleRow(props: {
             aria-label={`Open ${item.title ?? "created thread"}`}
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
-            Open chat
+            <Trans>Open chat</Trans>
           </Button>
         </div>
       );
     }
+    const itemTitleText = item.title ? ` · ${item.title}` : "";
     return (
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<T3Wordmark className="size-4 text-icon-muted" aria-hidden />}
-        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        label={
+          <>
+            <Trans>Created thread{itemTitleText}</Trans>
+          </>
+        }
         trailing={
           <InlineButton
             aria-label={`Open ${item.title ?? "created thread"}`}
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
-            Open chat
+            <Trans>Open chat</Trans>
           </InlineButton>
         }
       />
@@ -172,14 +187,54 @@ const STATUS_VISUALS: Record<
   OrchestrationV2TurnItem["status"],
   { dotClass: string; label: string }
 > = {
-  pending: { dotClass: "bg-info", label: "Queued" },
-  running: { dotClass: "bg-info", label: "Running" },
-  waiting: { dotClass: "bg-info", label: "Waiting" },
-  idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
-  completed: { dotClass: "bg-success", label: "Completed" },
-  failed: { dotClass: "bg-destructive", label: "Failed" },
-  cancelled: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
-  interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
+  pending: {
+    dotClass: "bg-info",
+    get label() {
+      return t({ message: "Queued" });
+    },
+  },
+  running: {
+    dotClass: "bg-info",
+    get label() {
+      return t({ message: "Running" });
+    },
+  },
+  waiting: {
+    dotClass: "bg-info",
+    get label() {
+      return t({ message: "Waiting" });
+    },
+  },
+  idle: {
+    dotClass: "bg-muted-foreground/50",
+    get label() {
+      return t({ message: "Idle · resumable" });
+    },
+  },
+  completed: {
+    dotClass: "bg-success",
+    get label() {
+      return t({ message: "Completed" });
+    },
+  },
+  failed: {
+    dotClass: "bg-destructive",
+    get label() {
+      return t({ message: "Failed" });
+    },
+  },
+  cancelled: {
+    dotClass: "bg-muted-foreground/60",
+    get label() {
+      return t({ message: "Stopped" });
+    },
+  },
+  interrupted: {
+    dotClass: "bg-muted-foreground/60",
+    get label() {
+      return t({ message: "Stopped" });
+    },
+  },
 };
 
 function subagentStatusVisual(status: OrchestrationV2TurnItem["status"]) {
@@ -465,7 +520,9 @@ function SubagentTimelineLink(props: {
             {props.title}
           </span>
           {remote !== undefined ? (
-            <span className="shrink-0 text-xs text-muted-foreground">on {remote.label}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              <Trans>on {remote.label}</Trans>
+            </span>
           ) : null}
         </span>
         <span
@@ -640,7 +697,11 @@ export function HandoffRow(props: {
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
     <TimelineSystemDivider
-      label={props.pending ? "Context handoff pending" : "Context handoff"}
+      label={
+        props.pending
+          ? t({ message: "Context handoff pending" })
+          : t({ message: "Context handoff" })
+      }
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}

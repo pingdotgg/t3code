@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -43,9 +45,24 @@ import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
-  ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
-  on: { label: "On pace with the window", icon: GaugeIcon },
-  under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
+  ahead: {
+    get label() {
+      return t({ message: "Ahead of pace: spending faster than the window elapses" });
+    },
+    icon: TrendingUpIcon,
+  },
+  on: {
+    get label() {
+      return t({ message: "On pace with the window" });
+    },
+    icon: GaugeIcon,
+  },
+  under: {
+    get label() {
+      return t({ message: "Under pace: headroom left for the rest of the window" });
+    },
+    icon: TrendingDownIcon,
+  },
 };
 
 export function barColor(driver: ServerProvider["driver"]): string {
@@ -134,6 +151,8 @@ function WindowBar({
     timeLeft === null ? "" : `, ${timeLeft}% of the window left`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
+  const timeLeftNullText = timeLeft !== null ? ` · ${timeLeft}% of the window left` : "";
+  const resetsInText = resetsAt ? (resetsIn ? ` · ${resetsIn}` : "") : undefined;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -168,15 +187,21 @@ function WindowBar({
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            <Trans>
+              {remaining}% left{timeLeftNullText}
+            </Trans>
           </span>
           {timeLeft !== null ? (
-            <span className="text-muted-foreground">The line is where even spending would be.</span>
+            <span className="text-muted-foreground">
+              <Trans>The line is where even spending would be.</Trans>
+            </span>
           ) : null}
           {resetsAt ? (
             <span className="text-muted-foreground">
-              Resets {resetsAt}
-              {resetsIn ? ` · ${resetsIn}` : ""}
+              <Trans>
+                Resets {resetsAt}
+                {resetsInText}
+              </Trans>
             </span>
           ) : null}
         </div>
@@ -210,12 +235,13 @@ export function LimitWindows({
       {windows.map((window) => {
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now);
+        const remainingPercentText = remainingPercent(window);
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                <Trans>{remainingPercentText}% left</Trans>
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />
@@ -285,16 +311,22 @@ export function ResetCreditDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
+          <AlertDialogTitle>
+            <Trans>Use a reset credit?</Trans>
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            This redeems one credit on your account and clears the current rate-limit windows. It
-            cannot be undone.
+            <Trans>
+              This redeems one credit on your account and clears the current rate-limit windows. It
+              cannot be undone.
+            </Trans>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <Trans>Cancel</Trans>
+          </AlertDialogClose>
           <Button disabled={disabled} onClick={onConfirm}>
-            Use credit
+            <Trans>Use credit</Trans>
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
@@ -346,7 +378,7 @@ export function ResetCredits({
             if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
           }}
         >
-          {busy ? "Using…" : "Use reset"}
+          {busy ? <Trans>Using…</Trans> : <Trans>Use reset</Trans>}
         </Button>
       ) : null}
       {status ? <span className="text-foreground">{status}</span> : null}

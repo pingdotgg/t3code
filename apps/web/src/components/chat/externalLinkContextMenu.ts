@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { ContextMenuItem } from "@t3tools/contracts";
 
 type ExternalLinkContextMenuAction =
@@ -24,9 +25,24 @@ const FAILURE_OPERATION_BY_ACTION = {
 } as const satisfies Record<ExternalLinkContextMenuAction, ExternalLinkContextMenuFailureOperation>;
 
 const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
-  { id: "open-in-preview", label: "Open in integrated browser" },
-  { id: "open-external", label: "Open in system browser" },
-  { id: "copy-link", label: "Copy Link" },
+  {
+    id: "open-in-preview",
+    get label() {
+      return t({ message: "Open in integrated browser" });
+    },
+  },
+  {
+    id: "open-external",
+    get label() {
+      return t({ message: "Open in system browser" });
+    },
+  },
+  {
+    id: "copy-link",
+    get label() {
+      return t({ message: "Copy Link" });
+    },
+  },
 ] as const satisfies readonly ContextMenuItem<ExternalLinkContextMenuAction>[];
 
 function externalLinkContextMenuItems(options: {
@@ -41,7 +57,9 @@ function externalLinkContextMenuItems(options: {
     {
       id: options.threadLinkAction,
       label:
-        options.threadLinkAction === "link-to-thread" ? "Link to thread" : "Unlink from thread",
+        options.threadLinkAction === "link-to-thread"
+          ? t({ message: "Link to thread" })
+          : t({ message: "Unlink from thread" }),
     },
     ...items,
   ];

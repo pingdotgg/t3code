@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import {
   findSearchTokenRanges,
   splitSearchText,
@@ -40,7 +41,7 @@ export function ThreadSearchMatchExcerpt(props: {
   return (
     <span className="truncate text-xs text-muted-foreground/85">
       <span className={isUser ? "text-info-foreground" : "text-success-foreground"}>
-        {isUser ? "You:" : "Agent:"}
+        {isUser ? <Trans>You:</Trans> : <Trans>Agent:</Trans>}
       </span>{" "}
       <HighlightedSearchText
         text={props.match.snippet}

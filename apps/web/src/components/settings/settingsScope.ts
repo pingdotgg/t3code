@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type {
@@ -66,7 +67,7 @@ export function resolveSettingsScope(
   ): ResolvedSettingsScope => ({
     kind: "unavailable",
     reason,
-    label: "Unavailable selection",
+    label: t({ message: "Unavailable selection" }),
     message,
     members: [],
     environmentIds: [],
@@ -113,21 +114,23 @@ export function resolveSettingsScope(
           member.environmentId === checkout.environmentId &&
           member.physicalProjectKey !== checkout.physicalProjectKey,
       );
+      const sharesEnvironmentText = sharesEnvironment ? ` · ${checkout.workspaceRoot}` : "";
       return {
         kind: "checkout",
         group,
         checkout,
         environmentId: checkout.environmentId,
-        label: `${group.displayName} / ${checkoutEnvironment.label}${sharesEnvironment ? ` · ${checkout.workspaceRoot}` : ""}`,
+        label: t`${group.displayName} / ${checkoutEnvironment.label}${sharesEnvironmentText}`,
         members,
         environmentIds: [checkout.environmentId],
       };
     }
+    const environmentLabelText = environment?.label ?? "All checkouts";
     return {
       kind: "project",
       group,
       environmentId: environment?.environmentId ?? null,
-      label: `${group.displayName} / ${environment?.label ?? "All checkouts"}`,
+      label: t`${group.displayName} / ${environmentLabelText}`,
       members,
       environmentIds: [...new Set(members.map((member) => member.environmentId))],
     };
@@ -143,7 +146,7 @@ export function resolveSettingsScope(
   }
   return {
     kind: "all",
-    label: "All environments",
+    label: t({ message: "All environments" }),
     members: [],
     environmentIds: environments.map((candidate) => candidate.environmentId),
   };

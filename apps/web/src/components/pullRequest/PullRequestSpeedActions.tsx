@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestAction, PullRequestSummary } from "@t3tools/contracts";
 import { createContext, use, type ReactNode } from "react";
@@ -111,11 +113,13 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
               {label}
             </TooltipTrigger>
             <TooltipPopup>
-              {action === "merge" && entry.stack
-                ? `Open this ${terminology.singular} to merge its stack`
-                : action === "close" && onCloseSweepStart
-                  ? "Close immediately, or drag across rows to close several"
-                  : `${label} immediately`}
+              {action === "merge" && entry.stack ? (
+                <Trans>Open this {terminology.singular} to merge its stack</Trans>
+              ) : action === "close" && onCloseSweepStart ? (
+                <Trans>Close immediately, or drag across rows to close several</Trans>
+              ) : (
+                <Trans>{label} immediately</Trans>
+              )}
             </TooltipPopup>
           </Tooltip>
         );
@@ -164,8 +168,28 @@ function SpeedModeGroup({
 }
 
 const ACTIONS = {
-  close: { label: "Close", Icon: PullRequestGlyph.closed },
-  merge: { label: "Merge", Icon: PullRequestGlyph.merged },
-  ready: { label: "Ready for review", Icon: PullRequestGlyph.pullRequest },
-  reopen: { label: "Reopen", Icon: PullRequestGlyph.reopen },
+  close: {
+    get label() {
+      return t({ message: "Close" });
+    },
+    Icon: PullRequestGlyph.closed,
+  },
+  merge: {
+    get label() {
+      return t({ message: "Merge" });
+    },
+    Icon: PullRequestGlyph.merged,
+  },
+  ready: {
+    get label() {
+      return t({ message: "Ready for review" });
+    },
+    Icon: PullRequestGlyph.pullRequest,
+  },
+  reopen: {
+    get label() {
+      return t({ message: "Reopen" });
+    },
+    Icon: PullRequestGlyph.reopen,
+  },
 } as const;

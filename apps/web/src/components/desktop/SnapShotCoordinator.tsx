@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   type DesktopBridge,
   type DesktopPendingSnapShot,
@@ -347,8 +348,8 @@ export function SnapShotCoordinator() {
               "missing-project",
               stackedThreadToast({
                 type: "error",
-                title: "Snapshot taken, but no project is available",
-                description: "Add a project, then capture the window again.",
+                title: t({ message: "Snapshot taken, but no project is available" }),
+                description: t({ message: "Add a project, then capture the window again." }),
               }),
             );
             continue;
@@ -366,15 +367,15 @@ export function SnapShotCoordinator() {
             reportedCaptureFailuresRef.current.delete(item.id);
           } catch (error) {
             await dismissSnapShotAnimation(item.id);
+            const errorInstanceofErrorText =
+              error instanceof Error ? error.message : "Try the capture again.";
             reportOnce(
               item.id,
               "delivery",
               stackedThreadToast({
                 type: "error",
-                title: "Snapshot failed",
-                description: `Capture ${item.id}: ${
-                  error instanceof Error ? error.message : "Try the capture again."
-                }`,
+                title: t({ message: "Snapshot failed" }),
+                description: t`Capture ${item.id}: ${errorInstanceofErrorText}`,
               }),
             );
           }
@@ -387,8 +388,9 @@ export function SnapShotCoordinator() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Snapshot failed",
-            description: error instanceof Error ? error.message : "Try the capture again.",
+            title: t({ message: "Snapshot failed" }),
+            description:
+              error instanceof Error ? error.message : t({ message: "Try the capture again." }),
           }),
         );
       })
@@ -455,8 +457,8 @@ export function SnapShotCoordinator() {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Snapshot failed",
-                description: state.message ?? "Try the capture again.",
+                title: t({ message: "Snapshot failed" }),
+                description: state.message ?? t({ message: "Try the capture again." }),
               }),
             );
           });

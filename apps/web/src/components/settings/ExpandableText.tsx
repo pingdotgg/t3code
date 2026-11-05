@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { InlineButton } from "../ui/button";
 import { useId, useState } from "react";
 
@@ -39,7 +40,7 @@ export function ExpandableText({
           className="mt-1"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "Show less" : expandLabel}
+          {expanded ? <Trans>Show less</Trans> : expandLabel}
         </InlineButton>
       ) : null}
     </div>

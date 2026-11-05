@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
 import { CheckIcon, TagIcon } from "lucide-react";
@@ -57,8 +58,8 @@ export function PullRequestLabelPicker({
       toastManager.add({
         type: "error",
         title: candidate.isApplied
-          ? `Could not take ${candidate.name} off`
-          : `Could not put ${candidate.name} on`,
+          ? t`Could not take ${candidate.name} off`
+          : t`Could not put ${candidate.name} on`,
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused it. Check that you have triage access on this repository.",
@@ -71,9 +72,9 @@ export function PullRequestLabelPicker({
   return (
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
-      label="Change labels"
+      label={t({ message: "Change labels" })}
       allowed={allowed}
-      disabledReason="Changing labels needs triage access on this repository"
+      disabledReason={t({ message: "Changing labels needs triage access on this repository" })}
       open={open}
       onOpenChange={setOpen}
       query={query}
@@ -82,11 +83,14 @@ export function PullRequestLabelPicker({
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
-      emptyLabel="This repository has no labels."
-      noMatchLabel="No label matches that."
-      errorLabel="The labels could not be read."
+      emptyLabel={t({ message: "This repository has no labels." })}
+      noMatchLabel={t({ message: "No label matches that." })}
+      errorLabel={t({ message: "The labels could not be read." })}
       truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
+      truncatedLabel={t({
+        message:
+          "This repository has more labels than are listed here. Apply the rest on the host.",
+      })}
       candidateKey={(candidate) => candidate.name}
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}
@@ -107,7 +111,7 @@ export function PullRequestLabelPicker({
               ) : null}
             </span>
             {candidate.isApplied ? (
-              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
+              <CheckIcon aria-label={t({ message: "Applied" })} className="size-3.5 shrink-0" />
             ) : null}
           </>
         );

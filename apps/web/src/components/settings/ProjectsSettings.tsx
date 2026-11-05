@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { EnvironmentId } from "@t3tools/contracts";
 import { LayersIcon } from "lucide-react";
 
@@ -22,7 +23,7 @@ export function ProjectsSettings() {
               onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
             >
               <LayersIcon />
-              Show all environments
+              <Trans>Show all environments</Trans>
             </Button>
           ) : null}
         </div>
@@ -47,7 +48,7 @@ export function ProjectsSettings() {
         unavailable
       ) : (
         <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
+          <Trans>Choose a project to manage its name, icon, checkouts and actions.</Trans>
         </SettingsScopeNotice>
       )}
     </div>

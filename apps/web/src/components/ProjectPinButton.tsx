@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { PinIcon, PinOffIcon } from "lucide-react";
 import type { KeyboardEvent } from "react";
@@ -44,7 +45,7 @@ export function ProjectPinButton(props: {
         variant="ghost-muted"
         tabIndex={-1}
         aria-hidden="true"
-        title={props.shortcutLabel ? `${action} (${props.shortcutLabel})` : action}
+        title={props.shortcutLabel ? t`${action} (${props.shortcutLabel})` : action}
         onPointerDown={(event) => event.stopPropagation()}
         onMouseDown={(event) => event.preventDefault()}
         onClick={(event) => {

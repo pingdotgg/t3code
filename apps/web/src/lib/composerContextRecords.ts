@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -72,8 +73,11 @@ export function reviewCommentContextLabel(comment: ReviewCommentPresentation): s
     return `#${pullRequestNumber}`;
   }
   const diffRange = /^([+-])(\d+)(?: to \1(\d+))?$/u.exec(comment.rangeLabel);
+  const messageText = diffRange ? diffRange[2] : undefined;
+  const diffRange3Text = diffRange ? (diffRange[3] ? ` to L${diffRange[3]}` : "") : undefined;
+  const diffRange1Text = diffRange ? (diffRange[1] === "-" ? " (before)" : "") : undefined;
   const rangeLabel = diffRange
-    ? `L${diffRange[2]}${diffRange[3] ? ` to L${diffRange[3]}` : ""}${diffRange[1] === "-" ? " (before)" : ""}`
+    ? t`L${messageText}${diffRange3Text}${diffRange1Text}`
     : comment.rangeLabel;
   const sectionPullRequest = /^pull-request:(\d+)$/u.exec(comment.sectionId)?.[1];
   const prefix = sectionPullRequest === undefined ? "" : `#${sectionPullRequest} `;

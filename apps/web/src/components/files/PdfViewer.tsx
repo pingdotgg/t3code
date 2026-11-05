@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   useEffect,
   useEffectEvent,
@@ -341,45 +343,53 @@ export default function PdfViewer(props: {
       clearTimeout(timer);
     };
   }, [pdf, query]);
+  const currentText = pdf ? current + 1 : undefined;
+  const MathRoundText = !(zoom === null) ? Math.round(scale * 100) : undefined;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2 py-1 text-xs">
         <span className="mr-auto px-1 tabular-nums" aria-live="polite">
-          {pdf ? `${current + 1} / ${pdf.numPages} pages` : "PDF"}
+          {pdf ? (
+            <Trans>
+              {currentText} / {pdf.numPages} pages
+            </Trans>
+          ) : (
+            <Trans>PDF</Trans>
+          )}
         </span>
         <FileSurfaceAction
-          label="Previous page"
+          label={t({ message: "Previous page" })}
           disabled={!pdf || current === 0}
           onPress={() => showPage(current - 1)}
         >
           <ChevronUpIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label="Next page"
+          label={t({ message: "Next page" })}
           disabled={!pdf || current + 1 >= pdf.numPages}
           onPress={() => showPage(current + 1)}
         >
           <ChevronDownIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label="Zoom out"
+          label={t({ message: "Zoom out" })}
           disabled={scale <= PDF_MIN_ZOOM}
           onPress={() => changeZoom(stepPdfZoom(scale, -1))}
         >
           <MinusIcon className="size-3.5" />
         </FileSurfaceAction>
         <span className="min-w-14 text-center tabular-nums">
-          {zoom === null ? "Fit width" : `${Math.round(scale * 100)}%`}
+          {zoom === null ? <Trans>Fit width</Trans> : <Trans>{MathRoundText}%</Trans>}
         </span>
         <FileSurfaceAction
-          label="Zoom in"
+          label={t({ message: "Zoom in" })}
           disabled={scale >= PDF_MAX_ZOOM}
           onPress={() => changeZoom(stepPdfZoom(scale, 1))}
         >
           <PlusIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label="Fit width"
+          label={t({ message: "Fit width" })}
           onPress={() => {
             changeZoom(null);
             scroll.current?.scrollTo({ left: 0 });
@@ -392,8 +402,8 @@ export default function PdfViewer(props: {
             ref={find}
             size="compact"
             type="search"
-            aria-label="Find in PDF"
-            placeholder="Find in PDF"
+            aria-label={t({ message: "Find in PDF" })}
+            placeholder={t({ message: "Find in PDF" })}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -405,12 +415,14 @@ export default function PdfViewer(props: {
         {query ? (
           <>
             <span role="status">
-              {finding
-                ? "Searching…"
-                : (findError ?? `${matches.length ? match + 1 : 0}/${matches.length}`)}
+              {finding ? (
+                <Trans>Searching…</Trans>
+              ) : (
+                (findError ?? `${matches.length ? match + 1 : 0}/${matches.length}`)
+              )}
             </span>
             <FileSurfaceAction
-              label="Next matching page"
+              label={t({ message: "Next matching page" })}
               disabled={!matches.length}
               onPress={() => {
                 const next = (match + 1) % matches.length;

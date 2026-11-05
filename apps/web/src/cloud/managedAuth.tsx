@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useClerk } from "@clerk/react";
 import {
   createCloudAccountService,
@@ -54,7 +55,7 @@ const managedRelayAccountService = createCloudAccountService<ClerkInstance>({
       ),
     ]);
     for (const result of results) {
-      reportAtomCommandResult(result, { label: "cloud account cleanup" });
+      reportAtomCommandResult(result, { label: t({ message: "cloud account cleanup" }) });
     }
   },
   activate: ({ source, accountId }) =>

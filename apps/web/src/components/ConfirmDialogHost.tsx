@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { t } from "@palamedes/core/macro";
 import { useSyncExternalStore } from "react";
 
@@ -84,10 +85,10 @@ export function ConfirmDialogHost() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>
-            {t({ message: "Cancel" })}
+            <Trans>Cancel</Trans>
           </AlertDialogClose>
           <Button variant={confirmVariant} onClick={onConfirm}>
-            {t({ message: "Confirm" })}
+            <Trans>Confirm</Trans>
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

@@ -1,3 +1,4 @@
+import { t, plural } from "@palamedes/core/macro";
 import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
@@ -447,7 +448,7 @@ export function buildLocalDraftThread(
   return presentThreadShell(draftThread.environmentId, {
     id: threadId,
     projectId: draftThread.projectId,
-    title: "New thread",
+    title: t({ message: "New thread" }),
     providerInstanceId: fallbackModelSelection.instanceId,
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,
@@ -761,17 +762,27 @@ export function buildExpiredTerminalContextToastCopy(
   variant: "omitted" | "empty",
 ): { title: string; description: string } {
   const count = Math.max(1, Math.floor(expiredTerminalContextCount));
-  const noun = count === 1 ? "Expired terminal context" : "Expired terminal contexts";
-  const pronoun = count === 1 ? "it" : "them";
   if (variant === "empty") {
     return {
-      title: `${noun} won't be sent`,
-      description: `Remove ${pronoun} or re-add ${pronoun} to include terminal output.`,
+      title: plural(count, {
+        one: `Expired terminal context won't be sent`,
+        other: `Expired terminal contexts won't be sent`,
+      }),
+      description: plural(count, {
+        one: "Remove it or re-add it to include terminal output.",
+        other: "Remove them or re-add them to include terminal output.",
+      }),
     };
   }
   return {
-    title: `${noun} omitted from message`,
-    description: `Re-add ${pronoun} if you want that terminal output included.`,
+    title: plural(count, {
+      one: `Expired terminal context omitted from message`,
+      other: `Expired terminal contexts omitted from message`,
+    }),
+    description: plural(count, {
+      one: `Re-add it if you want that terminal output included.`,
+      other: `Re-add them if you want that terminal output included.`,
+    }),
   };
 }
 
@@ -885,8 +896,10 @@ export function getStartedThreadModelChangeBlockReason(input: {
     return null;
   }
   return {
-    title: "Start a new chat to switch providers",
-    description: "This thread does not support switching providers after it has started.",
+    title: t({ message: "Start a new chat to switch providers" }),
+    description: t({
+      message: "This thread does not support switching providers after it has started.",
+    }),
   };
 }
 

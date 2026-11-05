@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { PullRequestReviewGuideResult } from "@t3tools/contracts";
 import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
@@ -89,7 +91,10 @@ function watchGuideRun(
     const looking = document.visibilityState === "visible" && document.hasFocus();
     if (looking && isGuideShown(runKey)) return;
 
-    const title = failure === null ? "Review guide ready" : "Review guide failed";
+    const title =
+      failure === null
+        ? t({ message: "Review guide ready" })
+        : t({ message: "Review guide failed" });
     const body =
       watch.title ??
       observedPullRequestTitle(registry, watch.environmentId, watch.reference) ??
@@ -118,7 +123,7 @@ function watchGuideRun(
       const toastId = toastManager.add({
         type: failure === null ? "success" : "error",
         title,
-        description: failure === null ? body : `${body}: ${failure}`,
+        description: failure === null ? body : t`${body}: ${failure}`,
         data: {
           hideCopyButton: true,
           leadingIcon:
@@ -129,7 +134,7 @@ function watchGuideRun(
             ),
         },
         actionProps: {
-          children: "Open guide",
+          children: <Trans>Open guide</Trans>,
           onClick: () => {
             toastManager.close(toastId);
             open();

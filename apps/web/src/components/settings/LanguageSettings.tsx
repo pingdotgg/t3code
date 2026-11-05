@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { t } from "@palamedes/core/macro";
 import { useState } from "react";
 
@@ -56,14 +57,14 @@ export function LanguageSettings() {
                 }
               }}
             >
-              {t`Apply and reload`}
+              <Trans>Apply and reload</Trans>
             </Button>
           </div>
         }
       />
       {failed ? (
         <p role="alert" className="px-4 py-2 text-sm text-destructive">
-          {t`Could not save the language. Allow local storage and try again.`}
+          <Trans>Could not save the language. Allow local storage and try again.</Trans>
         </p>
       ) : null}
     </SettingsSection>

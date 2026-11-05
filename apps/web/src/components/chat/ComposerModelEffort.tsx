@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
@@ -209,11 +211,17 @@ function ColumnRow(props: {
       <span className="min-w-0 flex-1 truncate">{props.label}</span>
       {props.selected ? (
         <>
-          {props.isDefault ? <span className="sr-only">Default</span> : null}
+          {props.isDefault ? (
+            <span className="sr-only">
+              <Trans>Default</Trans>
+            </span>
+          ) : null}
           <CheckIcon aria-hidden="true" className="size-3.5" />
         </>
       ) : props.isDefault ? (
-        <span className="text-muted-foreground/70 text-xs">Default</span>
+        <span className="text-muted-foreground/70 text-xs">
+          <Trans>Default</Trans>
+        </span>
       ) : null}
     </>
   );
@@ -308,7 +316,7 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
         {([true, false] as const).map((value) => (
           <ColumnRow
             key={String(value)}
-            label={value ? "On" : "Off"}
+            label={value ? t({ message: "On" }) : t({ message: "Off" })}
             selected={(control.descriptor.currentValue === true) === value}
             tabStop={(control.descriptor.currentValue === true) === value}
             onPick={() => traits.changeBoolean(descriptor.id, value)}
@@ -448,7 +456,9 @@ function OptionMenuRow(props: {
                   ) : null}
                 </span>
                 {choice.isDefault ? (
-                  <span className="text-muted-foreground/70 text-xs">Default</span>
+                  <span className="text-muted-foreground/70 text-xs">
+                    <Trans>Default</Trans>
+                  </span>
                 ) : null}
                 <MenuRadioItemIndicator />
               </span>
@@ -485,7 +495,9 @@ function OptionSwitchRow(props: {
 
 function NoEffortRow() {
   return (
-    <div className="flex h-8 items-center px-2 text-muted-foreground text-sm">No effort levels</div>
+    <div className="flex h-8 items-center px-2 text-muted-foreground text-sm">
+      <Trans>No effort levels</Trans>
+    </div>
   );
 }
 
@@ -527,6 +539,7 @@ const FOOTER_SEGMENT =
 
 function SpeedSegment(props: {
   checked: boolean;
+  speed?: "fast" | "ultrafast" | undefined;
   label: string;
   description?: string | undefined;
   onPick: () => void;
@@ -541,9 +554,7 @@ function SpeedSegment(props: {
   } as const;
   const content = (
     <>
-      {props.label === "Fast" || props.label === "Ultrafast" ? (
-        <FastBolt ultra={props.label === "Ultrafast"} />
-      ) : null}
+      {props.speed ? <FastBolt ultra={props.speed === "ultrafast"} /> : null}
       {props.label}
     </>
   );
@@ -575,6 +586,13 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
               key={option.id}
               checked={option.id === traits.selectValue(speedSelect)}
               label={option.label}
+              speed={
+                option.label === "Ultrafast"
+                  ? "ultrafast"
+                  : option.label === "Fast"
+                    ? "fast"
+                    : undefined
+              }
               description={option.description}
               onPick={() => traits.changeSelect(speedSelect, option.id)}
             />
@@ -584,7 +602,8 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
               <SpeedSegment
                 key={String(value)}
                 checked={(fastToggle.currentValue === true) === value}
-                label={value ? "Fast" : "Standard"}
+                label={value ? t({ message: "Fast" }) : t({ message: "Standard" })}
+                speed={value ? "fast" : undefined}
                 onPick={() => traits.changeBoolean(fastToggle.id, value)}
               />
             ))

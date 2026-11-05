@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentId, RuntimeMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 
@@ -33,6 +34,7 @@ export function ComposerContextPermissions(props: {
   const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId));
   const composerMenuProps = useComposerMenuProps();
   const { icon: Icon, label } = runtimeModeConfig[mode];
+  const shortcutLabelText = shortcutLabel ? ` · ${shortcutLabel}` : null;
   return (
     <Menu>
       <Tooltip>
@@ -53,7 +55,9 @@ export function ComposerContextPermissions(props: {
           <Icon aria-hidden="true" className="size-3" />
           <ComposerContextLabel>{label}</ComposerContextLabel>
         </TooltipTrigger>
-        <TooltipPopup>Permissions{shortcutLabel ? ` · ${shortcutLabel}` : null}</TooltipPopup>
+        <TooltipPopup>
+          <Trans>Permissions{shortcutLabelText}</Trans>
+        </TooltipPopup>
       </Tooltip>
       <MenuPopup side="top" align="end" {...composerMenuProps}>
         <ComposerPermissionsSection

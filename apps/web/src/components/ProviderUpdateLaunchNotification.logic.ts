@@ -1,3 +1,4 @@
+import { t, plural } from "@palamedes/core/macro";
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
@@ -239,7 +240,10 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
   if (failureLines.length === 0) {
     return {
       type: "success",
-      title: settled.length === 1 ? "Provider updated" : `${settled.length} providers updated`,
+      title:
+        settled.length === 1
+          ? t({ message: "Provider updated" })
+          : t`${settled.length} providers updated`,
       description: getProviderUpdatedDescription(settled.length),
     };
   }
@@ -247,10 +251,10 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
     type: "error",
     title:
       failureLines.length < settled.length
-        ? `${failureLines.length} of ${settled.length} provider updates failed`
+        ? t`${failureLines.length} of ${settled.length} provider updates failed`
         : settled.length === 1
-          ? "Provider update failed"
-          : "Provider updates failed",
+          ? t({ message: "Provider update failed" })
+          : t({ message: "Provider updates failed" }),
     description: failureLines.join("\n"),
   };
 }
@@ -308,6 +312,11 @@ export function getProviderUpdateSidebarPillView(
     const activeProvider = activeProviders[0]!;
     const activeProviderName =
       PROVIDER_DISPLAY_NAMES[activeProvider.driver] ?? activeProvider.driver;
+    const formatProviderListText =
+      activeProviders.length === 1 ? formatProviderList(activeProviders) : undefined;
+    const formatProviderListText2 = !(activeProviders.length === 1)
+      ? formatProviderList(activeProviders)
+      : undefined;
     return {
       key: `loading:${activeProviders
         .map((provider) => `${provider.driver}:${provider.updateState?.status ?? "idle"}`)
@@ -316,12 +325,12 @@ export function getProviderUpdateSidebarPillView(
       tone: "loading",
       title:
         activeProviders.length === 1
-          ? `Updating ${activeProviderName}`
-          : `Updating ${activeProviders.length} providers`,
+          ? t`Updating ${activeProviderName}`
+          : t`Updating ${activeProviders.length} providers`,
       description:
         activeProviders.length === 1
-          ? `${formatProviderList(activeProviders)} update in progress.`
-          : `${formatProviderList(activeProviders)} updates are in progress.`,
+          ? t`${formatProviderListText} update in progress.`
+          : t`${formatProviderListText2} updates are in progress.`,
     };
   }
 
@@ -347,7 +356,7 @@ export function getProviderUpdateSidebarPillView(
       title:
         failedProviders.length === 1
           ? getProviderFailedUpdateTitle(failedProvider)
-          : `${failedProviders.length} provider updates failed`,
+          : t`${failedProviders.length} provider updates failed`,
       description: getFailedProviderUpdateDescription(failedProviders),
       dismissible: true,
     });
@@ -360,6 +369,8 @@ export function getProviderUpdateSidebarPillView(
     const unchangedProvider = unchangedProviders[0]!;
     const unchangedProviderName =
       PROVIDER_DISPLAY_NAMES[unchangedProvider.driver] ?? unchangedProvider.driver;
+    const formatProviderListText3 = formatProviderList(unchangedProviders);
+
     terminalCandidates.push({
       key: `unchanged:${unchangedProviders
         .map(
@@ -371,11 +382,12 @@ export function getProviderUpdateSidebarPillView(
       tone: "warning",
       title:
         unchangedProviders.length === 1
-          ? `${unchangedProviderName} still needs an update`
-          : `${unchangedProviders.length} providers still need updates`,
-      description: `${formatProviderList(unchangedProviders)} ${
-        unchangedProviders.length === 1 ? "still appears" : "still appear"
-      } outdated. Review provider settings for details.`,
+          ? t`${unchangedProviderName} still needs an update`
+          : t`${unchangedProviders.length} providers still need updates`,
+      description: plural(unchangedProviders.length, {
+        one: `${formatProviderListText3} still appears outdated. Review provider settings for details.`,
+        other: `${formatProviderListText3} still appear outdated. Review provider settings for details.`,
+      }),
       dismissible: true,
     });
   }
@@ -397,7 +409,7 @@ export function getProviderUpdateSidebarPillView(
       title:
         succeededProviders.length === 1
           ? getProviderUpdatedTitle(succeededProvider)
-          : `${succeededProviders.length} providers updated`,
+          : t`${succeededProviders.length} providers updated`,
       description: getProviderUpdatedDescription(succeededProviders.length),
       dismissAfterVisibleMs: PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
     });

@@ -1,3 +1,5 @@
+import { t, plural } from "@palamedes/core/macro";
+import { Trans, Plural } from "@palamedes/react/macro";
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -191,14 +193,17 @@ export function WelcomeWizard({
         if (importWarning) {
           toastManager.add({
             type: "warning",
-            title: "Some history was not imported",
+            title: t({ message: "Some history was not imported" }),
             description: importWarning,
             timeout: 0,
           });
         } else if (importedThreadCount > 0) {
           toastManager.add({
             type: "success",
-            title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
+            title: plural(importedThreadCount, {
+              one: `Imported ${importedThreadCount} thread`,
+              other: `Imported ${importedThreadCount} threads`,
+            }),
           });
         }
         return true;
@@ -206,8 +211,8 @@ export function WelcomeWizard({
       .catch(() => {
         const errorToast = {
           type: "error",
-          title: "Could not finish setup",
-          description: "Your settings could not be saved. Try again.",
+          title: t({ message: "Could not finish setup" }),
+          description: t({ message: "Your settings could not be saved. Try again." }),
         } as const;
         if (completionErrorToastIdRef.current === null) {
           completionErrorToastIdRef.current = toastManager.add(errorToast);
@@ -240,12 +245,12 @@ export function WelcomeWizard({
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
       >
         <WizardHeader
-          title="Set up T3 Code"
+          title={t({ message: "Set up T3 Code" })}
           identity={
             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
               <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
+                <Trans>Code</Trans>
               </span>
             </div>
           }
@@ -342,17 +347,24 @@ function ConnectionStep({
       continueRef.current?.focus();
     }
   }, [ready]);
+  const telemetryOffText =
+    telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it.";
+  const telemetryOffUndefinedText = telemetryOff === undefined ? " and how to opt out" : "";
+  const skippedLabelsJoinText = skippedLabels.length > 0 ? skippedLabels.join(", ") : undefined;
+
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        Connect your computers
+        <Trans>Connect your computers</Trans>
       </h1>
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        Choose one or more computers. We’ll set up agents and projects on each.
+        <Trans>Choose one or more computers. We’ll set up agents and projects on each.</Trans>
       </p>
       {directEnvironments.length > 0 ? (
         <fieldset className="mt-5 space-y-2">
-          <legend className="sr-only">Computers to set up</legend>
+          <legend className="sr-only">
+            <Trans>Computers to set up</Trans>
+          </legend>
           {directEnvironments.map((environment) => (
             <label
               key={environment.environmentId}
@@ -374,9 +386,12 @@ function ConnectionStep({
                     {environment.label}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {!environment.entry.enabled && environment.connection.phase !== "unsupported"
-                      ? "Off"
-                      : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
+                    {!environment.entry.enabled &&
+                    environment.connection.phase !== "unsupported" ? (
+                      <Trans>Off</Trans>
+                    ) : (
+                      presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel
+                    )}
                   </span>
                 </span>
                 {environment.displayUrl ? (
@@ -416,7 +431,9 @@ function ConnectionStep({
               }
             >
               <LinkIcon className="size-4 text-muted-foreground" />
-              <span className="flex-1 text-left">Add a computer</span>
+              <span className="flex-1 text-left">
+                <Trans>Add a computer</Trans>
+              </span>
               <ChevronRightIcon
                 className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
               />
@@ -439,24 +456,28 @@ function ConnectionStep({
       </div>
       {skippedLabels.length > 0 ? (
         <p className="mt-4 text-xs text-muted-foreground">
-          Not connected, so setup skips {skippedLabels.join(", ")}. You can set{" "}
-          {skippedLabels.length === 1 ? "it" : "them"} up later from Settings.
+          <Plural
+            value={skippedLabels.length}
+            one={`Not connected, so setup skips ${skippedLabelsJoinText}. You can set it up later from Settings.`}
+            other={`Not connected, so setup skips ${skippedLabelsJoinText}. You can set them up later from Settings.`}
+          />
         </p>
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
-          more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
-          see our{" "}
-          <a
-            className="underline underline-offset-2 hover:text-foreground"
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            privacy policy
-          </a>
-          .
+          <Trans>
+            {telemetryOffText} To read more about how your data is used{telemetryOffUndefinedText},
+            see our{" "}
+            <a
+              className="underline underline-offset-2 hover:text-foreground"
+              href={PRIVACY_POLICY_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              privacy policy
+            </a>
+            .
+          </Trans>
         </p>
         <Button
           className="shrink-0 self-end"
@@ -465,7 +486,7 @@ function ConnectionStep({
           disabled={!ready || isPairing}
           onClick={onContinue}
         >
-          Continue
+          <Trans>Continue</Trans>
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </div>
@@ -508,15 +529,17 @@ function ConnectAccountOption({
           }
         >
           <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="flex-1 text-left">T3 Connect</span>
+          <span className="flex-1 text-left">
+            <Trans>T3 Connect</Trans>
+          </span>
           <span className="text-xs text-muted-foreground">
-            {!isLoaded
-              ? "Loading sign-in…"
-              : !isSignedIn
-                ? "Sign in"
-                : !discoveryReady
-                  ? "Loading computers…"
-                  : null}
+            {!isLoaded ? (
+              <Trans>Loading sign-in…</Trans>
+            ) : !isSignedIn ? (
+              <Trans>Sign in</Trans>
+            ) : !discoveryReady ? (
+              <Trans>Loading computers…</Trans>
+            ) : null}
           </span>
           <ChevronRightIcon
             className={cn("size-4 text-muted-foreground", expanded && isSignedIn && "rotate-90")}
@@ -534,17 +557,19 @@ function ConnectAccountOption({
                   selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
                   refreshWhileEmpty
                   empty={
-                    <p className="py-3 text-sm text-muted-foreground">No computers linked yet.</p>
+                    <p className="py-3 text-sm text-muted-foreground">
+                      <Trans>No computers linked yet.</Trans>
+                    </p>
                   }
                 />
               ) : null}
             </div>
             <p className="text-sm text-muted-foreground">
-              Run this on each computer you want to connect.
+              <Trans>Run this on each computer you want to connect.</Trans>
             </p>
             <InstallT3Commands command="t3 connect" className="mt-3" />
             <p className="mt-3 text-xs text-muted-foreground">
-              Keep T3 Code running. Select the computers you want to set up above.
+              <Trans>Keep T3 Code running. Select the computers you want to set up above.</Trans>
             </p>
           </div>
         </CollapsiblePanel>
@@ -602,7 +627,7 @@ function PairingForm({
       >
         <div>
           <label className="block text-sm text-muted-foreground" htmlFor="onboarding-pairing-url">
-            Pairing link
+            <Trans>Pairing link</Trans>
           </label>
           <Input
             id="onboarding-pairing-url"
@@ -642,10 +667,10 @@ function PairingForm({
               className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
             >
               <ChevronRightIcon className="size-3.5 group-data-panel-open:rotate-90" />
-              Need a pairing link?
+              <Trans>Need a pairing link?</Trans>
             </CollapsibleTrigger>
             <Button type="submit" disabled={isPairing || pairingUrl.trim().length === 0}>
-              {isPairing ? "Pairing..." : "Pair"}
+              {isPairing ? <Trans>Pairing...</Trans> : <Trans>Pair</Trans>}
             </Button>
           </div>
           <CollapsiblePanel>
@@ -685,8 +710,8 @@ function AgentsStep({
   const { environments } = useEnvironments();
   return (
     <StepShell
-      title="Connect your agents"
-      description="Choose an agent to start coding. You can add more later."
+      title={t({ message: "Connect your agents" })}
+      description={t({ message: "Choose an agent to start coding. You can add more later." })}
     >
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
@@ -705,7 +730,7 @@ function AgentsStep({
       <CliPathSetup />
       <div className="mt-6 flex justify-end">
         <Button autoFocus onClick={onContinue}>
-          Continue
+          <Trans>Continue</Trans>
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </div>
@@ -774,7 +799,7 @@ function ConnectedAgentsStep({
       <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
       {!canOperateTerminal ? (
         <p className="mb-2 text-sm text-muted-foreground">
-          This connection cannot control terminals.
+          <Trans>This connection cannot control terminals.</Trans>
         </p>
       ) : null}
       <div className="space-y-1.5">
@@ -858,7 +883,7 @@ function ConnectedAgentsStep({
       ) ? (
         <div className="mt-3">
           <Button size="xs" variant="ghost-muted" onClick={() => setAddingAccount(true)}>
-            Connect another ChatGPT account
+            <Trans>Connect another ChatGPT account</Trans>
           </Button>
         </div>
       ) : null}
@@ -999,20 +1024,24 @@ function AgentCard({
       <div className="min-w-0 flex-1">
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState === "ready" ? "Ready to code." : summary.headline}
-          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
+          {providerState === "ready" ? <Trans>Ready to code.</Trans> : summary.headline}
+          {providerState !== "ready" && summary.detail ? <Trans> · {summary.detail}</Trans> : ""}
         </p>
       </div>
       <div className="shrink-0">
         {providerState === "ready" ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
             <CheckIcon className="size-3.5" />
-            Ready
+            <Trans>Ready</Trans>
           </span>
         ) : providerState === "checking" ? (
-          <span className="text-xs text-muted-foreground">Checking...</span>
+          <span className="text-xs text-muted-foreground">
+            <Trans>Checking...</Trans>
+          </span>
         ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">Disabled</span>
+          <span className="text-xs text-muted-foreground">
+            <Trans>Disabled</Trans>
+          </span>
         ) : providerState === "attention" ? (
           <span className="text-xs text-muted-foreground">{summary.headline}</span>
         ) : (
@@ -1023,7 +1052,7 @@ function AgentCard({
             disabled={terminalOpen || !terminalAvailable}
           >
             <TerminalIcon className="size-3.5" />
-            {providerState === "signIn" ? "Sign in" : "Install"}
+            {providerState === "signIn" ? <Trans>Sign in</Trans> : <Trans>Install</Trans>}
           </Button>
         )}
       </div>
@@ -1140,8 +1169,10 @@ function AgentInstallTerminal({
             "This connection cannot control terminals."
           ) : setupState === "writeFailed" ? (
             <>
-              Run <code className="rounded bg-muted px-1 font-mono">{command}</code> in this
-              terminal.
+              <Trans>
+                Run <code className="rounded bg-muted px-1 font-mono">{command}</code> in this
+                terminal.
+              </Trans>
             </>
           ) : setupState === "ready" ? (
             "Review the command, then press Enter to run it."
@@ -1163,11 +1194,11 @@ function AgentInstallTerminal({
                 }
               }}
             >
-              Retry
+              <Trans>Retry</Trans>
             </Button>
           ) : null}
           <Button size="xs" variant="ghost-muted" onClick={onClose}>
-            Close
+            <Trans>Close</Trans>
           </Button>
         </div>
       </div>
@@ -1442,16 +1473,18 @@ function ImportStep({
   if (scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending)) {
     return (
       <div className="flex h-full min-h-40 flex-col">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your projects</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          <Trans>Your projects</Trans>
+        </h1>
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
           <Spinner size="lg" tone="muted" />
           <p className="text-center text-sm text-muted-foreground">
-            Looking for projects from Claude Code and Codex…
+            <Trans>Looking for projects from Claude Code and Codex…</Trans>
           </p>
         </div>
         <div className="flex justify-end">
           <Button variant="ghost-muted" onClick={() => void onDone()}>
-            Do not import projects
+            <Trans>Do not import projects</Trans>
           </Button>
         </div>
       </div>
@@ -1460,13 +1493,18 @@ function ImportStep({
 
   return (
     <StepShell
-      title="Import your projects"
-      description="Import projects and conversations from Claude Code and Codex on your selected computers."
+      title={t({ message: "Import your projects" })}
+      description={t({
+        message:
+          "Import projects and conversations from Claude Code and Codex on your selected computers.",
+      })}
     >
       {candidates.length > 0 ? (
         <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span role="status">
-            {selected.length} of {candidates.length} selected
+            <Trans>
+              {selected.length} of {candidates.length} selected
+            </Trans>
           </span>
           <div className="flex items-center gap-1">
             <Button
@@ -1475,7 +1513,7 @@ function ImportStep({
               disabled={isImporting || selected.length === candidates.length}
               onClick={() => setSelectedKeys(new Set(candidates.map((item) => item.key)))}
             >
-              Select all
+              <Trans>Select all</Trans>
             </Button>
             <Button
               variant="ghost"
@@ -1483,7 +1521,7 @@ function ImportStep({
               disabled={isImporting || selected.length === 0}
               onClick={() => setSelectedKeys(new Set())}
             >
-              Select none
+              <Trans>Select none</Trans>
             </Button>
           </div>
         </div>
@@ -1496,7 +1534,7 @@ function ImportStep({
             );
             const label =
               environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? "Computer";
+                ?.label ?? t({ message: "Computer" });
             return (
               <fieldset
                 key={scan.environmentId}
@@ -1509,21 +1547,23 @@ function ImportStep({
                 {scan.isPending && scan.data === null ? (
                   <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
                     <Spinner size="md" />
-                    Looking for projects…
+                    <Trans>Looking for projects…</Trans>
                   </div>
                 ) : scan.error !== null ? (
                   <div
                     role="alert"
                     className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
                   >
-                    <span>Could not check projects. {scan.error}</span>
+                    <span>
+                      <Trans>Could not check projects. {scan.error}</Trans>
+                    </span>
                     <Button variant="ghost" size="sm" onClick={scan.refresh}>
-                      Retry
+                      <Trans>Retry</Trans>
                     </Button>
                   </div>
                 ) : scanCandidates.length === 0 ? (
                   <p className="py-2 text-sm text-muted-foreground">
-                    No existing Claude Code or Codex projects found.
+                    <Trans>No existing Claude Code or Codex projects found.</Trans>
                   </p>
                 ) : null}
                 {scan.data?.truncated ? (
@@ -1546,16 +1586,22 @@ function ImportStep({
       ) : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
         <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
-          Do not import projects
+          <Trans>Do not import projects</Trans>
         </Button>
         <Button
           autoFocus
           disabled={!canImport || isImporting || selected.length === 0}
           onClick={() => void runImport(selected)}
         >
-          {isImporting
-            ? "Importing…"
-            : `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"}`}
+          {isImporting ? (
+            <Trans>Importing…</Trans>
+          ) : (
+            <Plural
+              value={selected.length}
+              one={`Import ${selected.length} project`}
+              other={`Import ${selected.length} projects`}
+            />
+          )}
         </Button>
       </div>
     </StepShell>
@@ -1612,9 +1658,11 @@ function ImportCandidateList({
             />
             <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-              <span className="truncate text-sm text-muted-foreground">Other folders</span>
+              <span className="truncate text-sm text-muted-foreground">
+                <Trans>Other folders</Trans>
+              </span>
               <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-                {other.length} {other.length === 1 ? "folder" : "folders"}
+                {other.length} {other.length === 1 ? <Trans>folder</Trans> : <Trans>folders</Trans>}
               </span>
             </CollapsibleTrigger>
           </div>

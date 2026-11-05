@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { lazy, Suspense, useSyncExternalStore } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
@@ -38,8 +39,10 @@ export function ThemeEditorHost() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not save your theme",
-            description: "Browser storage is unavailable, so the change was not kept.",
+            title: t({ message: "Could not save your theme" }),
+            description: t({
+              message: "Browser storage is unavailable, so the change was not kept.",
+            }),
           }),
         );
         return false;
@@ -47,8 +50,8 @@ export function ThemeEditorHost() {
       toastManager.add(
         stackedThreadToast({
           type: "success",
-          title: `${savedTheme.label} updated`,
-          description: `Its ${mergedAppearance} palette was added.`,
+          title: t`${savedTheme.label} updated`,
+          description: t`Its ${mergedAppearance} palette was added.`,
         }),
       );
       return true;
@@ -63,8 +66,10 @@ export function ThemeEditorHost() {
       toastManager.add(
         stackedThreadToast({
           type: "success",
-          title: `${savedTheme.label} saved`,
-          description: wasActive ? "Your changes are now active." : "Your changes are saved.",
+          title: t`${savedTheme.label} saved`,
+          description: wasActive
+            ? t({ message: "Your changes are now active." })
+            : t({ message: "Your changes are saved." }),
         }),
       );
       return true;
@@ -74,8 +79,10 @@ export function ThemeEditorHost() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not save your theme",
-          description: "Browser storage is unavailable, so the change was not kept.",
+          title: t({ message: "Could not save your theme" }),
+          description: t({
+            message: "Browser storage is unavailable, so the change was not kept.",
+          }),
         }),
       );
       return false;
@@ -83,8 +90,8 @@ export function ThemeEditorHost() {
     toastManager.add(
       stackedThreadToast({
         type: "success",
-        title: `${savedTheme.label} created`,
-        description: "It’s now active.",
+        title: t`${savedTheme.label} created`,
+        description: t({ message: "It’s now active." }),
       }),
     );
     return true;

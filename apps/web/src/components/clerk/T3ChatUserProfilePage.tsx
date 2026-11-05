@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { T3CHAT_PLAN_TUNNEL_LIMITS, type RelayT3ChatLink } from "@t3tools/contracts/relay";
 import { MessageSquareIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -14,7 +15,7 @@ import { useT3ChatLink } from "./useT3ChatLink";
 
 const upgradeLink = (
   <a className="underline" href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer">
-    Upgrade on T3 Chat
+    <Trans>Upgrade on T3 Chat</Trans>
   </a>
 );
 
@@ -25,12 +26,18 @@ function planLabel(link: RelayT3ChatLink): ReactNode {
     case "pro":
       return (
         <>
-          Pro · up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
-          {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
+          <Trans>
+            Pro · up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
+            {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
+          </Trans>
         </>
       );
     case "free":
-      return <>{upgradeLink} for more tunnels</>;
+      return (
+        <>
+          <Trans>{upgradeLink} for more tunnels</Trans>
+        </>
+      );
   }
 }
 
@@ -56,12 +63,14 @@ export function T3ChatUserProfilePage() {
     >
       {linkState.error ? (
         <div className="border-t py-3 text-xs" role="alert">
-          <p className="font-medium text-destructive-foreground">Could not load T3 Chat link</p>
+          <p className="font-medium text-destructive-foreground">
+            <Trans>Could not load T3 Chat link</Trans>
+          </p>
           <p className="mt-0.5 text-muted-foreground">{linkState.error}</p>
         </div>
       ) : data === null ? null : !data.available ? (
         <p className="border-t py-4 text-xs text-muted-foreground">
-          This T3 Connect server does not support T3 Chat linking.
+          <Trans>This T3 Connect server does not support T3 Chat linking.</Trans>
         </p>
       ) : (
         <ul className="border-t">
@@ -69,23 +78,25 @@ export function T3ChatUserProfilePage() {
             <div className="flex items-start gap-4">
               <div className="min-w-0 flex-1">
                 <h3 className="truncate text-sm leading-4.5 font-medium text-foreground">
-                  {link ? link.email : "Not linked"}
+                  {link ? link.email : <Trans>Not linked</Trans>}
                 </h3>
                 <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
                   {link ? (
                     planLabel(link)
                   ) : linkUrl ? (
                     <>
-                      Confirm on{" "}
-                      <a
-                        className="underline"
-                        href={linkUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        t3.chat
-                      </a>
-                      , then select Refresh.
+                      <Trans>
+                        Confirm on{" "}
+                        <a
+                          className="underline"
+                          href={linkUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          t3.chat
+                        </a>
+                        , then select Refresh.
+                      </Trans>
                     </>
                   ) : (
                     "You confirm the link on t3.chat."
@@ -99,11 +110,11 @@ export function T3ChatUserProfilePage() {
                   disabled={pending !== null}
                   onClick={() => void handleUnlink()}
                 >
-                  {pending === "unlink" ? "Unlinking…" : "Unlink"}
+                  {pending === "unlink" ? <Trans>Unlinking…</Trans> : <Trans>Unlink</Trans>}
                 </Button>
               ) : (
                 <Button size="sm" disabled={pending !== null} onClick={() => void handleLink()}>
-                  {pending === "link" ? "Opening…" : "Link T3 Chat"}
+                  {pending === "link" ? <Trans>Opening…</Trans> : <Trans>Link T3 Chat</Trans>}
                 </Button>
               )}
             </div>

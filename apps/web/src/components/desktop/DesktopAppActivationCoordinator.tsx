@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
@@ -21,7 +22,7 @@ export function DesktopAppActivationCoordinator() {
   const primaryEnvironment = usePrimaryEnvironment();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
-    label: "project unarchive",
+    label: t({ message: "project unarchive" }),
   });
   const openThread = useNewThreadHandler();
   const queueRef = useRef(Promise.resolve());

@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useAuth } from "@clerk/react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -36,20 +37,26 @@ export function HostedEmptyState() {
         <Empty className="flex-1">
           <EmptyHeader>
             <EmptyTitle>
-              {localEnvironmentOff ? "This computer is off" : "No computer connected"}
+              {localEnvironmentOff ? (
+                <Trans>This computer is off</Trans>
+              ) : (
+                <Trans>No computer connected</Trans>
+              )}
             </EmptyTitle>
             <EmptyDescription>
-              {localEnvironmentOff
-                ? "Turn it back on, or connect a different computer."
-                : cloudEnabled
-                  ? "Your agents run on your computer."
-                  : "Your agents run on your computer. Start T3 Code there first."}
+              {localEnvironmentOff ? (
+                <Trans>Turn it back on, or connect a different computer.</Trans>
+              ) : cloudEnabled ? (
+                <Trans>Your agents run on your computer.</Trans>
+              ) : (
+                <Trans>Your agents run on your computer. Start T3 Code there first.</Trans>
+              )}
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             {localEnvironmentOff ? (
               <Button render={<Link to="/settings/connections" />} size="sm">
-                Open Environments
+                <Trans>Open Environments</Trans>
               </Button>
             ) : (
               <ol className="w-full space-y-4 text-left">
@@ -79,11 +86,11 @@ function T3ConnectSteps() {
         {isSignedIn ? (
           <p className="flex items-center gap-1.5 text-muted-foreground">
             <CheckIcon className="size-4" />
-            Signed in
+            <Trans>Signed in</Trans>
           </p>
         ) : (
           <Button size="sm" disabled={!isLoaded} onClick={openAuthPrompt}>
-            Sign in
+            <Trans>Sign in</Trans>
           </Button>
         )}
       </SetupStep>
@@ -106,7 +113,11 @@ function T3ConnectSteps() {
                     return next;
                   }),
               }}
-              empty={<p className="text-xs text-muted-foreground">Waiting for your computer…</p>}
+              empty={
+                <p className="text-xs text-muted-foreground">
+                  <Trans>Waiting for your computer…</Trans>
+                </p>
+              }
             />
           </div>
         ) : null}
@@ -123,7 +134,7 @@ function PairingSteps() {
       </SetupStep>
       <SetupStep number={2}>
         <Button render={<Link to="/settings/connections" />} size="sm">
-          Add pairing link
+          <Trans>Add pairing link</Trans>
         </Button>
       </SetupStep>
     </>
@@ -156,7 +167,7 @@ function RunOnComputer({ command }: { readonly command: string }) {
         target="_blank"
         rel="noreferrer noopener"
       >
-        Or download the desktop app
+        <Trans>Or download the desktop app</Trans>
       </a>
     </>
   );

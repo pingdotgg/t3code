@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useState } from "react";
 import {
   DEFAULT_SNOOZE_PRESETS,
@@ -39,27 +41,59 @@ import {
 const UNIT_MINUTES = { minutes: 1, hours: 60, days: 24 * 60 } as const;
 type DurationUnit = keyof typeof UNIT_MINUTES;
 const UNIT_LABELS: Record<DurationUnit, string> = {
-  minutes: "minutes",
-  hours: "hours",
-  days: "days",
+  get minutes() {
+    return t({ message: "minutes" });
+  },
+  get hours() {
+    return t({ message: "hours" });
+  },
+  get days() {
+    return t({ message: "days" });
+  },
 };
 const SINGULAR_UNIT_LABELS: Record<DurationUnit, string> = {
-  minutes: "minute",
-  hours: "hour",
-  days: "day",
+  get minutes() {
+    return t({ message: "minute" });
+  },
+  get hours() {
+    return t({ message: "hour" });
+  },
+  get days() {
+    return t({ message: "day" });
+  },
 };
 
 const WHEN_LABELS: Record<"after" | SnoozePresetDay, string> = {
-  after: "In",
-  today: "Today",
-  tomorrow: "Tomorrow",
-  monday: "Monday",
-  tuesday: "Tuesday",
-  wednesday: "Wednesday",
-  thursday: "Thursday",
-  friday: "Friday",
-  saturday: "Saturday",
-  sunday: "Sunday",
+  get after() {
+    return t({ message: "In" });
+  },
+  get today() {
+    return t({ message: "Today" });
+  },
+  get tomorrow() {
+    return t({ message: "Tomorrow" });
+  },
+  get monday() {
+    return t({ message: "Monday" });
+  },
+  get tuesday() {
+    return t({ message: "Tuesday" });
+  },
+  get wednesday() {
+    return t({ message: "Wednesday" });
+  },
+  get thursday() {
+    return t({ message: "Thursday" });
+  },
+  get friday() {
+    return t({ message: "Friday" });
+  },
+  get saturday() {
+    return t({ message: "Saturday" });
+  },
+  get sunday() {
+    return t({ message: "Sunday" });
+  },
 };
 const WHEN_VALUES = ["after", ...SnoozePresetDay.literals] as const;
 
@@ -186,11 +220,14 @@ export function SnoozePresetsRow() {
       serverScoped
       settingKeys={["snoozePresets"]}
       {...searchableSetting("snooze-options")}
-      description="Choices in every snooze menu, listed soonest first. Weekdays mean the next one after today."
+      description={t({
+        message:
+          "Choices in every snooze menu, listed soonest first. Weekdays mean the next one after today.",
+      })}
       resetAction={
         !mixed && sameSnoozePresets(presets, DEFAULT_SNOOZE_PRESETS) ? null : (
           <SettingResetButton
-            label="snooze options"
+            label={t({ message: "snooze options" })}
             onClick={() => {
               const sorted = sortSnoozeRows(
                 DEFAULT_SNOOZE_PRESETS,
@@ -260,6 +297,7 @@ function SnoozePresetList(props: {
     repeatedLabels.has(preset.label) ? `${preset.label} ${preset.whenLabel}` : preset.label,
   );
 
+  const menuOrderJoinText = !(menuOrder.length === 0) ? menuOrder.join(" · ") : undefined;
   return (
     <div
       className="flex flex-col gap-1.5 pt-3 pb-2"
@@ -307,7 +345,11 @@ function SnoozePresetList(props: {
         );
       })}
       <p className="text-xs text-muted-foreground">
-        {menuOrder.length === 0 ? "Menus offer only Custom…" : `Menu now: ${menuOrder.join(" · ")}`}
+        {menuOrder.length === 0 ? (
+          <Trans>Menus offer only Custom…</Trans>
+        ) : (
+          <Trans>Menu now: {menuOrderJoinText}</Trans>
+        )}
       </p>
       <div>
         <Button
@@ -317,11 +359,11 @@ function SnoozePresetList(props: {
           onClick={props.onAdd}
         >
           <PlusIcon />
-          Add option
+          <Trans>Add option</Trans>
         </Button>
         {props.presets.length >= MAX_SNOOZE_PRESETS ? (
           <span className="ps-2 text-xs text-muted-foreground">
-            Up to {MAX_SNOOZE_PRESETS} options
+            <Trans>Up to {MAX_SNOOZE_PRESETS} options</Trans>
           </span>
         ) : null}
       </div>
@@ -356,7 +398,7 @@ function SnoozePresetFields(props: {
           onChange(next);
         }}
       >
-        <SelectTrigger size="sm" className="w-32" aria-label="When">
+        <SelectTrigger size="sm" className="w-32" aria-label={t({ message: "When" })}>
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>
@@ -380,7 +422,7 @@ function SnoozePresetFields(props: {
             size="sm"
             type="time"
             className="w-32"
-            aria-label="Time"
+            aria-label={t({ message: "Time" })}
             value={preset.time}
             onChange={(event) => {
               if (/^\d{2}:\d{2}$/.test(event.target.value)) {
@@ -430,9 +472,9 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
         }}
       >
         <NumberFieldGroup>
-          <NumberFieldDecrement aria-label="Decrease" />
+          <NumberFieldDecrement aria-label={t({ message: "Decrease" })} />
           <NumberFieldInput
-            aria-label="Amount"
+            aria-label={t({ message: "Amount" })}
             // Base UI commits on blur but not on Enter; refocus so keyboard users stay put.
             onKeyDown={(event) => {
               if (event.key !== "Enter") return;
@@ -441,7 +483,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
               input.focus();
             }}
           />
-          <NumberFieldIncrement aria-label="Increase" />
+          <NumberFieldIncrement aria-label={t({ message: "Increase" })} />
         </NumberFieldGroup>
       </NumberField>
       <Select
@@ -454,7 +496,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-28" aria-label="Unit">
+        <SelectTrigger size="sm" className="w-28" aria-label={t({ message: "Unit" })}>
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>

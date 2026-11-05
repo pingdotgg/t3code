@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   getAddProjectInitialQuery,
@@ -237,8 +239,9 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Clone failed",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: t({ message: "Clone failed" }),
+            description:
+              error instanceof Error ? error.message : t({ message: "An error occurred." }),
           }),
         );
       }
@@ -259,7 +262,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     if (link.kind === "pull-request") {
       setState({
         status: "failed",
-        title: `Cloning ${repository.owner}/${repository.name}`,
+        title: t`Cloning ${repository.owner}/${repository.name}`,
         message: "Open this link again when the clone finishes.",
       });
       return;
@@ -346,10 +349,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
 
   switch (state.status) {
     case "opening":
-      return <LinkPage title="Opening the link..." />;
+      return <LinkPage title={t({ message: "Opening the link..." })} />;
     case "opened":
       return (
-        <LinkPage title="This link is open">
+        <LinkPage title={t({ message: "This link is open" })}>
           <Button
             size="sm"
             variant="outline"
@@ -359,26 +362,29 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
               setState({ status: "opening" });
             }}
           >
-            Open it again
+            <Trans>Open it again</Trans>
           </Button>
         </LinkPage>
       );
     case "failed":
       return (
-        <LinkPage title={state.title ?? "Could not open the link"} description={state.message} />
+        <LinkPage
+          title={state.title ?? t({ message: "Could not open the link" })}
+          description={state.message}
+        />
       );
     case "missing-repository": {
       const name = `${state.repository.owner}/${state.repository.name}`;
       return (
         <LinkPage
           title={`You don't have ${name}`}
-          description="Clone it to work on it here, or start without a project."
+          description={t({ message: "Clone it to work on it here, or start without a project." })}
         >
           <Button size="sm" onClick={() => void cloneRepository(state.repository)}>
-            Clone {name}
+            <Trans>Clone {name}</Trans>
           </Button>
           <Button size="sm" variant="outline" onClick={openWithoutProject}>
-            Use without project
+            <Trans>Use without project</Trans>
           </Button>
         </LinkPage>
       );
@@ -417,7 +423,10 @@ function PullRequestLinkCheckout({
   return (
     <LinkPage
       title={`Check out ${owner}/${name}#${number}?`}
-      description="This puts the pull request's code in a new worktree and runs your project's setup script on it."
+      description={t({
+        message:
+          "This puts the pull request's code in a new worktree and runs your project's setup script on it.",
+      })}
     >
       <Button
         size="sm"
@@ -429,7 +438,7 @@ function PullRequestLinkCheckout({
           )
         }
       >
-        {handoff !== null ? "Checking out..." : "Check out"}
+        {handoff !== null ? <Trans>Checking out...</Trans> : <Trans>Check out</Trans>}
       </Button>
     </LinkPage>
   );

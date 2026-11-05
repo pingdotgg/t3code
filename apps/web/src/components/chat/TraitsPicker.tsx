@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
@@ -55,10 +57,18 @@ export function readPromptUltrathink(prompt: string): PromptUltrathink {
 }
 
 const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
-  agent: "Agent",
-  effort: "Effort",
-  reasoningEffort: "Reasoning effort",
-  variant: "Reasoning",
+  get agent() {
+    return t({ message: "Agent" });
+  },
+  get effort() {
+    return t({ message: "Effort" });
+  },
+  get reasoningEffort() {
+    return t({ message: "Reasoning effort" });
+  },
+  get variant() {
+    return t({ message: "Reasoning" });
+  },
 };
 
 function savedOptionLabel(id: string): string {
@@ -106,7 +116,7 @@ type TraitsPersistence =
 function DefaultBadge() {
   return (
     <Badge variant="outline" size="sm" className="min-w-0">
-      Default
+      <Trans>Default</Trans>
     </Badge>
   );
 }
@@ -471,7 +481,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
               {(["on", "off"] as const).map((value) => (
                 <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
                   <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                    <span>{value === "on" ? "On" : "Off"}</span>
+                    <span>{value === "on" ? <Trans>On</Trans> : <Trans>Off</Trans>}</span>
                   </span>
                 </MenuRadioItem>
               ))}

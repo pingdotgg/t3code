@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useState } from "react";
 import {
   AuthSourceControlWriteScope,
@@ -81,7 +83,7 @@ export function PullRequestMarkdownEditor({
       }}
     >
       <ToggleGroup
-        aria-label="Markdown editor mode"
+        aria-label={t({ message: "Markdown editor mode" })}
         variant="segmented"
         value={[preview ? "preview" : "write"]}
         disabled={saving}
@@ -90,13 +92,19 @@ export function PullRequestMarkdownEditor({
           if (mode === "write" || mode === "preview") setPreview(mode === "preview");
         }}
       >
-        <Toggle value="write">Write</Toggle>
-        <Toggle value="preview">Preview</Toggle>
+        <Toggle value="write">
+          <Trans>Write</Trans>
+        </Toggle>
+        <Toggle value="preview">
+          <Trans>Preview</Trans>
+        </Toggle>
       </ToggleGroup>
       {preview ? (
         <div className="rounded-lg border border-border/60 px-3 py-2">
           {empty ? (
-            <p className="text-xs text-muted-foreground">Nothing to preview.</p>
+            <p className="text-xs text-muted-foreground">
+              <Trans>Nothing to preview.</Trans>
+            </p>
           ) : (
             <PullRequestMarkdown
               text={draft}
@@ -120,7 +128,7 @@ export function PullRequestMarkdownEditor({
       )}
       <div className="flex justify-end gap-2">
         <Button size="xs" variant="ghost" disabled={saving} onClick={onCancel}>
-          Cancel
+          <Trans>Cancel</Trans>
         </Button>
         <Button
           size="xs"
@@ -136,7 +144,7 @@ export function PullRequestMarkdownEditor({
             onSave(draft);
           }}
         >
-          {saving ? "Saving..." : "Save"}
+          {saving ? <Trans>Saving...</Trans> : <Trans>Save</Trans>}
         </Button>
       </div>
     </div>

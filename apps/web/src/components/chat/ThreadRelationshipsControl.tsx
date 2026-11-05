@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -113,11 +115,13 @@ function ThreadLineageRowList(props: {
   readonly onShowMore: () => void;
   readonly children: ReactNode;
 }) {
+  const MathMinText =
+    props.hiddenCount > 0 ? Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT) : undefined;
   return (
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
-        aria-label="Related threads"
+        aria-label={t({ message: "Related threads" })}
         className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
@@ -129,7 +133,7 @@ function ThreadLineageRowList(props: {
           className={`flex h-8 w-full cursor-pointer items-center rounded-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-sm font-medium text-muted-foreground/70 hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]`}
         >
           <PlusIcon aria-hidden className="size-4 shrink-0" />
-          Show {Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)} more
+          <Trans>Show {MathMinText} more</Trans>
         </button>
       ) : null}
     </>
@@ -171,7 +175,11 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
           <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
             {props.label}
           </span>
-          {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
+          {failedCount > 0 ? (
+            <SectionHeaderStatus>
+              <Trans>{failedCount} failed</Trans>
+            </SectionHeaderStatus>
+          ) : null}
           {expanded ? null : (
             <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
               {props.rows.length}
@@ -270,9 +278,10 @@ function RemoteSubagentRow(props: {
   const status = props.agent.status;
   const failed = status === "failed";
   const title = relationshipThreadTitle({
-    title: props.agent.title ?? "Subagent",
+    title: props.agent.title ?? t({ message: "Subagent" }),
     isSubagent: true,
   });
+  const threadRelationshipStatusLabelText = threadRelationshipStatusLabel(status);
   return (
     <li className="group relative flex h-8 items-center rounded-lg">
       <Tooltip>
@@ -311,7 +320,9 @@ function RemoteSubagentRow(props: {
           <span
             className={`shrink-0 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
           >
-            on {remoteChild.label} · {threadRelationshipStatusLabel(status)}
+            <Trans>
+              on {remoteChild.label} · {threadRelationshipStatusLabelText}
+            </Trans>
           </span>
         </TooltipTrigger>
         <TooltipPopup side="left">
@@ -373,7 +384,9 @@ function DelegatedFromRow(props: {
             </span>
           </span>
           {label ? (
-            <span className="shrink-0 text-2xs text-muted-foreground">on {label}</span>
+            <span className="shrink-0 text-2xs text-muted-foreground">
+              <Trans>on {label}</Trans>
+            </span>
           ) : null}
         </TooltipTrigger>
         <TooltipPopup side="left">
@@ -626,7 +639,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       mergeErrorToastId.current = toastManager.add({
         type: "error",
-        title: "Could not merge back",
+        title: t({ message: "Could not merge back" }),
       });
       return;
     }
@@ -648,7 +661,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       detachErrorToastId.current = toastManager.add({
         type: "error",
-        title: "Could not disconnect agent session",
+        title: t({ message: "Could not disconnect agent session" }),
       });
     }
   };
@@ -665,7 +678,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop subagent" });
+      toastManager.add({ type: "error", title: t({ message: "Could not stop subagent" }) });
     }
   };
 
@@ -678,7 +691,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop workflow" });
+      toastManager.add({ type: "error", title: t({ message: "Could not stop workflow" }) });
     }
   };
 
@@ -878,8 +891,8 @@ export function ThreadRelationshipsPanel(props: {
                     part="secondary"
                     aria-label={
                       parentTitle
-                        ? `Merge back to ${parentTitle}`
-                        : "Merge back to source conversation"
+                        ? t`Merge back to ${parentTitle}`
+                        : t({ message: "Merge back to source conversation" })
                     }
                     disabled={!canMerge || busyAction !== null}
                     onClick={() => void merge()}
@@ -893,11 +906,13 @@ export function ThreadRelationshipsPanel(props: {
                 }
               />
               <TooltipPopup side="left">
-                {latestMergeBackRun === null
-                  ? "Complete a run in this fork before merging it back"
-                  : parentTitle
-                    ? `Merge this conversation back into ${parentTitle}`
-                    : "Merge this conversation back into its source"}
+                {latestMergeBackRun === null ? (
+                  <Trans>Complete a run in this fork before merging it back</Trans>
+                ) : parentTitle ? (
+                  <Trans>Merge this conversation back into {parentTitle}</Trans>
+                ) : (
+                  <Trans>Merge this conversation back into its source</Trans>
+                )}
               </TooltipPopup>
             </Tooltip>
             <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
@@ -929,7 +944,9 @@ export function ThreadRelationshipsPanel(props: {
                   <SquareIcon aria-hidden className="size-3 fill-current" />
                 )}
               </TooltipTrigger>
-              <TooltipPopup side="left">Stop subagent</TooltipPopup>
+              <TooltipPopup side="left">
+                <Trans>Stop subagent</Trans>
+              </TooltipPopup>
             </Tooltip>
           </div>
         ) : null}
@@ -942,7 +959,9 @@ export function ThreadRelationshipsPanel(props: {
       {lineageVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
-          title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
+          title={
+            runningCount > 0 ? t`Lineage · ${runningCount} running` : t({ message: "Lineage" })
+          }
           // A lone "Previous agents" row names itself; the heading returns for status or actions.
           showHeading={
             runningCount > 0 ||
@@ -962,7 +981,7 @@ export function ThreadRelationshipsPanel(props: {
                       size="icon-xs"
                       variant="ghost"
                       part="icon"
-                      aria-label="More thread actions"
+                      aria-label={t({ message: "More thread actions" })}
                       disabled={busyAction !== null}
                     />
                   }
@@ -972,7 +991,7 @@ export function ThreadRelationshipsPanel(props: {
                 <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
                   <MenuItem onClick={() => void detach()}>
                     <UnplugIcon className="size-3.5" />
-                    Disconnect agent session
+                    <Trans>Disconnect agent session</Trans>
                   </MenuItem>
                 </MenuPopup>
               </Menu>
@@ -1012,7 +1031,11 @@ export function ThreadRelationshipsPanel(props: {
       {sideChatsVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-side-chats-heading"
-          title={runningSideChats > 0 ? `Side chats · ${runningSideChats} running` : "Side chats"}
+          title={
+            runningSideChats > 0
+              ? t`Side chats · ${runningSideChats} running`
+              : t({ message: "Side chats" })
+          }
           data-thread-side-chats-panel
         >
           <ThreadLineageGroup

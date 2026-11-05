@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
@@ -49,13 +50,25 @@ const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps
 };
 
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
-  server: "Server",
-  cloud: "Cloud VM",
+  get server() {
+    return t({ message: "Server" });
+  },
+  get cloud() {
+    return t({ message: "Cloud VM" });
+  },
   linux: "Linux/WSL",
-  desktop: "Desktop",
-  laptop: "Laptop",
-  "mac-mini": "Mini PC",
-  "mac-studio": "Workstation",
+  get desktop() {
+    return t({ message: "Desktop" });
+  },
+  get laptop() {
+    return t({ message: "Laptop" });
+  },
+  get "mac-mini"() {
+    return t({ message: "Mini PC" });
+  },
+  get "mac-studio"() {
+    return t({ message: "Workstation" });
+  },
 };
 
 export function environmentMachineIcon(

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { limitsNotice } from "@t3tools/shared/usageLimits";
@@ -31,15 +33,15 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
         <RedactedSensitiveText
           key={label}
           value={label}
-          ariaLabel="Toggle account label visibility"
-          revealTooltip="Click to reveal account"
-          hideTooltip="Click to hide account"
+          ariaLabel={t({ message: "Toggle account label visibility" })}
+          revealTooltip={t({ message: "Click to reveal account" })}
+          hideTooltip={t({ message: "Click to hide account" })}
           className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
         />
       ) : (
         label
       )}
-      {account.plan ? ` · ${account.plan}` : null}
+      {account.plan ? <Trans> · {account.plan}</Trans> : null}
     </>
   );
 }
@@ -61,7 +63,7 @@ export function usageLimitsBannerItem(
     id,
     variant: "info",
     icon: <GaugeIcon />,
-    title: "Usage limits",
+    title: t({ message: "Usage limits" }),
     description: summary,
     dismissLabel: "Dismiss usage limits",
     onDismiss,
@@ -86,15 +88,18 @@ export function modelFallbackBannerItem({
   readonly onUseDefault: () => void;
   readonly onDismiss: () => void;
 }): ComposerBannerStackItem {
+  const resetsAtText = resetsAt
+    ? ` · resets ${formatUpcomingTimestamp(resetsAt, timestampFormat)}`
+    : "";
   return {
     id: "fallback-model",
     variant: "info",
     icon: <GaugeIcon />,
-    title: `Using ${fallbackModelName}`,
-    description: `${defaultProviderName} is out of usage${resetsAt ? ` · resets ${formatUpcomingTimestamp(resetsAt, timestampFormat)}` : ""}`,
+    title: t`Using ${fallbackModelName}`,
+    description: t`${defaultProviderName} is out of usage${resetsAtText}`,
     actions: (
       <Button size="xs" variant="ghost" onClick={onUseDefault}>
-        Use {defaultModelName}
+        <Trans>Use {defaultModelName}</Trans>
       </Button>
     ),
     dismissLabel: "Dismiss fallback model notice",
@@ -144,7 +149,7 @@ function UsageLimitsBannerBody({
                   className="self-start"
                   onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
                 >
-                  Manage usage
+                  <Trans>Manage usage</Trans>
                 </Button>
               ) : null}
               {resetCreditInput && account.limits.resetCredits ? (

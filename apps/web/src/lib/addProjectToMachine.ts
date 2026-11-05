@@ -1,3 +1,4 @@
+import { t, plural } from "@palamedes/core/macro";
 import {
   executeAtomQuery,
   runAtomCommand,
@@ -112,7 +113,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
           environmentId: input.source.environmentId,
           input: { cwd: input.source.cwd, relativePath },
         }),
-        { label: "Read file to copy", reportFailure: false, refresh: true },
+        { label: t({ message: "Read file to copy" }), reportFailure: false, refresh: true },
       );
       if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
       if (result.value.truncated) return { relativePath, error: "Too large to copy." };
@@ -138,7 +139,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         destinationPath: input.destinationPath,
       },
     },
-    { label: "Add project to machine", reportFailure: false },
+    { label: t({ message: "Add project to machine" }), reportFailure: false },
   );
   if (started._tag === "Failure") {
     setFileCopy(copyKey, null);
@@ -172,18 +173,22 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
             contents: read.contents,
           },
         },
-        { label: "Copy file to machine", reportFailure: false },
+        { label: t({ message: "Copy file to machine" }), reportFailure: false },
       );
       if (written._tag === "Failure")
         failed.push(`${read.relativePath}: ${failureMessage(written)}`);
     }
+
     setFileCopy(
       copyKey,
       failed.length === 0
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: plural(failed.length, {
+              one: `Could not copy ${failed.length} file to ${input.target.label}`,
+              other: `Could not copy ${failed.length} files to ${input.target.label}`,
+            }),
             failures: failed,
           },
     );

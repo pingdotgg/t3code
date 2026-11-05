@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans, Plural } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -85,9 +87,15 @@ export function UpdateEverythingDialog({
 }
 
 const APP_LABELS = {
-  "this-app": "This app",
-  server: "Server",
-  "desktop-app": "Desktop app",
+  get "this-app"() {
+    return t({ message: "This app" });
+  },
+  get server() {
+    return t({ message: "Server" });
+  },
+  get "desktop-app"() {
+    return t({ message: "Desktop app" });
+  },
 } as const;
 
 function UpdateEverythingDialogContent({
@@ -129,7 +137,13 @@ function UpdateEverythingDialogContent({
     <>
       <AlertDialogHeader className="shrink-0">
         <AlertDialogTitle>
-          {title ?? `Update ${updating.length} ${updating.length === 1 ? "machine" : "machines"}?`}
+          {title ?? (
+            <Plural
+              value={updating.length}
+              one={`Update ${updating.length} machine?`}
+              other={`Update ${updating.length} machines?`}
+            />
+          )}
         </AlertDialogTitle>
         <AlertDialogDescription>
           {version !== null ? (
@@ -138,9 +152,13 @@ function UpdateEverythingDialogContent({
             </>
           ) : null}
           {version !== null && providerCount > 0 ? " · " : null}
-          {providerCount > 0
-            ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
-            : null}
+          {providerCount > 0 ? (
+            <Plural
+              value={providerCount}
+              one={`${providerCount} provider update`}
+              other={`${providerCount} provider updates`}
+            />
+          ) : null}
         </AlertDialogDescription>
       </AlertDialogHeader>
       <ScrollArea scrollFade>
@@ -153,9 +171,13 @@ function UpdateEverythingDialogContent({
           {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
           <div className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm">
             <div className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs">
-              <span>Machine</span>
+              <span>
+                <Trans>Machine</Trans>
+              </span>
               <span>T3 Code</span>
-              <span>Providers</span>
+              <span>
+                <Trans>Providers</Trans>
+              </span>
               <span />
             </div>
             {updating.map((row) => (
@@ -169,10 +191,14 @@ function UpdateEverythingDialogContent({
                 <span>
                   {row.app !== null ? APP_LABELS[row.app] : null}
                   {row.app === null && row.skipped !== null ? (
-                    <span className="text-muted-foreground">Skipped</span>
+                    <span className="text-muted-foreground">
+                      <Trans>Skipped</Trans>
+                    </span>
                   ) : null}
                   {row.app === "this-app" ? (
-                    <span className="block text-muted-foreground text-xs">restarts last</span>
+                    <span className="block text-muted-foreground text-xs">
+                      <Trans>restarts last</Trans>
+                    </span>
                   ) : null}
                 </span>
                 <span>
@@ -195,7 +221,7 @@ function UpdateEverythingDialogContent({
             <Collapsible>
               <CollapsibleTrigger className="flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground data-panel-open:[&_svg]:rotate-90">
                 <ChevronRightIcon className="size-3.5 transition-transform" aria-hidden />
-                {skipped.length} skipped
+                <Trans>{skipped.length} skipped</Trans>
               </CollapsibleTrigger>
               <CollapsiblePanel>
                 <div className="grid grid-cols-[minmax(0,max-content)_1fr] gap-x-3 gap-y-0.5 pt-1.5 ps-4.5 text-muted-foreground text-xs">
@@ -220,15 +246,19 @@ function UpdateEverythingDialogContent({
           </p>
         ) : running > 0 ? (
           <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
-            {stopped === 0
-              ? `${threads} will be interrupted and can resume after the restart.`
-              : continuing === 0
-                ? `${threads} will be interrupted.`
-                : `${threads} will be interrupted. ${continuing} can resume after the restart.`}
+            {stopped === 0 ? (
+              <Trans>{threads} will be interrupted and can resume after the restart.</Trans>
+            ) : continuing === 0 ? (
+              <Trans>{threads} will be interrupted.</Trans>
+            ) : (
+              <Trans>
+                {threads} will be interrupted. {continuing} can resume after the restart.
+              </Trans>
+            )}
           </p>
         ) : null}
         <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
-          Cancel
+          <Trans>Cancel</Trans>
         </AlertDialogClose>
         <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
           {confirmLabel}
@@ -240,5 +270,9 @@ function UpdateEverythingDialogContent({
 
 function RunningThreads({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const count = useAtomValue(runningThreadCountAtom(environmentId));
-  return count > 0 ? <span className="whitespace-nowrap text-warning">{count} running</span> : null;
+  return count > 0 ? (
+    <span className="whitespace-nowrap text-warning">
+      <Trans>{count} running</Trans>
+    </span>
+  ) : null;
 }

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { LoaderCircleIcon, PauseIcon, PlayIcon, TriangleAlertIcon } from "lucide-react";
 import { createContext, useContext, useRef, useState } from "react";
 
@@ -108,13 +110,25 @@ function AudioChip(props: AudioPreviewProps) {
         ? PauseIcon
         : PlayIcon;
 
+  const audioTimeText =
+    !props.failed && !loading && duration > 0 && (elapsed > 0 || playing)
+      ? audioTime(elapsed)
+      : undefined;
+  const audioTimeText2 =
+    !props.failed && !loading && duration > 0 && (elapsed > 0 || playing)
+      ? audioTime(duration)
+      : undefined;
   return (
     <ContextChip
       kind="file"
       {...(props.failed ? { state: "invalid" as const } : {})}
       {...(props.variant === "bubble" ? { shape: "bubble" as const } : {})}
       className="relative isolate overflow-hidden"
-      title={props.failed ? "Audio unavailable. Open the file or retry playback." : props.name}
+      title={
+        props.failed
+          ? t({ message: "Audio unavailable. Open the file or retry playback." })
+          : props.name
+      }
     >
       <span
         aria-hidden
@@ -157,15 +171,21 @@ function AudioChip(props: AudioPreviewProps) {
         )}
       </ContextChipLabel>
       <span dir="ltr" className="shrink-0 self-baseline text-3xs text-current">
-        {props.failed
-          ? "Unavailable"
-          : loading
-            ? "..."
-            : duration > 0
-              ? elapsed > 0 || playing
-                ? `${audioTime(elapsed)} / ${audioTime(duration)}`
-                : audioTime(duration)
-              : audioTime(elapsed)}
+        {props.failed ? (
+          <Trans>Unavailable</Trans>
+        ) : loading ? (
+          "..."
+        ) : duration > 0 ? (
+          elapsed > 0 || playing ? (
+            <Trans>
+              {audioTimeText} / {audioTimeText2}
+            </Trans>
+          ) : (
+            audioTime(duration)
+          )
+        ) : (
+          audioTime(elapsed)
+        )}
       </span>
       {props.src && !props.failed ? (
         <audio

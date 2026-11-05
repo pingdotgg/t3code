@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   managedRuntimeModeDenial,
   type ManagedPolicySummary,
@@ -10,23 +11,39 @@ export const runtimeModeConfig: Record<
   { label: string; description: string; icon: LucideIcon }
 > = {
   "approval-required": {
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
+    get label() {
+      return t({ message: "Supervised" });
+    },
+    get description() {
+      return t({ message: "Ask before commands and file changes." });
+    },
     icon: LockIcon,
   },
   "auto-accept-edits": {
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
+    get label() {
+      return t({ message: "Auto-accept edits" });
+    },
+    get description() {
+      return t({ message: "Auto-approve edits, ask before other actions." });
+    },
     icon: PenLineIcon,
   },
   auto: {
-    label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
+    get label() {
+      return t({ message: "Auto" });
+    },
+    get description() {
+      return t({ message: "Supported providers approve routine actions; others still ask." });
+    },
     icon: SparklesIcon,
   },
   "full-access": {
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
+    get label() {
+      return t({ message: "Full access" });
+    },
+    get description() {
+      return t({ message: "Allow commands and edits without prompts." });
+    },
     // An open lock reads like a closed one at small sizes; a crossed shield does not.
     icon: ShieldOffIcon,
   },

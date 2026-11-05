@@ -1,5 +1,11 @@
+import { t } from "@palamedes/core/macro";
 export const CODE_BLOCK_LANGUAGES = [
-  { id: "", label: "Plain text" },
+  {
+    id: "",
+    get label() {
+      return t({ message: "Plain text" });
+    },
+  },
   { id: "asm", label: "Assembly" },
   { id: "bash", label: "Bash" },
   { id: "c", label: "C" },

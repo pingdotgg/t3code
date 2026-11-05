@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import {
@@ -53,7 +54,7 @@ function useRunScopedPlan() {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
-        title: "Setting not saved",
+        title: t({ message: "Setting not saved" }),
         description: plan.unavailableReason,
       });
       onFailed?.();
@@ -83,7 +84,9 @@ function useRunScopedPlan() {
       toastManager.add({
         type: "error",
         title:
-          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+          savedEnvironmentCount > 0
+            ? t({ message: "Setting saved on some environments" })
+            : t({ message: "Setting not saved" }),
         description: [
           ...failedEnvironments.map(
             ({ label, message }) => `Could not save on ${label}: ${message}`,

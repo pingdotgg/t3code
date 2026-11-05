@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 /** Bubble classes for a guest's message. A pending one has a dashed edge and no fill. */
 export function guestBubbleClassName(pending: boolean): string {
   return pending ? "border border-dashed border-guest/50 bg-transparent" : "bg-guest-surface";
@@ -8,7 +9,9 @@ export function GuestMessageName({ name }: { readonly name: string }) {
   return (
     <p className="me-1 text-2xs text-guest-foreground">
       {name}
-      <span className="sr-only"> (guest)</span>
+      <span className="sr-only">
+        <Trans> (guest)</Trans>
+      </span>
     </p>
   );
 }

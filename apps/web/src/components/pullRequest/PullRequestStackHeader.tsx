@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { MenuGroupLabel } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -13,11 +14,13 @@ export function PullRequestStackHeader({
   return (
     <MenuGroupLabel>
       <div className="flex items-center justify-between gap-2">
-        <span>Stack #{number}</span>
+        <span>
+          <Trans>Stack #{number}</Trans>
+        </span>
         {notice ? (
           <Tooltip>
             <TooltipTrigger render={<span role="status" className="text-xs font-normal" />}>
-              {stale ? "May be stale" : "Refreshing…"}
+              {stale ? <Trans>May be stale</Trans> : <Trans>Refreshing…</Trans>}
             </TooltipTrigger>
             <TooltipPopup>{notice}</TooltipPopup>
           </Tooltip>

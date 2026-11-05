@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { type EnvironmentContextRecord, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
 import { useEnvironment } from "~/state/environments";
@@ -33,7 +34,7 @@ export function EnvironmentContextChip(props: {
         }
       />
       <TooltipPopup side="top">
-        {environment ? "T3 Code environment" : "Machine not in this app"}
+        {environment ? <Trans>T3 Code environment</Trans> : <Trans>Machine not in this app</Trans>}
       </TooltipPopup>
     </Tooltip>
   );

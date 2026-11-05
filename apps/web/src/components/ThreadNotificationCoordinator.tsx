@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -130,16 +132,16 @@ export function startThreadNotifications(
     };
     const title =
       kind === "completion"
-        ? "Thread completed"
+        ? t({ message: "Thread completed" })
         : status === "approval"
-          ? "Approval needed"
+          ? t({ message: "Approval needed" })
           : status === "limited"
-            ? "Usage limit reached"
+            ? t({ message: "Usage limit reached" })
             : status === "failed"
-              ? "Thread failed"
+              ? t({ message: "Thread failed" })
               : status === "request"
-                ? "Guest request"
-                : "Input needed";
+                ? t({ message: "Guest request" })
+                : t({ message: "Input needed" });
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -173,7 +175,7 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: "Open thread",
+          children: <Trans>Open thread</Trans>,
           onClick: () => {
             toastManager.close(toastId);
             void router.navigate({

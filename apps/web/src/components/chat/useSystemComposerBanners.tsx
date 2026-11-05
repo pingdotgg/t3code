@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -94,8 +96,9 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not reconnect environment",
-          description: error instanceof Error ? error.message : "Failed to reconnect.",
+          title: t({ message: "Could not reconnect environment" }),
+          description:
+            error instanceof Error ? error.message : t({ message: "Failed to reconnect." }),
         }),
       );
     }
@@ -122,8 +125,9 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not disconnect server",
-            description: error instanceof Error ? error.message : "Failed to disconnect.",
+            title: t({ message: "Could not disconnect server" }),
+            description:
+              error instanceof Error ? error.message : t({ message: "Failed to disconnect." }),
           }),
         );
       }
@@ -136,10 +140,14 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
   );
   const autoBalanceUpdateBanner = useAutoBalanceUpdateBanner(autoUpdateEnvironments);
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
+  const activeEnvironmentLabelServerConfigEnvironmentLabelText =
+    hasMultipleRegisteredEnvironments && activeThreadEnvironmentId !== null
+      ? (activeEnvironment?.label ?? serverConfig?.environment.label ?? activeThreadEnvironmentId)
+      : undefined;
   const versionMismatchServerLabel =
     hasMultipleRegisteredEnvironments && activeThreadEnvironmentId !== null
-      ? `${activeEnvironment?.label ?? serverConfig?.environment.label ?? activeThreadEnvironmentId} server`
-      : "server";
+      ? t`${activeEnvironmentLabelServerConfigEnvironmentLabelText} server`
+      : t({ message: "server" });
   const serverUpdateEnvironmentId = activeThreadEnvironmentId;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const versionMismatchInstallation = serverConfig?.environment.capabilities.serverInstallation;
@@ -163,14 +171,14 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           size="xs"
           variant="ghost"
           disabled={disconnectingEnvironment}
-          title="Hide this server's threads. Switch it on again in Environments."
+          title={t({ message: "Hide this server's threads. Switch it on again in Environments." })}
           onClick={() =>
             void handleDisconnectActiveEnvironmentStable(
               activeEnvironmentUnavailableState.environmentId,
             )
           }
         >
-          Disconnect server
+          <Trans>Disconnect server</Trans>
         </Button>
       ) : undefined;
     const environmentReconnecting =
@@ -184,12 +192,13 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       unavailableConnection !== null &&
       !suppressUnavailableBanner;
     if (showUnavailableBanner) {
+      const environmentReconnectingText = environmentReconnecting ? "reconnecting" : "offline";
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         group: "environment",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        title: t`${activeEnvironmentUnavailableState.label} is ${environmentReconnectingText}`,
         description: activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,
@@ -205,7 +214,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
                   )
                 }
               >
-                Reconnect
+                <Trans>Reconnect</Trans>
               </Button>
             ) : null}
             {disconnectAction}
@@ -222,12 +231,13 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       !serverUpdateFailureDismissed
     ) {
       const updateFailed = serverUpdateState.status === "failed";
+      const updateFailedText = updateFailed ? "Could not update" : "Updating";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
         variant: updateFailed ? "error" : "default",
         group: "environment",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
-        title: `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`,
+        title: `${updateFailedText} ${versionMismatchServerLabel}`,
         description:
           serverUpdateState.status === "failed"
             ? serverUpdateState.message
@@ -244,7 +254,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             installation={versionMismatchInstallation}
             desktopAppUpdate={versionMismatchDesktopAppUpdate}
             targetVersion={versionMismatch.clientVersion}
-            label="Retry"
+            label={t({ message: "Retry" })}
             variant="ghost"
           />
         ),

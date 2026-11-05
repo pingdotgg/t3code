@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   SimlockDeviceHostConfig,
   type EnvironmentId,
@@ -12,7 +13,7 @@ const parseSimlockDeviceHostDraft = Schema.decodeUnknownOption(SimlockDeviceHost
 export const newSimlockDeviceHost = (id: string): SimlockDeviceHostConfigType => ({
   kind: "simlock",
   id,
-  label: "Simlock",
+  label: t({ message: "Simlock" }),
   gatewayUrl: "",
   agentToken: "",
   maxLeases: 2,

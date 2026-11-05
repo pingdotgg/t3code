@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { X } from "lucide-react";
 
@@ -33,7 +34,7 @@ export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Pro
             {entry.title ?? label}
           </span>
           <span className="truncate text-xs text-muted-foreground">
-            {entry.title ? `${label} · ` : ""}
+            {entry.title ? <Trans>{label} · </Trans> : ""}
             {visitedAt}
           </span>
         </div>

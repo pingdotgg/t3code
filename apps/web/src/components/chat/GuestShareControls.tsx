@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -110,10 +112,14 @@ function GuestShareDialog({
     >
       <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Share with guest</DialogTitle>
+          <DialogTitle>
+            <Trans>Share with guest</Trans>
+          </DialogTitle>
           <DialogDescription>
-            The guest sees the thread as you do, including command output and the agent&apos;s
-            reasoning. Each message they send waits for you.
+            <Trans>
+              The guest sees the thread as you do, including command output and the agent&apos;s
+              reasoning. Each message they send waits for you.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -121,20 +127,22 @@ function GuestShareDialog({
             <div className="flex items-center gap-2">
               <Input
                 readOnly
-                aria-label="Guest link"
+                aria-label={t({ message: "Guest link" })}
                 value={state.url}
                 onFocus={(event) => event.currentTarget.select()}
               />
               <Button size="sm" variant="outline" onClick={() => copyToClipboard(state.url)}>
                 {isCopied ? <CheckIcon /> : <CopyIcon />}
-                {isCopied ? "Copied" : "Copy"}
+                {isCopied ? <Trans>Copied</Trans> : <Trans>Copy</Trans>}
               </Button>
             </div>
           ) : (
             <p className="text-muted-foreground text-sm">
-              {activeShare !== null
-                ? "A new link ends the current one."
-                : "The link works once and expires in 24 hours."}
+              {activeShare !== null ? (
+                <Trans>A new link ends the current one.</Trans>
+              ) : (
+                <Trans>The link works once and expires in 24 hours.</Trans>
+              )}
             </p>
           )}
           {state.status === "failed" ? (
@@ -146,7 +154,7 @@ function GuestShareDialog({
         <DialogFooter>
           {state.status === "created" ? (
             <Button size="sm" onClick={onClose}>
-              Done
+              <Trans>Done</Trans>
             </Button>
           ) : (
             <>
@@ -156,14 +164,18 @@ function GuestShareDialog({
                 onClick={onClose}
                 disabled={state.status === "creating"}
               >
-                Cancel
+                <Trans>Cancel</Trans>
               </Button>
               <Button
                 size="sm"
                 onClick={() => void create()}
                 disabled={!canCreate || state.status === "creating"}
               >
-                {state.status === "creating" ? "Creating..." : "Create link"}
+                {state.status === "creating" ? (
+                  <Trans>Creating...</Trans>
+                ) : (
+                  <Trans>Create link</Trans>
+                )}
               </Button>
             </>
           )}
@@ -177,7 +189,7 @@ function GuestShareDialog({
 export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const share = useThreadGuestShare(threadRef);
   const closeGuestShare = useOrchestrationCommand(threadEnvironment.closeGuestShare, {
-    label: "stop guest share",
+    label: t({ message: "stop guest share" }),
   });
   const [closing, setClosing] = useState(false);
   if (share === null) return null;
@@ -198,7 +210,7 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
           setClosing(false);
         }}
       >
-        Stop sharing
+        <Trans>Stop sharing</Trans>
       </Button>
     </div>
   );
@@ -207,9 +219,20 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
 function GuestShareStatus({ share }: { readonly share: ThreadGuestShare }) {
   const nowMinute = useNowMinute();
   // The share stays on the thread after it expires, until the owner clears it.
-  if (share.expiresAt.slice(0, 16) <= nowMinute) return <span>Guest link expired</span>;
+  if (share.expiresAt.slice(0, 16) <= nowMinute)
+    return (
+      <span>
+        <Trans>Guest link expired</Trans>
+      </span>
+    );
   return (
-    <span>{share.guestName !== null ? `${share.guestName} is a guest` : "Guest link active"}</span>
+    <span>
+      {share.guestName !== null ? (
+        <Trans>{share.guestName} is a guest</Trans>
+      ) : (
+        <Trans>Guest link active</Trans>
+      )}
+    </span>
   );
 }
 
@@ -229,7 +252,7 @@ export function GuestPendingMessages({
   const share = useThreadGuestShare(threadRef);
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const resolveGuestMessage = useOrchestrationCommand(threadEnvironment.resolveGuestMessage, {
-    label: "resolve guest message",
+    label: t({ message: "resolve guest message" }),
   });
   const [busyIds, setBusyIds] = useState<ReadonlySet<GuestMessageId>>(new Set());
   const pending = share?.messages.filter((message) => message.status === "pending") ?? [];
@@ -306,7 +329,7 @@ export function GuestPendingMessages({
                   aria-label={`Dismiss message from ${guestName}`}
                   onClick={() => void resolve(message.id, "dismiss")}
                 >
-                  Dismiss
+                  <Trans>Dismiss</Trans>
                 </Button>
                 <Button
                   size="xs"
@@ -314,7 +337,7 @@ export function GuestPendingMessages({
                   aria-label={`Send message from ${guestName}`}
                   onClick={() => void resolve(message.id, "send")}
                 >
-                  Send
+                  <Trans>Send</Trans>
                 </Button>
               </div>
             ) : null}

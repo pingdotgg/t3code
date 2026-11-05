@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { useAuth, useClerk } from "@clerk/react";
 import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -13,9 +15,15 @@ import { Button } from "../ui/button";
 
 const invalidLinkMessage = {
   context: "Authorization request",
-  title: "This connect link is incomplete",
-  description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
+  get title() {
+    return t({ message: "This connect link is incomplete" });
+  },
+  get description() {
+    return t({
+      message:
+        "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
+    });
+  },
 } as const;
 
 export function ConnectCliAuthorizeSurface() {
@@ -70,17 +78,17 @@ export function ConnectCliAuthorizeSurface() {
     <StandalonePage>
       <StandalonePageHeader
         context="Browser authorization"
-        title="Connecting your terminal"
+        title={t({ message: "Connecting your terminal" })}
         description={
           isSignedIn
-            ? "Redirecting to authorize T3 Connect for your CLI…"
-            : "Sign in to continue authorizing T3 Connect for your CLI."
+            ? t({ message: "Redirecting to authorize T3 Connect for your CLI…" })
+            : t({ message: "Sign in to continue authorizing T3 Connect for your CLI." })
         }
       />
       {isLoaded && !isSignedIn ? (
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
-            Sign in
+            <Trans>Sign in</Trans>
           </Button>
         </div>
       ) : null}

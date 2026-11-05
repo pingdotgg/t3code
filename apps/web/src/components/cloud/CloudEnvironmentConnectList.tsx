@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   type EnvironmentConnectionPresentation,
@@ -154,11 +156,11 @@ export function CloudEnvironmentConnectRows({
       toastManager.add({
         type: "success",
         title: savedWithoutRelay.has(environment.environmentId)
-          ? "T3 Connect route added"
-          : "Environment added",
+          ? t({ message: "T3 Connect route added" })
+          : t({ message: "Environment added" }),
         description: savedWithoutRelay.has(environment.environmentId)
-          ? `${environment.label} falls back to T3 Connect when its other routes are unreachable.`
-          : `Connecting to ${environment.label} through T3 Connect.`,
+          ? t`${environment.label} falls back to T3 Connect when its other routes are unreachable.`
+          : t`Connecting to ${environment.label} through T3 Connect.`,
       });
       return true;
     }
@@ -167,17 +169,19 @@ export function CloudEnvironmentConnectRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.";
+      cause instanceof Error
+        ? cause.message
+        : t({ message: "Could not connect the T3 Connect environment." });
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
       type: "error",
-      title: "Could not connect environment",
+      title: t({ message: "Could not connect environment" }),
       description: message,
       data: traceId
         ? {
             secondaryActionProps: {
-              children: "Copy trace ID",
+              children: <Trans>Copy trace ID</Trans>,
               onClick: () => void navigator.clipboard?.writeText(traceId),
             },
           }
@@ -289,7 +293,7 @@ export function CloudEnvironmentConnectRows({
       return (
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="text-sm font-medium text-destructive">
-            Could not load T3 Connect environments
+            <Trans>Could not load T3 Connect environments</Trans>
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
           <Button
@@ -298,7 +302,7 @@ export function CloudEnvironmentConnectRows({
             className="mt-3"
             onClick={() => void refreshRelayEnvironments()}
           >
-            Try again
+            <Trans>Try again</Trans>
           </Button>
         </div>
       );
@@ -404,16 +408,18 @@ export function CloudEnvironmentConnectRows({
                 savedConnection?.tone === "error" ? "text-destructive" : "text-muted-foreground",
               )}
             >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Connecting…"
-                : (savedConnection?.buttonLabel ??
-                  (availability === "online"
-                    ? "Available"
-                    : availability === "offline"
-                      ? "Offline"
-                      : availability === "error"
-                        ? "Unavailable"
-                        : "Checking…"))}
+              {connectingEnvironmentIds.has(environment.environmentId) ? (
+                <Trans>Connecting…</Trans>
+              ) : (
+                (savedConnection?.buttonLabel ??
+                (availability === "online"
+                  ? "Available"
+                  : availability === "offline"
+                    ? "Offline"
+                    : availability === "error"
+                      ? "Unavailable"
+                      : "Checking…"))
+              )}
             </TooltipTrigger>
             <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
           </Tooltip>
@@ -473,10 +479,12 @@ export function CloudEnvironmentConnectRows({
             <Tooltip>
               <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
                 <Button size="sm" disabled>
-                  Add
+                  <Trans>Add</Trans>
                 </Button>
               </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
+              <TooltipPopup>
+                {unsupportedDetail ?? <Trans>Client not supported</Trans>}
+              </TooltipPopup>
             </Tooltip>
           ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>
@@ -488,11 +496,13 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Adding…"
-                : savedWithoutRelay.has(environment.environmentId)
-                  ? "Add route"
-                  : "Add"}
+              {connectingEnvironmentIds.has(environment.environmentId) ? (
+                <Trans>Adding…</Trans>
+              ) : savedWithoutRelay.has(environment.environmentId) ? (
+                <Trans>Add route</Trans>
+              ) : (
+                <Trans>Add</Trans>
+              )}
             </Button>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   getNewProjectRepository,
@@ -47,11 +48,12 @@ export function useNewProject() {
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
+        const errorMessageText = errorMessage(squashAtomCommandFailure(result));
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not create the ${label} repository`,
-            description: `${errorMessage(squashAtomCommandFailure(result))} Use Publish Repository in the Git menu to try again.`,
+            title: t`Could not create the ${label} repository`,
+            description: t`${errorMessageText} Use Publish Repository in the Git menu to try again.`,
           }),
         );
       }
@@ -60,7 +62,7 @@ export function useNewProject() {
     toastManager.add(
       stackedThreadToast({
         type: "success",
-        title: `Published to ${label}`,
+        title: t`Published to ${label}`,
         description: result.value.repository.nameWithOwner,
       }),
     );
@@ -81,7 +83,7 @@ export function useNewProject() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not create the project",
+            title: t({ message: "Could not create the project" }),
             description: errorMessage(squashAtomCommandFailure(result)),
           }),
         );
@@ -93,11 +95,11 @@ export function useNewProject() {
     toastManager.add(
       stackedThreadToast(
         commitError === undefined
-          ? { type: "success", title: `Created ${input.name}`, description: workspaceRoot }
+          ? { type: "success", title: t`Created ${input.name}`, description: workspaceRoot }
           : {
               type: "warning",
-              title: `Created ${input.name} without a first commit`,
-              description: `${commitError} The project is in ${workspaceRoot}.`,
+              title: t`Created ${input.name} without a first commit`,
+              description: t`${commitError} The project is in ${workspaceRoot}.`,
             },
       ),
     );
@@ -112,11 +114,12 @@ export function useNewProject() {
     const projectRef = scopeProjectRef(input.environmentId, projectId);
     // Wait for the stored project path; drafts use it as their key.
     const project = await waitForProject(projectRef).catch((error: unknown) => {
+      const errorMessageText2 = errorMessage(error);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to open project",
-          description: `${errorMessage(error)} It will appear in the sidebar once this client catches up.`,
+          title: t({ message: "Failed to open project" }),
+          description: t`${errorMessageText2} It will appear in the sidebar once this client catches up.`,
         }),
       );
       return null;
@@ -126,7 +129,7 @@ export function useNewProject() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to open project",
+          title: t({ message: "Failed to open project" }),
           description: errorMessage(error),
         }),
       );

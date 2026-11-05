@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes as MdastNodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
@@ -43,9 +44,15 @@ import {
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
+  get merge() {
+    return t({ message: "Merge" });
+  },
+  get squash() {
+    return t({ message: "Squash and merge" });
+  },
+  get rebase() {
+    return t({ message: "Rebase and merge" });
+  },
 };
 
 export function allowsSinglePullRequestMerge(input: {
@@ -523,7 +530,7 @@ function commentTimelineEvent(comment: PullRequestComment): PullRequestTimelineE
     id: comment.id,
     at: comment.createdAt,
     kind: comment.kind === "review" ? "review" : "comment",
-    title: comment.kind === "review" ? "reviewed" : "commented",
+    title: comment.kind === "review" ? t({ message: "reviewed" }) : t({ message: "commented" }),
     body: visibleBody(comment.body),
     markdown: true,
     url: comment.url,
@@ -702,12 +709,15 @@ export function buildPullRequestTimeline(
     Partial<Pick<PullRequestDetailView, "reviewThreads">>,
 ): ReadonlyArray<PullRequestTimelineEvent> {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const capitalizeTermText = detail.mergedAt ? capitalizeTerm(term) : undefined;
+  const capitalizeTermText2 =
+    detail.closedAt && !detail.mergedAt ? capitalizeTerm(term) : undefined;
   return [
     {
       id: "created",
       at: detail.createdAt,
       kind: "opened" as const,
-      title: `opened this ${term}`,
+      title: t`opened this ${term}`,
       body: null,
       markdown: false,
       url: null,
@@ -719,22 +729,25 @@ export function buildPullRequestTimeline(
       reviewState: null,
       reactions: [],
     },
-    ...detail.commits.map((commit) => ({
-      id: commit.oid,
-      at: commit.committedDate,
-      kind: "commit" as const,
-      title: `Commit ${commit.oid.slice(0, 7)}`,
-      body: commit.messageHeadline || null,
-      markdown: false,
-      url: null,
-      actor: commit.authors?.[0] ?? null,
-      commitAuthors: commit.authors ?? [],
-      additions: commit.additions ?? null,
-      deletions: commit.deletions ?? null,
-      path: null,
-      reviewState: null,
-      reactions: [],
-    })),
+    ...detail.commits.map((commit) => {
+      const commitOidSliceText = commit.oid.slice(0, 7);
+      return {
+        id: commit.oid,
+        at: commit.committedDate,
+        kind: "commit" as const,
+        title: t`Commit ${commitOidSliceText}`,
+        body: commit.messageHeadline || null,
+        markdown: false,
+        url: null,
+        actor: commit.authors?.[0] ?? null,
+        commitAuthors: commit.authors ?? [],
+        additions: commit.additions ?? null,
+        deletions: commit.deletions ?? null,
+        path: null,
+        reviewState: null,
+        reactions: [],
+      };
+    }),
     ...pullRequestConversationItems(detail.comments, detail.reviewThreads ?? []).map((item) => {
       if (item.kind === "comment") return commentTimelineEvent(item.comment);
       return {
@@ -757,7 +770,7 @@ export function buildPullRequestTimeline(
             id: "merged",
             at: detail.mergedAt,
             kind: "merged" as const,
-            title: `${capitalizeTerm(term)} merged`,
+            title: t`${capitalizeTermText} merged`,
             body: null,
             markdown: false,
             url: null,
@@ -777,7 +790,7 @@ export function buildPullRequestTimeline(
             id: "closed",
             at: detail.closedAt,
             kind: "closed" as const,
-            title: `${capitalizeTerm(term)} closed`,
+            title: t`${capitalizeTermText2} closed`,
             body: null,
             markdown: false,
             url: null,
@@ -1322,7 +1335,7 @@ export function checkoutFailureDescription(failure: unknown): string {
   const description = isGitCommandError(failure)
     ? failure.reason === undefined
       ? failure.detail
-      : `${failure.detail} (${failure.reason})`
+      : t`${failure.detail} (${failure.reason})`
     : failure;
   return readableFailure(
     description,
