@@ -208,7 +208,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     if (action === "steer" && result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Couldn't send queued message",
+        "Could not send queued message",
         error instanceof Error ? error.message : "Try again.",
       );
     }
