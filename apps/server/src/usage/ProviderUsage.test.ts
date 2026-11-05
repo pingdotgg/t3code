@@ -13,7 +13,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProviderUsage from "./ProviderUsage.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 
@@ -206,10 +206,18 @@ describe("providerUsageReport", () => {
   it.effect("refreshes providers and hubs at most once per five minutes", () =>
     Effect.gen(function* () {
       const refreshes = yield* Ref.make(0);
+      const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
       const usage = yield* ProviderUsage.make.pipe(
         Effect.provide(
           Layer.merge(
-            ProviderRegistryMock.layer([provider({})]),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Ref.get(providers),
+              refresh: () =>
+                Effect.andThen(
+                  Ref.update(refreshes, (count) => count + 1),
+                  Ref.updateAndGet(providers, () => [provider({})]),
+                ),
+            }),
             Layer.mock(UsageLimitSources.UsageLimitSources)({
               current: Effect.succeed([]),
               refresh: Ref.update(refreshes, (count) => count + 1),
@@ -220,11 +228,11 @@ describe("providerUsageReport", () => {
       yield* Effect.all([usage.read, usage.read], { concurrency: "unbounded" });
       yield* TestClock.adjust("4 minutes");
       const cached = yield* usage.read;
-      expect(yield* Ref.get(refreshes)).toBe(1);
+      expect(yield* Ref.get(refreshes)).toBe(2);
       expect(cached.providers.map((entry) => entry.providerInstanceId)).toEqual(["codex"]);
       yield* TestClock.adjust("2 minutes");
       yield* usage.read;
-      expect(yield* Ref.get(refreshes)).toBe(2);
+      expect(yield* Ref.get(refreshes)).toBe(4);
     }),
   );
 });
