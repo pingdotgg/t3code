@@ -9,7 +9,8 @@ import {
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { use, useEffect, useRef, useState, type RefObject } from "react";
+import { HeaderHeightContext } from "@react-navigation/elements";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
 import { Pressable, StatusBar, View } from "react-native";
@@ -26,6 +27,7 @@ import {
   androidHeaderMenuActions,
   findHeaderMenuAction,
 } from "../../components/ui/headerMenu.android";
+import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useAppForeground } from "../../lib/appState";
 import { useHardwareBack } from "../../lib/backHandler";
@@ -88,6 +90,8 @@ export function DevicePreviewScreen({
 }) {
   const embedded = onMaximize !== undefined;
   const insets = useSafeAreaInsets();
+  // In a pane the stream sits below the pane's bar, which content otherwise slides under.
+  const headerHeight = use(HeaderHeightContext) ?? 0;
   // NativeColumnContent already insets the sides, so only a book fold moves the hidden-controls pill.
   const handleBounds = deriveBottomControlInsets(useNativeColumnLayoutMetrics());
   const { themeVariables } = useAppearancePreferences();
@@ -265,20 +269,19 @@ export function DevicePreviewScreen({
     <View className="flex-1" style={{ backgroundColor: themeVariables["--color-sheet-solid"] }}>
       {!embedded ? <StatusBar hidden animated /> : null}
       {embedded ? (
-        <View
-          className="flex-row items-center gap-1 px-2 pb-2"
-          style={{ paddingTop: Math.max(insets.top, 8) }}
-        >
-          <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
-          <AppText numberOfLines={1} className="min-w-0 flex-1 font-t3-medium text-sm">
-            {preview?.name ?? "Devices"}
-          </AppText>
-          <ControlPill
-            accessibilityLabel="Maximize device"
-            icon="arrow.up.left.and.arrow.down.right"
-            onPress={() => onMaximize(preview?.key ?? null)}
+        <>
+          <AppBar
+            title={preview?.name ?? "Devices"}
+            actions={[
+              {
+                accessibilityLabel: "Maximize device",
+                icon: "arrow.up.left.and.arrow.down.right",
+                onPress: () => onMaximize(preview?.key ?? null),
+              },
+            ]}
           />
-        </View>
+          <View style={{ height: headerHeight }} />
+        </>
       ) : null}
       {preview && focused && foreground ? (
         <OpenDevicePreview
