@@ -63,7 +63,9 @@ export const definition = defineSourceControl({
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
   changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|close)\b/u,
   changeRequestCreateCommand: /\bglab\s+mr\s+create\b/u,
-  authorProfileUrl: () => null,
+  // Bot users, unlike GitHub's, have real profile pages.
+  authorProfileUrl: (login, repositoryUrl) =>
+    new URL(`/${encodeURIComponent(login)}`, repositoryUrl).toString(),
   referenceAutolinks: gitLabReferenceAutolinks,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
