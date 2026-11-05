@@ -1105,6 +1105,112 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
   ),
 );
 
+// regression: #31290
+it.effect("starts each queued message in the modes it was sent with", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("queued-modes");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const sends = [
+          { name: "plan", interactionMode: "plan", runtimeMode: "approval-required" },
+          { name: "default", interactionMode: "default", runtimeMode: "full-access" },
+        ] as const;
+        for (const send of sends) {
+          yield* orchestrator.dispatch({
+            type: "thread.interaction-mode.set",
+            commandId: CommandId.make(`${send.name}:interaction-mode`),
+            threadId,
+            interactionMode: send.interactionMode,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: CommandId.make(`${send.name}:runtime-mode`),
+            threadId,
+            runtimeMode: send.runtimeMode,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${send.name}:message`),
+            threadId,
+            messageId: MessageId.make(`message:${send.name}`),
+            text: send.name,
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        for (const index of [0, 1]) {
+          const turnInput = started[index]!;
+          const settled = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === turnInput.runId &&
+                event.payload.status === "waiting",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
+            (candidate) => candidate.runAttemptId === turnInput.attemptId,
+          )!;
+          yield* Queue.offer(events, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+          });
+          yield* Queue.offer(events, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: turn.providerThreadId,
+            providerTurnId: turn.id,
+            runOrdinal: turnInput.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* Fiber.join(settled);
+          const nextRunning = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.runAttemptId !== turnInput.attemptId &&
+                event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* worker.drain();
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          if (index === 0) yield* Fiber.join(nextRunning);
+        }
+
+        assert.deepEqual(
+          started.slice(1).map((turn) => ({
+            message: turn.message.text,
+            interactionMode: turn.runtimePolicy.interactionMode,
+            runtimeMode: turn.runtimePolicy.runtimeMode,
+          })),
+          sends.map((send) => ({
+            message: send.name,
+            interactionMode: send.interactionMode,
+            runtimeMode: send.runtimeMode,
+          })),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 // regression: #26695 cancelling a Copilot prompt to steer it kills its background agents
 it.effect("queues a steer until the turn ends when the provider cannot steer it", () =>
   Effect.scoped(
