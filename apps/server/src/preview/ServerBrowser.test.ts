@@ -1551,77 +1551,6 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a click on a native select offers its options to the viewer and takes its choice", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      // Chromium draws the select popup outside the page, so the screencast never shows it.
-      const chromiumBrowser = yield* Effect.acquireRelease(
-        Effect.promise(() => chromium.launch({ headless: true })),
-        (launched) => Effect.promise(() => launched.close()),
-      );
-      const context = yield* Effect.promise(() => chromiumBrowser.newContext());
-      realContextNext = context;
-      const { browser, tabId } = yield* ready;
-      const page = context.pages()[0]!;
-      yield* Effect.promise(() =>
-        page.setContent(
-          `<select style="position: absolute; left: 40px; top: 60px; width: 200px; height: 30px">
-            <option>One</option><option disabled>Two</option><option selected>Three</option>
-          </select>
-          <script>
-            for (const type of ["input", "change"])
-              document.querySelector("select").addEventListener(type, () => {
-                document.body.dataset.events = (document.body.dataset.events ?? "") + type + " ";
-              });
-          </script>`,
-        ),
-      );
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* viewer.input({ type: "takeControl" });
-      yield* Queue.clear(viewer.output);
-      const click = { type: "mouse", button: "left", x: 140, y: 75, clickCount: 1 };
-      yield* viewer.input({ ...click, action: "down", buttons: 1 });
-      yield* viewer.input({ ...click, action: "up", buttons: 0 });
-      const offers = (yield* Queue.clear(viewer.output)).filter(
-        (item) => (item as { _tag: string })._tag === "selectMenu",
-      );
-      expect(offers, "the viewer is offered the select's options").toEqual([
-        {
-          _tag: "selectMenu",
-          id: expect.any(String),
-          options: [
-            { label: "One", disabled: false },
-            { label: "Two", disabled: true },
-            { label: "Three", disabled: false },
-          ],
-          selectedIndex: 2,
-          x: 40,
-          y: 60,
-          width: 200,
-          height: 30,
-        },
-      ]);
-      expect(
-        yield* Effect.promise(() =>
-          page.evaluate(`document.querySelector("select").matches(":open")`),
-        ),
-        "the native picker stays closed",
-      ).toBe(false);
-      const offerId = (offers[0] as unknown as { id: string }).id;
-      const chosen = () =>
-        Effect.promise(() =>
-          page.evaluate(
-            `({ value: document.querySelector("select").value, events: document.body.dataset.events ?? "" })`,
-          ),
-        );
-      yield* viewer.input({ type: "selectMenu", id: "unknown", index: 0 });
-      expect(yield* chosen()).toEqual({ value: "Three", events: "" });
-      yield* viewer.input({ type: "selectMenu", id: offerId, index: 0 });
-      expect(yield* chosen()).toEqual({ value: "One", events: "input change " });
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
 /** A controlling viewer on a real Chromium page; `click` presses and releases at a point. */
 const realSelectPage = (html: string) =>
   Effect.gen(function* () {
@@ -1650,6 +1579,55 @@ const realSelectPage = (html: string) =>
     const evaluate = (expression: string) => Effect.promise(() => page.evaluate(expression));
     return { page, viewer, click, output, evaluate };
   });
+
+it.live("a click on a native select offers its options to the viewer and takes its choice", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // Chromium draws the select popup outside the page, so the screencast never shows it.
+      const { viewer, click, output, evaluate } = yield* realSelectPage(
+        `<select style="position: absolute; left: 40px; top: 60px; width: 200px; height: 30px">
+          <option>One</option><option disabled>Two</option><option selected>Three</option>
+        </select>
+        <script>
+          for (const type of ["input", "change"])
+            document.querySelector("select").addEventListener(type, () => {
+              document.body.dataset.events = (document.body.dataset.events ?? "") + type + " ";
+            });
+        </script>`,
+      );
+      yield* click(140, 75);
+      const offers = yield* output("selectMenu");
+      expect(offers, "the viewer is offered the select's options").toEqual([
+        {
+          _tag: "selectMenu",
+          id: expect.any(String),
+          options: [
+            { label: "One", disabled: false },
+            { label: "Two", disabled: true },
+            { label: "Three", disabled: false },
+          ],
+          selectedIndex: 2,
+          x: 40,
+          y: 60,
+          width: 200,
+          height: 30,
+        },
+      ]);
+      expect(
+        yield* evaluate(`document.querySelector("select").matches(":open")`),
+        "the native picker stays closed",
+      ).toBe(false);
+      const chosen = () =>
+        evaluate(
+          `({ value: document.querySelector("select").value, events: document.body.dataset.events ?? "" })`,
+        );
+      yield* viewer.input({ type: "selectMenu", id: "unknown", index: 0 });
+      expect(yield* chosen()).toEqual({ value: "Three", events: "" });
+      yield* viewer.input({ type: "selectMenu", id: offers[0]!.id, index: 0 });
+      expect(yield* chosen()).toEqual({ value: "One", events: "input change " });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
 
 it.live("a relayed select press reaches page handlers, and a page can keep its own press", () =>
   Effect.scoped(
