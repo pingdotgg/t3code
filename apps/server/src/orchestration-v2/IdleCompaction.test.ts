@@ -241,12 +241,11 @@ describe("IdleCompactionService", () => {
             "instance" in test ? test.instance : "claudeAgent",
           );
           const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
-          const base = records({
-            cacheExpiresInMs:
-              "cacheExpiresInMs" in test && test.cacheExpiresInMs === undefined
-                ? undefined
-                : 2 * MINUTE_MS,
-          });
+          const base = records(
+            "cacheExpiresInMs" in test && test.cacheExpiresInMs === undefined
+              ? {}
+              : { cacheExpiresInMs: 2 * MINUTE_MS },
+          );
           const data: OrchestrationV2ThreadProjection = {
             ...base,
             thread: {
