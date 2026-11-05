@@ -791,6 +791,7 @@ export function emptyProjection(
     runtimeRequests: [],
     messages: [],
     plans: [],
+    artifacts: [],
     turnItems: [],
     checkpointScopes: [],
     checkpoints: [],
@@ -962,6 +963,11 @@ export function applyToProjection(
       return {
         ...base,
         plans: upsertById(base.plans, event.payload),
+      };
+    case "artifact.updated":
+      return {
+        ...base,
+        artifacts: upsertById(base.artifacts, event.payload),
       };
     case "checkpoint-scope.created":
       return {
