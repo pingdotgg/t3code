@@ -24,6 +24,7 @@ import * as Option from "effect/Option";
 import {
   AudioLinesIcon,
   CheckIcon,
+  ChevronDownIcon,
   DownloadIcon,
   GaugeIcon,
   GlobeIcon,
@@ -45,6 +46,7 @@ import {
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
+import { cn } from "../../lib/utils";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { usePreparedConnection } from "../../state/session";
 import { Badge } from "../ui/badge";
@@ -190,6 +192,15 @@ const modelSortOrder = (model: EnvironmentSpeechModel) => {
   if (model.state === "installed") return 1;
   if (model.state === "downloading" || model.state === "verifying") return 2;
   return 3;
+};
+const SHORT_MODEL_LIST_SIZE = 5;
+const shortModelList = (sortedModels: readonly EnvironmentSpeechModel[]) => {
+  const downloadable = sortedModels.filter((model) => model.state === "downloadable");
+  const recommended = downloadable.filter((model) => model.recommended);
+  return [
+    ...sortedModels.filter((model) => model.state !== "downloadable"),
+    ...(recommended.length > 0 ? recommended : downloadable).slice(0, SHORT_MODEL_LIST_SIZE),
+  ];
 };
 
 function ModelRow(props: {
@@ -373,6 +384,7 @@ export function VoiceSettingsPanel() {
   const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({});
   const [languageSearch, setLanguageSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
+  const [showAllModels, setShowAllModels] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<{
     readonly environmentId: EnvironmentId | null;
     readonly code: string;
@@ -593,7 +605,7 @@ export function VoiceSettingsPanel() {
     model.languages.includes(language ?? ""),
   );
   const modelSearchTerm = modelSearch.trim().toLocaleLowerCase();
-  const visibleModels = modelsForLanguage
+  const matchingModels = modelsForLanguage
     .filter(
       (model) =>
         !modelSearchTerm ||
@@ -608,6 +620,9 @@ export function VoiceSettingsPanel() {
         b.speed - a.speed ||
         a.name.localeCompare(b.name),
     );
+  const shortModels = shortModelList(matchingModels);
+  const canShortenModels = !modelSearchTerm && shortModels.length < matchingModels.length;
+  const visibleModels = canShortenModels && !showAllModels ? shortModels : matchingModels;
 
   return (
     <SettingsPageContainer>
@@ -962,6 +977,26 @@ export function VoiceSettingsPanel() {
                 }
               />
             ))}
+            {canShortenModels ? (
+              <div className="px-3 py-2 sm:px-4">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-expanded={showAllModels}
+                  onClick={() => setShowAllModels((open) => !open)}
+                >
+                  {showAllModels ? "Show fewer" : `Show all ${matchingModels.length} models`}
+                  <ChevronDownIcon
+                    aria-hidden
+                    className={cn(
+                      "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+                      showAllModels && "rotate-180",
+                    )}
+                  />
+                </Button>
+              </div>
+            ) : null}
 
             {modelsForLanguage.length === 0 ? (
               <SettingsRow title="No transcription models are available." />

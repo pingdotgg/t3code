@@ -33,8 +33,7 @@ export function SettingsWorkspaceLayout(props: { readonly children: ReactNode })
           </View>
         </Activity>
       ) : null}
-      {/* A push slides the page underneath to the left; keep it out of the list beside it. */}
-      <View className="flex-1 overflow-hidden">
+      <View className="flex-1">
         <View
           className="flex-1"
           pointerEvents={emptyDetail ? "none" : "auto"}
