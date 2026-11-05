@@ -62,6 +62,7 @@ const AgentAwarenessOperation = Schema.Literals([
   "list-active-live-activities",
   "load-live-activity-prime-preferences",
   "prime-live-activity",
+  "load-registration-record",
 ]);
 
 export class AgentAwarenessOperationError extends Schema.TaggedError<AgentAwarenessOperationError>()(
@@ -345,9 +346,11 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   }
 
   const identity = relayTokenProviderIdentity ?? "";
-  const persisted = yield* Effect.tryPromise(() => loadAgentAwarenessRegistrationRecord()).pipe(
-    Effect.orElseSucceed(() => null),
-  );
+  const persisted = yield* Effect.tryPromise({
+    try: () => loadAgentAwarenessRegistrationRecord(),
+    catch: (cause) =>
+      new AgentAwarenessOperationError({ operation: "load-registration-record", cause }),
+  }).pipe(Effect.orElseSucceed(() => null));
   if (expectedGeneration !== deviceRegistrationGeneration) {
     // Signed out while the record loaded — do not resurrect the cleared
     // record or report the previous account's registration as current.

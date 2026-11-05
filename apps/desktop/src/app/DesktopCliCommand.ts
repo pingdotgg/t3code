@@ -140,7 +140,10 @@ export const make = Effect.gen(function* () {
   const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
     function* (target: string) {
       if ((yield* fs.stat(target)).type !== "File") return false;
-      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFSP.constants.X_OK));
+      yield* Effect.tryPromise({
+        try: () => NodeFSP.access(target, NodeFSP.constants.X_OK),
+        catch: () => fail(`${target} is not executable.`),
+      });
       return true;
     },
     Effect.orElseSucceed(() => false),

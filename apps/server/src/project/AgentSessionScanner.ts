@@ -46,6 +46,15 @@ import {
 } from "./AgentSessionJson.ts";
 
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
+
+class TranscriptParseError extends Schema.TaggedError<TranscriptParseError>()(
+  "TranscriptParseError",
+  { filePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not parse the transcript at ${this.filePath}.`;
+  }
+}
 const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
@@ -1071,23 +1080,33 @@ export const make = Effect.gen(function* () {
               }
 
               bytesRead += next.value.byteLength;
-              const withinBudget = yield* Effect.try(() => {
-                let start = 0;
-                while (start < next.value.byteLength) {
-                  const newline = next.value.indexOf(10, start);
-                  const end = newline === -1 ? next.value.byteLength : newline;
-                  recordStarted = true;
-                  reader.write(decoder.decode(next.value.subarray(start, end), { stream: true }));
-                  if (newline === -1) break;
-                  if (!finishRecord()) return false;
-                  start = newline + 1;
-                }
-                return true;
+              const withinBudget = yield* Effect.try({
+                try: () => {
+                  let start = 0;
+                  while (start < next.value.byteLength) {
+                    const newline = next.value.indexOf(10, start);
+                    const end = newline === -1 ? next.value.byteLength : newline;
+                    recordStarted = true;
+                    reader.write(decoder.decode(next.value.subarray(start, end), { stream: true }));
+                    if (newline === -1) break;
+                    if (!finishRecord()) return false;
+                    start = newline + 1;
+                  }
+                  return true;
+                },
+                catch: (cause) => new TranscriptParseError({ filePath, cause }),
               });
               if (!withinBudget) return null;
             }
 
-            if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
+            if (
+              recordStarted &&
+              !(yield* Effect.try({
+                try: finishRecord,
+                catch: (cause) => new TranscriptParseError({ filePath, cause }),
+              }))
+            )
+              return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
               ? { records, cwd, claudeFields }
               : null;

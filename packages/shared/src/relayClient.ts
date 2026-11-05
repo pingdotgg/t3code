@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -55,6 +56,15 @@ export type RelayClientStatus =
     };
 
 export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
+
+class RelayClientLockRemoveError extends Schema.TaggedError<RelayClientLockRemoveError>()(
+  "RelayClientLockRemoveError",
+  { lockPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not remove the relay client lock ${this.lockPath}.`;
+  }
+}
 
 export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
   readonly reason:
@@ -486,7 +496,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const removeEmptyLock = (lockPath: string) =>
-    Effect.tryPromise(() => NodeFSP.rmdir(lockPath)).pipe(Effect.ignore);
+    Effect.tryPromise({
+      try: () => NodeFSP.rmdir(lockPath),
+      catch: (cause) => new RelayClientLockRemoveError({ lockPath, cause }),
+    }).pipe(Effect.ignore);
 
   const releaseOwnedLock = Effect.fn("cloudflared.releaseOwnedLock")(function* (
     lockPath: string,
