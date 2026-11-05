@@ -11,7 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { olderSettledThreads, threadFamilies } from "./threads";
@@ -41,8 +41,9 @@ export function useOlderSettledShelf(input: {
   }));
   const shelfKey = JSON.stringify(shelfScopes);
   const shelf = useAtomValue(olderSettledThreads.shelfAtom(shelfScopes));
+  // Before paint so expanding Settled does not flash an empty shelf while pages remount.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older settled thread pages into the shared thread registry while the shelf shows them
-  useEffect(() => {
+  useLayoutEffect(() => {
     const releases = (JSON.parse(shelfKey) as typeof shelfScopes).flatMap(({ scope, pages }) =>
       pages === 0
         ? []

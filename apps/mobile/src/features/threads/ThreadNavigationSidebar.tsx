@@ -15,10 +15,20 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
+import type { LegendListRef } from "@legendapp/list/react-native";
+import {
+  threadListShelfExpansionKey,
+  useThreadListShelfLayoutAnimation,
+} from "./threadListAnimations";
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useRef, useState } from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Platform,
+  StyleSheet,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { FLOATING_TABS } from "../layout/workspace/floating-workspace-tabs";
@@ -43,6 +53,7 @@ import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenuItems } from "../home/home-list-filter-menu";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { createSwipeRowActivation } from "../home/swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -120,7 +131,20 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const listRef = useRef<LegendListRef>(null);
   const sidebarScrollGesture = useNativeGesture();
+  const swipeRowActivation = createSwipeRowActivation();
+  const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
+  useEffect(() => () => clearTimeout(activationTimerRef.current), []);
+  const activateVisibleRows = (rows: ReadonlyArray<SidebarListItem>) => {
+    const state = listRef.current?.getState();
+    if (state === undefined || !(state.end >= 0)) return;
+    const visible = rows.slice(Math.max(0, state.start - 2), state.end + 3);
+    // Swipe only: speculative detail warm fights the tapped thread and burns scroll.
+    // Open warming stays in useSelectWorkspaceDetail / startOpeningDetail on press.
+    swipeRowActivation.activate(visible.map((row) => row.key));
+  };
   const {
     archiveThread,
     confirmDeleteThread,
@@ -242,6 +266,13 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
+  const shelfLayoutAnimation = useThreadListShelfLayoutAnimation(
+    threadListShelfExpansionKey({
+      workingShelfExpanded,
+      snoozedShelfExpanded,
+      settledShelfExpanded,
+    }),
+  );
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
@@ -339,22 +370,46 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     openSwipeableRef.current?.close();
   };
   const onFabScroll = useFabScroll();
+  const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    onFabScroll?.(event);
+    clearTimeout(activationTimerRef.current);
+    activationTimerRef.current = setTimeout(
+      () => activateVisibleRows(listRef.current?.getState().data ?? []),
+      200,
+    );
+  };
   const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
-    onScroll: onFabScroll,
+    onScroll: handleListScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
   // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
-  const listExtraData = {
-    activeNewTask,
-    selectedThreadKey: props.selectedThreadKey ?? "",
-    projectByKey,
-    projectTitleByProjectKey,
-    savedConnectionsById,
-    listEnvironments,
-    threadSearchMatchByKey,
-    workingShelfEnabled,
-  };
+  const listExtraData = useMemo(
+    () => ({
+      activeNewTask,
+      selectedThreadKey: props.selectedThreadKey ?? "",
+      projectByKey,
+      projectTitleByProjectKey,
+      savedConnectionsById,
+      listEnvironments,
+      threadSearchMatchByKey,
+      workingShelfEnabled,
+    }),
+    [
+      activeNewTask,
+      props.selectedThreadKey,
+      projectByKey,
+      projectTitleByProjectKey,
+      savedConnectionsById,
+      listEnvironments,
+      threadSearchMatchByKey,
+      workingShelfEnabled,
+    ],
+  );
   useThreadJumpShortcuts(listItems, handleSelectThread);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- wakes swipe for the rows LegendList reports as visible after the list commits
+  useEffect(() => {
+    if (swipeEnabled) activateVisibleRows(listItems);
+  }, [activateVisibleRows, swipeEnabled, listItems]);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
     if (isThreadListV2ListItem(previous) && isThreadListV2ListItem(item)) {
       return threadListV2ListItemsAreEqual(previous, item);
@@ -398,6 +453,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onSwipeableClose={handleSwipeableClose}
             onSwipeableWillOpen={handleSwipeableWillOpen}
             simultaneousSwipeGesture={sidebarScrollGesture}
+            activationKey={item.key}
           />
         );
       }
@@ -475,6 +531,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onSwipeableClose={handleSwipeableClose}
             onSwipeableWillOpen={handleSwipeableWillOpen}
             simultaneousSwipeGesture={sidebarScrollGesture}
+            activationKey={item.key}
           />
         );
       }
@@ -578,11 +635,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       <>
         {header}
         <View className="flex-1">
-          <SwipeableScrollGateProvider enabled={swipeEnabled}>
+          <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <AnimatedLegendList
+                ref={listRef}
                 renderScrollComponent={NativeScrollView}
-                itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
+                itemLayoutAnimation={shelfLayoutAnimation}
                 data={listItems}
                 drawDistance={500}
                 estimatedItemSize={64}
@@ -591,6 +649,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
+                onLoad={() => activateVisibleRows(listItems)}
                 automaticallyAdjustsScrollIndicatorInsets
                 // The column lays the list under its bar, glass or solid; UIKit insets it past both.
                 contentInsetAdjustmentBehavior="automatic"
@@ -635,11 +694,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         {listItems.length === 0 ? (
           <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
-          <SwipeableScrollGateProvider enabled={swipeEnabled}>
+          <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
             <GestureDetector gesture={sidebarScrollGesture}>
               {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- The Android sidebar has no native header to register with. */}
               <AnimatedLegendList
-                itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
+                ref={listRef}
+                itemLayoutAnimation={shelfLayoutAnimation}
                 data={listItems}
                 drawDistance={500}
                 estimatedItemSize={64}
@@ -648,6 +708,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
+                onLoad={() => activateVisibleRows(listItems)}
                 contentContainerStyle={{
                   paddingBottom: floatingTabsEnabled
                     ? FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize

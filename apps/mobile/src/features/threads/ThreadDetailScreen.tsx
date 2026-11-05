@@ -415,8 +415,17 @@ function ThreadDetailBody(
   const openInspector = useOpenThreadInspector();
   const { session: voiceInputSession } = useGlobalVoiceInput();
   const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
+  const detailThreadIdentity = `${props.environmentId}:${props.selectedThread.id}`;
+  // Device/browser queries compete with first feed paint; reset per thread so switches defer again.
+  const [chromeReadyIdentity, setChromeReadyIdentity] = useState<string | null>(null);
+  const chromeReady = chromeReadyIdentity === detailThreadIdentity;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers device/browser chrome until this thread's first paint has committed
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect, react/no-deriving-state-in-effects -- First-paint gate: ready only after this thread identity commits, not a render-time derive.
+    setChromeReadyIdentity(detailThreadIdentity);
+  }, [detailThreadIdentity]);
   const deviceState = useEnvironmentQuery(
-    deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
+    chromeReady ? deviceEnvironment.state({ environmentId: props.environmentId, input: {} }) : null,
   );
   const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
   const openDevicePreview = () => {
@@ -437,7 +446,9 @@ function ThreadDetailBody(
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
     enabled:
-      !props.draftMode && props.serverConfig?.environment.capabilities.serverBrowser === true,
+      chromeReady &&
+      !props.draftMode &&
+      props.serverConfig?.environment.capabilities.serverBrowser === true,
   });
   const openBrowserPreview = (tabId?: string) => {
     Keyboard.dismiss();

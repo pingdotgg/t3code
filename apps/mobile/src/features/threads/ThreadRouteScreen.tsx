@@ -374,8 +374,6 @@ function ThreadRouteContent(
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const startSideChat = useStartSideChat();
   const composer = useThreadComposerState({ startSideChat });
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
@@ -464,6 +462,17 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  // Git/terminal queries compete with first feed paint; reset per thread so switches defer again.
+  const [chromeReadyIdentity, setChromeReadyIdentity] = useState<string | null>(null);
+  const chromeReady = chromeReadyIdentity === routeThreadIdentity && routeThreadIdentity !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers git/terminal chrome until this thread's first paint has committed
+  useEffect(() => {
+    if (routeThreadIdentity === null) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Marks this thread's first paint so deferred git queries may start.
+    setChromeReadyIdentity(routeThreadIdentity);
+  }, [routeThreadIdentity]);
+  const gitState = useSelectedThreadGitState({ enabled: chromeReady });
+  const gitActions = useSelectedThreadGitActions({ enabled: chromeReady });
   // The chosen mode survives thread switches; "route" only applies while the route
   // supplies an inspector, which is also the default whenever it does.
   const [chosenInspectorMode, setChosenInspectorMode] = useState<ThreadInspectorMode | null>(null);
@@ -519,7 +528,7 @@ function ThreadRouteContent(
     .filter(Boolean)
     .join(" · ");
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    chromeReady && selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -527,8 +536,8 @@ function ThreadRouteContent(
       : null,
   );
   const { sessions: knownTerminalSessions } = useKnownTerminalSessions({
-    environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
+    environmentId: chromeReady ? (selectedThread?.environmentId ?? null) : null,
+    threadId: chromeReady ? (selectedThread?.id ?? null) : null,
   });
   const terminalMenuSessions = buildTerminalMenuSessions({
     knownSessions: knownTerminalSessions ?? [],

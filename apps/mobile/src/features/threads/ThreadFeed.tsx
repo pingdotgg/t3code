@@ -3168,6 +3168,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
+  // Keep this a plain object so React Compiler can memoize identity across parent ticks.
   const listAppearanceData = {
     disclosureLayout,
     reduceMotion,
@@ -3226,19 +3227,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => new Map<string, ThreadWorkGroupScrollPosition>(),
   );
 
-  // Opening at a message: once the filled list has loaded, the render that sees
-  // the jump unfolds a run hiding the message and stops following the end, so
-  // the committed list holds the target row with end maintenance off.
+  // Opening at a message: once this thread's list has loaded and the target row
+  // exists, unfold a run hiding it and stop following the end so the committed
+  // list holds the row with end maintenance off.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
-  const jumpReady = !!jumpToMessageId && loadedListKey === feedThreadKey;
-  if (jumpReady && revealedMessageId !== jumpToMessageId) {
+// Reveal once this thread's list has loaded; jump only after non-thinking content exists.
+  const jumpListReady = !!jumpToMessageId && loadedListKey === feedThreadKey;
+  if (jumpListReady && revealedMessageId !== jumpToMessageId) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
   const presentedFeed = appendGuestPendingMessages(
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
     guestShare,
   );
+  const feedHasContent = presentedFeed.some((entry) => entry.type !== "thinking");
+  const jumpReady = jumpListReady && feedHasContent;
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)

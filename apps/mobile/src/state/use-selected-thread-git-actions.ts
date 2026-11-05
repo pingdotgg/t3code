@@ -52,7 +52,8 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
     ),
 });
 
-export function useSelectedThreadGitActions() {
+export function useSelectedThreadGitActions(options?: { readonly enabled?: boolean }) {
+  const enabled = options?.enabled !== false;
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -63,27 +64,29 @@ export function useSelectedThreadGitActions() {
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const activeThread = enabled ? selectedThread : null;
   const canWriteSourceControl = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
+    activeThread?.environmentId ?? null,
     AuthSourceControlWriteScope,
   );
   const canOperateThread = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
+    activeThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
   const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const cwd = enabled ? selectedThreadCwd : null;
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      environmentId: activeThread?.environmentId ?? null,
+      cwd,
     }),
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = enabled ? (selectedThreadProject?.workspaceRoot ?? null) : null;
   const branchTarget = {
-    environmentId: selectedThread?.environmentId ?? null,
+    environmentId: activeThread?.environmentId ?? null,
     cwd: selectedThreadGitRootCwd,
     query: null,
   };
@@ -155,8 +158,8 @@ export function useSelectedThreadGitActions() {
 
   useAtomMount(
     selectedThreadStatusRevalidation(
-      selectedThread && selectedThreadProject && selectedThreadCwd
-        ? { environmentId: selectedThread.environmentId, cwd: selectedThreadCwd }
+      activeThread && selectedThreadProject && cwd
+        ? { environmentId: activeThread.environmentId, cwd }
         : null,
     ),
   );

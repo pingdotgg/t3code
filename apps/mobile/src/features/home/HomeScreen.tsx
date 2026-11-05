@@ -7,7 +7,10 @@ import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSi
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { THREAD_SIDEBAR_ROW_LAYOUT } from "../threads/threadListAnimations";
+import {
+  threadListShelfExpansionKey,
+  useThreadListShelfLayoutAnimation,
+} from "../threads/threadListAnimations";
 import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
@@ -143,7 +146,7 @@ const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 // Rows away from the viewport skip their swipe actions (see
 // swipe-row-activation), so render further ahead: a fast fling then reaches
 // rows that are already built instead of rows still being rebuilt.
-const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
+const THREAD_LIST_V2_DRAW_DISTANCE = 500;
 
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
@@ -336,9 +339,10 @@ export function HomeScreen(props: HomeScreenProps) {
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
     if (state === undefined || !(state.end >= 0)) return;
-    swipeRowActivation.activate(
-      rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
-    );
+    const visible = rows.slice(Math.max(0, state.start - 2), state.end + 3);
+    // Swipe only: speculative detail warm fights the tapped thread and burns scroll.
+    // Open warming stays in useSelectWorkspaceDetail / startOpeningDetail on press.
+    swipeRowActivation.activate(visible.map((row) => row.key));
   };
   // Status-bar, accessibility and programmatic scrolls bypass the gate; activate visible rows after settling.
   const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -380,13 +384,13 @@ export function HomeScreen(props: HomeScreenProps) {
     [projects, selectedEnvironmentId, projectGroupingMode],
   );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
-  const projectByKey = (() => {
+  const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of props.projects) {
       map.set(scopedProjectKey(project.environmentId, project.id), project);
     }
     return map;
-  })();
+  }, [props.projects]);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
   // An archived project's filter reads as all projects, matching the filter menu.
@@ -402,13 +406,20 @@ export function HomeScreen(props: HomeScreenProps) {
       : { projectIds: v2ScopedProjectGroup.projectRefs.map((ref) => ref.projectId) },
   );
   const threadSearchMatchByKey = useThreadListSearchMatches(props.threads, threadSearch);
-  const v2ProjectTitleByProjectKey = new Map(
-    projectScopes.flatMap((scope) =>
-      scope.projectRefs.map(
-        (projectRef) =>
-          [scopedProjectKey(projectRef.environmentId, projectRef.projectId), scope.title] as const,
+  const v2ProjectTitleByProjectKey = useMemo(
+    () =>
+      new Map(
+        projectScopes.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                scope.title,
+              ] as const,
+          ),
+        ),
       ),
-    ),
+    [projectScopes],
   );
   const handleSettleThread = props.onSettleThread;
   const handleSnoozeThread = props.onSnoozeThread;
@@ -442,6 +453,13 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
+  const shelfLayoutAnimation = useThreadListShelfLayoutAnimation(
+    threadListShelfExpansionKey({
+      workingShelfExpanded,
+      snoozedShelfExpanded,
+      settledShelfExpanded,
+    }),
+  );
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
@@ -647,17 +665,30 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2KeyExtractor = (item: ThreadListV2ListItem) => item.key;
 
   // extraData changes invalidate every visible row; put the minute clock on items to limit updates.
-  const v2ExtraData = {
-    activeNewTask,
-    projectByKey,
-    projectTitleByProjectKey: v2ProjectTitleByProjectKey,
-    listEnvironments,
-    savedConnectionsById: props.savedConnectionsById,
-    searchQuery: props.searchQuery,
-    selectedThreadKey,
-    threadSearchMatchByKey,
-    workingShelfEnabled,
-  };
+  const v2ExtraData = useMemo(
+    () => ({
+      activeNewTask,
+      projectByKey,
+      projectTitleByProjectKey: v2ProjectTitleByProjectKey,
+      listEnvironments,
+      savedConnectionsById: props.savedConnectionsById,
+      searchQuery: props.searchQuery,
+      selectedThreadKey,
+      threadSearchMatchByKey,
+      workingShelfEnabled,
+    }),
+    [
+      activeNewTask,
+      projectByKey,
+      v2ProjectTitleByProjectKey,
+      listEnvironments,
+      props.savedConnectionsById,
+      props.searchQuery,
+      selectedThreadKey,
+      threadSearchMatchByKey,
+      workingShelfEnabled,
+    ],
+  );
 
   const hasAnyThreads =
     props.threads.some((thread) => thread.archivedAt === null) ||
@@ -794,7 +825,7 @@ export function HomeScreen(props: HomeScreenProps) {
           <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
             <GestureDetector gesture={homeScrollGesture}>
               <AnimatedLegendList
-                itemLayoutAnimation={sidebarSurface ? THREAD_SIDEBAR_ROW_LAYOUT : undefined}
+                itemLayoutAnimation={sidebarSurface ? shelfLayoutAnimation : undefined}
                 ref={listRef}
                 onLoad={() => activateVisibleRows(threadListV2Items)}
                 onTouchStart={(event) => trackListTouches(event, true)}

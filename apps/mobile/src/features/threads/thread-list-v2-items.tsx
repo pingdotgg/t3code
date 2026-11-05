@@ -755,7 +755,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         showBadge: providerInstance.showBadge,
       })
     : null;
-  const pr = useThreadPr(thread);
+  // Offscreen/dormant rows skip PR summary fetches until swipe activation wakes them.
+  const pr = useThreadPr(thread, { enabled: !dormant });
   const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
   const handleOpenPullRequests = useCallback(() => {
     if (pr) onOpenThreadPullRequests(thread, pr);
@@ -940,6 +941,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [canTurnIntoProject, props.titleRegenerationSupported, thread.runtime, isRegeneratingTitle],
   );
   const menuActions = useMemo<MenuAction[]>(() => {
+    // Shelf expand mounts many dormant rows; build menus only once swipe activation wakes them.
+    if (dormant) return [];
     const nested = Platform.OS === "ios";
     const direct: MenuAction[] = [
       ...(thread.branch
@@ -1014,6 +1017,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [
     autoSettleMenuItems,
     canUnsettle,
+    dormant,
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
