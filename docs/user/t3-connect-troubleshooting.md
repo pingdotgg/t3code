@@ -1,5 +1,7 @@
 # T3 Connect troubleshooting
 
+OminaX does not include T3 Connect yet. This page applies to T3 Code.
+
 A T3 Connect connection goes through four parts, in this order:
 
 1. **This device** reaches T3 Connect over the internet.

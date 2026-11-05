@@ -40,6 +40,7 @@ describe("cloud-only deep links", () => {
     "t3code-dev://connect-onboarding/?source=x",
     "t3code://settings/waitlist",
     "t3code://settings/auth",
+    "t3code://settings/notifications",
     "exp://192.168.1.2:8081/--/settings/auth",
   ])("ignores %s without cloud config", (url) => {
     expect(shouldHandleAppLink(url, false)).toBe(false);

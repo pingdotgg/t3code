@@ -119,6 +119,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -1040,7 +1041,11 @@ function WebhookEndpointField({
   if (!task || !endpoint) {
     return <p className="text-sm text-muted-foreground">The URL appears after you save.</p>;
   }
-  const { address: url, copyable, note } = webhookAddress(endpoint, httpBaseUrl);
+  const {
+    address: url,
+    copyable,
+    note,
+  } = webhookAddress(endpoint, httpBaseUrl, hasCloudPublicConfig());
   const rotateUrl = async () => {
     const confirmed =
       (await requestConfirmDialog("Rotate this webhook URL?\nThe current URL stops working.", {

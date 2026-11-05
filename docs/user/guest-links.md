@@ -1,5 +1,7 @@
 # Guest links
 
+Guest links need T3 Connect, which OminaX does not include yet, so OminaX hides them.
+
 A guest link lets a teammate follow one thread in their browser and ask the agent questions, with no
 account. They see your messages and the agent's replies as they stream. Each message they send waits
 until you send or dismiss it.
