@@ -2,7 +2,6 @@ import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
-  executeAtomQuery,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -24,7 +23,6 @@ import {
 } from "lucide-react";
 import {
   AuthPreviewOperateScope,
-  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   type ContextMenuItem,
@@ -35,12 +33,10 @@ import {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/reactivity";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
-  useContext,
   useEffectEvent,
   useLayoutEffect,
   useRef,
@@ -87,8 +83,6 @@ import {
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
-import { getFileMetadataQueryAtom } from "../hooks/useFileMetadata";
-import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { attachedTerminalSessionAtom } from "../state/terminalSessions";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -195,7 +189,7 @@ export function synchronizeTerminalOutput(
   const selection = cells > 0 && compared ? terminal.getSelection() : "";
   writeTerminalOutputUpdate(terminal, update);
   if (!compared || (cells > 0 && terminal.getSelection() !== selection)) {
-    terminal.clearSelection({ source: "output" });
+    terminal.clearSelection();
   }
   return update.cursor;
 }
@@ -536,45 +530,10 @@ function TerminalSessionViewport({
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
-  const [linkPath, setLinkPath] = useState<string | null>(null);
-  const metadataThreadRef = useContext(FileMetadataThreadContext);
-  const linkMetadataQuery =
-    linkPath !== null && canOpenHostEditor && canReadFilesystem
-      ? getFileMetadataQueryAtom(
-          environmentId,
-          resolvePathLinkTarget(linkPath, cwd),
-          cwd,
-          metadataThreadRef,
-        )
-      : null;
-  const canActivateTerminalLink = useEffectEvent((text: string) => {
-    if (isTerminalUrl(text)) return true;
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-    if (text !== linkPath || !linkMetadataQuery) return false;
-    const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
-    return metadata?.kind === "file" || metadata?.kind === "directory";
-  });
-  const validateTerminalLink = useEffectEvent(async (text: string) => {
-    if (isTerminalUrl(text)) return true;
-    if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
-      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
-    )
-      return false;
-    const query = getFileMetadataQueryAtom(
-      environmentId,
-      resolvePathLinkTarget(text, cwd),
-      cwd,
-      metadataThreadRef,
-    );
-    if (!query) return false;
-    const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
-    return (
-      result._tag === "Success" &&
-      (result.value?.kind === "file" || result.value?.kind === "directory")
-    );
-  });
+  const canActivateTerminalLink = useEffectEvent(
+    (text: string) =>
+      isTerminalUrl(text) || readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+  );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
@@ -686,18 +645,14 @@ function TerminalSessionViewport({
       consumePendingTerminalFocus(threadRef, terminalId);
   }, [canOperateTerminal, terminalId, threadRef]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the imperative terminal's hovered link after filesystem metadata or editor permissions change
+  // Links re-read the grant on activation; only the hovered link's styling needs a nudge.
+  const linkActivationScopeRef = useRef(canOpenHostEditor);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes link activation styling on the imperative terminal surface when the editor grant changes
   useEffect(() => {
-    if (!linkMetadataQuery) {
-      terminalRef.current?.refreshLinkActivation();
-      return;
-    }
-    return appAtomRegistry.subscribe(
-      linkMetadataQuery,
-      () => terminalRef.current?.refreshLinkActivation(),
-      { immediate: true },
-    );
-  }, [linkMetadataQuery]);
+    if (linkActivationScopeRef.current === canOpenHostEditor) return;
+    linkActivationScopeRef.current = canOpenHostEditor;
+    terminalRef.current?.refreshLinkActivation();
+  }, [canOpenHostEditor]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
@@ -738,8 +693,6 @@ function TerminalSessionViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
-        validateLink: (text) => validateTerminalLink(text),
-        onLinkHover: (text) => setLinkPath(text !== null && !isTerminalUrl(text) ? text : null),
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
@@ -1043,11 +996,7 @@ function TerminalSessionViewport({
       }
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
-        if (
-          !isTerminalUrl(text) &&
-          !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-        )
-          return;
+        if (!canActivateTerminalLink(text)) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (isTerminalUrl(text)) {

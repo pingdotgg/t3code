@@ -6,9 +6,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { View } from "react-native";
-
-import { ScreenContent } from "../../components/ui/ScreenContent";
+import { Platform, View } from "react-native";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
 
 type ThreadScreenContent =
@@ -42,7 +40,11 @@ function ThreadScreenOutlet() {
   return (
     <>
       {"props" in content ? content.props.header : content.header}
-      <ScreenContent surface="canvas">{body}</ScreenContent>
+      {Platform.OS === "android" ? (
+        <View className="flex-1 overflow-hidden rounded-t-[28px] bg-thread-canvas">{body}</View>
+      ) : (
+        body
+      )}
     </>
   );
 }
