@@ -198,8 +198,8 @@ voice input isn't available. On Android, keep T3 Code open while recording and
 transcribing.
 
 The first use may download a speech model and needs a network connection.
-Later transcription works offline for that language. On Android, transcription
-processes the full recording at roughly its original duration. Recordings can be up to five
+Later transcription works offline for that language. Android processes audio while
+you record, then finishes the transcript after you stop. Recordings can be up to five
 minutes long. Canceling or an audio interruption discards the recording and
 preserves your existing draft. Navigating to another screen keeps dictation active;
 use the floating controls to finish or cancel. While recording, the screen stays

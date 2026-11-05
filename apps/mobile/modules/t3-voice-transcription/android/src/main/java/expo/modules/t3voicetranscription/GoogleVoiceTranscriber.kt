@@ -158,5 +158,16 @@ internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : 
     }
   }
 
+  suspend fun transcribeLive(capture: LivePcmCapture, pipe: PcmPipe): String = pipe.use {
+    val request = speechRecognizerRequest { audioSource = pipe.source }
+    try {
+      collectGoogleVoiceTranscript(
+        livePcmResponses(capture, pipe) { recognizer.startRecognition(request) }
+      )
+    } finally {
+      withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }
+    }
+  }
+
   override fun close() = recognizer.close()
 }
