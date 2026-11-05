@@ -68,7 +68,7 @@ export type ClientCapabilities = {
     readonly compaction?: Meta;
   } | null;
   readonly plan?: Meta;
-  readonly auth?: { readonly terminal?: boolean };
+  readonly auth?: { readonly terminal?: boolean; readonly _meta?: Meta };
   readonly elicitation?: V2.ElicitationCapabilities | null;
   readonly _meta?: Meta;
 };

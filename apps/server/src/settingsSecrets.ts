@@ -293,7 +293,14 @@ export function withoutRemovedSecretProviderReferences(
   };
 }
 
-const gatewayOrigin = (url: string) => (URL.canParse(url) ? new URL(url).origin : url);
+export const gatewayOrigin = (url: string) => URL.parse(url)?.origin ?? url;
+
+export const isKeptSettingsSecret = (value: unknown, previous: unknown) =>
+  value === SECRET_REDACTED ||
+  (isSecretReference(value) &&
+    isSecretReference(previous) &&
+    value.provider === previous.provider &&
+    value.reference === previous.reference);
 
 /**
  * `next` with a Simlock host's kept token cleared when its gateway moved to another origin: a
@@ -304,19 +311,13 @@ export function withoutRedirectedSimlockTokens(
   next: ServerSettings,
 ): ServerSettings {
   const saved = new Map(current.simlockDeviceHosts.map((host) => [host.id, host]));
-  const kept = (token: SettingsSecretValue, savedToken: SettingsSecretValue) =>
-    token === SECRET_REDACTED ||
-    (isSecretReference(token) &&
-      isSecretReference(savedToken) &&
-      token.provider === savedToken.provider &&
-      token.reference === savedToken.reference);
   return {
     ...next,
     simlockDeviceHosts: next.simlockDeviceHosts.map((host) => {
       const previous = saved.get(host.id);
       return previous &&
         gatewayOrigin(previous.gatewayUrl) !== gatewayOrigin(host.gatewayUrl) &&
-        kept(host.agentToken, previous.agentToken)
+        isKeptSettingsSecret(host.agentToken, previous.agentToken)
         ? { ...host, agentToken: "" }
         : host;
     }),

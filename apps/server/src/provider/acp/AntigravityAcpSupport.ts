@@ -134,6 +134,8 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
           writeTextFile: false,
         },
         terminal: false,
+        // The agent offers its `gateway` auth method only to clients that opt in.
+        ...(input.authMethod === "gateway" ? { auth: { _meta: { gateway: true } } } : {}),
       },
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},

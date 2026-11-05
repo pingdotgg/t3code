@@ -1594,6 +1594,104 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("keeps a saved Antigravity key at its original destination", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("antigravity");
+      const save = (config: Record<string, unknown>) =>
+        service.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: { driver: ProviderDriverKind.make("antigravity"), config },
+        });
+      const config = { authMethod: "gateway", gatewayUrl: "https://gateway.test" };
+      yield* save({ authMethod: "gemini-api-key", apiKey: "gemini-key" });
+      assert.propertyVal(
+        (yield* save({ ...config, apiKey: SECRET_REDACTED })).providerInstances[instanceId]?.config,
+        "apiKey",
+        "",
+      );
+      yield* save({ ...config, apiKey: "gateway-key" });
+      assert.propertyVal(
+        (yield* save({
+          ...config,
+          gatewayUrl: "https://gateway.test:443/api",
+          apiKey: SECRET_REDACTED,
+        })).providerInstances[instanceId]?.config,
+        "apiKey",
+        "gateway-key",
+      );
+      assert.propertyVal(
+        (yield* save({ ...config, gatewayUrl: "https://second.test", apiKey: SECRET_REDACTED }))
+          .providerInstances[instanceId]?.config,
+        "apiKey",
+        "",
+      );
+      const source = { provider: SecretProviderId.make("personal"), reference: "gateway/key" };
+      const replacement = { ...source, reference: "second/key" };
+      yield* save({ ...config, apiKey: source });
+      assert.propertyVal(
+        (yield* save({ authMethod: "agent-platform", apiKey: source })).providerInstances[
+          instanceId
+        ]?.config,
+        "apiKey",
+        "",
+      );
+      yield* save({ ...config, apiKey: source });
+      assert.deepEqual(
+        (yield* save({ ...config, gatewayUrl: "http://127.0.0.1:4000", apiKey: replacement }))
+          .providerInstances[instanceId]?.config,
+        { authMethod: "gateway", gatewayUrl: "http://127.0.0.1:4000", apiKey: replacement },
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("rejects invalid Antigravity gateway URLs before writing settings", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("antigravity");
+      for (const gatewayUrl of [
+        "https:///missing-host",
+        "https://%67ateway.test",
+        "https://gateway.test/a%xx",
+        "ftp://gateway.test",
+        "http://127.gateway.test",
+        "https://user:private-password@gateway.test",
+      ]) {
+        const error = yield* service
+          .updateSettings({
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("antigravity"),
+                config: { authMethod: "gateway", gatewayUrl },
+              },
+            },
+          })
+          .pipe(Effect.flip);
+        assert.include(error.message, "gateway URL");
+        assert.notInclude(JSON.stringify(error), "private-password");
+      }
+      assert.isUndefined((yield* service.getSettings).providerInstances[instanceId]);
+
+      const existing = yield* decodeServerSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: "antigravity",
+            config: {
+              authMethod: "gateway",
+              gatewayUrl: "https://user:private-password@gateway.test",
+            },
+          },
+        },
+      });
+      const client = ServerSettingsModule.redactServerSettingsForClient(existing, {
+        secretReferences: true,
+      });
+      assert.propertyVal(client.providerInstances[instanceId]?.config, "gatewayUrl", "");
+      assert.notInclude(JSON.stringify(client), "private-password");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("moves saved provider credentials to the secret store when settings load", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

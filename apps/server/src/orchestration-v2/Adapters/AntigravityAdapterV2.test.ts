@@ -365,6 +365,78 @@ describe("AntigravityAdapterV2 session open", () => {
   );
 });
 
+describe("AntigravityAdapterV2 gateway sign-in", () => {
+  it.effect("opts in to the agent's gateway method and authenticates with it", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
+      const requestLog = path.join(logs, "requests.ndjson");
+      const instanceId = ProviderInstanceId.make("antigravity-gateway-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            authMethod: "gateway",
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: {
+                T3_ACP_ANTIGRAVITY: "1",
+                T3_ACP_REQUEST_LOG_PATH: requestLog,
+                AGY_LLM_GATEWAY_URL: "https://gateway.example.com",
+              },
+            },
+          }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const threadId = ThreadId.make("thread-antigravity-gateway");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-gateway"),
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+
+      const requests = (yield* fileSystem.readFileString(requestLog))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method?: string;
+              params?: {
+                clientCapabilities?: { auth?: { _meta?: { gateway?: unknown } } };
+                methodId?: string;
+              };
+            },
+        );
+      const initialize = requests.find((request) => request.method === "initialize");
+      // `authenticate` on ACP v1, `auth/login` on v2.
+      const authenticate = requests.find((request) => request.params?.methodId !== undefined);
+      assert.equal(initialize?.params?.clientCapabilities?.auth?._meta?.gateway, true);
+      assert.equal(authenticate?.params?.methodId, "gateway");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
 describe("AntigravityAdapterV2 client file system", () => {
   it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
     Effect.gen(function* () {

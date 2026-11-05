@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  antigravityGatewayUrlHasCredentials,
+  antigravityGatewayUrlIssue,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -64,6 +66,8 @@ import {
 } from "./sourceControl/sourceControlHostSecrets.ts";
 
 import {
+  gatewayOrigin,
+  isKeptSettingsSecret,
   mapSettingsSecrets,
   mapSettingsSecretValues,
   withoutRemovedSecretProviderReferences,
@@ -156,7 +160,24 @@ export function redactServerSettingsForClient(
     : mapSettingsSecretValues(redacted, (value) =>
         isSecretReference(value) ? SECRET_REDACTED : value,
       );
-  return { ...shaped, secretProviders: withoutUnknownSecretProviderConfigs(shaped) };
+  let providerInstances: Record<ProviderInstanceId, ProviderInstanceConfig> | undefined;
+  for (const [instanceId, instance] of Object.entries(shaped.providerInstances) as Array<
+    [ProviderInstanceId, ProviderInstanceConfig]
+  >) {
+    const config = antigravityInstanceConfig(instance);
+    if (
+      typeof config?.gatewayUrl === "string" &&
+      antigravityGatewayUrlHasCredentials(config.gatewayUrl)
+    ) {
+      providerInstances ??= { ...shaped.providerInstances };
+      providerInstances[instanceId] = { ...instance, config: { ...config, gatewayUrl: "" } };
+    }
+  }
+  return {
+    ...shaped,
+    providerInstances: providerInstances ?? shaped.providerInstances,
+    secretProviders: withoutUnknownSecretProviderConfigs(shaped),
+  };
 }
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */
@@ -250,6 +271,53 @@ function ensureProviderInstanceMutationAllowed(
     );
   }
   return Effect.void;
+}
+
+function antigravityInstanceConfig(instance: ProviderInstanceConfig | undefined) {
+  const config = instance?.driver === "antigravity" ? instance.config : undefined;
+  return config !== null && typeof config === "object" && !Array.isArray(config)
+    ? (config as Record<string, unknown>)
+    : undefined;
+}
+
+function protectAntigravityGatewaySettings(
+  current: ServerSettings,
+  next: ServerSettings,
+  settingsPath: string,
+) {
+  const providerInstances = { ...next.providerInstances };
+  for (const [instanceId, instance] of Object.entries(next.providerInstances) as Array<
+    [ProviderInstanceId, ProviderInstanceConfig]
+  >) {
+    const config = antigravityInstanceConfig(instance);
+    if (!config) continue;
+    const previous = antigravityInstanceConfig(current.providerInstances[instanceId]);
+    const gatewayUrl = typeof config.gatewayUrl === "string" ? config.gatewayUrl.trim() : "";
+    const previousUrl = typeof previous?.gatewayUrl === "string" ? previous.gatewayUrl.trim() : "";
+    if (gatewayUrl && gatewayUrl !== previousUrl) {
+      const detail = antigravityGatewayUrlIssue(gatewayUrl);
+      if (detail !== null) {
+        return Effect.fail(
+          new ServerSettingsError({
+            settingsPath,
+            operation: "normalize",
+            providerInstanceId: instanceId,
+            detail,
+          }),
+        );
+      }
+    }
+    const gateway = config.authMethod === "gateway";
+    if (
+      previous &&
+      (gateway !== (previous.authMethod === "gateway") ||
+        (gateway && gatewayOrigin(gatewayUrl) !== gatewayOrigin(previousUrl))) &&
+      isKeptSettingsSecret(config.apiKey, previous.apiKey)
+    ) {
+      providerInstances[instanceId] = { ...instance, config: { ...config, apiKey: "" } };
+    }
+  }
+  return Effect.succeed({ ...next, providerInstances });
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -1205,9 +1273,13 @@ const make = Effect.gen(function* () {
         }
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withoutRedirectedSimlockTokens(
+        const updated = yield* protectAntigravityGatewaySettings(
           current,
-          withEchoedSecretReferences(current, yield* update(current)),
+          withoutRedirectedSimlockTokens(
+            current,
+            withEchoedSecretReferences(current, yield* update(current)),
+          ),
+          settingsPath,
         );
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);

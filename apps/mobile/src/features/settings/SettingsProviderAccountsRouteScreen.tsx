@@ -259,7 +259,9 @@ function ProviderAccount({
     Boolean(url) && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction);
   const usesCredentials =
     provider.driver === "antigravity" &&
-    (provider.auth.type === "gemini-api-key" || provider.auth.type === "agent-platform");
+    (provider.auth.type === "gemini-api-key" ||
+      provider.auth.type === "agent-platform" ||
+      provider.auth.type === "gateway");
   const status =
     active || state?.phase === "failed" || state?.phase === "cancelled"
       ? state.message

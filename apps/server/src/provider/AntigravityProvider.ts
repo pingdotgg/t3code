@@ -196,7 +196,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   options: AntigravityProviderOptions,
 ) {
   const usesCredentials =
-    options.auth?.type === "gemini-api-key" || options.auth?.type === "agent-platform";
+    options.auth?.type === "gemini-api-key" ||
+    options.auth?.type === "agent-platform" ||
+    options.auth?.type === "gateway";
   const signInMessage = usesCredentials
     ? `Connect with ${options.auth.label} to use Antigravity and load models.`
     : SIGN_IN_MESSAGE;
