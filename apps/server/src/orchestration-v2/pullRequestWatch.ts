@@ -13,9 +13,10 @@ export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
-// Only real element names, so prose like Promise<void> survives. Review bots open with badge markup.
+// Review bots open with badge markup. Only lowercase element names match, so Promise<void>
+// and type parameters like Promise<A> survive.
 const HTML_TAG =
-  /<\/?(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])[^>]*>/gi;
+  /<\/?(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])[^>]*>/g;
 const MARKDOWN_CODE = /(```[\s\S]*?```|`[^`]*`)/;
 
 // Split keeps the captured code regions at odd indexes, and those keep their tags.

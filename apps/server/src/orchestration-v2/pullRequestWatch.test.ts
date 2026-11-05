@@ -361,7 +361,7 @@ describe("evaluatePullRequestWatch", () => {
         "2026-10-02T12:06:00Z",
         `${badge}\n\n_⚠️ Potential issue_ | _🟠 Major_\n\n**Guard the empty list.**`,
       ),
-      remark("reviewer", "2026-10-02T12:07:00Z", "Return Promise<void> here, not Promise<string>."),
+      remark("reviewer", "2026-10-02T12:07:00Z", "Return Promise<void> here, not Promise<A>."),
       remark("designer", "2026-10-02T12:08:00Z", "Replace `<div>` with `<span>`."),
     ]);
     const { text } = pullRequestWatchMessage({
@@ -372,7 +372,7 @@ describe("evaluatePullRequestWatch", () => {
       report,
     });
     assert.include(text, `"_⚠️ Potential issue_ | _🟠 Major_ **Guard the empty list.**"`);
-    assert.include(text, `"Return Promise<void> here, not Promise<string>."`);
+    assert.include(text, `"Return Promise<void> here, not Promise<A>."`);
     assert.include(text, '"Replace `<div>` with `<span>`."');
     assert.notInclude(text, "<picture");
   });
