@@ -1422,6 +1422,31 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // GitHub refuses a requested-reviewer list holding a team the viewer cannot see. Remember the
+  // refusal so later reads of that pull request skip straight to the read without reviewers.
+  const refusedReviewers = yield* Cache.make({
+    capacity: 512,
+    timeToLive: "10 minutes",
+    lookup: (_key: string) => Effect.void,
+  });
+  const readRequestedReviewers = Effect.fn("GitHubPullRequestApi.readRequestedReviewers")(
+    function* <A, E, R>(
+      input: { readonly host: string; readonly repository: string; readonly number: number },
+      wanted: number,
+      read: (requestedReviewers: number) => Effect.Effect<A, E, R>,
+    ) {
+      const host = normalizeHost(input.host);
+      const { fingerprint } = yield* api.credential(host);
+      const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}\0${input.number}`;
+      if (yield* Cache.has(refusedReviewers, key)) return yield* read(0);
+      return yield* read(wanted).pipe(
+        Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
+          Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(read(0))),
+        ),
+      );
+    },
+  );
+
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
@@ -1436,8 +1461,7 @@ export const make = Effect.gen(function* () {
       });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        read(100).pipe(
-          Effect.catchIf(isRefusedRequestedReviewersOnly, () => read(0)),
+        readRequestedReviewers(input, 100, read).pipe(
           graphql({ ...input, operation, allowReserve }),
           Effect.map(toPullRequestCore),
           Effect.flatMap(found({ ...input, operation })),
@@ -2031,7 +2055,9 @@ export const make = Effect.gen(function* () {
         let withComments = true;
         let withReviews = true;
         const target = { ...input, operation: "getPullRequestActivity" };
-        for (let page = 0; page < REVIEW_THREAD_PAGES && (withComments || withReviews); page++) {
+        const readPage = Effect.fn("GitHubPullRequestApi.readActivityPage")(function* (
+          page: number,
+        ) {
           const read: GitHubPullRequestActivityPage = yield* client
             .PullRequestActivity({
               owner,
@@ -2058,16 +2084,28 @@ export const make = Effect.gen(function* () {
           reviewsAfter = read.nextReviewsCursor;
           withComments = withComments && commentsAfter !== null;
           withReviews = withReviews && reviewsAfter !== null;
-        }
+        });
+        yield* readPage(0);
+        const laterPages = Effect.gen(function* () {
+          for (let page = 1; page < REVIEW_THREAD_PAGES; page++) {
+            if (!withComments && !withReviews) return;
+            yield* readPage(page);
+          }
+        });
         const emptyStats = toPullRequestCommitStats({ nodes: [] });
-        const commitStats =
-          nonMergeCommitIds.length === 0
-            ? emptyStats
-            : yield* client.PullRequestCommitStats({ ids: nonMergeCommitIds }).pipe(
-                graphql(target),
-                Effect.map(toPullRequestCommitStats),
-                Effect.orElseSucceed(() => emptyStats),
-              );
+        const [, commitStats] = yield* Effect.all(
+          [
+            laterPages,
+            nonMergeCommitIds.length === 0
+              ? Effect.succeed(emptyStats)
+              : client.PullRequestCommitStats({ ids: nonMergeCommitIds }).pipe(
+                  graphql(target),
+                  Effect.map(toPullRequestCommitStats),
+                  Effect.orElseSucceed(() => emptyStats),
+                ),
+          ],
+          { concurrency: 2 },
+        );
         return {
           author,
           comments: remarks.toSorted((left, right) =>
@@ -2157,25 +2195,12 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const { owner, name } = parseRepositorySelector(input.repository);
         const target = { ...input, operation: "listReviewThreadComments" };
-        let requestedReviewers = 50;
         const threadPage = (
           after: string | null,
-        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> => {
-          const read = () =>
-            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers });
-          return read().pipe(
-            Effect.catchIf(
-              (error) => requestedReviewers > 0 && isRefusedRequestedReviewersOnly(error),
-              () => {
-                requestedReviewers = 0;
-                return read();
-              },
-            ),
-            graphql(target),
-            Effect.map(toReviewThreadPage),
-            Effect.flatMap(found(target)),
-          );
-        };
+        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> =>
+          readRequestedReviewers(input, 50, (requestedReviewers) =>
+            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers }),
+          ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
         const botLogins = new Set<string>();
