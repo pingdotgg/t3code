@@ -3230,16 +3230,20 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
-  it.effect.each(["global", "project"] as const)(
-    "a delegate on the %s default model gets that default's options",
-    (source) =>
+  it.effect.each([
+    { source: "global", defaultModel: "gpt-6.1-sol", expectedEffort: "high" },
+    { source: "project", defaultModel: "gpt-6.1-sol", expectedEffort: "high" },
+    { source: "global", defaultModel: "gpt-6-luna", expectedEffort: undefined },
+  ] as const)(
+    "a delegate gets the $source default's options only on its model ($defaultModel)",
+    ({ source, defaultModel, expectedEffort }) =>
       Effect.gen(function* () {
         const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
         const model = "gpt-6.1-sol";
         const parent = { instanceId: claudeInstanceId, model: "claude-opus-5-5" };
         const defaultSelection = (effort: string) => ({
           instanceId: codexInstanceId,
-          model,
+          model: defaultModel,
           options: [
             { id: "reasoningEffort", value: effort },
             { id: "notAnOptionOfThisModel", value: true },
@@ -3340,7 +3344,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.deepEqual(commands[0]?.modelSelection, {
             instanceId: codexInstanceId,
             model,
-            options: [{ id: "reasoningEffort", value: "high" }],
+            ...(expectedEffort === undefined
+              ? {}
+              : { options: [{ id: "reasoningEffort", value: expectedEffort }] }),
           });
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),
