@@ -97,6 +97,7 @@ const emptyProjection = {
   runtimeRequests: [],
   messages: [],
   plans: [],
+  artifacts: [],
   turnItems: [],
   checkpointScopes: [],
   checkpoints: [],
