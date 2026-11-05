@@ -80,6 +80,25 @@ internal fun pacedRecordedResponses(
   }
 }
 
+internal fun livePcmResponses(
+  capture: LivePcmCapture,
+  output: PcmOutput,
+  responses: () -> Flow<SpeechRecognizerResponse>
+): Flow<SpeechRecognizerResponse> = flow {
+  try {
+    withTimeout(330000) {
+      responses().collect { emit(it) }
+      requireCompleteAudio(capture.inputExhausted) {
+        "Speech recognition ended before receiving the complete recording."
+      }
+      capture.awaitFinished()
+      output.verifyConsumed()
+    }
+  } finally {
+    capture.cancel()
+  }
+}
+
 internal inline fun requireCompleteAudio(condition: Boolean, message: () -> String) {
   if (!condition) throw VoiceTranscriptionException("incomplete-audio", message())
 }

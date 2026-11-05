@@ -1,4 +1,6 @@
 import { requireOptionalNativeModule } from "expo";
+import type { RecorderState, RecordingStatus } from "expo-audio";
+import type { NativeVoiceRecorder } from "../features/voice-input/lazyVoiceRecorder";
 
 import {
   VoiceTranscriptionError,
@@ -13,6 +15,8 @@ type GoogleTranscriptionModule = {
   prepare(id: number): Promise<PreparedGoogleTranscription>;
   transcribe(id: number, uri: string, locale: string, mode: number): Promise<string>;
   cancel(id: number): Promise<void>;
+  readonly LiveVoiceRecorder?: new () => NativeVoiceRecorder<RecordingStatus, RecorderState>;
+  startLive?(id: number, uri: string, locale: string, mode: number): Promise<string>;
 };
 
 const native = requireOptionalNativeModule<GoogleTranscriptionModule>("T3VoiceTranscription");
@@ -33,6 +37,10 @@ const nativeErrorMessages: Readonly<Record<string, string>> = {
 
 let nextOperationId = 0;
 
+export function createLiveVoiceRecorder() {
+  return native?.LiveVoiceRecorder ? new native.LiveVoiceRecorder() : null;
+}
+
 export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
   if (!native || !(await native.checkAvailability())) return null;
   const module = native;
@@ -41,8 +49,17 @@ export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | nul
       const prepared = await runOperation(module, signal, "preparation-failed", (id) =>
         module.prepare(id),
       );
+      const startLive = module.startLive?.bind(module);
       return {
         locale: prepared.locale,
+        ...(module.LiveVoiceRecorder && startLive
+          ? {
+              start: (uri: string, { signal }: { signal: AbortSignal }) =>
+                runOperation(module, signal, "transcription-failed", (id) =>
+                  startLive(id, uri, prepared.locale, prepared.mode),
+                ),
+            }
+          : {}),
         transcribe: (uri, { signal }) =>
           runOperation(module, signal, "transcription-failed", (id) =>
             module.transcribe(id, uri, prepared.locale, prepared.mode),
