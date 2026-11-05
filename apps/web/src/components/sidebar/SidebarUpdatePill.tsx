@@ -4,12 +4,14 @@ import {
   managedUpdatesDenial,
 } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
-import { type ComponentProps, useId, useRef, useState } from "react";
+import { type ComponentProps, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { cn } from "../../lib/utils";
+import { registerMenuAction } from "../../shortcuts/dispatcher";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
@@ -201,6 +203,7 @@ function SidebarUpdateControl() {
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
+  const [isInstallRequested, setIsInstallRequested] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -277,8 +280,9 @@ function SidebarUpdateControl() {
     setReleaseNotesOpen(showReleaseNotesPopover && releaseNotesTriggerFocusVisible);
   }
 
-  const handleAction = async () => {
+  const handleAction = useStableCallback(async () => {
     const bridge = window.desktopBridge;
+    setIsInstallRequested(false);
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
@@ -350,7 +354,15 @@ function SidebarUpdateControl() {
         );
       })
       .finally(() => setIsActionPending(false));
-  };
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribes to the desktop menu.
+  useEffect(() => registerMenuAction("install-update", () => setIsInstallRequested(true)), []);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The menu can outrun the update state.
+  useEffect(() => {
+    if (isInstallRequested && action === "install") void handleAction();
+  }, [action, handleAction, isInstallRequested]);
 
   const runEverything = async () => {
     const bridge = window.desktopBridge;

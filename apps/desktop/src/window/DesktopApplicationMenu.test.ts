@@ -162,21 +162,30 @@ const downloadFailed: DesktopUpdateActionResult = {
 
 describe("checkForUpdatesFromMenu", () => {
   it.effect.each([
-    ["downloads a found update on accept", "available", 0, downloadFinished, ["Update available"]],
-    ["leaves a found update on Later", "available", 1, null, ["Update available"]],
+    [
+      "opens the update flow once a download finishes",
+      "available",
+      0,
+      downloadFinished,
+      ["Update available"],
+      "install-update",
+    ],
+    ["leaves a found update on Later", "available", 1, null, ["Update available"], null],
     [
       "reports a download that fails",
       "available",
       0,
       downloadFailed,
       ["Update available", "Could not download update"],
+      null,
     ],
-    ["says a download is under way", "downloading", 0, null, ["Update downloading"]],
-    ["never installs a downloaded update", "downloaded", 0, null, ["Update ready to install"]],
-  ] as const)("%s", ([_case, status, response, download, expectedDialogs]) =>
+    ["says a download is under way", "downloading", 0, null, ["Update downloading"], null],
+    ["opens the update flow for a downloaded update", "downloaded", 0, null, [], "install-update"],
+  ] as const)("%s", ([_case, status, response, download, expectedDialogs, expectedAction]) =>
     Effect.gen(function* () {
       const dialogs: Array<string | undefined> = [];
       let downloads = 0;
+      const selectedAction = yield* Deferred.make<string>();
 
       yield* DesktopApplicationMenu.checkForUpdatesFromMenu.pipe(
         Effect.provide(
@@ -198,12 +207,17 @@ describe("checkForUpdatesFromMenu", () => {
                 return Effect.succeed({ response, checkboxChecked: false });
               },
             }),
+            layerDesktopWindow(selectedAction),
           ),
         ),
       );
 
       assert.deepEqual(dialogs, [...expectedDialogs]);
       assert.equal(downloads, download === null ? 0 : 1);
+      assert.equal(
+        (yield* Deferred.isDone(selectedAction)) ? yield* Deferred.await(selectedAction) : null,
+        expectedAction,
+      );
     }),
   );
 });

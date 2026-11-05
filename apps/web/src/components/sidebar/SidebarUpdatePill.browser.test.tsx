@@ -1,9 +1,11 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
+import { ConfirmDialogHost } from "../ConfirmDialogHost";
+import { dispatchMenuAction } from "../../shortcuts/dispatcher";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
 const mocks = vi.hoisted(() => {
@@ -113,6 +115,39 @@ describe("SidebarUpdatePill release notes", () => {
     );
     await expect.element(page.getByText("One-time tasks.", { exact: true })).toBeVisible();
     await expect.element(page.getByText("Plus 2 more bug fixes.")).toBeVisible();
+  });
+});
+
+describe("SidebarUpdatePill menu install request", () => {
+  it("waits for the download, and Enter on the confirm does not install", async () => {
+    const installUpdate = vi.fn();
+    window.desktopBridge = {
+      installUpdate,
+      getLocalEnvironmentEnabled: () => false,
+      getLocalEnvironmentBootstraps: () => [],
+    } as unknown as DesktopBridge;
+    using _bridge = { [Symbol.dispose]: () => delete window.desktopBridge };
+    setup({ ...nightlyUpdate([]), status: "downloading", downloadPercent: 99 });
+    await using _screen = await render(
+      <>
+        <ConfirmDialogHost />
+        <SidebarUpdatePill />
+      </>,
+    );
+
+    await act(() => dispatchMenuAction("install-update"));
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+
+    await publish({
+      ...nightlyUpdate([]),
+      status: "downloaded",
+      downloadedVersion: "0.0.50-nightly.2",
+    });
+    await expect.element(page.getByRole("button", { name: "Cancel" })).toHaveFocus();
+
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
+    expect(installUpdate).not.toHaveBeenCalled();
   });
 });
 

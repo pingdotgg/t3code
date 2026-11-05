@@ -77,6 +77,7 @@ function describeUpdate(
 export const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const result = yield* updates.check("menu");
   const updateState = result.state;
 
@@ -100,14 +101,17 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
       type: "info",
       title: "Update available",
       message: `${describeUpdate(updateState)} is available.`,
-      detail: `You're on ${updateState.currentVersion}. After it downloads, install it from ${UPDATE_BUTTON}.`,
+      detail: `You're on ${updateState.currentVersion}. You can keep working while it downloads, and T3 Code will ask before it restarts.`,
       buttons: ["Download", "Later"],
       defaultId: 0,
       cancelId: 1,
     });
     if (response !== 0) return;
     const download = yield* updates.download;
-    if (download.completed) return;
+    if (download.completed) {
+      yield* desktopWindow.dispatchMenuAction("install-update", { reveal: false });
+      return;
+    }
     yield* electronDialog.showMessageBox({
       type: "warning",
       title: "Could not download update",
@@ -124,13 +128,7 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
       buttons: ["OK"],
     });
   } else if (updateState.status === "downloaded") {
-    yield* electronDialog.showMessageBox({
-      type: "info",
-      title: "Update ready to install",
-      message: `${describeUpdate(updateState)} is ready to install.`,
-      detail: `Install it from ${UPDATE_BUTTON}.`,
-      buttons: ["OK"],
-    });
+    yield* desktopWindow.dispatchMenuAction("install-update");
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
