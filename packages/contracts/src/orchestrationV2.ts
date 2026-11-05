@@ -882,7 +882,8 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   stopCount: Schema.optional(NonNegativeInt),
   /**
    * Its run there ended by itself and no later task here follows the thread yet: the next
-   * run there after this one, other than its restart, becomes a new task. Cleared by a stop.
+   * run there after this one, other than its restart, becomes a new task. A stop of any task
+   * on the same thread there clears it.
    */
   followsAfterRunId: Schema.optional(RunId),
 });
@@ -3444,8 +3445,9 @@ const OrchestrationV2InternalCommand = Schema.Union([
     type: Schema.Literal("delegated_task.remote.request"),
     commandId: CommandId,
     parentThreadId: ThreadId,
-    parentRunId: RunId,
-    parentNodeId: NodeId,
+    /** Absent for a `followUpOf` request, which binds to the parent's owner run at dispatch. */
+    parentRunId: Schema.optional(RunId),
+    parentNodeId: Schema.optional(NodeId),
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     driver: ProviderDriverKind,
@@ -3455,6 +3457,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     /**
      * The finished task whose thread there started this later run: the run binds as a
      * follow-up to a finished child here does, and takes over following that thread.
+     * Refused once that thread is no longer followed.
      */
     followUpOf: Schema.optional(NodeId),
   }),

@@ -339,6 +339,134 @@ it.effect("waitForThread with afterRunId waits for a later run that is not its r
   }),
 );
 
+it.effect("waitForThread with afterRunId skips a later run that never started", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-after-queued");
+    const threadId = ThreadId.make("thread:thread-management:wait-after-queued");
+    const runId = RunId.make("run:thread-management:wait-after-queued:1");
+    const subscribed = yield* Deferred.make<void>();
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const run = (
+      id: string,
+      ordinal: number,
+      status: OrchestrationV2Run["status"],
+      started: boolean,
+    ) =>
+      ({
+        id: RunId.make(id),
+        ordinal,
+        status,
+        startedAt: started ? DateTime.makeUnsafe(ordinal * 1_000) : null,
+        ...(status === "queued" ? { queueHeld: true } : {}),
+      }) as unknown as OrchestrationV2Run;
+    // A message queued there behind a held queue is no run yet.
+    let runs = [
+      run(runId, 1, "completed", true),
+      run("run:thread-management:wait-after-queued:held", 2, "queued", false),
+    ];
+    const stored = (sequence: number, event: object) =>
+      ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "run.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          getThreadRecords: () =>
+            Effect.sync(
+              () =>
+                ({
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs,
+                }) as unknown as OrchestrationV2ThreadProjection,
+            ),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, afterRunId: runId, timeoutMs: 60 * 60 * 1_000 })
+      .pipe(Effect.forkChild);
+    yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
+    // The queued message is removed unrun; the next one starts.
+    const started = run("run:thread-management:wait-after-queued:started", 3, "running", true);
+    runs = [
+      runs[0]!,
+      run("run:thread-management:wait-after-queued:held", 2, "cancelled", false),
+      started,
+    ];
+    yield* Queue.offer(events, stored(1, { type: "run.updated", payload: started }));
+
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      timedOut: false,
+      run: { id: started.id, status: "running" },
+    });
+  }),
+);
+
+it.effect("waitForThread on a monitor's run answers with that run, not an earlier one", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-monitor");
+    const threadId = ThreadId.make("thread:thread-management:wait-monitor");
+    const workRunId = RunId.make("run:thread-management:wait-monitor:work");
+    const monitorRunId = RunId.make("run:thread-management:wait-monitor:monitor");
+    const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1_000);
+    const run = (id: RunId, ordinal: number) =>
+      ({
+        id,
+        ordinal,
+        status: "completed",
+        startedAt: at(ordinal * 2 - 1),
+        completedAt: at(ordinal * 2),
+      }) as unknown as OrchestrationV2Run;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(false),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () => Stream.never,
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, projectId, deletedAt: null },
+              runs: [run(workRunId, 1), run(monitorRunId, 2)],
+              // A monitor's notification started the later run.
+              messages: [{ runId: monitorRunId, notification: { source: { kind: "monitor" } } }],
+              subagents: [],
+              providerThreads: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+
+    expect(
+      yield* service.waitForThread({
+        projectId,
+        threadId,
+        runId: monitorRunId,
+        timeoutMs: 60 * 60 * 1_000,
+        untilDelegatedWorkSettled: true,
+      }),
+    ).toMatchObject({ timedOut: false, resultRun: { id: monitorRunId } });
+  }),
+);
+
 it.effect("waitForThread can wait past an ended run for the thread's delegated work", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-delegated");

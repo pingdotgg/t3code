@@ -135,9 +135,12 @@ also what keeps restart recovery from treating them as abandoned provider work.
 The linked environment never calls back, so after a task's run ends by itself
 the follower keeps a `t3_thread_wait` with `afterRunId` open on that thread
 (`remoteChild.followsAfterRunId`): a later run there, say one a user started,
-becomes a follow-up task as it would for a local child, and takes over
-following. That is one forwarded wait per followed thread until a Stop or
-cancel here, or the thread, parent or link is gone.
+becomes a follow-up task once it starts, as it would for a local child, and
+takes over following. Following belongs to the parent, environment and thread
+together: a Stop or cancel here of any task on that thread ends it for all of
+them under the parent's lock, before the stop is sent there, and a handoff that
+loses that race is refused. That is one forwarded wait per followed thread
+until then, or until the thread, parent or link is gone.
 
 The link is routing, not isolation: an agent the link starts runs as the
 receiving environment's user. **A full-access link is therefore not fenced**:

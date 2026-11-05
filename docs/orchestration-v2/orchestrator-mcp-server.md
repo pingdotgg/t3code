@@ -457,7 +457,8 @@ Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time; an idle thread returns immediately. A timeout reports the latest durable
 status and does not cancel work. With `afterRunId`, it instead returns as soon
-as a later run exists that is not that run's restart.
+as a later run that is not that run's restart starts; one removed from the queue
+unrun is skipped.
 
 ### `t3_thread_interrupt`
 

@@ -44,6 +44,7 @@ import {
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -176,8 +177,8 @@ export interface ThreadManagementWaitInput {
    */
   readonly untilDelegatedWorkSettled?: boolean;
   /**
-   * Instead wait for a run that starts after this one and is not its restart
-   * continuation, returned as soon as it exists; on timeout, this one's latest.
+   * Instead wait for a run after this one that is not its restart continuation, returned
+   * as soon as it starts; on timeout, this one's latest.
    */
   readonly afterRunId?: RunId;
 }
@@ -535,13 +536,15 @@ export function latestRun(
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
-/** The earliest run after `after` that is not `after` restarted. */
+/**
+ * The earliest run after `after` that is not `after` restarted, once it has started; one that
+ * ended without starting, say a queued message removed, is skipped.
+ */
 function laterRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
   after: OrchestrationV2Run,
 ): OrchestrationV2Run | undefined {
   const restarts = new Set<RunId>([after.id]);
-  let later: OrchestrationV2Run | undefined;
   for (const run of runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
     if (run.ordinal <= after.ordinal) continue;
     if (
@@ -551,9 +554,10 @@ function laterRun(
       restarts.add(run.id);
       continue;
     }
-    later ??= run;
+    if (run.startedAt !== null) return run;
+    if (!isTerminalRunStatus(run.status)) return undefined;
   }
-  return later;
+  return undefined;
 }
 
 function latestRestartContinuation(
@@ -1027,7 +1031,7 @@ const make = Effect.gen(function* () {
       return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
-    const delegatedWorkResult = Effect.gen(function* () {
+    const delegatedWorkResult = Effect.fnUntraced(function* (selected: OrchestrationV2Run) {
       const records = yield* getProjectThreadRecords(
         input,
         ["runs", "messages", "subagents", "providerThreads"],
@@ -1041,11 +1045,17 @@ const make = Effect.gen(function* () {
       ) {
         return latestRun(records);
       }
-      if (progress.state !== "result_available") return undefined;
+      if (progress.state !== "result_available" || progress.resultRun === undefined) {
+        return undefined;
+      }
       const pending = yield* orchestrator
         .delegatedTaskResultPending(input.threadId)
         .pipe(Effect.mapError(loadError));
-      return pending ? undefined : progress.resultRun;
+      if (pending) return undefined;
+      // A run waited on by id answers for itself over an earlier one, say as a monitor's does.
+      return input.runId !== undefined && runRanAfter(selected, progress.resultRun)
+        ? selected
+        : progress.resultRun;
     });
     const evaluate = Effect.fn("orchestrationV2.threadManagement.evaluate")(function* (
       runs: ReadonlyArray<OrchestrationV2Run>,
@@ -1054,7 +1064,7 @@ const make = Effect.gen(function* () {
       if (!current.settled || !untilDelegatedWorkSettled) {
         return { ...current, resultRun: undefined };
       }
-      const resultRun = yield* delegatedWorkResult;
+      const resultRun = yield* delegatedWorkResult(current.run);
       return { ...current, settled: resultRun !== undefined, resultRun };
     });
     const settledResult = (current: Effect.Success<ReturnType<typeof evaluate>>) => ({
