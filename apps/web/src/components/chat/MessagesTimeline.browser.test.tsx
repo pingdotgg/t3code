@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { page, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -291,7 +291,9 @@ describe("MessagesTimeline work rows", () => {
       { container },
     );
     const heading = screen.getByRole("button", { name: /^Worked for/ });
-    await expect.element(heading).toBeVisible();
+    // LegendList keeps rows click-through until its initial scroll settles on animation
+    // frames, which the fake clock below would freeze.
+    await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
     const viewport = props.listRef.current!.getScrollableNode()!;
     // Bootstrap can reach the estimated bottom before its rows are measured and
     // interactive. Let it finish before recording the position we want to keep.
@@ -309,6 +311,19 @@ describe("MessagesTimeline work rows", () => {
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
+    const fadedRowIds: string[] = [];
+    const listening = new AbortController();
+    onTestFinished(() => listening.abort());
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        if (event.animationName !== "timeline-fold-reveal" || !(event.target instanceof Element))
+          return;
+        const row = event.target.querySelector("[data-timeline-row-id]");
+        fadedRowIds.push(row?.getAttribute("data-timeline-row-id") ?? "");
+      },
+      { signal: listening.signal },
+    );
     await heading.click();
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
@@ -316,6 +331,10 @@ describe("MessagesTimeline work rows", () => {
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
         500,
       );
+    });
+    await vi.waitFor(() => {
+      expect(fadedRowIds).toEqual(["entry-progress"]);
+      expect(viewport.querySelector("[data-fold-reveal]")).toBeNull();
     });
   });
 
@@ -388,17 +407,22 @@ describe("MessagesTimeline work rows", () => {
     const barElement = bar.element();
     const barTop = barElement.getBoundingClientRect().top;
     const viewport = history.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
-    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(
-      2,
-    );
+    const fullHeight = viewport.scrollHeight;
+    expect(fullHeight).toBeGreaterThan(2000 * 20);
+    expect(fullHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(2);
+    const tailSources = mountedSources();
+    const tailAnchor = history.querySelector<HTMLElement>("[data-assistant-citation-source]")!;
+    let tailAnchorTop = 0;
     await act(() => {
-      viewport.scrollTop = 0;
+      viewport.scrollTop = fullHeight - viewport.clientHeight - 400;
       viewport.dispatchEvent(new Event("scroll"));
+      tailAnchorTop = tailAnchor.getBoundingClientRect().top;
     });
     await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await vi.waitFor(() => expect(mountedSources()).toBeGreaterThan(tailSources));
+    expect(Math.abs(tailAnchor.getBoundingClientRect().top - tailAnchorTop)).toBeLessThanOrEqual(1);
     await expect.element(bar).toHaveAttribute("aria-expanded", "false");
-    expect(viewport.scrollTop).toBeGreaterThan(0);
+    expect(Math.abs(viewport.scrollHeight - fullHeight)).toBeLessThan(fullHeight / 10);
     expect(mountedSources()).toBeLessThan(70);
     expect(barElement.getBoundingClientRect().top).toBe(barTop);
     await screen.getByRole("button", { name: "Jump to latest" }).click();
@@ -406,6 +430,13 @@ describe("MessagesTimeline work rows", () => {
     await expect
       .element(screen.getByRole("button", { name: "Jump to latest" }))
       .not.toBeInTheDocument();
+    await act(() => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await expect.element(screen.getByText("History answer 0", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(viewport.scrollTop).toBe(0));
+    await screen.getByRole("button", { name: "Jump to latest" }).click();
     const barTops = new Set<number>();
     const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
     resizes.observe(history);
@@ -445,6 +476,57 @@ describe("MessagesTimeline work rows", () => {
     await expect
       .element(screen.getByText("History answer 99", { exact: true }))
       .toBeInTheDocument();
+  });
+
+  it("keeps the bar still when work arrives while the history collapses at the bottom", async () => {
+    const runId = RunId.make("collapse-run");
+    const props = {
+      ...baseProps(),
+      isWorking: true,
+      activeTurnStartedAt: CREATED_AT,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+    };
+    const entries = (steps: number) => [
+      ...Array.from({ length: 40 }, (_, index) =>
+        message(`Earlier ${index}`, {}, `earlier-${index}`),
+      ),
+      message("Build it", { runId }),
+      ...Array.from({ length: steps }, (_, index) =>
+        message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
+      ),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries(30)} />,
+    );
+    const bar = screen.getByRole("button", { name: "Open work history" });
+    await expect.element(bar).toBeVisible();
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    const barElement = bar.element();
+    await bar.click();
+    const history = screen.getByRole("region", { name: "Work history" }).element();
+    await expect.element(screen.getByText("Step 0", { exact: true })).toBeInTheDocument();
+    await Promise.all(history.getAnimations().map((animation) => animation.finished));
+    const barTop = barElement.getBoundingClientRect().top;
+    const expandedHeight = history.clientHeight;
+    const barTops = new Set<number>();
+    const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
+    resizes.observe(history);
+    using _resizes = { [Symbol.dispose]: () => resizes.disconnect() };
+    history.style.transitionDuration = "10s";
+
+    await screen.getByRole("button", { name: "Close work history" }).click();
+    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(expandedHeight - 20));
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(31)} />);
+    const arrivedHeight = history.clientHeight;
+    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(arrivedHeight - 60));
+    for (const animation of history.getAnimations()) animation.finish();
+    await vi.waitFor(() =>
+      expect(history.querySelector('[data-slot="scroll-area-viewport"]')).not.toBeNull(),
+    );
+    expect([...barTops]).toEqual([barTop]);
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(
@@ -790,6 +872,76 @@ describe("MessagesTimeline messages", () => {
     expect(screen.container.innerHTML).not.toContain("javascript:");
     await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+});
+
+function usageLimitEntries(resetAt: string) {
+  const threadId = ThreadId.make("usage-limit-thread");
+  const at = DateTime.makeUnsafe(CREATED_AT);
+  return deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: [
+      {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("usage-limit"),
+        item: {
+          id: TurnItemId.make("usage-limit"),
+          threadId,
+          runId: RunId.make("usage-limit-run"),
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          title: null,
+          startedAt: at,
+          completedAt: at,
+          updatedAt: at,
+          type: "error",
+          status: "failed",
+          failure: {
+            class: "usage_limit",
+            message: "You've hit your usage limit.",
+            code: null,
+            retryable: true,
+            resetAt,
+          },
+        },
+      },
+    ],
+    optimisticMessages: [],
+  });
+}
+
+describe("MessagesTimeline usage limit notice", () => {
+  it("labels the retry time with the viewer's timezone", async () => {
+    await using screen = await renderTimeline(usageLimitEntries("2026-03-17T19:30:00.000Z"));
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(screen.text()).toMatch(/Retry after .+\./);
+    expect(screen.text()).toContain(`(${timeZone})`);
+  });
+
+  it("keeps the retry time in the named zone after the viewer's timezone changes", async () => {
+    const resetAt = "2026-07-01T19:30:00.000Z";
+    const session = cdp();
+    await session.send("Emulation.setTimezoneOverride", { timezoneId: "Europe/Madrid" });
+    try {
+      {
+        await using _madrid = await renderTimeline(usageLimitEntries(resetAt));
+      }
+      await session.send("Emulation.setTimezoneOverride", { timezoneId: "America/New_York" });
+      await using screen = await renderTimeline(usageLimitEntries(resetAt));
+      const newYorkTime = new Date(resetAt).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: "America/New_York",
+      });
+      expect(screen.text()).toContain(`${newYorkTime} (America/New_York)`);
+    } finally {
+      await session.send("Emulation.setTimezoneOverride", { timezoneId: "" });
+    }
   });
 });
 
@@ -1836,6 +1988,64 @@ describe("MessagesTimeline work rows", () => {
     expect(screen.text()).toContain("Working for");
     expect(screen.text()).not.toContain("Paused at");
   });
+
+  it.each(["run-backed", "runless"] as const)(
+    "folds the %s working history once it outgrows the collapsed window and keeps it open as the turn fold",
+    async (kind) => {
+      const runId = kind === "runless" ? null : RunId.make("growing-run");
+      const entries = (count: number) => [
+        message("Build it", { runId }),
+        ...Array.from({ length: count }, (_, index) =>
+          message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
+        ),
+      ];
+      const props = {
+        ...baseProps(),
+        isWorking: true,
+        runlessWorkActive: runId === null,
+        activeTurnStartedAt: CREATED_AT,
+        latestRun:
+          runId === null
+            ? null
+            : { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+      };
+      await using screen = await renderElement(
+        <MessagesTimeline {...props} timelineEntries={entries(2)} />,
+      );
+      await expect.element(screen.getByText("Step 1", { exact: true })).toBeVisible();
+      expect(screen.buttons(/work history/)).toEqual([]);
+      const label = screen
+        .getByText(/^Working for/)
+        .element()
+        .closest("button")!;
+      expect(label.disabled).toBe(true);
+      expect(label.hasAttribute("aria-expanded")).toBe(false);
+
+      await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(30)} />);
+      await expect
+        .element(screen.getByRole("button", { name: "Open work history" }))
+        .toHaveAttribute("aria-expanded", "false");
+
+      await screen.getByRole("button", { name: "Open work history" }).click();
+      await expect
+        .element(screen.getByRole("button", { name: "Close work history" }))
+        .toHaveAttribute("aria-expanded", "true");
+      await screen.rerender(
+        <MessagesTimeline
+          {...props}
+          timelineEntries={entries(30)}
+          isWorking={false}
+          runlessWorkActive={false}
+          latestRun={
+            props.latestRun && { ...props.latestRun, status: "completed", completedAt: CREATED_AT }
+          }
+        />,
+      );
+      await expect
+        .element(screen.getByRole("button", { name: /^Worked for/ }))
+        .toHaveAttribute("aria-expanded", "true");
+    },
+  );
 
   it("stops showing Thinking in the working window when the provider turn ends", async () => {
     const runId = RunId.make("ended-provider-run");

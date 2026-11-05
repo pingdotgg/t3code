@@ -99,6 +99,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { observeResize } from "~/lib/observeResize";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
+import { configuredHostedAppUrl } from "../hostedPairing";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   pickableProjectGroups,
@@ -197,7 +198,6 @@ import {
   resolveSidebarThreadSection,
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
-  shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   sidebarListItemId,
   sidebarThreadKeyAtY,
@@ -1067,7 +1067,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectScopeFilter = useComboboxFilter();
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
-  const headerSearchRef = useRef<HTMLDivElement | null>(null);
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
@@ -2902,7 +2901,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             }
             return;
           case "copy-thread":
-            void copyThreadReference(threadChipCopyTarget(threadRef, thread.title));
+            void copyThreadReference(
+              threadChipCopyTarget(threadRef, thread.title, configuredHostedAppUrl()),
+            );
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
@@ -3042,37 +3043,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
 
-  const handleNewThreadClick = (event?: ReactMouseEvent) => {
-    if (
-      boringSidebarEnabled ||
-      shouldCreateNewThreadInCurrentProject(
-        event?.shiftKey ?? false,
-        scopeGroups.length,
-        projectGroups.length,
-      )
-    ) {
-      if (isMobile) setOpenMobile(false);
-      // With no current or open project, such as when every project is archived, pick one.
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread,
-      }).then((started) => {
-        if (!started) openCommandPalette({ open: "new-thread-in" });
-      });
-      return;
-    }
+  const handleNewThreadClick = () => {
     if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
+    // With no current or open project, such as when every project is archived, pick one.
+    void startNewThreadFromContext({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread,
+    }).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
+    });
   };
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (shouldCreateNewThreadInCurrentProject(false, scopeGroups.length, projectGroups.length)
-      ? shortcutLabelForCommand(keybindings, "chat.newLocal")
-      : undefined);
-  const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+    shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
       <ThreadContextDragGhost />
@@ -3083,7 +3069,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         fixedHeader={
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
-              searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
               projectScope={
                 <Combobox
@@ -3154,8 +3139,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
                   <ComboboxPopup
                     align="start"
-                    anchor={headerSearchRef}
-                    className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
+                    collisionAvoidance={{ side: "flip", align: "shift" }}
+                    className="w-[min(18rem,var(--available-width))] overflow-hidden"
                     finalFocus={(closeType) => closeType === "keyboard"}
                   >
                     <ComboboxSearchInput
@@ -3274,15 +3259,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               onNewThread={handleNewThreadClick}
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
-              newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showNewThreadInProjectHint={
-                !boringSidebarEnabled &&
-                !shouldCreateNewThreadInCurrentProject(
-                  false,
-                  scopeGroups.length,
-                  projectGroups.length,
-                )
-              }
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {

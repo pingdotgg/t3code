@@ -79,6 +79,7 @@ export function useChatBannerLane(input: {
       : null;
   const items: ComposerBannerStackItem[] = [];
   const providerItem = providerStatusBannerItem({
+    environmentId,
     status: providerStatus,
     onDismiss: () => setDismissedProviderStatusBannerKey(providerStatusBannerKey),
     onOpenProviderSetup,

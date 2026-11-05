@@ -3,6 +3,7 @@ import { Activity, useState, type ReactNode } from "react";
 import { View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
+import { PaneContext } from "../../components/ui/Pane";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
 import { SettingsListScreen } from "./SettingsRouteScreen";
@@ -24,9 +25,11 @@ export function SettingsWorkspaceLayout(props: { readonly children: ReactNode })
       {visited ? (
         <Activity mode={split ? "visible" : "hidden"}>
           <View style={{ width: layout.listPaneWidth ?? 0, marginRight: layout.listPaneGap ?? 0 }}>
-            <NavigationRouteContext value={route}>
-              <SettingsListScreen sidebar selected={root?.settingsPage ?? null} />
-            </NavigationRouteContext>
+            <PaneContext value="sidebar">
+              <NavigationRouteContext value={route}>
+                <SettingsListScreen sidebar selected={root?.settingsPage ?? null} />
+              </NavigationRouteContext>
+            </PaneContext>
           </View>
         </Activity>
       ) : null}

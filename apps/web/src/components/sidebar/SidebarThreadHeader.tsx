@@ -2,7 +2,6 @@ import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -14,16 +13,13 @@ import { SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
-  searchFieldRef?: RefObject<HTMLDivElement | null>;
   /** Without projects there is nothing to scope, so the scope picker stays out. */
   hasProjects: boolean;
   projectScope: ReactNode;
   onNewProject: () => void;
-  onNewThread: (event: ReactMouseEvent) => void;
+  onNewThread: () => void;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
-  newThreadInProjectShortcutLabel: string | null | undefined;
-  showNewThreadInProjectHint: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
@@ -35,15 +31,12 @@ export interface SidebarThreadHeaderProps {
 }
 
 export function SidebarThreadHeader({
-  searchFieldRef,
   hasProjects,
   projectScope,
   onNewProject,
   onNewThread,
   newThreadDisabled,
   newThreadShortcutLabel,
-  newThreadInProjectShortcutLabel,
-  showNewThreadInProjectHint,
   searchInputRef,
   searchQuery,
   onSearchQueryChange,
@@ -62,7 +55,7 @@ export function SidebarThreadHeader({
 
   return (
     <div className="flex items-center gap-1">
-      <InputGroup ref={searchFieldRef} size="sidebar" className="min-w-0 flex-1">
+      <InputGroup size="sidebar" className="min-w-0 flex-1">
         <InputGroupAddon>
           {/* A 16px slot like a row's favicon, pulled out like the addon's own
               svg: the glyph centers on the icon column and the placeholder
@@ -118,19 +111,7 @@ export function SidebarThreadHeader({
         </SidebarHeaderIconButton>
         <SidebarHeaderIconButton
           label="New thread"
-          tooltip={
-            showNewThreadInProjectHint ? (
-              <span className="flex flex-col gap-0.5">
-                <span>{newThreadLabel}</span>
-                <span className="text-muted-foreground">
-                  New thread in current project: Shift+click
-                  {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
-                </span>
-              </span>
-            ) : (
-              newThreadLabel
-            )
-          }
+          tooltip={newThreadLabel}
           disabled={newThreadDisabled}
           onClick={onNewThread}
         >

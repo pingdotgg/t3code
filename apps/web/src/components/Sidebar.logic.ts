@@ -763,15 +763,6 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
   return nodeClosest(parent, "a[href]") !== null;
 }
 
-/** The "New thread in" picker opens unless there is one open project or none; then the current context decides. */
-export function shouldCreateNewThreadInCurrentProject(
-  shiftKey: boolean,
-  openProjectGroupCount: number,
-  projectGroupCount: number,
-): boolean {
-  return shiftKey || openProjectGroupCount === 1 || projectGroupCount === 0;
-}
-
 export function orderItemsByPreferredIds<TItem, TId>(input: {
   items: readonly TItem[];
   preferredIds: readonly TId[];
@@ -994,7 +985,6 @@ export type SidebarV2TopStatusKind =
   | "limited"
   | "input"
   | "request"
-  | "merged"
   | "waiting"
   | "woke"
   | "working";
@@ -1003,8 +993,6 @@ export function resolveSidebarV2TopStatus(input: {
   readonly status: SidebarThreadStatus;
   readonly isUnread: boolean;
   readonly isWoke: boolean;
-  /** The row still sits in the active list while its PR merged. */
-  readonly isMerged?: boolean;
 }): SidebarV2TopStatusKind | null {
   if (input.status === "working") {
     return "working";
@@ -1023,10 +1011,6 @@ export function resolveSidebarV2TopStatus(input: {
   }
   if (input.isWoke) {
     return "woke";
-  }
-  // Merged outranks Done: once the PR landed, "finished" is the less useful fact.
-  if (input.isMerged === true) {
-    return "merged";
   }
   return input.isUnread ? "done" : null;
 }
@@ -1250,14 +1234,17 @@ export function resolveThreadStatusPill(input: {
 }
 
 export function getFallbackThreadIdAfterDelete<
-  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
+  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt" | "settledOverride"> &
+    ThreadSortInput &
+    ThreadSnoozeShell,
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
   sortOrder: SidebarThreadSortOrder;
+  now: string;
   deletedThreadIds?: ReadonlySet<T["id"]>;
 }): T["id"] | null {
-  const { deletedThreadId, deletedThreadIds, sortOrder, threads } = input;
+  const { deletedThreadId, deletedThreadIds, sortOrder, now, threads } = input;
   const deletedThread = threads.find((thread) => thread.id === deletedThreadId);
   if (!deletedThread) {
     return null;
@@ -1269,7 +1256,9 @@ export function getFallbackThreadIdAfterDelete<
         (thread) =>
           thread.projectId === deletedThread.projectId &&
           thread.id !== deletedThreadId &&
-          !deletedThreadIds?.has(thread.id),
+          !deletedThreadIds?.has(thread.id) &&
+          thread.settledOverride !== "settled" &&
+          !effectiveSnoozed(thread, { now }),
       ),
       sortOrder,
     )[0]?.id ?? null

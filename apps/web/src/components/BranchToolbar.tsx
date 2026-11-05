@@ -40,13 +40,11 @@ import {
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   type PreviousWorktreeSeed,
-  shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 import {
   BranchToolbarBranchSelector,
   type BranchToolbarBranchSelectorHandle,
 } from "./BranchToolbarBranchSelector";
-import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -129,7 +127,17 @@ interface BranchToolbarProps {
 }
 
 interface WorkspaceMenuProps {
-  branch?: { label: string; onChooseRef: () => void; disabled: boolean };
+  branch?: {
+    label: string;
+    disabled: boolean;
+    open: boolean;
+    focusSearch: boolean;
+    onOpenChange: (open: boolean) => void;
+    children: ReactNode;
+    onContextMenu: (event: ReactMouseEvent) => void;
+  };
+  showEnvironmentInTrigger: boolean;
+  environmentUnavailable: boolean;
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
@@ -188,6 +196,8 @@ function PreviousWorktreeMeta({
 /** The composer's branch chip also owns machine and workspace choices. */
 const WorkspaceMenu = memo(function WorkspaceMenu({
   branch,
+  showEnvironmentInTrigger,
+  environmentUnavailable,
   forceNewWorktree,
   autoEnvironmentLabel,
   onAutoEnvironment,
@@ -208,7 +218,14 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
 }: WorkspaceMenuProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const connectedEnvironmentIds = useConnectedEnvironmentIds();
-  const [open, setOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const open = branch?.open ?? workspaceOpen;
+  const setOpen = branch?.onOpenChange ?? setWorkspaceOpen;
+  const activeEnvironment = availableEnvironments?.find(
+    (env) => env.environmentId === environmentId,
+  );
+  const environmentLabel = autoEnvironmentLabel ?? activeEnvironment?.label ?? environmentId;
   const inWorktree = forceNewWorktree || effectiveEnvMode === "worktree" || activeWorktreePath;
   const WorkspaceIcon = inWorktree ? FolderGit2Icon : GitBranchIcon;
   const workspaceLabel = forceNewWorktree
@@ -221,7 +238,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
   const canPickEnvironment = (showEnvironmentPicker && !envLocked) || addTargets.length > 0;
   const icon = <WorkspaceIcon aria-hidden className="size-3 shrink-0" />;
 
-  if (envModeLocked && !canPickEnvironment && !branch) {
+  if (envModeLocked && !canPickEnvironment && !branch && !showEnvironmentInTrigger) {
     return (
       <Tooltip>
         <TooltipTrigger
@@ -241,7 +258,22 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
   }
 
   return (
-    <Menu open={open} onOpenChange={setOpen}>
+    <Menu
+      open={open}
+      onOpenChange={setOpen}
+      onOpenChangeComplete={(nextOpen) => {
+        if (nextOpen) {
+          popupRef.current
+            ?.querySelector<HTMLElement>(
+              branch?.focusSearch
+                ? 'input[role="combobox"]'
+                : '[data-composer-workspace] [aria-checked="true"]',
+            )
+            ?.focus();
+        }
+      }}
+      modal={false}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -249,8 +281,11 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
               render={<ComposerControl size="xs" />}
               className={branch ? "min-w-0 max-w-full" : envModeLocked ? "ps-2 pe-0.5" : "ps-2"}
               aria-label={
-                branch ? `Branch and workspace: ${branch.label}` : `Workspace: ${workspaceLabel}`
+                branch
+                  ? `Branch and workspace: ${branch.label}, ${environmentLabel}`
+                  : `Workspace: ${workspaceLabel}`
               }
+              onContextMenu={branch?.onContextMenu}
               data-composer-context-control
               data-composer-shortcut={[
                 canPickEnvironment ? "composer.host" : "",
@@ -259,6 +294,25 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
             />
           }
         >
+          {showEnvironmentInTrigger ? (
+            <span
+              className={cn(
+                "flex min-w-0 max-w-32 items-center gap-1.25",
+                environmentUnavailable && "text-warning-foreground",
+              )}
+            >
+              {autoEnvironmentLabel ? (
+                <ScaleIcon className="size-3 shrink-0" />
+              ) : (
+                <EnvironmentMachineIcon
+                  kind={activeEnvironment?.machine ?? "server"}
+                  className="size-3 shrink-0"
+                />
+              )}
+              <span className="truncate">{environmentLabel}</span>
+              <span aria-hidden className="mx-0.5 h-3 border-s border-divider" />
+            </span>
+          ) : null}
           {icon}
           {envModeLocked && !branch ? null : (
             <>
@@ -277,19 +331,24 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
           <span className="flex flex-col gap-0.5">
             {branch ? <span>{branch.label}</span> : null}
             <span>{workspaceLabel}</span>
+            <span>
+              {environmentLabel}
+              {environmentUnavailable ? " (offline)" : ""}
+            </span>
           </span>
         </TooltipPopup>
       </Tooltip>
       <MenuPopup
+        ref={popupRef}
         spacing="relaxed"
         align="start"
         side="top"
         // Workspace choices and paths need a consistent width regardless of the chip label.
         className="w-90"
         {...composerFloatingLayerProps}
+        data-composer-run-context
       >
-        {availableEnvironments &&
-        ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0) ? (
+        {availableEnvironments && availableEnvironments.length > 0 ? (
           <MenuGroup>
             <MenuGroupLabel>Run on</MenuGroupLabel>
             <MenuRadioGroup
@@ -370,7 +429,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
             ) : null}
           </MenuGroup>
         ) : null}
-        <MenuGroup>
+        <MenuGroup data-composer-workspace>
           <MenuGroupLabel>Workspace</MenuGroupLabel>
           <MenuRadioGroup
             value={effectiveEnvMode}
@@ -403,18 +462,6 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
             </MenuRadioItem>
           </MenuRadioGroup>
         </MenuGroup>
-        {branch ? (
-          <MenuGroup>
-            <MenuGroupLabel>
-              {inWorktree && !activeWorktreePath ? "Base ref" : "Branch"}
-            </MenuGroupLabel>
-            <MenuItem disabled={branch.disabled} onClick={branch.onChooseRef}>
-              <GitBranchIcon />
-              <span className="min-w-0 flex-1 truncate">{branch.label}</span>
-              <ChevronDownIcon className="size-3 -rotate-90" />
-            </MenuItem>
-          </MenuGroup>
-        ) : null}
         {previousWorktree ? (
           <MenuGroup>
             <MenuGroupLabel>Previous worktree</MenuGroupLabel>
@@ -430,6 +477,26 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
               </span>
             </MenuItem>
           </MenuGroup>
+        ) : null}
+        {branch ? (
+          <>
+            <MenuSeparator />
+            <MenuGroup>
+              <MenuGroupLabel>
+                {inWorktree && !activeWorktreePath ? "Base ref" : "Branch"}
+              </MenuGroupLabel>
+            </MenuGroup>
+            <div
+              className="flex min-h-0 flex-col"
+              inert={branch.disabled}
+              aria-busy={branch.disabled}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" && event.key !== "Tab") event.stopPropagation();
+              }}
+            >
+              {branch.children}
+            </div>
+          </>
         ) : null}
       </MenuPopup>
     </Menu>
@@ -1051,11 +1118,6 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  // Started threads get no handler but still show which machine they run on.
-  const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
-  });
   const [attachStrip, stripCompaction] = useStripCompaction();
 
   if (!activeProject) return null;
@@ -1113,7 +1175,12 @@ export const BranchToolbar = memo(function BranchToolbar({
     );
   }
 
+  // The primary environment is implicit until its connection needs attention.
+  const showEnvironmentInTrigger =
+    activeEnvironmentOption?.isPrimary !== true || environmentUnavailable;
   const workspaceMenuProps = {
+    showEnvironmentInTrigger,
+    environmentUnavailable: environmentUnavailable ?? false,
     forceNewWorktree,
     autoEnvironmentLabel,
     onAutoEnvironment,
@@ -1133,11 +1200,6 @@ export const BranchToolbar = memo(function BranchToolbar({
     onAddToMachine,
   };
   const workspaceMenu = <WorkspaceMenu {...workspaceMenuProps} />;
-  // Local threads choose their machine from the workspace menu.
-  const showMachineChip =
-    availableEnvironments !== undefined &&
-    showEnvironmentIndicator &&
-    activeEnvironmentOption?.isPrimary === false;
 
   return (
     <ComposerSurface.ContextStrip
@@ -1145,19 +1207,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       data-compact={stripCompaction === "none" ? undefined : stripCompaction}
       data-composer-context-control
     >
-      {showMachineChip ? (
-        <BranchToolbarEnvironmentSelector
-          autoEnvironmentLabel={autoEnvironmentLabel}
-          onAutoEnvironment={onAutoEnvironment}
-          envLocked={envLocked}
-          environmentId={environmentId}
-          availableEnvironments={availableEnvironments}
-          {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
-          unavailable={environmentUnavailable}
-          {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
-        />
-      ) : null}
-      {!showGitControls && !showMachineChip ? workspaceMenu : null}
+      {!showGitControls ? workspaceMenu : null}
       {showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}

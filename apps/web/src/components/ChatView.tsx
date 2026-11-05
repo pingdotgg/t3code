@@ -6,6 +6,7 @@ import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
+import { configuredHostedAppUrl } from "../hostedPairing";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
   deriveAvailableRevertTurnCounts,
@@ -2256,9 +2257,13 @@ export default function ChatView(props: ChatViewProps) {
   const publishComposerOverlayHeight = (height: number) => {
     const nextHeight = Math.ceil(height);
     if (nextHeight <= 0) return;
-    if (composerTimelineInsetRef.current !== nextHeight) {
-      composerTimelineInsetRef.current = nextHeight;
-      setComposerTimelineInset(nextHeight);
+    const speechTray = composerOverlayElement?.querySelector<HTMLElement>(
+      '[data-chat-composer-speech="true"]',
+    );
+    const timelineInset = Math.ceil(height - (speechTray?.getBoundingClientRect().height ?? 0));
+    if (composerTimelineInsetRef.current !== timelineInset) {
+      composerTimelineInsetRef.current = timelineInset;
+      setComposerTimelineInset(timelineInset);
     }
     // Reserve the expanded composer height for the terminal drawer and empty placeholder.
     // Keep it while the mobile strip collapses, but allow growth from approvals or tasks.
@@ -2348,6 +2353,7 @@ export default function ChatView(props: ChatViewProps) {
           openPanelPullRequestUrl,
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
+          hostedAppUrl: configuredHostedAppUrl(),
         });
   const copyActiveThreadReference = () => {
     if (activeThreadReferenceCopyTarget === null) return;
@@ -3536,109 +3542,109 @@ export default function ChatView(props: ChatViewProps) {
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
-              <ThreadTimeline
-                pendingApprovals={pendingApprovals}
-                heldApprovalRequestIds={heldApprovalRequestIds}
-                respondingRequestIds={respondingRequestIds}
-                onRespondToApproval={onRespondToApprovalStable}
-                canOperateThread={canOperateThread}
-                threadDetailRef={routeThreadDetailRef}
-                entriesInput={timelineEntriesInput}
-                draftEntries={isServerThread ? null : draftTimelineEntries}
-                activeThreadKey={activeThreadKey}
-                syncing={threadSyncPhase !== null}
-                detailLoading={threadDetailLoading}
-                citationRequest={citationRequest}
-                citationHistory={citationHistory}
-                onCiteAssistantText={citeAssistantTextStable}
-                {...(activeProject
-                  ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
-                  : {})}
-                isWorking={isWorking}
-                runlessWorkActive={runlessWorkStartedAt !== null}
-                isCompacting={isCompacting}
-                pendingRequest={timelinePendingRequest}
-                usageLimit={timelineUsageLimit}
-                threadErrorMessage={timelineThreadError}
-                onFocusComposer={focusComposerAtEndStable}
-                awaitingUser={
-                  activePendingApproval !== null
-                    ? "approval"
-                    : activePendingUserInput !== null ||
-                        // A secret request has no runtime request; the shell carries it.
-                        activeThreadShell?.hasPendingUserInput === true
-                      ? "input"
-                      : null
-                }
-                awaitingRequestId={
-                  activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
-                }
-                activeTurnStartedAt={activeWorkStartedAt}
-                worktreeSetup={worktreeSetup}
-                onCancelWorktreeSetup={onCancelWorktreeSetupStable}
-                retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
-                onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
-                {...(draftId
-                  ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
-                  : {})}
-                {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
-                isPreparingWorktree={isPreparingWorktree}
-                footer={timelineFooter}
-                listRef={legendListRef}
-                runs={serverProjection?.runs ?? []}
-                latestRun={activeActivityRun}
-                announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
-                detailBehindShell={isDetailBehindShell(
-                  activeLatestRun,
-                  activeThreadShell?.latestRun ?? null,
-                )}
-                runningRunId={activeRunningTurnId}
-                turnDiffSummaries={turnDiffSummaries}
-                activeThreadEnvironmentId={
-                  displayedThreadRef?.environmentId ?? activeThread.environmentId
-                }
-                routeThreadKey={displayedTimelineKey}
-                displayThreadKey={displayedTimelineKey}
-                announceTurnStatus={!isProviderSubagent}
-                onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
-                // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
-                {...(embedded
-                  ? {}
-                  : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
-                onOpenThread={onOpenRelatedThreadStable}
-                parentThreadLink={parentThreadLink}
-                workflowOpening={workflowOpening}
-                supportsConversationRollback={supportsConversationRollback}
-                threadStartCheckpointReady={threadStartCheckpointReady}
-                availableRevertTurnCounts={availableRevertTurnCounts}
-                onRevertToTurnCount={onRevertTimelineTurnStable}
-                onUseArtifactTemplate={insertArtifactTemplateStable}
-                onSendAppMessage={sendAppMessageStable}
-                isRevertingCheckpoint={isRevertingCheckpoint}
-                onImageExpand={onExpandTimelineImageStable}
-                onFileOpen={openFileAttachmentStable}
-                onFileDownload={downloadFileAttachmentStable}
-                markdownCwd={gitCwd ?? undefined}
-                resolvedTheme={resolvedTheme}
-                timestampFormat={timestampFormat}
-                workspaceRoot={activeWorkspaceRoot}
-                skills={timelineSkills}
-                slashCommands={timelineSlashCommands}
-                anchorMessageId={timelineAnchorMessageId}
-                onAnchorReady={onTimelineAnchorReadyStable}
-                onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
-                contentInsetEndAdjustment={composerTimelineInset}
-                liveFollowEnabled={timelineLiveFollowEnabled}
-                onIsAtEndChange={onIsAtEndChangeStable}
-                onViewportAttach={attachTimelineViewport}
-                onFooterGrow={onTimelineFooterGrowStable}
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                emptyPlaceholderInset={composerReservedHeight}
-                topFadeEnabled
-                {...(threadHistoryControls === undefined
-                  ? {}
-                  : { historyControls: threadHistoryControls })}
-              />
+                <ThreadTimeline
+                  pendingApprovals={pendingApprovals}
+                  heldApprovalRequestIds={heldApprovalRequestIds}
+                  respondingRequestIds={respondingRequestIds}
+                  onRespondToApproval={onRespondToApprovalStable}
+                  canOperateThread={canOperateThread}
+                  threadDetailRef={routeThreadDetailRef}
+                  entriesInput={timelineEntriesInput}
+                  draftEntries={isServerThread ? null : draftTimelineEntries}
+                  activeThreadKey={activeThreadKey}
+                  syncing={threadSyncPhase !== null}
+                  detailLoading={threadDetailLoading}
+                  citationRequest={citationRequest}
+                  citationHistory={citationHistory}
+                  onCiteAssistantText={citeAssistantTextStable}
+                  {...(activeProject
+                    ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
+                    : {})}
+                  isWorking={isWorking}
+                  runlessWorkActive={runlessWorkStartedAt !== null}
+                  isCompacting={isCompacting}
+                  pendingRequest={timelinePendingRequest}
+                  usageLimit={timelineUsageLimit}
+                  threadErrorMessage={timelineThreadError}
+                  onFocusComposer={focusComposerAtEndStable}
+                  awaitingUser={
+                    activePendingApproval !== null
+                      ? "approval"
+                      : activePendingUserInput !== null ||
+                          // A secret request has no runtime request; the shell carries it.
+                          activeThreadShell?.hasPendingUserInput === true
+                        ? "input"
+                        : null
+                  }
+                  awaitingRequestId={
+                    activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
+                  }
+                  activeTurnStartedAt={activeWorkStartedAt}
+                  worktreeSetup={worktreeSetup}
+                  onCancelWorktreeSetup={onCancelWorktreeSetupStable}
+                  retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
+                  onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
+                  {...(draftId
+                    ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
+                    : {})}
+                  {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
+                  isPreparingWorktree={isPreparingWorktree}
+                  footer={timelineFooter}
+                  listRef={legendListRef}
+                  runs={serverProjection?.runs ?? []}
+                  latestRun={activeActivityRun}
+                  announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
+                  detailBehindShell={isDetailBehindShell(
+                    activeLatestRun,
+                    activeThreadShell?.latestRun ?? null,
+                  )}
+                  runningRunId={activeRunningTurnId}
+                  turnDiffSummaries={turnDiffSummaries}
+                  activeThreadEnvironmentId={
+                    displayedThreadRef?.environmentId ?? activeThread.environmentId
+                  }
+                  routeThreadKey={displayedTimelineKey}
+                  displayThreadKey={displayedTimelineKey}
+                  announceTurnStatus={!isProviderSubagent}
+                  onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
+                  // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
+                  {...(embedded
+                    ? {}
+                    : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
+                  onOpenThread={onOpenRelatedThreadStable}
+                  parentThreadLink={parentThreadLink}
+                  workflowOpening={workflowOpening}
+                  supportsConversationRollback={supportsConversationRollback}
+                  threadStartCheckpointReady={threadStartCheckpointReady}
+                  availableRevertTurnCounts={availableRevertTurnCounts}
+                  onRevertToTurnCount={onRevertTimelineTurnStable}
+                  onUseArtifactTemplate={insertArtifactTemplateStable}
+                  onSendAppMessage={sendAppMessageStable}
+                  isRevertingCheckpoint={isRevertingCheckpoint}
+                  onImageExpand={onExpandTimelineImageStable}
+                  onFileOpen={openFileAttachmentStable}
+                  onFileDownload={downloadFileAttachmentStable}
+                  markdownCwd={gitCwd ?? undefined}
+                  resolvedTheme={resolvedTheme}
+                  timestampFormat={timestampFormat}
+                  workspaceRoot={activeWorkspaceRoot}
+                  skills={timelineSkills}
+                  slashCommands={timelineSlashCommands}
+                  anchorMessageId={timelineAnchorMessageId}
+                  onAnchorReady={onTimelineAnchorReadyStable}
+                  onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
+                  contentInsetEndAdjustment={composerTimelineInset}
+                  liveFollowEnabled={timelineLiveFollowEnabled}
+                  onIsAtEndChange={onIsAtEndChangeStable}
+                  onViewportAttach={attachTimelineViewport}
+                  onFooterGrow={onTimelineFooterGrowStable}
+                  hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                  emptyPlaceholderInset={composerReservedHeight}
+                  topFadeEnabled
+                  {...(threadHistoryControls === undefined
+                    ? {}
+                    : { historyControls: threadHistoryControls })}
+                />
               </WorkspaceMutationIdContext>
 
               {showScrollToBottom && !isThreadFindActive && (

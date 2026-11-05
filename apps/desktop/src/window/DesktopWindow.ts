@@ -41,14 +41,11 @@ import { copyContextMenuImage } from "./ContextMenuImage.ts";
 const TITLEBAR_HEIGHT = 40;
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
 const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
-// Matches the sidebar's icon column in apps/web/src/index.css, the center of a
-// row's 16px leading icon, so the first button sits over the favicons.
-const MACOS_SIDEBAR_ICON_COLUMN = 30;
 const MACOS_WINDOW_BUTTON_RADIUS = 7;
 
 function macosWindowButtonPosition(zoomFactor: number) {
   return {
-    x: Math.round(MACOS_SIDEBAR_ICON_COLUMN * zoomFactor - MACOS_WINDOW_BUTTON_RADIUS),
+    x: 16,
     y: Math.round((MACOS_WORKSPACE_TOPBAR_HEIGHT * zoomFactor) / 2 - MACOS_WINDOW_BUTTON_RADIUS),
   };
 }

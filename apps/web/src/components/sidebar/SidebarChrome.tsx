@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { observeResize } from "../../lib/observeResize";
 import { usePullRequestsSupported } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -13,6 +14,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
+import { T3Wordmark } from "../T3Wordmark";
 import {
   SidebarFooter,
   SidebarMenu,
@@ -28,6 +30,38 @@ import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+
+// Preserve main's measured minimum even though the redesign omits its wordmark.
+export function SidebarBrandWidthProbe({
+  isElectron,
+  onWidthChange,
+}: {
+  isElectron: boolean;
+  onWidthChange: (width: number) => void;
+}) {
+  const observeWidth = (probe: HTMLDivElement) =>
+    observeResize(probe, ([entry]) => {
+      if (entry) onWidthChange(entry.borderBoxSize[0]?.inlineSize ?? probe.offsetWidth);
+    });
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
+      ref={observeWidth}
+    >
+      <div className="ml-[var(--workspace-titlebar-content-left)] flex gap-1">
+        <span className="inline-flex min-w-0 items-baseline gap-1 text-label tracking-tight">
+          <T3Wordmark className="h-[1cap] w-auto shrink-0" />
+          <span className="truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1">
+            Code
+          </span>
+        </span>
+        {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
+      </div>
+    </div>
+  );
+}
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
