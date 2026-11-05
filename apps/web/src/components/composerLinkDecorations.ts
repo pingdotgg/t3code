@@ -3,7 +3,11 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { ReactWidgetRenderer } from "@tiptap/react";
 
 import { type ComposerLink, findComposerLinks } from "~/composer-links";
+import { MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
 import { MarkdownLinkFavicon } from "./chat/MarkdownLinkFavicon";
+
+// Revealed Markdown source shows inline code as backtick text without the code mark.
+const CODE_SPAN = /(?<!`)(`+)(?!`)[^]*?(?<!`)\1(?!`)/gu;
 
 function collectComposerLinks(doc: ProseMirrorNode): ComposerLink[] {
   const links: ComposerLink[] = [];
@@ -23,7 +27,9 @@ function collectComposerLinks(doc: ProseMirrorNode): ComposerLink[] {
     node.forEach((child, offset) => {
       if (child.isText && !child.marks.some((mark) => mark.type.spec.code)) {
         if (run === "") runStart = pos + 1 + offset;
-        run += child.text;
+        run += child.marks.some((mark) => mark.type.name === MARKDOWN_SOURCE_MARK)
+          ? child.text!.replace(CODE_SPAN, (span) => " ".repeat(span.length))
+          : child.text;
       } else {
         flush();
       }
