@@ -110,7 +110,15 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
-import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  type SetStateAction,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -410,6 +418,19 @@ type ChatViewProps =
     };
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
+
+function focusMessageArea(event: MouseEvent<HTMLDivElement>) {
+  const target = event.target;
+  if (
+    !(target instanceof Element) ||
+    target.closest(
+      'a, button, input, textarea, select, [contenteditable], [role="button"], [role="textbox"], [tabindex]',
+    ) !== event.currentTarget ||
+    !window.getSelection()?.isCollapsed
+  )
+    return;
+  event.currentTarget.focus({ preventScroll: true });
+}
 
 export default function ChatView(props: ChatViewProps) {
   const {
@@ -3390,18 +3411,7 @@ export default function ChatView(props: ChatViewProps) {
               ref={messageAreaRef}
               tabIndex={0}
               aria-label="Conversation messages"
-              onClick={(event) => {
-                const target = event.target;
-                if (
-                  !(target instanceof Element) ||
-                  target.closest(
-                    'a, button, input, textarea, select, [contenteditable], [role="button"], [role="textbox"], [tabindex]',
-                  ) !== event.currentTarget ||
-                  !window.getSelection()?.isCollapsed
-                )
-                  return;
-                event.currentTarget.focus({ preventScroll: true });
-              }}
+              onClick={focusMessageArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>

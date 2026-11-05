@@ -81,8 +81,13 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
+    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+      context: shortcutContext,
+    });
+    const scrollToEndAvailable = command === "chat.scrollToEnd" && canScrollToEnd(shortcutContext);
 
     if (
+      !scrollToEndAvailable &&
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
       shouldTypeToFocusComposer(event) &&
@@ -93,11 +98,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
-    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-      context: shortcutContext,
-    });
     if (!command) return;
-    if (command === "chat.scrollToEnd" && !canScrollToEnd(shortcutContext)) return;
+    if (command === "chat.scrollToEnd" && !scrollToEndAvailable) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
@@ -122,7 +124,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     input.closeThreadFind();
   });
-  const handleComposerShortcut = useEffectEvent((event: KeyboardEvent) => {
+  const handleEmbeddedShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (
       event.target !== input.messageAreaRef?.current &&
       !(event.target instanceof Node && input.composerElement?.contains(event.target))
@@ -148,9 +150,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, scoped to the active chat
   useEffect(() => {
     if (embedded) {
-      const onComposerKeyDown = (event: KeyboardEvent) => handleComposerShortcut(event);
-      window.addEventListener("keydown", onComposerKeyDown, true);
-      return () => window.removeEventListener("keydown", onComposerKeyDown, true);
+      const onEmbeddedKeyDown = (event: KeyboardEvent) => handleEmbeddedShortcut(event);
+      window.addEventListener("keydown", onEmbeddedKeyDown, true);
+      return () => window.removeEventListener("keydown", onEmbeddedKeyDown, true);
     }
     const onKeyDownCapture = (event: KeyboardEvent) => handleShortcut(event);
     const onKeyDown = (event: KeyboardEvent) => dismissFind(event);

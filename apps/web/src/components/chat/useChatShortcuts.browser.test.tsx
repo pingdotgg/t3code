@@ -194,6 +194,7 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
 function ScrollChat(props: {
   onEnd: () => void;
+  composerKeys?: string[];
   embedded?: boolean;
   context?: Record<string, boolean>;
   keybindings?: ResolvedKeybindingsConfig;
@@ -215,7 +216,14 @@ function ScrollChat(props: {
       ...props.context,
     }),
     threadFindActive: false,
-    composerRef: { current: null },
+    composerRef: {
+      current: {
+        insertTextAtEnd: (key: string) => {
+          props.composerKeys?.push(key);
+          return true;
+        },
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
     commands: { "chat.scrollToEnd": props.onEnd },
@@ -234,13 +242,24 @@ function ScrollChat(props: {
   );
 }
 
-it.each([false, true])(
-  "routes End in main/embedded chat (%s) and reads the current thread callback",
-  async (embedded) => {
+it.each([
+  { embedded: false, key: "End" },
+  { embedded: true, key: "End" },
+  { embedded: false, key: "g" },
+  { embedded: true, key: "g" },
+])(
+  "routes $key in main/embedded chat ($embedded) and reads the current thread callback",
+  async ({ embedded, key }) => {
     const calls: string[] = [];
+    const composerKeys: string[] = [];
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key, command: "chat.scrollToEnd", when: "messageAreaFocus || composerFocus" },
+    ]);
     await using screen = await render(
       <ScrollChat
         embedded={embedded}
+        composerKeys={composerKeys}
+        keybindings={keybindings}
         onEnd={() => {
           calls.push("first");
         }}
@@ -248,22 +267,25 @@ it.each([false, true])(
       options,
     );
     screen.getByLabelText("Messages").element().focus();
-    await userEvent.keyboard("{End}");
+    await userEvent.keyboard(`{${key}}`);
     await screen.rerender(
       <ScrollChat
         embedded={embedded}
+        composerKeys={composerKeys}
+        keybindings={keybindings}
         onEnd={() => {
           calls.push("second");
         }}
       />,
     );
     await userEvent.click(screen.getByLabelText("Chat input"));
-    await userEvent.keyboard("{End}");
+    await userEvent.keyboard(`{${key}}`);
     await userEvent.click(screen.getByRole("button", { name: "Message action" }));
     await userEvent.keyboard("{End}");
     await userEvent.click(screen.getByLabelText("Other editor"));
     await userEvent.keyboard("{Control>}{Home}{/Control}{End}");
     expect(calls).toEqual(["first", "second"]);
+    expect(composerKeys).toEqual([]);
     expect((document.activeElement as HTMLTextAreaElement).selectionStart).toBe(10);
   },
 );
