@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Hash from "effect/Hash";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
 import type { DraftComposerImageAttachment } from "./composerImages";
@@ -31,6 +32,15 @@ async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<s
   return file.uri;
 }
 
+class ImagePreviewCacheError extends Schema.TaggedError<ImagePreviewCacheError>()(
+  "ImagePreviewCacheError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not cache an image preview.";
+  }
+}
+
 /**
  * Keyed by attachment id only: the cached file is named by id, and an upload
  * reference landing on the same draft must not restart materialization and
@@ -48,7 +58,10 @@ export class MaterializedPreviewKey implements Equal.Equal {
 
 export const materializedPreviewAtom = Atom.family(({ attachment }: MaterializedPreviewKey) =>
   Atom.make(
-    Effect.tryPromise(() => materializeDataUrlPreview(attachment.id, attachment.previewUri)).pipe(
+    Effect.tryPromise({
+      try: () => materializeDataUrlPreview(attachment.id, attachment.previewUri),
+      catch: (cause) => new ImagePreviewCacheError({ cause }),
+    }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("[composer-attachments] could not cache an image preview", error).pipe(
           Effect.as(null),
