@@ -99,6 +99,9 @@ const failure = (message: string) => new CourseError({ message });
 const isCourseError = Schema.is(CourseError);
 const isCourseId = (id: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id);
 
+export const courseBelongsToThread = (course: Course, threadId: ThreadId) =>
+  course.lessonThreadId === threadId || course.prepThreadIds.includes(threadId);
+
 export const make = Effect.fn("CourseService.make")(function* (stateDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

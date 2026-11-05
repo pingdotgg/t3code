@@ -12,6 +12,7 @@ import * as ManimRender from "../../../animation/ManimRender.ts";
 import * as CourseService from "../../../course/CourseService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { assertFullAccess, loadCaller } from "../../threadAccess.ts";
 import * as ServerConfig from "../../../config.ts";
 import { AnimationToolkit } from "./tools.ts";
 
@@ -48,6 +49,11 @@ const handlers = {
           scope,
           "animation_render",
         );
+        if (input.code)
+          yield* assertFullAccess(
+            yield* loadCaller(),
+            "Rendering runs Python on the server without a sandbox, so it needs a full-access thread in default mode. Show a cached clip with concept and no code instead.",
+          );
         const manim = yield* ManimRender.ManimRender;
         const config = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
@@ -86,9 +92,14 @@ const handlers = {
           })
           .pipe(Effect.mapError(toFailure));
         if (input.code && conceptSlug) {
-          const course = yield* (yield* CourseService.CourseService)
+          const loadedCourse = yield* (yield* CourseService.CourseService)
             .get(input.courseId ? { id: input.courseId } : { lessonThreadId: thread.threadId })
             .pipe(Effect.option);
+          const course =
+            loadedCourse._tag === "Some" &&
+            CourseService.courseBelongsToThread(loadedCourse.value, thread.threadId)
+              ? loadedCourse
+              : { _tag: "None" as const };
           const meta = {
             concept: input.concept,
             title: input.title,

@@ -18,7 +18,7 @@ import { CourseId } from "../course/tools.ts";
 
 const AnimationRenderTool = Tool.make(ANIMATION_RENDER_TOOL_NAME, {
   description:
-    "Render a short ManimCE clip and show it inline in this thread. `code` is a full Python file with `class Lesson(Scene)`, 10 to 25 s, 3Blue1Brown style, no external files or sound. Use only when motion teaches something; if Manim is missing or rendering fails twice, skip the clip. In a course lesson, first check `course_read`'s `cachedConcepts`: pass a fitting `concept` with no `code` to show that prepared clip at once; pass `concept` with `code` to save a new one.",
+    "Render a short ManimCE clip and show it inline in this thread. `code` is a full Python file with `class Lesson(Scene)`, 10 to 25 s, 3Blue1Brown style, no external files or sound; code needs a full-access thread in default mode. Use when motion teaches; skip after 2 failures too. In a course lesson, first check `course_read`'s `cachedConcepts`: pass a fitting `concept` with no `code` to show that prepared clip at once; pass `concept` with `code` to save a new one.",
   parameters: Schema.Struct({
     code: Schema.optional(
       Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64 * 1024)),

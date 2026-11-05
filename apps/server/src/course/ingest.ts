@@ -39,6 +39,8 @@ export interface IngestOptions {
 }
 
 const MAX_ZIP_BYTES = 300 * 1024 * 1024;
+const MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
+const MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
 const MAX_PDF_TEXT = 2 * 1024 * 1024;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"]);
 
@@ -280,10 +282,17 @@ export const parseOcwZip = (zipPath: string, source: string) =>
         (detail) => new CourseIngestError({ message: detail }),
       );
       const entries = new Map<string, Uint8Array>();
+      let totalUncompressed = 0;
       while (true) {
         const entry = yield* archive.next;
         if (!entry) break;
         if (!/(?:^|\/)data\.json$|\.(?:vtt|srt)$/i.test(entry.fileName)) continue;
+        if (entry.uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) continue;
+        totalUncompressed += entry.uncompressedSize;
+        if (totalUncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES)
+          return yield* new CourseIngestError({
+            message: "The OCW archive contains too much uncompressed course data.",
+          });
         const stream = yield* archive.streamEntry(entry);
         const bytes = yield* tryIo("Could not read the OCW zip", () => readStream(stream));
         entries.set(entry.fileName, bytes);
@@ -300,6 +309,11 @@ const boundedDownload = (url: string, destination: string) =>
       });
       if (!response.ok || !response.body)
         throw new Error(`Download failed with HTTP ${response.status}.`);
+      if (response.url) {
+        const finalUrl = new URL(response.url);
+        if (finalUrl.hostname !== "ocw.mit.edu" || !/^https?:$/.test(finalUrl.protocol))
+          throw new Error(`${finalUrl.origin} is not MIT OpenCourseWare.`);
+      }
       const length = Number(response.headers.get("content-length") ?? 0);
       if (length > MAX_ZIP_BYTES)
         throw new Error("The OCW download is larger than the 300 MB limit.");
@@ -343,6 +357,7 @@ const ocwDownloadUrl = (source: string) =>
       const page = new URL(parsed.origin);
       page.pathname = `${parsed.pathname.replace(/\/$/, "")}/download/`;
       const response = await fetchPage(page);
+      if (response.url) parsed = onOcw(new URL(response.url));
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
       const html = await response.text();
       const match = html.match(/href=["']([^"']+\.zip(?:\?[^"']*)?)["']/i);

@@ -12,7 +12,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { CourseToolkit } from "./tools.ts";
 
-const PREP_BRIEF = `You are a course preparation thread. Work only on the requested units for course {{courseId}} (units: {{units}}). For each unit, call course_read with courseId and its unit number. Write 2–3 likely sticking points, ranked by what the unit needs that knowledge_map_read lacks, what the learner asked before, the transcript, and common misconceptions. Write a four-question quiz with answers first. Save both with course_update using courseId. Render a clip with animation_render using concept and courseId only for sticking points where motion teaches. Do not message, wake, or delegate into the lesson thread; this is background preparation.`;
+const PREP_BRIEF = `You are a course preparation thread. Work only on the requested units for course {{courseId}} (units: {{units}}). For each unit, call course_read with courseId and its unit number. Write 2–3 likely sticking points, ranked by what the unit needs that knowledge_map_read lacks, what the learner asked before, the transcript, and common misconceptions. Write a four-question quiz with answers first. Save both with course_update using courseId. Do not message, wake, or delegate into the lesson thread; this is background preparation.`;
 const isCourseIngestError = Schema.is(CourseIngestError);
 const fail = (e: { readonly message: string }) =>
   new OrchestratorMcpFailure({
@@ -27,6 +27,23 @@ const atSeconds = (at: string | number | undefined) => {
   const seconds = parts.reduce((n, part) => n * 60 + Number(part), 0);
   return Number.isFinite(seconds) ? seconds : undefined;
 };
+const courseOwnershipFailure = () =>
+  new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: "That course belongs to another lesson.",
+  });
+const getOwnedCourse = Effect.fn("course.getOwnedCourse")(function* (
+  service: CourseService.CourseService["Service"],
+  threadId: Parameters<typeof CourseService.courseBelongsToThread>[1],
+  courseId: string | undefined,
+) {
+  const course = yield* service
+    .get(courseId ? { id: courseId } : { lessonThreadId: threadId })
+    .pipe(Effect.mapError(fail));
+  if (courseId && !CourseService.courseBelongsToThread(course, threadId))
+    return yield* courseOwnershipFailure();
+  return course;
+});
 const handlers = {
   course_add: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
@@ -46,9 +63,10 @@ const handlers = {
       const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
       // Only PDFs the learner attached: an agent in approval mode must not read host files through this tool.
-      if (!/^https?:/i.test(input.source)) {
+      let source = input.source;
+      if (!/^https?:/i.test(source)) {
         const real = yield* (yield* FileSystem.FileSystem)
-          .realPath(input.source)
+          .realPath(source)
           .pipe(Effect.orElseSucceed(() => ""));
         const attachments = yield* (yield* FileSystem.FileSystem)
           .realPath(config.attachmentsDir)
@@ -58,11 +76,12 @@ const handlers = {
             code: "invalid_request",
             message: "A PDF must be attached to this chat; ask the learner to drop it in.",
           });
+        source = real;
       }
       const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings.pipe(
         Effect.mapError(fail),
       );
-      const ingested = yield* ingestCourse(input.source, {
+      const ingested = yield* ingestCourse(source, {
         ytDlp: settings.courseYtDlp,
         workDir: path.join(config.stateDir, "courses", ".tmp"),
       }).pipe(Effect.mapError(fail));
@@ -76,9 +95,7 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "course_read");
       const service = yield* CourseService.CourseService;
-      const course = yield* service
-        .get(input.courseId ? { id: input.courseId } : { lessonThreadId: thread.threadId })
-        .pipe(Effect.mapError(fail));
+      const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
       const cachedConcepts = yield* service.cachedConcepts.pipe(Effect.mapError(fail));
       if (input.unit === undefined) return { ...course, cachedConcepts };
       const at = atSeconds(input.at);
@@ -107,9 +124,7 @@ const handlers = {
           message: "unit is required with plan, quiz or transcript",
         });
       const service = yield* CourseService.CourseService;
-      const course = yield* service
-        .get(input.courseId ? { id: input.courseId } : { lessonThreadId: thread.threadId })
-        .pipe(Effect.mapError(fail));
+      const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
       return yield* service
         .update({
           courseId: course.id,
@@ -127,9 +142,7 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "course_prepare");
       const service = yield* CourseService.CourseService;
-      const course = yield* service
-        .get(input.courseId ? { id: input.courseId } : { lessonThreadId: thread.threadId })
-        .pipe(Effect.mapError(fail));
+      const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
       const units = [...new Set(input.units)].sort((a, b) => a - b);
       if (
         units.length === 0 ||
@@ -149,7 +162,7 @@ const handlers = {
       const orchestrator = yield* OrchestratorMcpService.OrchestratorMcpService;
       const created = yield* orchestrator
         .createThreads(scope, {
-          threads: [{ title, prompt }],
+          threads: [{ title, prompt, runtimeMode: "approval-required" }],
         })
         .pipe(Effect.mapError(fail));
       const prepThread = created.threads[0];
