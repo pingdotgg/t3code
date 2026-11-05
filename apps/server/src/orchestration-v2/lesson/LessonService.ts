@@ -11,12 +11,14 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import {
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ThreadLaunchService from "../ThreadLaunchService.ts";
+import { OrchestratorRuntimeModeAboveCeilingError } from "../Orchestrator.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { truncate } from "@t3tools/shared/String";
 
@@ -25,6 +27,8 @@ const LESSON_DEPTH_LABELS = {
   working: ["Working knowledge", "enough to use it confidently"],
   deep: ["Deep detail", "the mechanics, edge cases and why it works"],
 } as const;
+
+const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
 export function buildLessonOpening(
   lesson: OrchestrationV2Lesson,
@@ -112,7 +116,20 @@ const make = Effect.gen(function* () {
           creationSource: input.creationSource,
           ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
         })
-        .pipe(Effect.mapError((error) => new LessonCreateError({ message: error.message })));
+        .pipe(
+          Effect.mapError((error) => {
+            if (error._tag === "ThreadManagementProviderInstanceDisabledError") {
+              return new LessonCreateError({ message: error.message, invalidRequest: true });
+            }
+            if (error._tag === "ThreadLaunchError" && isAboveCeilingError(error.cause)) {
+              return new LessonCreateError({
+                message: error.cause.message,
+                invalidRequest: true,
+              });
+            }
+            return new LessonCreateError({ message: error.message });
+          }),
+        );
       return { threadId: launched.threadId };
     },
   );

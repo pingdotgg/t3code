@@ -12,6 +12,10 @@ import { useId, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
@@ -71,6 +75,7 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
   const [purpose, setPurpose] = useState<"outcome" | "prerequisite">("outcome");
   const [goal, setGoal] = useState("");
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [commandId] = useState(() => CommandId.make(`lesson:${randomUUID()}`));
   const id = useId();
   const project = useProject(request.projectRef);
@@ -93,6 +98,7 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
     const trimmed = topic.trim();
     if (!trimmed || modelSelection === null || pending) return;
     setPending(true);
+    setError(null);
     const result = await createLesson({
       environmentId: request.projectRef.environmentId,
       input: {
@@ -113,15 +119,20 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
       },
     });
     setPending(false);
-    if (result._tag === "Success") {
-      onClose();
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(
-          scopeThreadRef(request.projectRef.environmentId, result.value.threadId),
-        ),
-      });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const failure = squashAtomCommandFailure(result);
+        setError(failure instanceof Error ? failure.message : "Couldn't start the lesson.");
+      }
+      return;
     }
+    onClose();
+    await navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(
+        scopeThreadRef(request.projectRef.environmentId, result.value.threadId),
+      ),
+    });
   };
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -174,6 +185,11 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
                 />
               </div>
             </div>
+            {error ? (
+              <p role="alert" className="mt-4 text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
           </DialogPanel>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>

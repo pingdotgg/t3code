@@ -1572,6 +1572,7 @@ export class LessonCreateError extends Schema.TaggedError<LessonCreateError>()(
   "LessonCreateError",
   {
     message: Schema.String,
+    invalidRequest: Schema.optional(Schema.Boolean),
   },
 ) {}
 
