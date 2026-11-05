@@ -19,7 +19,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { act, render } from "../../test/render";
+import { act, render } from "../../../test/render";
 import { makeThreadFixture } from "~/test-fixtures";
 
 type ResultAtom<A> = Atom.Atom<AsyncResult.AsyncResult<A, Error>>;
@@ -84,10 +84,10 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async () => {} }));
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
-vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
-vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
+vi.mock("~/components/diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
+vi.mock("~/components/DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
-import DiffPanel from "./DiffPanel";
+import DiffPanel from "./DiffSidePanel";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 
 const cwd = "/project-worktree";
