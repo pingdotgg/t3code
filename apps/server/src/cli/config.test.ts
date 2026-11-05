@@ -258,7 +258,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.flip,
         );
-        expect(String(error)).toContain(`pair --base-dir ${baseDir}`);
+        // A temp dir with spaces or backslashes is single-quoted for the shell.
+        const homePattern = baseDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        expect(String(error)).toMatch(
+          new RegExp(`pair --base-dir (${homePattern}|'${homePattern}')`),
+        );
       }
     }),
   );
