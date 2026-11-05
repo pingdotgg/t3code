@@ -20,7 +20,7 @@ T3 Learn keeps a per-environment map of topics you have explained back correctly
 
 The agent grades your explanation against its own full answer and says plainly what is missing; it saves only an explanation that holds. When you start a topic that isn't on the map, it asks one quick question first to find where to begin.
 
-Say `practise X` (or `practise what I know`) for problems on topics from your map. The agent gives hints rather than the answer, retests what you missed before ending, and practice never adds anything to the map.
+Say `practice X` (or `practice what I know`) for problems on topics from your map. The agent gives hints rather than answers and retests what you missed before ending. Practice never adds to the map.
 
 ## Pictures and animations
 
