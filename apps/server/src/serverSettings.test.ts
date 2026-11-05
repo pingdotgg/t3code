@@ -1303,10 +1303,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         inline:
           '[{"name":"FOO","value":"stored-foo","sensitive":true},{"name":"FOO","value":"","sensitive":true}]',
       },
+      {
+        label: "inline seed with an empty duplicate, new value then redacted",
+        duplicate: { value: "new-foo", sensitive: true },
+        redactedLast: true,
+        inline:
+          '[{"name":"FOO","value":"stored-foo","sensitive":true},{"name":"FOO","value":"","sensitive":true}]',
+        expected: "new-foo",
+      },
     ].map((testCase) => [testCase.label, testCase] as const),
   )(
     "keeps a stored secret a redacted row still claims when a duplicate name is saved (%s)",
-    ([, { duplicate, redactedLast, inline }]) =>
+    ([, { duplicate, redactedLast, inline, expected = "stored-foo" }]) =>
       Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
         const instanceId = ProviderInstanceId.make("codex_personal");
@@ -1343,9 +1351,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         );
         assert.equal(
           reloaded.providerInstances[instanceId]?.environment?.[redactedLast ? 1 : 0]?.value,
-          "stored-foo",
+          expected,
         );
       }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("removes a kept secret once every row with its name is deleted", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const store = yield* ServerSecretStore.ServerSecretStore;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const save = (environment: ProviderInstanceEnvironment) =>
+        service.updateSettings({
+          providerInstances: {
+            [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+          },
+        });
+      yield* save([{ name: "FOO", value: "stored-foo", sensitive: true }]);
+      yield* save([
+        { name: "FOO", value: "", sensitive: true, valueRedacted: true },
+        { name: "FOO", value: "plain-foo", sensitive: false },
+      ]);
+      const secretName = "provider-env-Y29kZXhfcGVyc29uYWw-Rk9P";
+      assert.isTrue(Option.isSome(yield* store.get(secretName)));
+      yield* save([]);
+      assert.isTrue(Option.isNone(yield* store.get(secretName)));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect.each([true, false])(
