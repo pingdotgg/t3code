@@ -362,7 +362,7 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
     assert.strictEqual(urls.length, 2);
     assert.strictEqual(
       error.detail,
-      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      "Git could not authenticate with the remote. Cloning over HTTPS instead also failed: Git could not authenticate with the remote. Clones use the Git credentials of the environment running them (a credential helper or SSH keys), not the token saved in Settings.",
     );
   }),
 );
