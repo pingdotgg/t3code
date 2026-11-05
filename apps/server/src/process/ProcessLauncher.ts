@@ -96,6 +96,8 @@ interface Launcher {
   readonly children: Map<number, HostedChild>;
   readonly ready: Deferred.Deferred<boolean>;
   closed: boolean;
+  /** Counts messages from the launcher, so a slow server is not mistaken for a hung launcher. */
+  heard: number;
 }
 
 const syncRef = (launcher: Launcher) => {
@@ -178,6 +180,7 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
     event: LauncherEvent,
     socket: NodeNet.Socket | undefined,
   ) => {
+    launcher.heard++;
     if (event.type === "ready") {
       Deferred.doneUnsafe(launcher.ready, Exit.succeed(true));
       return;
@@ -238,6 +241,7 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
       children: new Map(),
       ready: Deferred.makeUnsafe(),
       closed: false,
+      heard: 0,
     };
     worker.unref();
     worker.channel?.unref();
@@ -257,8 +261,8 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
     options: NodeChildProcess.SpawnOptions,
   ): NodeChildProcessSpawner.SpawnedChildProcess => {
     const launcher = current;
-    // Lost between the readiness check and the spawn; rare enough to fork for.
-    if (launcher === undefined || launcher.closed) {
+    // Lost or replaced between the readiness check and the spawn; rare enough to fork for.
+    if (launcher === undefined || launcher.closed || !Deferred.isDoneUnsafe(launcher.ready)) {
       return NodeChildProcess.spawn(command, [...commandArgs], options);
     }
     const id = ++nextId;
@@ -277,9 +281,18 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
       if (error) close(launcher);
     });
     // The native spawner waits for the reply uninterruptibly, so a hung launcher must not hold it.
-    setTimeout(() => {
-      if (!child.started && !child.settled) close(launcher, true);
-    }, Duration.toMillis(replyTimeout)).unref();
+    // Hung means silent for a whole window; replies queued behind a busy server count once read.
+    const watch = (heard: number) =>
+      setTimeout(
+        () =>
+          setImmediate(() => {
+            if (child.started || child.settled) return;
+            if (launcher.heard === heard) close(launcher, true);
+            else watch(launcher.heard);
+          }),
+        Duration.toMillis(replyTimeout),
+      ).unref();
+    watch(launcher.heard);
     return child;
   };
 

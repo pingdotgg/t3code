@@ -481,6 +481,61 @@ describe("ProcessRunner.layer", () => {
         ),
       ),
   );
+
+  // Under load the server reads the helper's replies late; that is not a hung helper.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "keeps a helper whose replies wait behind a busy server",
+    () =>
+      Effect.gen(function* () {
+        const childProcess: typeof NodeChildProcess = NodeModule.createRequire(import.meta.url)(
+          "node:child_process",
+        );
+        const spawn = childProcess.spawn;
+        let blocked = false;
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
+              const helper = spawn(...args);
+              helper.on("message", (event: { readonly type: string }) => {
+                if (event.type !== "pid" || blocked) return;
+                blocked = true;
+                // Holds the server's event loop past the reply deadline, as a loaded server does.
+                NodeChildProcess.execFileSync("sleep", ["1.5"]);
+              });
+              return helper;
+            }) as typeof spawn;
+            NodeModule.syncBuiltinESMExports();
+          }),
+          () =>
+            Effect.sync(() => {
+              childProcess.spawn = spawn;
+              NodeModule.syncBuiltinESMExports();
+            }),
+        );
+        const runner = Context.get(
+          yield* Layer.build(
+            ProcessRunner.layerWithSpawner.pipe(
+              Layer.provide(
+                Layer.effect(
+                  ChildProcessSpawner.ChildProcessSpawner,
+                  ProcessLauncher.make("1 second"),
+                ),
+              ),
+            ),
+          ),
+          ProcessRunner.ProcessRunner,
+        );
+        const parentPid = runner
+          .run({ command: "sh", args: ["-c", "echo $PPID"] })
+          .pipe(Effect.map((result) => Number(result.stdout.trim())));
+        const first = yield* parentPid;
+        const second = yield* parentPid;
+
+        expect(blocked).toBe(true);
+        expect(second).toBe(first);
+        expect(first).not.toBe(process.pid);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("isWindowsCommandNotFound", () => {
