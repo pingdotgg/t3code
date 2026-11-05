@@ -27,6 +27,7 @@ import {
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
+  type PullRequestSummary,
   PullRequestOperationError,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -193,6 +194,7 @@ const watchedPullRequestDetail = (input: {
     mergeMethods: [],
     search: false,
     checksAlwaysReport: true,
+    mergePinsHead: true,
     review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
     reviewers: { request: false, listCandidates: false },
   },
@@ -3284,6 +3286,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         headSha: "aaaaaaa",
         reviewThreads: [] as ReadonlyArray<PullRequestActivity["reviewThreads"][number]>,
         refuse: false,
+        rateLimited: false,
+        pinsHead: true,
+        reviewDecision: null as PullRequestSummary["reviewDecision"],
         beforeRead: Effect.void as Effect.Effect<void>,
         merges: [] as Array<{ readonly headSha: string }>,
       };
@@ -3301,6 +3306,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                       number: 7,
                       at: "2026-10-02T12:00:00.000Z",
                     }),
+                    capabilities: {
+                      ...watchedPullRequestDetail({
+                        projectId,
+                        number: 7,
+                        at: "2026-10-02T12:00:00.000Z",
+                      }).capabilities,
+                      mergePinsHead: host.pinsHead,
+                    },
                     viewerPermissions: {
                       actions: ["merge" as const],
                       comment: true,
@@ -3330,10 +3343,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   reviewThreads: host.reviewThreads,
                   commits: [],
                 })),
+              summary: () =>
+                Effect.sync(() => ({ reviewDecision: host.reviewDecision }) as PullRequestSummary),
               invalidate: () => Effect.void,
               mergeHead: (input) =>
                 Effect.suspend(() => {
                   host.merges.push(input);
+                  if (host.rateLimited) {
+                    return Effect.fail(
+                      new PullRequestOperationError({
+                        operation: "runAction",
+                        detail: "Rate limited.",
+                        cause: new PullRequestProviderError({
+                          provider: SourceControlProviderKind.make("github"),
+                          operation: "runAction",
+                          reason: "rate-limited",
+                          detail: "Rate limited.",
+                        }),
+                      }),
+                    );
+                  }
                   return host.refuse
                     ? Effect.fail(
                         new PullRequestOperationError({
@@ -3444,6 +3473,66 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       assert.equal(host.merges.at(-1)?.headSha, "bbbbbbb");
       yield* stop;
+    }),
+  );
+
+  it.effect("a rate-limited merge tries the same head again without waking the agent", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, stop } = yield* agentMergeFixture(
+        "rate-limited",
+        "merge",
+      );
+      host.rateLimited = true;
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.lengthOf(host.merges, 1);
+      assert.notInclude(yield* summaries, "#7: merge refused");
+
+      host.rateLimited = false;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 2);
+      assert.equal(host.merges[1]?.headSha, "aaaaaaa");
+      yield* stop;
+    }),
+  );
+
+  it.effect("a review the snapshot has not seen yet holds agent merge", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, stop } = yield* agentMergeFixture(
+        "fresh-review",
+        "merge",
+      );
+      host.reviewDecision = "changes-requested";
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.deepEqual(host.merges, []);
+      assert.include(yield* summaries, "#7: waiting on a reviewer requested changes");
+
+      host.reviewDecision = "approved";
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      yield* stop;
+    }),
+  );
+
+  it.effect("a host that cannot pin the head reports ready instead of merging", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, watched } = yield* agentMergeFixture(
+        "unpinned",
+        "merge",
+      );
+      host.pinsHead = false;
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.deepEqual(host.merges, []);
+      assert.include(yield* summaries, "#7: ready");
+      assert.isUndefined(yield* watched);
     }),
   );
 

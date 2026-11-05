@@ -363,7 +363,7 @@ export function pullRequestWatchMessage(input: {
   readonly baseBranch: string;
   readonly headSha: string | null;
   readonly agentMerge?: ThreadPullRequestAgentMerge | undefined;
-  readonly report: PullRequestWatchReport;
+  readonly report: Pick<PullRequestWatchReport, "changes" | "exhausted">;
 }): { readonly text: string; readonly notification: OrchestrationV2Notification } {
   const { changes, exhausted } = input.report;
   const context = {

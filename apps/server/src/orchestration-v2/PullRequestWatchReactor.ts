@@ -5,6 +5,7 @@ import {
   type PullRequestActivity,
   type PullRequestComment,
   type PullRequestRef,
+  type PullRequestReviewDecision,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
@@ -618,16 +619,12 @@ export const make = Effect.gen(function* () {
           );
           return;
         }
-        const gate =
+        const judge = (reviewDecision: PullRequestReviewDecision | null | undefined) =>
           mode === undefined || remarks === null || !Option.isSome(activity)
             ? null
-            : agentMergeGate(
-                mode,
-                detail,
-                activity.value.reviewThreads,
-                target.link.snapshot?.reviewDecision,
-              );
-        if (gate === null) {
+            : agentMergeGate(mode, detail, activity.value.reviewThreads, reviewDecision);
+        const snapshotGate = judge(target.link.snapshot?.reviewDecision);
+        if (snapshotGate === null) {
           if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
           return;
         }
@@ -637,6 +634,24 @@ export const make = Effect.gen(function* () {
           return;
         }
         const head = report.next.headSha;
+        // The snapshot can predate a review, so a pass that would act on it reads the host first.
+        const gate =
+          snapshotGate.blockers.length > 0 || mode === "checks" || target.watch.mergeHead === head
+            ? snapshotGate
+            : yield* pullRequests.invalidate({ reference }).pipe(
+                Effect.andThen(Effect.exit(pullRequests.summary(reference))),
+                Effect.flatMap((summary) =>
+                  Exit.isSuccess(summary)
+                    ? Effect.succeed(judge(summary.value.reviewDecision))
+                    : Cause.hasInterruptsOnly(summary.cause)
+                      ? Effect.failCause(summary.cause)
+                      : Effect.succeed(null),
+                ),
+              );
+        if (gate === null) {
+          if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
+          return;
+        }
         if (gate.blockers.length > 0) {
           if (head === null || target.watch.blockedHead === head) {
             if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
@@ -653,6 +668,7 @@ export const make = Effect.gen(function* () {
           mode === "merge" &&
           head !== null &&
           target.link.stack === null &&
+          detail.capabilities.mergePinsHead === true &&
           detail.viewerPermissions.actions.includes("merge");
         if (!merges) {
           yield* record(
@@ -682,6 +698,11 @@ export const make = Effect.gen(function* () {
         lastReads.delete(group.key);
         if (Exit.isSuccess(merged)) return;
         if (Cause.hasInterruptsOnly(merged.cause)) return yield* Effect.failCause(merged.cause);
+        // Dropping mergeHead lets a later sweep try again, once the rate limit lifts.
+        if (providerFailureReason(merged.cause) === "rate-limited") {
+          yield* record(target, report.next);
+          return;
+        }
         yield* record(
           target,
           { ...report.next, mergeHead: head },

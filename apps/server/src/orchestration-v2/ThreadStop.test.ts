@@ -1071,6 +1071,32 @@ it.effect("stopping agent merge interrupts the run carrying its brief", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("stopping agent merge still lands when its run cannot be interrupted", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:withdraw:uninterruptible");
+    yield* createWatchingThread(threadId, 4);
+    yield* agentMerge(threadId, 4, "merge", "merge:uninterruptible");
+    const [run] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+    yield* projections.apply({
+      id: EventId.make("event:withdraw:uninterruptible"),
+      type: "run.updated",
+      threadId,
+      runId: run!.id,
+      occurredAt: yield* DateTime.now,
+      payload: { ...run!, providerThreadId: null },
+    });
+
+    yield* stopWatching(threadId, 4);
+
+    const shell = yield* orchestrator.getThreadShell(threadId);
+    assert.isUndefined(shell?.pullRequests?.[0]?.watch);
+    const { runs } = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(runs[0]?.status, run!.status);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("an agent unlinking from its brief keeps the run it is finishing", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

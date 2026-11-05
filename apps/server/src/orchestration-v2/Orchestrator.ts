@@ -3142,8 +3142,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  // Agents merge from their own shell, so nothing can refuse a merge later. Withdrawing the mode
-  // therefore removes the briefs that grant it: undelivered ones and the run acting on one.
+  // Withdrawing the mode removes what acts on it: undelivered briefs and the run on one. T3 Code
+  // does the merging, so a turn that cannot be interrupted just finishes without holding the stop.
   const withdrawAgentMerge = Effect.fn("orchestrationV2.dispatch.withdrawAgentMerge")(function* (
     command: PullRequestWatchCommand,
     pullRequestKey: string,
@@ -3177,16 +3177,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !(command.type === "thread.pull-request.unlink" && command.keepActiveRun === true) &&
         ["preparing", "starting", "running", "waiting"].includes(run.status)
       ) {
-        cancelUnsettledEffects = yield* dispatchRunInterrupt(
-          {
-            type: "run.interrupt",
-            commandId: command.commandId,
+        const interruptEvents = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
+        const interruptEffects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+        const interrupted = yield* Effect.exit(
+          dispatchRunInterrupt(
+            {
+              type: "run.interrupt",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              runId: run.id,
+            },
+            interruptEvents,
+            interruptEffects,
+          ),
+        );
+        // A failed interrupt may have written part of its events, so they are kept apart.
+        if (Exit.isFailure(interrupted)) {
+          yield* Effect.logWarning("agent merge withdrawal could not interrupt the run", {
             threadId: command.threadId,
             runId: run.id,
-          },
-          events,
-          effects,
-        );
+            cause: interrupted.cause,
+          });
+          continue;
+        }
+        const written = yield* Ref.get(interruptEvents);
+        const enqueued = yield* Ref.get(interruptEffects);
+        yield* Ref.update(events, (existing) => [...existing, ...written]);
+        yield* Ref.update(effects, (existing) => [...existing, ...enqueued]);
+        cancelUnsettledEffects = interrupted.value;
       }
     }
     return cancelUnsettledEffects;

@@ -332,9 +332,10 @@ T3 Code decides when a pull request is ready, not the agent: required checks pas
 finishes, the branch has no conflict, and, when comments are in scope, no review thread is open and
 no reviewer requested changes. CodeRabbit is never waited for. It waits until the agent is idle. Then
 it stops watching and tells you, or with **Fix and merge when ready** it merges with your project's
-merge method, or the first one the repository allows. It merges only the commit it judged, and it
-never merges a stacked review or one you lack write access to; those are reported ready instead. If
-the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why,
+merge method, or the first one the repository allows. It merges only the commit it judged, so only
+GitHub merges this way: other hosts cannot refuse a commit that landed after the check, and those
+pull requests are reported ready instead. So are stacked reviews and ones you lack write access to.
+If the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why,
 and T3 Code tries again after a new push or review.
 
 T3 Code runs the watch and prompts the agent on each change, so the agent cannot watch or stop
