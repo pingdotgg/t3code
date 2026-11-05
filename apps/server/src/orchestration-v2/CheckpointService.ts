@@ -190,7 +190,7 @@ export interface RepositoryCheckpointHistory {
   readonly checkpoints: ReadonlyArray<
     Pick<OrchestrationV2Checkpoint, "scopeId" | "ordinalWithinScope" | "status" | "repositories">
   >;
-  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal">>;
 }
 
 export type RepositorySnapshot =
@@ -383,8 +383,9 @@ function repositoryPathPrefixes(
  * The snapshot of a repository worktree that rewinding to `targetOrdinal`
  * restores: the one the target checkpoint lists, or else the earliest one the
  * thread took after it, which is the worktree as it was when the thread first
- * attached it. Rolled-back runs are skipped, and a snapshot a later checkpoint
- * relied on is never passed over for a newer one.
+ * attached it. That holds when the run that attached it was rolled back since.
+ * A snapshot a later checkpoint relied on, stale or not, is never passed over
+ * for a newer one.
  */
 export const resolveRepositorySnapshot = Effect.fn("resolveRepositorySnapshot")(function* (input: {
   readonly history: RepositoryCheckpointHistory;
@@ -396,13 +397,13 @@ export const resolveRepositorySnapshot = Effect.fn("resolveRepositorySnapshot")(
   readonly beforeOrdinal?: number;
 }) {
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
-  const entryAt = (ordinal: number) =>
+  const entryAt = (ordinal: number, options?: { readonly includeStale: boolean }) =>
     input.history.checkpoints
       .find(
         (checkpoint) =>
           checkpoint.scopeId === input.history.scopeId &&
           checkpoint.ordinalWithinScope === ordinal &&
-          checkpoint.status !== "stale",
+          (options?.includeStale === true || checkpoint.status !== "stale"),
       )
       ?.repositories?.find((repository) => repository.worktreePath === input.worktreePath);
   const target = entryAt(input.targetOrdinal);
@@ -425,24 +426,14 @@ export const resolveRepositorySnapshot = Effect.fn("resolveRepositorySnapshot")(
         ),
       ),
     );
-  // A rollback that rewound the conversation but stopped restoring files
-  // leaves its runs rolled back with ready checkpoints, and finishing it must
-  // find the same snapshots.
-  const restorePending = (ordinal: number) =>
-    input.history.checkpoints.some(
-      (checkpoint) =>
-        checkpoint.scopeId === input.history.scopeId &&
-        checkpoint.ordinalWithinScope === ordinal &&
-        checkpoint.status === "ready",
-    );
+  // Rolled-back runs count: a rewind deletes the snapshots its runs took at
+  // their end, not the one taken when a run first attached a worktree, and a
+  // retry that finishes restoring files must find the same ones as the
+  // attempt before it.
   const laterRuns = [
     ...new Set(
       input.history.runs
-        .filter(
-          (run) =>
-            run.ordinal > input.targetOrdinal &&
-            (run.status !== "rolled_back" || restorePending(run.ordinal)),
-        )
+        .filter((run) => run.ordinal > input.targetOrdinal)
         .map((run) => run.ordinal),
     ),
   ].toSorted((left, right) => left - right);
@@ -452,7 +443,10 @@ export const resolveRepositorySnapshot = Effect.fn("resolveRepositorySnapshot")(
     if (ordinal >= before) break;
     const ref = yield* existing(ordinal);
     if (ref !== null) return { _tag: "found", ordinal, ref } as const;
-    if (entryAt(runOrdinal) !== undefined) return { _tag: "unavailable", ordinal } as const;
+    // A rolled-back run's stale checkpoint still records that it captured the worktree.
+    if (entryAt(runOrdinal, { includeStale: true }) !== undefined) {
+      return { _tag: "unavailable", ordinal } as const;
+    }
   }
   // Attached between turns: the baseline sits at the latest run's ordinal,
   // which the loop above never reaches.

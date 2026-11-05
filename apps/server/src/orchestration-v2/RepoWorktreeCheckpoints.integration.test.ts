@@ -1179,6 +1179,223 @@ describe("repository worktree checkpoints", () => {
     { timeout: 120_000 },
   );
 
+  /**
+   * Turn 1 attaches nothing, turn 2 attaches alpha, and turn 3 first attaches
+   * beta, a reused worktree with edits of its own. Rewinding to turn 2 then
+   * sends beta back to how the thread found it.
+   */
+  const attachedInRewoundTurn = (fixture: Fixture, agent: Agent, name: string) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+      const threadId = yield* createThread({ threadId: `thread:${name}` });
+      const beta = path.join(fixture.worktrees, "beta", "shared");
+      yield* git(fixture.beta, ["worktree", "add", "-b", "shared", beta]);
+      yield* write(path.join(beta, "README.md"), "# beta\nearlier edit\n");
+      yield* write(path.join(beta, "notes.txt"), "earlier untracked\n");
+      let alpha = "";
+      yield* runTurn(agent, threadId, Effect.void);
+      yield* runTurn(
+        agent,
+        threadId,
+        Effect.gen(function* () {
+          alpha = (yield* repoWorktrees.ensure({
+            threadId,
+            repository: "alpha",
+            branch: `t3/${name}`,
+            baseRef: "main",
+          })).repoWorktree.worktreePath;
+          yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
+        }),
+      );
+      yield* runTurn(
+        agent,
+        threadId,
+        Effect.gen(function* () {
+          const reused = yield* repoWorktrees.ensure({
+            threadId,
+            repository: "beta",
+            branch: "shared",
+          });
+          assert.equal(reused.status, "reused");
+          yield* write(path.join(beta, "README.md"), "# beta\nearlier edit\nturn 3\n");
+          yield* write(path.join(beta, "draft.txt"), "turn 3\n");
+        }),
+      );
+      const turnThreeRef = (yield* projectionOf(threadId)).checkpoints
+        .find((checkpoint) => checkpoint.appRunOrdinal === 3)
+        ?.repositories?.find((entry) => entry.repository === "beta")?.ref;
+      assert.isDefined(turnThreeRef);
+      const turnThree = {
+        ref: turnThreeRef!,
+        commit: yield* git(beta, ["rev-parse", turnThreeRef!]),
+      };
+
+      const rewound = yield* rollback(threadId, 2);
+      assert.isNull(rewound.thread.rollbackFailure ?? null);
+      assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 2\n");
+      yield* expectBetaBaseline(beta);
+      return { threadId, alpha, beta, turnThree };
+    });
+  const expectBetaBaseline = (beta: string) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nearlier edit\n");
+      assert.equal(yield* read(path.join(beta, "notes.txt")), "earlier untracked\n");
+      assert.isFalse(yield* exists(path.join(beta, "draft.txt")));
+      assert.equal(yield* git(beta, ["status", "--porcelain"]), "M README.md\n?? notes.txt");
+    });
+
+  it.effect(
+    "restores a worktree first attached in a rewound turn on each earlier rewind",
+    () =>
+      withHarness(({ fixture, agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+          const { threadId, alpha, beta } = yield* attachedInRewoundTurn(
+            fixture,
+            agent,
+            "rewound-attach",
+          );
+
+          const first = yield* rollback(threadId, 1);
+          assert.isNull(first.thread.rollbackFailure ?? null);
+          assert.equal(first.runs.find((run) => run.ordinal === 2)?.status, "rolled_back");
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+          yield* expectBetaBaseline(beta);
+
+          // A turn after the gap diffs beta against that baseline, and rewinding it finds it again.
+          yield* runTurn(
+            agent,
+            threadId,
+            Effect.gen(function* () {
+              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 4\n");
+              yield* write(path.join(beta, "README.md"), "# beta\nearlier edit\nturn 4\n");
+              yield* write(path.join(beta, "draft.txt"), "turn 4\n");
+            }),
+          );
+          const fourth = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 4 });
+          assert.include(fourth.diff, "diff --git a/beta/README.md b/beta/README.md");
+          assert.include(fourth.diff, "+turn 4");
+          assert.notInclude(fourth.diff, "+earlier edit");
+          assert.notInclude(fourth.diff, "notes.txt");
+          const second = yield* rollback(threadId, 1);
+          assert.isNull(second.thread.rollbackFailure ?? null);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+          yield* expectBetaBaseline(beta);
+
+          const start = yield* rollback(threadId, 0);
+          assert.isNull(start.thread.rollbackFailure ?? null);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+          yield* expectBetaBaseline(beta);
+          assert.deepEqual(yield* Ref.get(agent.nativeTurns), []);
+          assert.equal(yield* Ref.get(agent.rollbacks), 4);
+          // The source checkouts never change.
+          assert.equal(yield* read(path.join(fixture.beta, "README.md")), "# beta\n");
+          assert.equal(yield* git(fixture.beta, ["status", "--porcelain"]), "");
+          assert.equal(yield* git(fixture.alpha, ["branch", "--show-current"]), "main");
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.effect(
+    "refuses an earlier rewind whose first-attach baseline is gone, not using a newer snapshot",
+    () =>
+      withHarness(({ fixture, agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const { threadId, alpha, beta, turnThree } = yield* attachedInRewoundTurn(
+            fixture,
+            agent,
+            "rewound-attach-missing",
+          );
+          // The baseline is gone, while turn 3's edited snapshot outlived its rewind.
+          const refs = (yield* git(beta, [
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/t3/",
+          ])).split("\n");
+          assert.equal(refs.length, 1);
+          yield* git(beta, ["update-ref", "-d", refs[0]!]);
+          yield* git(beta, ["update-ref", turnThree.ref, turnThree.commit]);
+
+          yield* rollback(threadId, 1);
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            yield* TestClock.adjust(Duration.seconds(31));
+            yield* worker.drain();
+          }
+          const after = yield* projectionOf(threadId);
+          assert.include(after.thread.rollbackFailure?.message ?? "", "No checkpoint of beta");
+          assert.include(after.thread.rollbackFailure?.message ?? "", "Nothing was changed");
+          assert.equal(after.runs.find((run) => run.ordinal === 2)?.status, "completed");
+          assert.equal(yield* Ref.get(agent.rollbacks), 1);
+          assert.equal((yield* Ref.get(agent.nativeTurns)).length, 2);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 2\n");
+          yield* expectBetaBaseline(beta);
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.effect.skipIf(!permissionsBlockWrites)(
+    "retries an earlier rewind's file restore from the same first-attach baseline",
+    () =>
+      withHarness(({ fixture, agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const { threadId, alpha, beta } = yield* attachedInRewoundTurn(
+            fixture,
+            agent,
+            "rewound-attach-retry",
+          );
+          yield* runTurn(
+            agent,
+            threadId,
+            Effect.gen(function* () {
+              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 4\n");
+              yield* write(path.join(beta, "README.md"), "# beta\nearlier edit\nturn 4\n");
+              yield* write(path.join(beta, "draft.txt"), "turn 4\n");
+            }),
+          );
+          const retained = (yield* Ref.get(agent.nativeTurns)).slice(0, 1);
+
+          // Git can read beta but not replace its files.
+          yield* fileSystem.chmod(beta, 0o555);
+          yield* Effect.addFinalizer(() => fileSystem.chmod(beta, 0o755).pipe(Effect.ignore));
+          const partial = yield* rollback(threadId, 1);
+          assert.include(
+            partial.thread.rollbackFailure?.message ?? "",
+            "The conversation was rewound, but restoring files stopped at the beta worktree",
+          );
+          assert.include(partial.thread.rollbackFailure?.message ?? "", "Already restored: alpha.");
+          assert.deepEqual(yield* Ref.get(agent.nativeTurns), retained);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nearlier edit\nturn 4\n");
+
+          // Fixed before the outbox's next attempt, which finishes the files.
+          yield* fileSystem.chmod(beta, 0o755);
+          yield* TestClock.adjust(Duration.seconds(31));
+          yield* worker.drain();
+          const finished = yield* projectionOf(threadId);
+          assert.isNull(finished.thread.rollbackFailure ?? null);
+          assert.equal(
+            finished.checkpoints.find((checkpoint) => checkpoint.appRunOrdinal === 4)?.status,
+            "stale",
+          );
+          assert.equal(yield* Ref.get(agent.rollbacks), 2);
+          assert.deepEqual(yield* Ref.get(agent.nativeTurns), retained);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+          yield* expectBetaBaseline(beta);
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
   it.effect("recovers a rewind whose reply was lost without removing earlier turns", () =>
     withHarness(({ agent }) =>
       Effect.gen(function* () {
