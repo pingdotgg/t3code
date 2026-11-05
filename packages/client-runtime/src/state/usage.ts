@@ -71,7 +71,7 @@ export async function refreshUsageLimits<A>(
       } catch {}
       return refreshUsageLimits(environmentId, refresh, false, true, selectionKey);
     }
-    return automatic ? undefined : ((await pending) as A);
+    return (await pending) as A;
   }
   const refreshAfter = limitsRefreshAfter.get(key) ?? 0;
   // @effect-diagnostics-next-line globalDate:off

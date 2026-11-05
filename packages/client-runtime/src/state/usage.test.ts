@@ -210,11 +210,15 @@ describe("limits refresh cooldown", () => {
       false,
       "claude",
     );
+    const automaticCheck = vi.fn(async () => "unexpected extra limits");
+    const coalescedAutomatic = refreshUsageLimits(id, automaticCheck, true, false, "cursor");
     const newCheck = vi.fn(async () => "new limits");
     const afterEnable = refreshUsageLimits(id, newCheck, false, true, "cursor");
     expect(newCheck).not.toHaveBeenCalled();
     oldCheck.resolve("old limits");
     expect(await first).toBe("old limits");
+    expect(await coalescedAutomatic).toBe("old limits");
+    expect(automaticCheck).not.toHaveBeenCalled();
     expect(await otherProviders).toBe("claude limits");
     expect(await afterEnable).toBe("new limits");
     expect(newCheck).toHaveBeenCalledTimes(1);
