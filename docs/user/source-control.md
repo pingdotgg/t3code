@@ -312,24 +312,29 @@ A watched thread counts as working between wakes, so it stays in the **Working**
 not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
 returns to your inbox.
 
-**Agent merge** starts a watch and tells the agent to act on what it sees, without asking. Start it
-from the bot button in the thread details card, or from a row's menu in the **Linked pull requests**
-panel; on mobile, long-press a linked review. Pick how far the agent may go:
+**Agent merge** starts a watch and has the agent fix what it finds, without asking. Start it from the
+bot button in the thread details card, or from a row's menu in the **Linked pull requests** panel; on
+mobile, long-press a linked review. Pick how far it goes:
 
-- **Fix checks** fixes failing checks and merge conflicts, then hands the work back once checks pass.
-  Comments do not wake it.
+- **Fix checks** fixes failing checks and merge conflicts. Comments do not wake it.
 - **Fix checks and feedback** also addresses review comments. Anyone who can comment on the pull
   request can wake the agent, so use it with care on public repositories.
-- **Fix and merge when ready** also merges once required checks pass, the branch is clean, and
-  every comment is handled. The agent never bypasses branch protection, and it merges with your
-  host's own tools, so your merge method setting does not apply.
+- **Fix and merge when ready** also merges for you.
+
+T3 Code decides when a pull request is ready, not the agent: required checks pass, every other check
+finishes, the branch has no conflict, and, when comments are in scope, no review thread is open and
+no reviewer requested changes. CodeRabbit is never waited for. It waits until the agent is idle. Then
+it stops watching and tells you, or with **Fix and merge when ready** it merges with your project's
+merge method, or the first one the repository allows. It merges only the commit it judged, and it
+never merges a stacked review or one you lack write access to; those are reported ready instead. If
+the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why.
 
 Agent merge starts right away, even if the agent is idle: it first reviews where the pull request
 stands. Pick another option to change it, or stop it the same way you stop a watch. Stopping,
 changing, or unlinking cancels anything the agent has not started yet and interrupts a turn already
-working on agent merge. Permission to merge lasts one turn at a time, so a later message that does
-not repeat it cannot merge. All the limits
-above apply. Starting it needs an active thread whose agent can push to the pull request's branch.
+working on agent merge. Permission to merge belongs to T3 Code, so it ends the moment you stop. All
+the limits above apply, and agent merge checks the host on every sweep while it is on. Starting it
+needs an active thread whose agent can push to the pull request's branch.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.

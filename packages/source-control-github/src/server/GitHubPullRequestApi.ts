@@ -657,6 +657,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly expectedHeadSha?: string;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
@@ -2581,7 +2582,7 @@ export const make = Effect.gen(function* () {
             .pipe(graphql(target), Effect.asVoid);
         }
         let body: string | undefined;
-        let expectedHead: string | undefined;
+        let expectedHead = input.expectedHeadSha;
         if (input.removeAgentCreditsOnMerge === true && input.mergeMethod !== "rebase") {
           const message = yield* client
             .PullRequestMergeMessage({
@@ -2600,7 +2601,7 @@ export const make = Effect.gen(function* () {
             const cleaned = removeAgentCredits(message.viewerMergeBodyText);
             if (cleaned !== message.viewerMergeBodyText) {
               body = cleaned;
-              expectedHead = message.headRefOid;
+              expectedHead ??= message.headRefOid;
             }
           }
         }

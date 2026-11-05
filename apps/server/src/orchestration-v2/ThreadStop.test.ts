@@ -1028,8 +1028,10 @@ it.effect.each(Object.keys(withdrawals) as ReadonlyArray<keyof typeof withdrawal
       const pending = runs
         .filter((run) => run.status === "queued")
         .map((run) => messages.find((message) => message.id === run.userMessageId)?.text ?? "");
-      assert.isFalse(pending.some((text) => text.includes("authorized you to merge")));
-      const brief = messages.find((message) => message.text.includes("authorized you to merge"));
+      assert.isFalse(pending.some((text) => text.includes("T3 Code merges it once it is ready")));
+      const brief = messages.find((message) =>
+        message.text.includes("T3 Code merges it once it is ready"),
+      );
       assert.equal(runs.find((run) => run.id === brief?.runId)?.status, "cancelled");
     }).pipe(Effect.provide(layerTest)),
 );

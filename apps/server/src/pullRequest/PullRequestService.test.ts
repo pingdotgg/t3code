@@ -117,6 +117,16 @@ function hostedChangeRequest(body: string, additions = 1) {
   };
 }
 
+it("merges with the project's method unless the repository forbids it", () => {
+  const allowed = { merge: false, squash: true, rebase: true };
+  assert.equal(PullRequestService.allowedMergeMethod("rebase", allowed), "rebase");
+  assert.equal(PullRequestService.allowedMergeMethod("merge", allowed), "squash");
+  assert.equal(PullRequestService.allowedMergeMethod(null, allowed), "squash");
+  assert.isUndefined(
+    PullRequestService.allowedMergeMethod(null, { merge: false, squash: false, rebase: false }),
+  );
+});
+
 it.effect("reads maintainer edits and changes them through the update command", () =>
   Effect.gen(function* () {
     let enabled = true;

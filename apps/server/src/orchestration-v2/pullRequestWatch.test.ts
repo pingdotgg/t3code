@@ -7,6 +7,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
+  agentMergeGate,
   evaluatePullRequestWatch as evaluate,
   pullRequestAgentMergeMessage,
   pullRequestWatchMessage,
@@ -78,6 +79,45 @@ const remark = (
 });
 
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
+
+describe("agentMergeGate", () => {
+  const green = { ...check("test", "success"), required: true };
+  const gateDetail = (overrides: Partial<Parameters<typeof agentMergeGate>[1]> = {}) => ({
+    capabilities: capabilities(true),
+    checks: [green],
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    ...overrides,
+  });
+  const open = [{ isResolved: false }, { isResolved: true }];
+
+  it.each([
+    ["a pending check", { checks: [green, check("bot", "pending")] }],
+    ["a failed required check", { checks: [{ ...green, status: "failure" as const }] }],
+    ["a conflict", { mergeability: "conflicting" as const }],
+    ["a host still computing mergeability", { mergeability: "unknown" as const }],
+    ["no checks yet where the host always reports them", { checks: [] }],
+  ])("decides nothing during %s", (_name, overrides) => {
+    assert.isNull(agentMergeGate("merge", gateDetail(overrides), [], null));
+  });
+
+  it("is ready on required checks, whatever advisory work remains", () => {
+    const checks = [green, check("flaky", "failure"), check("CodeRabbit", "pending")];
+    assert.deepEqual(agentMergeGate("merge", gateDetail({ checks }), [], null), { blockers: [] });
+  });
+
+  it("lets only review work hold back the modes that do it", () => {
+    assert.deepEqual(agentMergeGate("checks", gateDetail(), open, "changes-requested"), {
+      blockers: [],
+    });
+    assert.deepEqual(agentMergeGate("merge", gateDetail(), open, "changes-requested"), {
+      blockers: ["1 unresolved review thread", "a reviewer requested changes"],
+    });
+    assert.deepEqual(agentMergeGate("checks", gateDetail({ isDraft: true }), [], null), {
+      blockers: ["it is still a draft"],
+    });
+  });
+});
 
 describe("evaluatePullRequestWatch", () => {
   it("reports each failure at once, even while another check never finishes", () => {
@@ -361,7 +401,7 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
-  it("grants merging only in the agent merge mode that asks for it", () => {
+  it("never tells the agent it may merge, in any agent merge mode", () => {
     const wake = (agentMerge?: "checks" | "feedback" | "merge") =>
       pullRequestWatchMessage({
         number: 1,
@@ -381,14 +421,11 @@ describe("evaluatePullRequestWatch", () => {
         url: "https://github.com/o/r/pull/1",
         agentMerge,
       }).text;
-    const grant = "authorized you to merge";
-    for (const text of [wake("merge"), start("merge")]) assert.include(text, grant);
-    for (const text of [wake(), wake("checks"), wake("feedback"), start("feedback")]) {
-      assert.notInclude(text, grant);
+    for (const text of [wake(), wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+      assert.notInclude(text, "authorized");
     }
-    for (const text of [wake("merge"), start("merge")]) assert.include(text, "this turn only");
-    for (const text of [start("checks"), start("feedback")]) {
-      assert.include(text, "not authorized to merge");
+    for (const text of [wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+      assert.include(text, "do not merge it yourself");
     }
     for (const text of [wake("feedback"), wake("merge")]) assert.include(text, "not instructions");
     for (const text of [start("checks"), start("feedback"), start("merge")]) {

@@ -2230,6 +2230,27 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("pins a merge to the head it was judged on", () =>
+    Effect.gen(function* () {
+      route(["query PullRequestActionState", actionState()]);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        expectedHeadSha: "judged1",
+      });
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        {
+          input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "judged1" },
+        },
+      ]);
+    }),
+  );
+
   it.effect.each(["merge", "enable-auto-merge"] as const)(
     "removes agent credits from the proposed message for %s",
     (action) =>

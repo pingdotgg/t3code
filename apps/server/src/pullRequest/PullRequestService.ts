@@ -27,6 +27,7 @@ import {
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
+  type PullRequestMergeMethod,
   type PullRequestPreview,
   type PullRequestChecks,
   type PullRequestDiffFileContentsInput,
@@ -170,6 +171,15 @@ const routingCredential = Context.Reference<{
 const credentialNamespace = Symbol("pullRequestCredentialNamespace");
 type CredentialRef = PullRequestRef & { readonly [credentialNamespace]?: string };
 
+/** The project's method when the repository allows it, otherwise the first it does. */
+export function allowedMergeMethod(
+  preferred: PullRequestMergeMethod | null,
+  allowed: PullRequestDetail["mergeCapabilities"],
+): PullRequestMergeMethod | undefined {
+  if (preferred !== null && allowed[preferred]) return preferred;
+  return (["squash", "merge", "rebase"] as const).find((method) => allowed[method]);
+}
+
 export class PullRequestService extends Context.Service<
   PullRequestService,
   {
@@ -251,6 +261,13 @@ export class PullRequestService extends Context.Service<
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestChangeBreakdown, PullRequestError>;
     readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
+    /** Merges with the project's method, and only while the head is still `headSha`. */
+    readonly mergeHead: (
+      input: PullRequestRef & {
+        readonly headSha: string;
+        readonly mergeCapabilities: PullRequestDetail["mergeCapabilities"];
+      },
+    ) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
@@ -2095,6 +2112,9 @@ export const make = Effect.gen(function* () {
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                    ...(input.expectedHeadSha === undefined
+                      ? {}
+                      : { expectedHeadSha: input.expectedHeadSha }),
                     ...(input.updateMethod === undefined
                       ? {}
                       : { updateMethod: input.updateMethod }),
@@ -3583,6 +3603,30 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const mergeHead: PullRequestService["Service"]["mergeHead"] = Effect.fn(
+    "PullRequestService.mergeHead",
+  )(function* ({ headSha, mergeCapabilities, ...ref }) {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        () =>
+          new PullRequestOperationError({
+            operation: "mergeHead",
+            detail: "Could not read merge settings.",
+          }),
+      ),
+    );
+    const mergeMethod = allowedMergeMethod(
+      resolveProjectSettings(settings, ref.projectId).settings.pullRequestMergeMethod,
+      mergeCapabilities,
+    );
+    yield* runActionAndInvalidate({
+      ...ref,
+      action: "merge",
+      expectedHeadSha: headSha,
+      ...(mergeMethod === undefined ? {} : { mergeMethod }),
+    });
+  });
+
   const credentialCached =
     <I extends PullRequestRef, Args extends ReadonlyArray<unknown>, A, E>(
       read: (input: I, ...args: Args) => Effect.Effect<A, E>,
@@ -3742,6 +3786,7 @@ export const make = Effect.gen(function* () {
       Cache.get(changeBreakdownCache, refCacheKey(input)),
     ),
     runAction: runActionAndInvalidate,
+    mergeHead,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),
     updateComment: invalidatedByMutation(updateComment),

@@ -105,6 +105,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The head whose agent merge blockers the agent was told, so each head wakes it once. */
+  blockedHead: Schema.optional(TrimmedNonEmptyString),
+  /** The head T3 Code tried to merge, so a refusal or a merge queue is not retried. */
+  mergeHead: Schema.optional(TrimmedNonEmptyString),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
