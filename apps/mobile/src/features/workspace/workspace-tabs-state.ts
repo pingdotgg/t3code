@@ -56,7 +56,7 @@ export type WorkspaceTabsAction =
   | { readonly type: "search"; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "query"; readonly query: string; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "expand"; readonly tab?: WorkspaceSearchTab }
-  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab; readonly scrollToTop?: boolean }
   | { readonly type: "scroll"; readonly tab: WorkspaceSearchTab; readonly offset: number };
 
 export function workspaceTabsReducer(
@@ -96,7 +96,8 @@ export function workspaceTabsReducer(
         ...current,
         query: "",
         searchMode: "resting",
-        scrollOffset: current.searchEntryOffset,
+        scrollOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
+        searchEntryOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
       };
       break;
     case "scroll":
