@@ -321,7 +321,7 @@ function AboutVersionSection() {
                     buttonDisabled ||
                     isUpdateActionPending ||
                     updateEverything.isPending ||
-                    updateRun !== null
+                    (updateRun !== null && action !== "none")
                   }
                   onClick={handleButtonClick}
                 >
