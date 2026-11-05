@@ -12,7 +12,7 @@ import {
   SIDE_CHAT_CONTEXT_FALLBACK_HANDOFF_TITLE,
   SIDE_CHAT_CONTEXT_HANDOFF_TITLE,
   SIDE_CHAT_SUMMARY_HANDOFF_TITLE,
-  SIDE_CHAT_WAIT_CAP_MS,
+  SIDE_CHAT_OPENING_WAIT_CAP_MS,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -42,11 +42,14 @@ export function pendingSideChatOpeningEffect(
   };
 }
 
-/** Waits at most `SIDE_CHAT_WAIT_CAP_MS` for `settled`; `true` when it finished in time. */
+/** Waits at most `SIDE_CHAT_OPENING_WAIT_CAP_MS` for `settled`; `true` when it finished in time. */
 export function awaitWithinSideChatWaitCap<E>(
   settled: Effect.Effect<void, E>,
 ): Effect.Effect<boolean, E> {
-  return settled.pipe(Effect.timeoutOption(SIDE_CHAT_WAIT_CAP_MS), Effect.map(Option.isSome));
+  return settled.pipe(
+    Effect.timeoutOption(SIDE_CHAT_OPENING_WAIT_CAP_MS),
+    Effect.map(Option.isSome),
+  );
 }
 
 /** The opening context handed to the provider thread that `runId` starts fresh. */

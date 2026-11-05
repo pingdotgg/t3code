@@ -2,7 +2,7 @@ import {
   CommandId,
   MessageId,
   ScheduledTaskId,
-  SIDE_CHAT_WAIT_CAP_MS,
+  SIDE_CHAT_OPENING_WAIT_CAP_MS,
   type ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -316,7 +316,7 @@ describe("side chat Done", () => {
         const question = yield* harness.send(box, BOX_QUESTION, { await: "none" });
 
         // Past the cap, box's first turn starts from the fallback context.
-        yield* TestClock.adjust(Duration.millis(SIDE_CHAT_WAIT_CAP_MS));
+        yield* TestClock.adjust(Duration.millis(SIDE_CHAT_OPENING_WAIT_CAP_MS));
         yield* harness.awaitRun(afterAsk, question, "completed");
         assert.equal((yield* harness.thread(box)).sideChat?.opening.status, "pending");
 

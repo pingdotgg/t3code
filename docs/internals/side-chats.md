@@ -43,7 +43,7 @@ summary. The cache is in memory, so a server restart writes a new one.
 ## Context in
 
 [ProviderTurnStartService](../../apps/server/src/orchestration-v2/ProviderTurnStartService.ts) hands a
-new provider thread the opening context. It waits up to `SIDE_CHAT_WAIT_CAP_MS` for the summary before
+new provider thread the opening context. It waits up to `SIDE_CHAT_OPENING_WAIT_CAP_MS` (25 s) for the summary before
 taking the workspace lease, which the side chat shares with the lesson. A context sent without the
 summary gets the fallback title, and the summary rides the next turn on its own once it lands. It is
 owed only while no handoff of the side chat contains its text

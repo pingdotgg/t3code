@@ -11,7 +11,7 @@ import {
   SIDE_CHAT_CONTEXT_HANDOFF_TITLE,
   SIDE_CHAT_EXCERPT_MAX_CHARS,
   SIDE_CHAT_SUMMARY_HANDOFF_TITLE,
-  SIDE_CHAT_WAIT_CAP_MS,
+  SIDE_CHAT_OPENING_WAIT_CAP_MS,
   TextGenerationError,
   ThreadId,
   type ServerProvider,
@@ -1077,7 +1077,7 @@ describe("side chat opening context", () => {
         const question = yield* harness.send(space, "What is an observation space?", {
           await: "none",
         });
-        yield* TestClock.adjust(Duration.millis(SIDE_CHAT_WAIT_CAP_MS));
+        yield* TestClock.adjust(Duration.millis(SIDE_CHAT_OPENING_WAIT_CAP_MS));
         yield* harness.awaitRun(afterAsk, question, "completed");
 
         const afterSummary = yield* harness.mark;
@@ -1141,7 +1141,7 @@ describe("side chat opening context", () => {
           const turnStart = yield* worker.runOnce.pipe(
             Effect.forkChild({ startImmediately: true }),
           );
-          yield* TestClock.adjust(Duration.millis(SIDE_CHAT_WAIT_CAP_MS));
+          yield* TestClock.adjust(Duration.millis(SIDE_CHAT_OPENING_WAIT_CAP_MS));
           assert.isTrue(yield* Fiber.join(turnStart));
           yield* Deferred.succeed(gate, undefined);
           yield* Fiber.join(opening);
