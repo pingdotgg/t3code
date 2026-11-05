@@ -17,7 +17,7 @@ type SpeechPresentation = {
   showsSend: boolean;
 };
 
-function resolveSpeechPresentation(
+export function resolveSpeechPresentation(
   state: VoiceInputState,
   progress: { downloaded: number; total: number } | null,
 ): SpeechPresentation {
