@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../config.ts";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
@@ -22,6 +23,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   OrchestrationV2ThreadProjectionJson,
+  OrchestrationV2Lesson,
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
@@ -150,6 +152,7 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.provide(layerReceipts),
   );
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  const layerProjectionStore = ProjectionStore.layer.pipe(Layer.provide(layerDatabase));
   const createWorktree = vi.fn(
     options.createWorktree ??
       ((input) =>
@@ -281,6 +284,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerThreadManagement,
       layerTitleRegeneration,
       layerOutbox,
+      layerProjectionStore,
       layerDatabase,
       layerExternalServices,
     ),
@@ -323,6 +327,26 @@ function launchInput(input: {
     creationSource: "web" as const,
   };
 }
+
+it.effect("persists lesson answers on a launched thread", () => {
+  const harness = makeHarness();
+  const lesson = {
+    topic: "event sourcing",
+    depth: "working" as const,
+    purpose: "outcome" as const,
+  } satisfies OrchestrationV2Lesson;
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const input = {
+      ...launchInput({ command: "command:lesson", thread: "thread:lesson" }),
+      lesson,
+    };
+    const launched = yield* launches.launch(input);
+    const projection = yield* projectionStore.getThread(launched.threadId);
+    assert.deepEqual(projection.lesson, lesson);
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>

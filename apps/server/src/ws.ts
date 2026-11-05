@@ -121,6 +121,7 @@ import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as LessonService from "./orchestration-v2/lesson/LessonService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1395,6 +1396,7 @@ export const layerWsRpc = (
         ).pipe(Effect.ignore);
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const lessons = yield* LessonService.LessonService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
@@ -2627,6 +2629,8 @@ export const layerWsRpc = (
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverStartChatSync]: () => chatSync.start,
+        [WS_METHODS.lessonCreate]: (input) =>
+          lessons.create({ ...input, createdBy: "user", creationSource: "web" }),
         [WS_METHODS.serverGetChatSyncStatus]: () => chatSync.status,
         [WS_METHODS.knowledgeList]: () => knowledgeMap.list,
         [WS_METHODS.knowledgeRemove]: (input) => knowledgeMap.remove(input.topic),

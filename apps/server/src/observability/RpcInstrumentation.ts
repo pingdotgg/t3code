@@ -59,6 +59,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRunStorageCleanup]: "server",
   [WS_METHODS.serverGetStorageCleanupReport]: "server",
   [WS_METHODS.serverStartChatSync]: "server",
+  [WS_METHODS.lessonCreate]: "lesson",
   [WS_METHODS.serverGetChatSyncStatus]: "server",
   [WS_METHODS.knowledgeList]: "server",
   [WS_METHODS.knowledgeRemove]: "server",

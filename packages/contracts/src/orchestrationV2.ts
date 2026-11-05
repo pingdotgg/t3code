@@ -423,6 +423,19 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
 export const SIDE_CHAT_EXCERPT_MAX_CHARS = 4_000;
+export const OrchestrationV2Lesson = Schema.Struct({
+  topic: TrimmedNonEmptyString.check(Schema.isMaxLength(4_000)),
+  depth: Schema.Literals(["overview", "working", "deep"]),
+  purpose: Schema.Literals(["outcome", "prerequisite"]),
+  goal: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
+  source: Schema.optional(
+    Schema.Struct({
+      threadId: ThreadId,
+      excerpt: TrimmedNonEmptyString.check(Schema.isMaxLength(SIDE_CHAT_EXCERPT_MAX_CHARS)),
+    }),
+  ),
+});
+export type OrchestrationV2Lesson = typeof OrchestrationV2Lesson.Type;
 export const SIDE_CHAT_EXCERPT_CONTEXT_MAX_CHARS = 1_500;
 export const SIDE_CHAT_LABEL_MAX_CHARS = 120;
 export const SIDE_CHAT_NOTE_MAX_CHARS = 300;
@@ -527,6 +540,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  lesson: Schema.optional(OrchestrationV2Lesson),
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -3049,6 +3063,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     projectId: ProjectId,
     title: TrimmedNonEmptyString,
+    lesson: Schema.optional(OrchestrationV2Lesson),
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,

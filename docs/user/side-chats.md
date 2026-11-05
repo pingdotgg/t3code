@@ -6,6 +6,10 @@ You can also highlight text inside an HTML embed, or use its corner button to as
 
 Side chats work in the web and desktop apps. The mobile app doesn't support them yet; a lesson with side chats says so instead of listing them.
 
+## Start a lesson
+
+Choose **New lesson** beside New thread, find **New lesson** in the command palette, or highlight a reply and choose **Create a lesson**. Answer what you want to learn, how deep to go, and why. T3 creates a lesson thread and starts teaching immediately; those answers become its first message. A lesson made from a highlight keeps the passage and a link back to the source chat.
+
 ## Settings
 
 Open **Settings → Threads → Side chats** to choose the model for new side chats, change how they explain things, and attach skills. Skills are added when a side chat starts where its provider supports them; a few providers can only see the skill name.
