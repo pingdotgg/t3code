@@ -21,6 +21,7 @@ const selectTriggerVariants = cva(
         // The raised recipe; open and focused trade the rim for the ring stroke.
         default:
           "w-full min-w-36 surface-raised text-foreground [:hover,[data-pressed]]:not-data-popup-open:surface-raised-hover focus-visible:not-data-disabled:surface-focus data-popup-open:not-data-disabled:surface-focus aria-invalid:not-data-disabled:surface-invalid focus-visible:aria-invalid:not-data-disabled:surface-invalid-focus data-popup-open:aria-invalid:not-data-disabled:surface-invalid [&_svg:not([class*='text-'])]:text-muted-foreground",
+        well: "w-full min-w-36 surface-well text-foreground [:hover,[data-pressed]]:not-data-popup-open:surface-well focus-visible:not-data-disabled:surface-focus data-popup-open:not-data-disabled:surface-focus aria-invalid:not-data-disabled:surface-invalid focus-visible:aria-invalid:not-data-disabled:surface-invalid-focus data-popup-open:aria-invalid:not-data-disabled:surface-invalid [&_svg:not([class*='text-'])]:text-muted-foreground",
         ghost:
           "border-transparent text-secondary-label focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring [:hover,[data-pressed],[data-popup-open]]:surface-ghost-hover [:hover,[data-pressed],[data-popup-open]]:text-foreground [&_svg:not([class*='text-'])]:text-muted-foreground",
       },
@@ -65,12 +66,14 @@ function SelectTrigger({
 function SelectButton({
   className,
   size = "default",
+  variant = "default",
   children,
   render,
   ...props
-}: useRender.ComponentProps<"button"> & Pick<VariantProps<typeof selectTriggerVariants>, "size">) {
+}: useRender.ComponentProps<"button"> &
+  Pick<VariantProps<typeof selectTriggerVariants>, "size" | "variant">) {
   const defaultProps = {
-    className: cn(selectTriggerVariants({ size }), className),
+    className: cn(selectTriggerVariants({ size, variant }), className),
     "data-slot": "select-trigger",
     type: render ? undefined : ("button" as const),
   };
