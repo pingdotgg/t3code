@@ -1,4 +1,5 @@
 import {
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -30,6 +31,7 @@ describe("resolveRemoteOpenState", () => {
         target: primaryTarget("http://127.0.0.1:8000"),
         sshTarget: null,
         isDesktopRenderer: false,
+        desktopHomeEnvironmentId: null,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
     ).toEqual({ mode: "local-exec" });
@@ -41,6 +43,7 @@ describe("resolveRemoteOpenState", () => {
         target: primaryTarget("https://sol.tail1234.ts.net"),
         sshTarget: null,
         isDesktopRenderer: false,
+        desktopHomeEnvironmentId: null,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
     ).toEqual({
@@ -56,6 +59,7 @@ describe("resolveRemoteOpenState", () => {
         target: primaryTarget("http://172.29.112.1:14369"),
         sshTarget: null,
         isDesktopRenderer: true,
+        desktopHomeEnvironmentId: null,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
     ).toEqual({ mode: "local-exec" });
@@ -66,6 +70,7 @@ describe("resolveRemoteOpenState", () => {
       target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
       sshTarget: { alias: "sol", username: null },
       isDesktopRenderer: true,
+      desktopHomeEnvironmentId: null,
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
       ],
@@ -96,6 +101,7 @@ describe("resolveRemoteOpenState", () => {
       target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
       sshTarget,
       isDesktopRenderer: true,
+      desktopHomeEnvironmentId: null,
       remoteOpenTargets: TAILSCALE_TARGETS,
     });
     expect(state.mode).toBe("remote-links");
@@ -118,6 +124,7 @@ describe("resolveRemoteOpenState", () => {
       target: new RelayConnectionTarget({ environmentId, label: "server" }),
       sshTarget: null,
       isDesktopRenderer: false,
+      desktopHomeEnvironmentId: null,
       remoteOpenTargets: [
         { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
       ],
@@ -129,6 +136,33 @@ describe("resolveRemoteOpenState", () => {
     ).toBe("cursor://vscode-remote/ssh-remote+admin-user%40server.tail1234.ts.net/work/project");
   });
 
+  it("keeps exec behavior for a paired server on the desktop's own T3 home", () => {
+    const pairedTarget = new BearerConnectionTarget({
+      environmentId,
+      label: "laptop service",
+      connectionId: "paired-1",
+    });
+    const input = {
+      target: pairedTarget,
+      sshTarget: null,
+      remoteOpenTargets: undefined,
+      isDesktopRenderer: true,
+    };
+    expect(resolveRemoteOpenState({ ...input, desktopHomeEnvironmentId: environmentId })).toEqual({
+      mode: "local-exec",
+    });
+    expect(resolveRemoteOpenState({ ...input, desktopHomeEnvironmentId: "other-home" })).toEqual({
+      mode: "remote-unavailable",
+    });
+    expect(
+      resolveRemoteOpenState({
+        ...input,
+        sshTarget: { alias: "laptop", username: null },
+        desktopHomeEnvironmentId: environmentId,
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "laptop" } });
+  });
+
   it("reports unavailable when a remote environment advertises no hosts", () => {
     for (const remoteOpenTargets of [[], undefined] as const) {
       expect(
@@ -136,6 +170,7 @@ describe("resolveRemoteOpenState", () => {
           target: new RelayConnectionTarget({ environmentId, label: "sol" }),
           sshTarget: null,
           isDesktopRenderer: false,
+          desktopHomeEnvironmentId: null,
           remoteOpenTargets,
         }),
       ).toEqual({ mode: "remote-unavailable" });
