@@ -1,27 +1,15 @@
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { refreshEnvironmentLimits } from "../features/usage/usageLimitsRefresh";
 
 import { environmentCatalog } from "../connection/catalog";
 import { isAppActive, subscribeAppState } from "../lib/appState";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentPresentations } from "../state/presentation";
-import { serverEnvironment } from "../state/server";
-import { createWidgetRefresher } from "./subscriptionUsageSnapshot";
 
 /**
  * App-lifetime worker that keeps provider quotas fresh for the usage widget:
  * on resume and connection changes; periodic reads belong to visible usage UI.
- * Each environment is refreshed at most once per interval.
  */
 export function installSubscriptionUsageRefresh(): () => void {
-  const refresh = createWidgetRefresher((environmentId: EnvironmentId) =>
-    runAtomCommand(
-      appAtomRegistry,
-      serverEnvironment.refreshProviders,
-      { environmentId, input: { usage: true } },
-      { label: serverEnvironment.refreshProviders.label, reportFailure: false },
-    ),
-  );
   let lastConnections = "";
   const update = () => {
     if (!isAppActive()) {
@@ -35,7 +23,11 @@ export function installSubscriptionUsageRefresh(): () => void {
     const key = [...connected].sort().join(",");
     if (key === lastConnections) return;
     lastConnections = key;
-    void refresh(connected, Date.now());
+    void Promise.allSettled(
+      connected.map((environmentId) =>
+        refreshEnvironmentLimits(appAtomRegistry, environmentId, { automatic: true }),
+      ),
+    );
   };
 
   const unsubscribeCatalog = appAtomRegistry.subscribe(environmentCatalog.catalogValueAtom, update);
