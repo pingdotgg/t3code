@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Window
+import QtQuick.Window as QtWindow
 import QtQml.Models
 import org.kde.kwin
 import "feedbackGeometry.js" as Geometry
@@ -57,7 +57,7 @@ Item {
     }
     Instantiator {
         model: Workspace.screens
-        delegate: Window {
+        delegate: QtWindow.Window {
             required property var modelData
             x: modelData.geometry.x
             y: modelData.geometry.y
