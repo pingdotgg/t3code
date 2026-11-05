@@ -37,6 +37,7 @@ export function createSourceLineScroll(reserveTail: (length: number) => void) {
   };
 
   const attempt = () => {
+    cancelPending?.();
     cancelPending = null;
     awaitingLayout = false;
     if (target === null || !list || target >= (list.props.data?.length ?? 0)) {
@@ -44,7 +45,7 @@ export function createSourceLineScroll(reserveTail: (length: number) => void) {
       return;
     }
     list.scrollToIndex({ index: target, animated: false, viewPosition: 0.3 });
-    if (!awaitingLayout) retry();
+    retry();
   };
 
   return {
@@ -64,11 +65,9 @@ export function createSourceLineScroll(reserveTail: (length: number) => void) {
       highestMeasuredFrameIndex: number;
     }) {
       if (info.index !== target || !list) return;
-      // A failure that measured no new rows spends the budget; leaving awaitingLayout unset ends it.
       const progressed = info.highestMeasuredFrameIndex > highestMeasured;
       highestMeasured = info.highestMeasuredFrameIndex;
-      if (!progressed && retries >= MAX_RETRIES) return;
-      if (!progressed) retries += 1;
+      if (progressed) retries = 0;
       const offset = info.averageItemLength * info.index;
       reserveTail(offset);
       list.scrollToOffset({ offset, animated: false });

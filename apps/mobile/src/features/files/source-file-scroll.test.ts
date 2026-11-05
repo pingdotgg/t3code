@@ -150,7 +150,11 @@ it("stops retrying when the target never measures", () => {
   expect(() => vi.runAllTimers()).not.toThrow();
 
   expect(t.scrollToIndex.mock.calls.length).toBeLessThanOrEqual(10);
+  expect(t.state.reserve).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
+  const calls = t.scrollToIndex.mock.calls.length;
+  t.scroll.onContentSizeChange();
+  expect(t.scrollToIndex).toHaveBeenCalledTimes(calls);
 });
 
 it("ignores a line outside the document", () => {
