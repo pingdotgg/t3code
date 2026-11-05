@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - The private-network gate guards the node:http server.
+import type * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -70,6 +72,20 @@ export const acceptsPrivateNetworkConnection = (socket: {
   [socket.localAddress, socket.remoteAddress].every(
     (address) => address !== undefined && isPrivateNetworkAddress(address),
   );
+
+/** Closing is silent to the client, so each closed connection is logged with both addresses. */
+export const closeNonPrivateNetworkConnections = Effect.fn("closeNonPrivateNetworkConnections")(
+  function* (server: NodeHttp.Server) {
+    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
+    server.on("connection", (socket) => {
+      if (acceptsPrivateNetworkConnection(socket)) return;
+      // Read before destroy: Node forgets localAddress once the handle closes.
+      const addresses = { localAddress: socket.localAddress, remoteAddress: socket.remoteAddress };
+      socket.destroy();
+      runSync(Effect.logWarning("closed a connection outside the private network", addresses));
+    });
+  },
+);
 
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
   address._tag === "InetAddressV6" && NetAddress.isLoopback(address.address)
