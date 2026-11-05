@@ -5,7 +5,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
@@ -52,7 +52,12 @@ describe("UsageLimitsPooled ChatGPT usage card", () => {
       ],
     ]);
     await using screen = await render(
-      <UsageLimitsPooled presentations={presentations} now={Date.parse(checkedAt)} />,
+      <UsageLimitsPooled
+        presentations={presentations}
+        now={Date.parse(checkedAt)}
+        providerOrder={[]}
+        onProviderOrderChange={vi.fn()}
+      />,
     );
 
     await expect

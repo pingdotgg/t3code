@@ -15,11 +15,28 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { ProviderDriverKind } from "@t3tools/contracts";
+import { AlertTriangleIcon, ExternalLinkIcon, GripVerticalIcon, TicketIcon } from "lucide-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
-import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
-  Fragment,
   type ReactNode,
   type RefObject,
   use,
@@ -30,15 +47,18 @@ import {
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
+import { usageLimitOrder } from "./usageLimitOrder";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PaceIcon,
   ResetCreditDialog,
@@ -569,13 +589,55 @@ function PoolWindowCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  now,
+  animate,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  readonly animate: boolean;
+}) {
+  const {
+    active,
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: pool.driver, ...(animate ? {} : { transition: null }) });
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   return (
-    <section className="flex flex-col gap-3">
+    <section
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "relative flex flex-col gap-3",
+        isDragging && "z-10 rounded-lg bg-background shadow-lg",
+      )}
+    >
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <Tooltip disabled={active !== null}>
+          <TooltipTrigger
+            render={
+              <button
+                ref={setActivatorNodeRef}
+                type="button"
+                {...attributes}
+                {...listeners}
+                aria-label={`Reorder ${label}`}
+                className="flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
+              />
+            }
+          >
+            <GripVerticalIcon className="size-4" aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup>Drag to reorder, or press Space and use the arrow keys</TooltipPopup>
+        </Tooltip>
         <ProviderInstanceIcon
           driverKind={pool.driver}
           displayName={label}
@@ -606,21 +668,33 @@ export function UsageLimitsPooled({
   presentations,
   now,
   cursorPrompt,
+  providerOrder,
+  onProviderOrderChange,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
+  readonly providerOrder: readonly ProviderDriverKind[];
+  readonly onProviderOrderChange: (order: readonly ProviderDriverKind[]) => void;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
+  const [keyboardDrag, setKeyboardDrag] = useState(false);
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
-  const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const collectedPools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const order = usageLimitOrder(
+    providerOrder,
+    collectedPools.map((pool) => pool.driver),
+  );
+  const pools = collectedPools.toSorted(
+    (left, right) => order.indexOf(left.driver) - order.indexOf(right.driver),
+  );
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
   return (
     <div className="flex flex-col gap-8">
       {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
@@ -629,12 +703,39 @@ export function UsageLimitsPooled({
         </p>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
-        {pools.map((pool, index) => (
-          <Fragment key={pool.driver}>
-            {index === cursorPromptAt ? cursorPrompt : null}
-            <PoolSection pool={pool} now={now} />
-          </Fragment>
-        ))}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis]}
+          onDragStart={({ activatorEvent }) => setKeyboardDrag(activatorEvent.type === "keydown")}
+          onDragEnd={({ active, over }) => {
+            if (!over || active.id === over.id) return;
+            const visibleOrder = pools.map((pool) => pool.driver);
+            const from = visibleOrder.findIndex((driver) => driver === active.id);
+            const to = visibleOrder.findIndex((driver) => driver === over.id);
+            if (from < 0 || to < 0) return;
+            const reordered = arrayMove(visibleOrder, from, to);
+            onProviderOrderChange(
+              order.map((driver) =>
+                visibleOrder.includes(driver) ? (reordered.shift() ?? driver) : driver,
+              ),
+            );
+          }}
+        >
+          <SortableContext
+            items={pools.map((pool) => pool.driver)}
+            strategy={verticalListSortingStrategy}
+          >
+            {pools.map((pool) => (
+              <PoolSection
+                key={pool.driver}
+                pool={pool}
+                now={now}
+                animate={!keyboardDrag && !reducedMotion}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
       </SegmentPopoverContext>
       <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
         {({ payload }) =>
@@ -649,7 +750,7 @@ export function UsageLimitsPooled({
           ) : null
         }
       </Popover>
-      {cursorPromptAt === pools.length ? cursorPrompt : null}
+      {cursorPrompt}
       {externalLinks.map((link) => (
         <section
           key={link.url}

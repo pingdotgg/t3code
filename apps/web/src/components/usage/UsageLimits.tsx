@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type ProviderConsumeResetCreditOutcome,
   ProviderConsumeResetCreditInput,
+  type ProviderDriverKind,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
@@ -364,11 +365,15 @@ export function ResetCredits({
 export function UsageLimitsSection({
   selectedEnvironmentIds,
   hiddenProviders,
+  providerOrder,
+  onProviderOrderChange,
   now,
   cursorPrompt,
 }: {
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
+  readonly providerOrder: readonly ProviderDriverKind[];
+  readonly onProviderOrderChange: (order: readonly ProviderDriverKind[]) => void;
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
@@ -402,5 +407,13 @@ export function UsageLimitsSection({
       ];
     }),
   );
-  return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
+  return (
+    <UsageLimitsPooled
+      presentations={selected}
+      now={now}
+      cursorPrompt={cursorPrompt}
+      providerOrder={providerOrder}
+      onProviderOrderChange={onProviderOrderChange}
+    />
+  );
 }
