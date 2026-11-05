@@ -109,7 +109,11 @@ export function countedLayoutWorkspacesAcrossSwitch(previous: LayoutState, next:
   if (left.columns.length > 0 || counted.some((workspace) => workspace.id === left.id)) {
     return counted;
   }
-  return previous.workspaces[0] === left ? [left, ...counted] : [...counted, left];
+  const above = previous.workspaces
+    .slice(0, previous.workspaces.indexOf(left))
+    .map((workspace) => workspace.id);
+  const position = counted.filter((workspace) => above.includes(workspace.id)).length;
+  return [...counted.slice(0, position), left, ...counted.slice(position)];
 }
 
 /** Commands after which a hint shows where the pane landed (pen Q5TwsK). */

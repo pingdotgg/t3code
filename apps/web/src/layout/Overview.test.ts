@@ -5,6 +5,7 @@ vi.mock(import("../motion/stripCamera"), () => ({ settleStripCamera: () => {} })
 import { overviewRowShift, selectOverviewStage } from "./Overview";
 import { countedLayoutWorkspacesAcrossSwitch } from "./layoutCommands";
 import {
+  closeLayoutTab,
   focusLayoutWorkspaceStep,
   type LayoutState,
   type LayoutTabContent,
@@ -71,5 +72,30 @@ describe("overviewRowShift", () => {
     expect(overviewRowShift(stageOf(onNewBelow).rows, stageOf(onLast).rows)).toBe(0);
     expect(hintedIds(onLast, onNewBelow)).toEqual(["a", "b", "trailing"]);
     expect(hintedIds(onNewBelow, onLast)).toEqual(["a", "b", "trailing"]);
+  });
+
+  it("keeps an emptied middle workspace in its place in the hint count when focus leaves it", () => {
+    const emptiedMiddle = closeLayoutTab(
+      {
+        workspaces: [
+          workspace("a", true),
+          workspace("b", true),
+          workspace("c", true),
+          workspace("trailing", false),
+        ],
+        focusedWorkspaceId: "b",
+      },
+      "tab-b",
+    );
+    expect(emptiedMiddle.workspaces.map((workspace) => workspace.id)).toEqual([
+      "a",
+      "b",
+      "c",
+      "trailing",
+    ]);
+    const up = focusLayoutWorkspaceStep(emptiedMiddle, -1);
+    const down = focusLayoutWorkspaceStep(emptiedMiddle, 1);
+    expect(hintedIds(emptiedMiddle, up)).toEqual(["a", "b", "c"]);
+    expect(hintedIds(emptiedMiddle, down)).toEqual(["a", "b", "c"]);
   });
 });
