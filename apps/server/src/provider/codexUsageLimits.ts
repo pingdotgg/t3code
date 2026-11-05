@@ -186,6 +186,20 @@ export function mergeCodexRateLimits(
   };
 }
 
+export type CodexRateLimitWindowId = "primary" | "secondary";
+
+/** Windows a notification gave a reset; a later one that omits it cleared that reset. */
+export function notifiedCodexResets(
+  notified: ReadonlySet<CodexRateLimitWindowId>,
+  update: CodexRateLimitSnapshot,
+): ReadonlySet<CodexRateLimitWindowId> {
+  if (update.limitId && update.limitId !== "codex") return notified;
+  const added = (["primary", "secondary"] as const).filter(
+    (id) => update[id]?.resetsAt != null && !notified.has(id),
+  );
+  return added.length === 0 ? notified : new Set([...notified, ...added]);
+}
+
 /**
  * A read is the whole snapshot as of its request, so fields it omits are gone. Fields a
  * notification changed while it was pending are newer and stay.
@@ -194,6 +208,7 @@ export function reconcileCodexRateLimitsRead(
   sent: CodexRateLimitSnapshot | undefined,
   current: CodexRateLimitSnapshot | undefined,
   read: CodexRateLimitSnapshot,
+  notifiedResets: ReadonlySet<CodexRateLimitWindowId>,
 ): CodexRateLimitSnapshot | undefined {
   if (read.limitId && read.limitId !== "codex") return current;
   if (!current || current === sent) return read;
@@ -207,10 +222,22 @@ export function reconcileCodexRateLimitsRead(
       ? { rateLimitReachedType }
       : {}),
     ...(!sameWindow(primary, sent?.primary) && primary !== undefined
-      ? { primary: laterWindow(primary, read.primary, sent?.primary, readPlan) }
+      ? {
+          primary: laterWindow(
+            primary,
+            read.primary,
+            readPlan && sent?.primary?.resetsAt == null && !notifiedResets.has("primary"),
+          ),
+        }
       : {}),
     ...(!sameWindow(secondary, sent?.secondary) && secondary !== undefined
-      ? { secondary: laterWindow(secondary, read.secondary, sent?.secondary, readPlan) }
+      ? {
+          secondary: laterWindow(
+            secondary,
+            read.secondary,
+            readPlan && sent?.secondary?.resetsAt == null && !notifiedResets.has("secondary"),
+          ),
+        }
       : {}),
     ...(!sameIndividualLimit(individualLimit, sent?.individualLimit) &&
     individualLimit !== undefined
@@ -256,21 +283,19 @@ function sameIndividualLimit(
   );
 }
 
-// Codex omits resets it does not know. A reset the request never had is not one the
-// notification cleared, so the read fills it while the window and plan match and usage has not
-// rolled over.
+// Codex omits resets it does not know. A reset neither the request nor a notification during the
+// read had is not one a notification cleared, so the read fills it while the window and plan
+// match and usage has not rolled over.
 function laterWindow(
   notified: CodexRateLimitWindow | null,
   read: CodexRateLimitSnapshot["primary"],
-  sent: CodexRateLimitSnapshot["primary"],
-  readPlan: boolean,
+  resetUnknown: boolean,
 ): CodexRateLimitWindow | null {
-  return readPlan &&
+  return resetUnknown &&
     notified &&
     read &&
     notified.resetsAt == null &&
     read.resetsAt != null &&
-    sent?.resetsAt == null &&
     (notified.windowDurationMins ?? null) === (read.windowDurationMins ?? null) &&
     notified.usedPercent >= read.usedPercent
     ? { ...notified, resetsAt: read.resetsAt }

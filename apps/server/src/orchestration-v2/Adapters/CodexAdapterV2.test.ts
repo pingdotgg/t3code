@@ -5652,6 +5652,33 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     },
     {
+      name: "repeated-unknown-reset-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: {},
+        during: [{ primary: { usedPercent: 99 } }, { primary: { usedPercent: 100 } }],
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: "2033-05-19T07:20:00.000Z",
+      },
+    },
+    {
+      name: "notified-then-cleared-reset-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: {},
+        during: [
+          { primary: { usedPercent: 99, resetsAt: 2000100000 } },
+          { primary: { usedPercent: 100 } },
+        ],
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: null,
+      },
+    },
+    {
       name: "resized-window-read",
       code: "usageLimitExceeded",
       notification: false,
@@ -6061,7 +6088,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     label: "account/rateLimits/read",
                     frame: { id: 4, method: "account/rateLimits/read", params: null },
                   },
-                  ...("during" in scenario.race ? [codexRateLimits(scenario.race.during)] : []),
+                  ...("during" in scenario.race
+                    ? [scenario.race.during].flat().map(codexRateLimits)
+                    : []),
                   {
                     type: "emit_inbound" as const,
                     label: "account/rateLimits/read",

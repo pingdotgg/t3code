@@ -25,10 +25,12 @@ import {
 import {
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
-  mergeCodexRateLimits,
   codexUsageLimitResetAt,
+  mergeCodexRateLimits,
+  notifiedCodexResets,
   reconcileCodexRateLimitsRead,
   type CodexRateLimitSnapshot,
+  type CodexRateLimitWindowId,
 } from "../../provider/codexUsageLimits.ts";
 import {
   CodexSettings,
@@ -4539,21 +4541,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (update) yield* adapterOptions.onUsageLimits({ ...update, checkedAt });
         });
 
+        // Resets notified since the pending read's request, recorded before the merge so a read
+        // reconciling in between still sees them.
+        const notifiedResets = yield* Ref.make<ReadonlySet<CodexRateLimitWindowId>>(new Set());
         yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
-          applyRateLimits((previous) => mergeCodexRateLimits(previous, payload.rateLimits)).pipe(
+          Ref.update(notifiedResets, (notified) =>
+            notifiedCodexResets(notified, payload.rateLimits),
+          ).pipe(
+            Effect.andThen(
+              applyRateLimits((previous) => mergeCodexRateLimits(previous, payload.rateLimits)),
+            ),
             Effect.orDie,
           ),
         );
 
         // A run's first request can 429 before Codex pushes a codex snapshot.
         const readAccountUsageLimits = Effect.gen(function* () {
+          yield* Ref.set(notifiedResets, new Set());
           const sent = yield* Ref.get(rateLimitSnapshot);
           const response = yield* client
             .request("account/rateLimits/read", null)
             .pipe(Effect.timeout("10 seconds"));
           const read = response.rateLimitsByLimitId?.codex ?? response.rateLimits;
+          const notified = yield* Ref.get(notifiedResets);
           yield* applyRateLimits(
-            (current) => reconcileCodexRateLimitsRead(sent, current, read),
+            (current) => reconcileCodexRateLimitsRead(sent, current, read, notified),
             true,
           );
         }).pipe(
