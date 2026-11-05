@@ -31,7 +31,7 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
 vi.mock("./session.ts", () => ({
@@ -67,6 +67,40 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination read grant to refresh providers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const refresh = createCommandPermissions(runtime, WS_METHODS.serverRefreshProviders);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(refresh.permissionAtom(env))).toBe(false);
+        expect((yield* refresh.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthOrchestrationReadScope],
+            permissions: [AuthOrchestrationReadScope],
+          }),
+        );
+        expect(registry.get(refresh.permissionAtom(env))).toBe(true);
+        yield* refresh.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(refresh.permissionAtom(other))).toBe(false);
+        expect((yield* refresh.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(refresh.permissionAtom(env))).toBe(false);
+        expect((yield* refresh.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -356,7 +390,11 @@ it.effect(
           ),
         };
         const supervisor = {
-          target: { environmentId: env },
+          target: new BearerConnectionTarget({
+            environmentId: env,
+            label: "Test",
+            connectionId: "test",
+          }),
           session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
           state: yield* SubscriptionRef.make({
             ...AVAILABLE_CONNECTION_STATE,

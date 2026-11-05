@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import type { DesktopUpdateState, DesktopUpdateStatusReport } from "@t3tools/contracts";
@@ -104,7 +105,7 @@ const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* 
   return { service };
 });
 
-it.layer(NodeServices.layer)("desktop app update", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("desktop app update", (it) => {
   it.effect("collapses state reports into progress stages and succeeds on installing", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness({
