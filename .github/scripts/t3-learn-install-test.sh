@@ -84,7 +84,7 @@ if [ "$scenario" = appimage ]; then format=appimage; fi
 if [ "$scenario" = fresh ]; then
   previous="$(gh release view -R "$repo" --json tagName -q .tagName 2>/dev/null | sed 's/^v//' || true)"
   if [ -n "$previous" ] && [ "$previous" != "$version" ]; then
-    log "Installing OminaX $previous (previous release)"
+    log "Installing the previous release, $previous"
     curl -fsSL "https://github.com/$repo/releases/download/v$previous/install.sh" |
       env T3LEARN_VERSION="$previous" T3LEARN_FORMAT="${format:-}" sh 2>&1 | tee "$artifacts/install-previous.log"
     previous_running="$(wait_for_server "$HOME/.t3-learn" "$previous")"

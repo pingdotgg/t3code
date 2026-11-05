@@ -62,7 +62,7 @@ if ($Scenario -eq "next-to-t3-code") {
 if ($Scenario -eq "fresh") {
   $previous = (gh release view -R $repo --json tagName -q .tagName 2>$null | ForEach-Object { $_ -replace '^v', '' })
   if ($previous -and $previous -ne $Version) {
-    Log "Installing OminaX $previous (previous release)"
+    Log "Installing the previous release, $previous"
     $env:T3LEARN_VERSION = $previous
     $previousCommand = "irm https://github.com/$repo/releases/download/v$previous/install.ps1 | iex"
     powershell -NoProfile -Command $previousCommand
@@ -91,6 +91,7 @@ Screenshot "t3-learn"
 
 $learnDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
 if (-not (Test-Path (Join-Path $learnDir "OminaX.exe"))) { Fail "OminaX.exe is missing" }
+if (Test-Path (Join-Path $learnDir "T3 Learn.exe")) { Fail "the old T3 Learn.exe is still installed" }
 $knowledge = Join-Path $HOME ".t3-learn\userdata\knowledge.json"
 if (-not (Test-Path $knowledge)) {
   '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content $knowledge
