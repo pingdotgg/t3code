@@ -120,6 +120,14 @@ describe("createInboxReturnTracker", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("returns a running thread at once when a guest request arrives", () => {
+    const tracker = createInboxReturnTracker();
+    tracker.observe([thread("a", true)]);
+    tracker.observe([{ ...thread("a", true), pendingGuestMessageCount: 1 }]);
+    expect(tracker.isWorking(thread("a", true))).toBe(false);
+    expect(tracker.returnedAt(thread("a", true))).toBe(10_000);
+  });
+
   it.each(["interrupted", "cancelled", "rolled_back"] as const)(
     "holds a %s run, because the server can still settle it",
     (status) => {

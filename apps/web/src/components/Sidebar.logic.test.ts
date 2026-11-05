@@ -6,7 +6,6 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
-  belongsInSidebarWorkingShelf,
   shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
@@ -1006,28 +1005,6 @@ describe("Working shelf (beta)", () => {
         interactionMode: "plan",
         hasActionableProposedPlan: true,
       }),
-    ).toBe(false);
-  });
-
-  it("keeps pending guest requests outside the shelves", () => {
-    const thread = { ...idle, runtime, pendingGuestMessageCount: 0 };
-    const shelve = (enabled = true) =>
-      belongsInSidebarWorkingShelf(thread, { enabled, isWorking: isSidebarThreadWorking });
-
-    expect(shelve()).toBe(true);
-    expect(shelve(false)).toBe(false);
-
-    const watching = {
-      ...waiting,
-      environmentId: localEnvironmentId,
-      pendingBackgroundTasks: [
-        { ...backgroundTask, taskId: "pull-request-watch:github.com/acme/app#1" },
-      ],
-      pendingGuestMessageCount: 1,
-    };
-    expect(isSidebarThreadWorking(watching)).toBe(true);
-    expect(
-      belongsInSidebarWorkingShelf(watching, { enabled: true, isWorking: isSidebarThreadWorking }),
     ).toBe(false);
   });
 

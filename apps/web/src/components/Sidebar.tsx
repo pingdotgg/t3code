@@ -187,7 +187,6 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
-  belongsInSidebarWorkingShelf,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -650,10 +649,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const watching: EnvironmentThreadShell[] = [];
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) => {
     if (
-      !belongsInSidebarWorkingShelf(thread, {
-        enabled: workingShelfEnabled,
-        isWorking: manuallyMoved ? isThreadWorking : inboxObservation.isWorking,
-      })
+      !workingShelfEnabled ||
+      !(manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
     ) {
       return active;
     }

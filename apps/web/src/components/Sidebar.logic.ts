@@ -184,15 +184,6 @@ export function resolveSidebarThreadSection(input: {
   return "active";
 }
 
-export function belongsInSidebarWorkingShelf<
-  T extends { readonly pendingGuestMessageCount?: number },
->(
-  thread: T,
-  input: { readonly enabled: boolean; readonly isWorking: (thread: T) => boolean },
-): boolean {
-  return input.enabled && (thread.pendingGuestMessageCount ?? 0) === 0 && input.isWorking(thread);
-}
-
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
