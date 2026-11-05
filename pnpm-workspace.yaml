@@ -18,6 +18,7 @@ allowBuilds:
   electron: false
   electron-winstaller: false
   esbuild: true
+  koffi: true
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
