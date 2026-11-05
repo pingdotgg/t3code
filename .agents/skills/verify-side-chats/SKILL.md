@@ -66,6 +66,6 @@ Put back the settings you changed (feature 8 **Restore**). Run `systemctl --user
 
 ## Run it
 
-Doctor → features 1 to 11 in order (`features/README.md`) → `result.md`.
+Doctor → features 1 to 12 in order (`features/README.md`) → `result.md`.
 
 Keep it current: every PR that changes side-chat behaviour updates the matching feature file in the same PR. A periodic audit follows pstack's `maintain-verification-skill`.

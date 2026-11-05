@@ -53,6 +53,7 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
   supportsLessonSideChats,
+  supportsLessons,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -1320,7 +1321,7 @@ function OpenCommandPaletteDialog(props: {
         lessonProjectId !== null &&
         lessonEnvironment !== undefined &&
         canCreateLesson &&
-        supportsLessonSideChats(lessonEnvironment)
+        supportsLessons(lessonEnvironment)
       ) {
         actionItems.push({
           kind: "action",

@@ -73,6 +73,7 @@ import {
   resolveIdleCompaction,
   RuntimeMode,
   supportsLessonSideChats,
+  supportsLessons,
   supportsSideChats,
 } from "@t3tools/contracts";
 import {
@@ -3456,7 +3457,10 @@ export default function ChatView(props: ChatViewProps) {
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
-                  {...(lessonSideChatsOffered && canCreateLesson
+                  {...(lessonSideChatsOffered &&
+                  canCreateLesson &&
+                  serverConfig !== null &&
+                  supportsLessons(serverConfig.environment)
                     ? { onCreateLesson: createLessonFromSelection }
                     : {})}
                   onAskInSideChat={canOperateThread ? lessonSideChats.onAskInSideChat : undefined}

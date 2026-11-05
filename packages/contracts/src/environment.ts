@@ -199,6 +199,13 @@ export function supportsLessonSideChats(
   );
 }
 
+/** New Lesson. lesson.create shipped in the same release as `knowledgeMap` (0.1.7-learn.14). */
+export function supportsLessons(
+  environment: Pick<ExecutionEnvironmentDescriptor, "capabilities">,
+): boolean {
+  return environment.capabilities.knowledgeMap === true;
+}
+
 /** Upstream side chats. Released T3 Learn servers sent `sideChats` for T3 Learn side chats only. */
 export function supportsSideChats(
   environment: Pick<ExecutionEnvironmentDescriptor, "capabilities" | "serverVersion">,

@@ -1,6 +1,6 @@
 # T3 Learn side-chat verification map
 
-This directory is the maintained source for proving T3 Learn side chats in the web UI. Read the index, establish the Launch and Doctor preconditions in `../SKILL.md`, then drive features 1→11 in order.
+This directory is the maintained source for proving T3 Learn side chats in the web UI. Read the index, establish the Launch and Doctor preconditions in `../SKILL.md`, then drive features 1→12 in order.
 
 ## Baseline preconditions
 
@@ -27,3 +27,4 @@ This directory is the maintained source for proving T3 Learn side chats in the w
 - [9. Embed highlight](./09-embed-highlight.md) — ask from selected embed text, the corner button, full screen, and a nested embed.
 - [10. HTML cards](./10-html-cards.md) — render a side-chat HTML card inline and full screen.
 - [11. Photo enlarge](./11-photo-enlarge.md) — enlarge a side-chat photo and inspect the composer thumbnail path.
+- [12. Version skew](./12-version-skew.md) — an older server hides New lesson instead of offering a no-op.
