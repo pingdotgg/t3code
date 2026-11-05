@@ -155,8 +155,8 @@ describe("FileBrowserPanel", () => {
     }));
     const load = vi.fn((_path: string) => Promise.resolve());
     directory = { ...directory, entries: folders, load };
-    using getItem = vi.spyOn(FileTree.prototype, "getItem");
     await using _screen = await render(<Panel />);
+    using getItem = vi.spyOn(FileTree.prototype, "getItem");
     const expandAll = page.getByRole("button", { name: "Expand all folders" });
     await expect.element(expandAll).toBeVisible();
     getItem.mockClear();
@@ -181,8 +181,8 @@ describe("FileBrowserPanel", () => {
       entries: Array.from({ length: perBatch }, (_, i) => folder(i)),
       load,
     };
-    using getItem = vi.spyOn(FileTree.prototype, "getItem");
     await using _screen = await render(<Panel />);
+    using getItem = vi.spyOn(FileTree.prototype, "getItem");
     await userEvent.click(page.getByRole("button", { name: "Expand all folders" }));
     await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(perBatch));
     getItem.mockClear();
