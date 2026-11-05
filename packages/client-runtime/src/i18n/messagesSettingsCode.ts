@@ -488,6 +488,7 @@ export const enMessages = {
   "settings.code.easEditor.sourceEnv": "EXPO_TOKEN on the server",
   "settings.code.easEditor.sourceLogin": "the server's eas login",
   "settings.code.easEditor.problemIdle": "Idle minutes must be smaller than session minutes.",
+  "settings.code.easEditor.problemToken": "Enter a valid secret reference.",
   "settings.code.easEditor.problemGeneral":
     "Give the host a label and limits within the ranges shown.",
   "settings.code.easEditor.addTitle": "Add EAS host",

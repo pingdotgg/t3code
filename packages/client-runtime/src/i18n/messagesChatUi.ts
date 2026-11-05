@@ -432,6 +432,7 @@ export const enMessages = {
   "chat.details.context": "Context",
   "chat.guestLink": "Guest link",
   "chat.linkRequest.pasteCode": "Paste the code",
+  "chat.linkRequest.pairingCode": "Pairing code",
   "chat.recovery.usageLimitReached": "Usage limit reached",
   "chat.recovery.chatgptLimitReached": "ChatGPT usage limit reached",
   "chat.recovery.workspaceLimitShort":
@@ -1156,6 +1157,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "chat.details.context": "上下文",
   "chat.guestLink": "访客链接",
   "chat.linkRequest.pasteCode": "粘贴代码",
+  "chat.linkRequest.pairingCode": "配对码",
   "chat.recovery.usageLimitReached": "已达到用量限制",
   "chat.recovery.chatgptLimitReached": "已达到 ChatGPT 用量限制",
   "chat.recovery.workspaceLimitShort": "已达到工作区在其他应用中使用 ChatGPT 套餐的上限。",
