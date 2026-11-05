@@ -308,7 +308,6 @@ interface ServerTab {
   readonly isolatedContext: boolean;
 
   readonly desktop: { readonly close: () => Promise<void> } | null;
-  readonly nativePopups: Set<Page>;
   readonly profileId: string | undefined;
   readonly openerTabId: string | undefined;
 
@@ -887,7 +886,6 @@ const make = Effect.gen(function* () {
       },
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
-      nativePopups: new Set(),
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
       downloads: [],
@@ -1364,8 +1362,6 @@ const make = Effect.gen(function* () {
     if (opener.desktop !== null) {
       // Keep native dialogs pending even when this popup never becomes an automation tab.
       popup.on("dialog", constVoid);
-      opener.nativePopups.add(popup);
-      popup.once("close", () => opener.nativePopups.delete(popup));
     }
     if (opener.closing) {
       await popup.close().catch(constVoid);
@@ -1466,7 +1462,8 @@ const make = Effect.gen(function* () {
 
   // A desktop popup is the person's own window, and closing its opener destroys it too.
   const isNativePopup = (tab: ServerTab) => tab.desktop !== null && tab.openerTabId !== undefined;
-  const holdsNativePopup = (tab: ServerTab) => isNativePopup(tab) || tab.nativePopups.size > 0;
+  const holdsNativePopup = (tab: ServerTab) =>
+    isNativePopup(tab) || (tab.desktop !== null && desktopChannel.hasNativePopups(tab));
 
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;

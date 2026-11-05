@@ -338,6 +338,7 @@ const desktopRenders = (tabId: string) => {
   return desktopTabs.has(tabId);
 };
 const shownDesktopTabs = new Set<string>();
+const nativePopupOpeners = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopTurns = new NodeEvents.EventEmitter();
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
@@ -397,6 +398,7 @@ const dependencies = Layer.mergeAll(
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     isShown: (key) => shownDesktopTabs.has(key.tabId),
+    hasNativePopups: (key) => nativePopupOpeners.has(key.tabId),
     endpoint: (key, options) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -480,6 +482,7 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   shownDesktopTabs.clear();
+  nativePopupOpeners.clear();
   desktopRendersNext = false;
   desktopPageUrl = "about:blank";
   desktopPopupsNext.length = 0;
@@ -2486,6 +2489,10 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       });
       const refused = makeContext(undefined, "https://example.com/retained");
       desktopConnections[8]!.context.page.emit("popup", refused.page);
+      nativePopupOpeners.add(opened[24]!);
+      nativePopupOpeners.add(opened[8]!);
+      // DevTools can already hold a native window before Playwright ever sees its page.
+      nativePopupOpeners.add(opened[9]!);
 
       now.mockReturnValue(100);
       yield* broker.invoke<PreviewAutomationStatus>({
@@ -2518,6 +2525,14 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
       expect(releasedDesktopTabs).toEqual([]);
       expect(refused.page.close).not.toHaveBeenCalled();
+      // Debugger detachment closes Playwright's page, leaving the native window open.
+      refused.page.emit("close");
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+      shownDesktopTabs.add(opened[8]!);
+      shownDesktopTabs.delete(opened[9]!);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
       shownDesktopTabs.clear();
       shownDesktopTabs.add(opened[1]!);
       const events = yield* manager.subscribeEvents;
@@ -2540,10 +2555,16 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
         [...opened.filter((tabId) => tabId !== opened[2]), popupTabId, fresh.tabId!].toSorted(),
       );
       yield* Effect.promise(() => refused.page.close());
+      nativePopupOpeners.delete(opened[8]!);
       for (const session of sessions) shownDesktopTabs.add(session.tabId);
       shownDesktopTabs.delete(opened[8]!);
       yield* open("agent-new");
       expect(yield* Queue.take(releases)).toBe(opened[8]);
+      nativePopupOpeners.delete(opened[9]!);
+      shownDesktopTabs.add(opened[8]!);
+      shownDesktopTabs.delete(opened[9]!);
+      yield* open("agent-new");
+      expect(yield* Queue.take(releases)).toBe(opened[9]);
     }),
   ).pipe(Effect.provide(layer)),
 );

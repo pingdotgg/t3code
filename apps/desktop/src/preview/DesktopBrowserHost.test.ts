@@ -179,19 +179,25 @@ describe("DesktopBrowserHost", () => {
   it.effect("re-sends shown to a backend that starts later and when a tab attaches again", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
-      host.attach(key, makeDebuggee().tab);
+      const page = makeDebuggee();
+      const popup = makeDebuggee();
+      popup.openDevTools();
+      host.openedPopup(page.tab.webContents, popup.tab.webContents);
+      host.attach(key, page.tab);
       host.setShown(key, true);
-      const reader = yield* takeEvents(host, 5).pipe(Effect.forkScoped);
+      const reader = yield* takeEvents(host, 7).pipe(Effect.forkScoped);
 
       yield* Effect.yieldNow;
       host.detach(key);
-      host.attach(key, makeDebuggee().tab);
+      host.attach(key, page.tab);
 
       expect(yield* Fiber.join(reader)).toEqual([
         { type: "attached", ...key },
+        { type: "popupWindows", ...key, open: true },
         { type: "shown", ...key, shown: true },
         { type: "detached", ...key },
         { type: "attached", ...key },
+        { type: "popupWindows", ...key, open: true },
         { type: "shown", ...key, shown: true },
       ]);
     }),
@@ -201,13 +207,16 @@ describe("DesktopBrowserHost", () => {
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const other = { ...key, tabId: "tab-2" };
+      const page = makeDebuggee();
+      host.openedPopup(page.tab.webContents, makeDebuggee().tab.webContents);
       host.setShown(key, false);
-      host.attach(key, makeDebuggee().tab);
+      host.attach(key, page.tab);
       host.setShown(other, true);
       host.attach(other, makeDebuggee().tab);
 
-      expect(yield* takeEvents(host, 3)).toEqual([
+      expect(yield* takeEvents(host, 4)).toEqual([
         { type: "attached", ...key },
+        { type: "popupWindows", ...key, open: true },
         { type: "shown", ...key, shown: false },
         { type: "attached", ...other },
       ]);
@@ -1189,11 +1198,14 @@ describe("DesktopBrowserHost", () => {
         const popup = makeDebuggee({ targetId: "POPUP" });
         const sibling = makeDebuggee({ targetId: "SIBLING" });
         const attach = vi.spyOn(popup.debuggee, "attach");
+        const nativeStates: Array<boolean> = [];
         const events = yield* Queue.unbounded<DesktopBrowserEvent>();
         yield* host.events.pipe(
-          Stream.runForEach((line) =>
-            Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
-          ),
+          Stream.runForEach((line) => {
+            const event = decodeEvent(new TextDecoder().decode(line));
+            if (event.type === "popupWindows") nativeStates.push(event.open);
+            return Queue.offer(events, event);
+          }),
           Effect.forkScoped,
         );
         const cdp = (message: Record<string, unknown>) =>
@@ -1235,6 +1247,7 @@ describe("DesktopBrowserHost", () => {
           });
         }
         expect(popup.debuggee.attached).toBe(false);
+        expect(nativeStates).toEqual([true]);
         attach.mockClear();
         popup.closeDevTools();
         expect(popup.debuggee.attached).toBe(true);
@@ -1287,6 +1300,9 @@ describe("DesktopBrowserHost", () => {
         expect(attach).toHaveBeenCalledOnce();
         popup.destroy();
         popup.closeDevTools();
+        let closed = yield* Queue.take(events);
+        while (closed.type !== "popupWindows" || closed.open) closed = yield* Queue.take(events);
+        expect(nativeStates).toEqual([true, false]);
         expect(attach).toHaveBeenCalledOnce();
         expect(popup.tab.webContents.close).not.toHaveBeenCalled();
       }).pipe(Effect.scoped),

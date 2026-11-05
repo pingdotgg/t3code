@@ -66,22 +66,29 @@ it.effect("protects unknown desktop visibility until an explicit hidden report a
       yield* send({ type: "attached", ...key });
       yield* channel.awaitAttached(key, "5 seconds");
       expect(channel.isShown(key)).toBe(true);
+      expect(channel.hasNativePopups(key)).toBe(false);
 
       yield* send({ type: "shown", ...key, shown: false });
+      yield* send({ type: "popupWindows", ...key, open: true });
       yield* send({ type: "attached", threadId: key.threadId, tabId: "sentinel-1" });
       yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel-1" }, "5 seconds");
       expect(channel.isShown(key)).toBe(false);
+      expect(channel.hasNativePopups(key)).toBe(true);
 
       yield* send({ type: "shown", ...key, shown: true });
+      yield* send({ type: "popupWindows", ...key, open: false });
       yield* send({ type: "attached", threadId: key.threadId, tabId: "sentinel-2" });
       yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel-2" }, "5 seconds");
       expect(channel.isShown(key)).toBe(true);
+      expect(channel.hasNativePopups(key)).toBe(false);
 
       yield* send({ type: "shown", ...key, shown: false });
+      yield* send({ type: "popupWindows", ...key, open: true });
       yield* send({ type: "detached", ...key });
       yield* send({ type: "attached", threadId: key.threadId, tabId: "sentinel-3" });
       yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel-3" }, "5 seconds");
       expect(channel.isShown(key)).toBe(true);
+      expect(channel.hasNativePopups(key)).toBe(false);
     }),
   ),
 );

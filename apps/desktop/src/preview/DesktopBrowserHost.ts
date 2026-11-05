@@ -547,11 +547,18 @@ export const make = Effect.gen(function* () {
       for (const tab of tabs.values())
         if (tab.debuggee.webContents === opener) showPopup(tab, popup);
     };
+    const report = (open: boolean) => {
+      for (const tab of tabs.values()) {
+        if (tab.debuggee.webContents === opener) emit({ type: "popupWindows", ...tab.key, open });
+      }
+    };
     popup.on("devtools-closed", show);
+    if (popups.size === 1) report(true);
     popup.once("destroyed", () => {
       popup.off("devtools-closed", show);
       popups.delete(popup);
       if (popups.size === 0 && openedPopups.get(opener) === popups) openedPopups.delete(opener);
+      if (popups.size === 0) report(false);
       for (const tab of tabs.values()) {
         const shown = tab.popups.get(popup);
         if (shown) hidePopup(shown, true);
@@ -614,6 +621,9 @@ export const make = Effect.gen(function* () {
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
     emit({ type: "attached", ...key });
+    if (openedPopups.get(debuggee.webContents)?.size) {
+      emit({ type: "popupWindows", ...key, open: true });
+    }
     const shown = shownTabs.get(id);
     if (shown !== undefined) emit({ type: "shown", ...key, shown });
   };
@@ -674,6 +684,11 @@ export const make = Effect.gen(function* () {
         dropRelay(tab);
         const shown = shownTabs.get(keyOf(tab.key));
         return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
+          Effect.andThen(
+            openedPopups.get(tab.debuggee.webContents)?.size
+              ? PubSub.publish(outbox, { type: "popupWindows", ...tab.key, open: true })
+              : Effect.void,
+          ),
           Effect.andThen(
             shown !== undefined
               ? PubSub.publish(outbox, { type: "shown", ...tab.key, shown })

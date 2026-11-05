@@ -14,6 +14,8 @@ export const DesktopBrowserEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("cdp"), ...TabKey, message: Schema.String }),
   /** Its `<webview>` started or stopped being on screen in a desktop window. */
   Schema.Struct({ type: Schema.Literal("shown"), ...TabKey, shown: Schema.Boolean }),
+  /** Native window lifetime, independent of popup debugger sessions. */
+  Schema.Struct({ type: Schema.Literal("popupWindows"), ...TabKey, open: Schema.Boolean }),
 ]);
 export type DesktopBrowserEvent = typeof DesktopBrowserEvent.Type;
 
