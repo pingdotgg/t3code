@@ -15,7 +15,7 @@ import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-gro
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import { EllipsisIcon, PinIcon, PlusIcon } from "lucide-react";
-import { useState, type ReactElement, type ReactNode } from "react";
+import { useRef, useState, type ReactElement, type ReactNode } from "react";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
 import { buildSidebarProjectPickerEntries } from "~/sidebarProjectGrouping";
@@ -183,8 +183,19 @@ export function ThreadSwitcher(props: {
   readonly onNewThread: () => void;
   readonly onShowThreadActions?: (() => void) | undefined;
 }) {
+  // The actions menu opens once this one has closed, or the closing menu dismisses it.
+  const showActionsAfterCloseRef = useRef(false);
+  const { onShowThreadActions } = props;
   return (
-    <Menu open={props.open} onOpenChange={props.onOpenChange}>
+    <Menu
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      onOpenChangeComplete={(open) => {
+        if (open || !showActionsAfterCloseRef.current) return;
+        showActionsAfterCloseRef.current = false;
+        onShowThreadActions?.();
+      }}
+    >
       <MenuTrigger render={props.trigger}>{props.children}</MenuTrigger>
       <MenuPopup align="start" className="w-80">
         <ThreadSwitcherContent
@@ -192,7 +203,13 @@ export function ThreadSwitcher(props: {
           activeThreadRef={props.activeThreadRef}
           onOpenChange={props.onOpenChange}
           onNewThread={props.onNewThread}
-          onShowThreadActions={props.onShowThreadActions}
+          onShowThreadActions={
+            onShowThreadActions
+              ? () => {
+                  showActionsAfterCloseRef.current = true;
+                }
+              : undefined
+          }
         />
       </MenuPopup>
     </Menu>
