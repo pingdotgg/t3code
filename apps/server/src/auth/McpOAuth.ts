@@ -331,7 +331,9 @@ const make = Effect.gen(function* () {
           error_description: `Register between 1 and ${MAX_REDIRECT_URIS} redirect URIs.`,
         });
       }
-      if (!redirectUris.every((uri) => parseRedirect(uri) !== undefined)) {
+      // Bytes, not characters: the client_id must fit in the authorize URL.
+      const fits = (uri: string) => new TextEncoder().encode(uri).length <= MAX_REDIRECT_URI_LENGTH;
+      if (!redirectUris.every((uri) => fits(uri) && parseRedirect(uri) !== undefined)) {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_redirect_uri",
           error_description:

@@ -195,6 +195,7 @@ it.live("registers loopback and https clients and never redirects for an unverif
         "https://bot.example/callback#",
         "http://localhost/callback#",
         "javascript:alert(1)",
+        `https://bot.example/${"漢".repeat(200)}`,
       ]) {
         const response = yield* register(handler, refused);
         expect(response.status).toBe(400);
