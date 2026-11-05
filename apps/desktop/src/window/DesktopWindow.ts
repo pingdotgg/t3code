@@ -336,7 +336,7 @@ export const make = Effect.gen(function* () {
   const byteLength = (text: string) => utf8.encode(text).length;
   const downloadSessions = new WeakSet<Electron.Session>();
   const reservedDownloadPaths = new Set<string>();
-  // macOS and Windows treat names differing only in case or Unicode normalization as the same file.
+  // macOS and Windows ignore case in names, and macOS also ignores Unicode normalization.
   const reservationKey = (filePath: string) => filePath.normalize("NFC").toLowerCase();
   const truncateToBytes = (text: string, maxBytes: number) => {
     let budget = maxBytes;
