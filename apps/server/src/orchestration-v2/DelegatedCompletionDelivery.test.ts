@@ -322,6 +322,74 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
+  it.effect("keeps an idle parent waiting while a finished task waits for the next delivery", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:wake-handoff-successor");
+      const runId = RunId.make("run:wake-handoff-successor");
+      const deliveredTaskId = NodeId.make("node:wake-handoff-successor-delivered");
+      const taskId = NodeId.make("node:wake-handoff-successor-pending");
+      // The delivery run has ended, but the successor delivery is not claimed yet.
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("project:wake-handoff-successor"),
+        runId,
+        rootNodeId: NodeId.make("node:wake-handoff-successor-root"),
+        taskId,
+        deliveryState: "pending",
+        deliveryTaskIds: [deliveredTaskId],
+        siblingTasks: [{ id: deliveredTaskId, deliveryState: "delivered" }],
+        parentRunStatus: "completed",
+        completionWake: "always",
+        now,
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:wake-handoff-successor-turn-item"),
+            type: "turn-item.updated",
+            threadId,
+            runId,
+            nodeId: taskId,
+            driver,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:wake-handoff-successor"),
+              threadId,
+              runId,
+              nodeId: taskId,
+              providerThreadId: parentProviderThreadId(threadId),
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: "Review the diff",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "subagent",
+              subagentId: taskId,
+              origin: "app_owned",
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              childThreadId: null,
+              prompt: "Review the diff.",
+              result: "child finished",
+            },
+          },
+        ],
+      });
+      const shell = yield* orchestrator.getThreadShell(threadId);
+      assert.equal(shell?.status, "completed");
+      assert.deepEqual(
+        shell?.pendingBackgroundTasks?.map((task) => task.kind),
+        ["subagent"],
+      );
+    }),
+  );
   it.effect(
     "interrupting a completion wake disposes both cohorts without reviving them on late results",
     () =>
