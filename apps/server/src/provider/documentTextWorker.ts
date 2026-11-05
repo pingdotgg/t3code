@@ -29,6 +29,7 @@ const HIDDEN = new Set([
   "pPr",
 ]);
 
+// @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; Truncation is a local throw sentinel.
 class Truncation extends Error {}
 
 interface XmlNode {

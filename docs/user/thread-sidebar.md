@@ -300,9 +300,9 @@ You can also choose **Side chat** from the **+** menu in the right panel. The si
 chat opens as a tab there, with its own composer. Side chats do not show in the
 sidebar. Find one again under **Side chats** in thread details.
 
-A side chat works in the same folder as the thread. Its first reply asks before it
-edits files or runs commands. After that, it uses the permission mode you choose
-in its composer.
+A side chat works in the same folder as the thread and inherits its permissions
+when created, including for its first reply. Change permissions for an individual
+side chat in its composer. Later changes to the parent do not change existing side chats.
 
 To use what you learned, choose **Bring back**. The thread gets the side chat with
 your next message there. Bring back is available while the thread is idle.
@@ -326,6 +326,8 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
 A snoozed thread keeps working and stays hidden until its wake time, even while
-its agent wakes itself for background work. It comes back early only when it needs
-an approval or answer from you, when a run fails, or when you send it a message.
+its agent wakes itself for background work. It comes back early for an approval,
+a new question, a failed run, or a message or answer you send. You can snooze an existing
+question and answer when the thread wakes; the question stays unanswered.

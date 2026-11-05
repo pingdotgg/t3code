@@ -1,4 +1,3 @@
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -36,11 +35,16 @@ function relayUrl(): string | null {
   return resolveCloudPublicConfig().relayUrl;
 }
 
-export class CloudEnvironmentLinkError extends Data.TaggedError("CloudEnvironmentLinkError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-  readonly traceId?: string;
-}> {}
+export class CloudEnvironmentLinkError extends Schema.TaggedError<CloudEnvironmentLinkError>()(
+  "CloudEnvironmentLinkError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    traceId: Schema.optional(Schema.String),
+  },
+) {}
+
+export const isCloudEnvironmentLinkError = Schema.is(CloudEnvironmentLinkError);
 
 const relayClientRpcError = (message: string) => (cause: unknown) =>
   new CloudEnvironmentLinkError({

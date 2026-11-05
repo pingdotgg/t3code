@@ -168,6 +168,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   triage: Schema.optionalKey(Schema.Boolean),
   /** Server accepts `{ type: "once" }` scheduled tasks; older servers reject them on save. */
   oneTimeSchedules: Schema.optionalKey(Schema.Boolean),
+  /** Server honors `freshContext` on sends; older servers ignore it and keep the old context. */
+  freshContext: Schema.optionalKey(Schema.Boolean),
+  /** Server saves and runs scheduled task `threadMode`; older servers ignore it. */
+  scheduledTaskThreadModes: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

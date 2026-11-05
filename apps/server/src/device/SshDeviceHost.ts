@@ -90,6 +90,8 @@ const bootstrap = (
     ),
   );
 
+const isSshCommandError = Schema.is(SshCommandError);
+
 // cmd expands only %OS% and PowerShell only $env:OS; POSIX shells expand neither to Windows_NT.
 const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(function* (
   config: SshDeviceHostConfig,
@@ -98,7 +100,7 @@ const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(functio
   const cause = error.cause;
   // Windows ssh.exe preserves full remote exit statuses such as 9009.
   if (
-    !(cause instanceof SshCommandError) ||
+    !isSshCommandError(cause) ||
     cause.exitCode === null ||
     cause.exitCode < 1 ||
     (cause.exitCode > 254 && cause.exitCode !== 9009)

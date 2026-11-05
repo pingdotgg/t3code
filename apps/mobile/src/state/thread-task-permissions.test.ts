@@ -19,6 +19,7 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { sendApprovalFeedback } from "@t3tools/client-runtime/state/thread-requests";
+import { DateTime } from "effect";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -34,6 +35,9 @@ const state = vi.hoisted(() => ({
   projection: null as OrchestrationV2ThreadProjection | null,
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
+  freshPending: false,
+  compactDue: false,
+  setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
   approve: vi.fn(),
   answer: vi.fn(),
@@ -54,7 +58,7 @@ const state = vi.hoisted(() => ({
     runtimeMode: "full-access",
     interactionMode: "default",
     runtime: null,
-    latestRun: null,
+    latestRun: null as unknown,
   },
 }));
 
@@ -70,6 +74,10 @@ vi.mock("react", () => ({
   ],
 }));
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
+vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
+  shouldCompactBeforeSend: () => state.compactDue,
+}));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("./queued-run-edit", () => ({
@@ -142,6 +150,8 @@ vi.mock("./use-composer-drafts", async () => {
     composerDraftsAtom: Atom.make({}),
     composerContextImportsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
+    isFreshSessionPending: () => state.freshPending,
+    setFreshSessionPending: state.setFreshPending,
     clearComposerDraftContent: state.clearDraft,
     clearComposerDraft: state.clearDraft,
     setComposerDraftText: (_key: string, text: string) => {
@@ -181,6 +191,9 @@ beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
   state.connectionState = "connected";
   state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
+  state.freshPending = false;
+  state.compactDue = false;
+  state.thread.latestRun = null;
   state.projection = null;
   state.serverConfig = {
     providers: [{ instanceId: "codex", driver: "codex", enabled: true }],
@@ -252,6 +265,75 @@ describe("mobile task permissions", () => {
     expect(state.updateSettings).toHaveBeenCalledWith("secondary:thread", {
       interactionMode: "plan",
     });
+  });
+
+  it("keeps an armed fresh session for the message after an approval redirect", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.freshPending = true;
+    const composer = useThreadComposerState();
+    expect(await composer.onSendMessage(undefined, async () => true)).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ freshContext: true }),
+    );
+    expect(state.setFreshPending).not.toHaveBeenCalled();
+    expect(await composer.onSendMessage()).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ freshContext: true }));
+    expect(state.setFreshPending).toHaveBeenCalledWith("secondary:thread", false);
+  });
+
+  it("compacts a stale thread before sending unless a fresh session is armed", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.projection = {
+      thread: {
+        ...state.thread,
+        activeProviderThreadId: null,
+        lineage: { rootThreadId: "thread", parentThreadId: null, relationshipToParent: null },
+      },
+      runs: [],
+      attempts: [],
+      nodes: [],
+      subagents: [],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [],
+      plans: [],
+      turnItems: [],
+      checkpointScopes: [],
+      checkpoints: [],
+      contextHandoffs: [],
+      contextTransfers: [],
+      visibleTurnItems: [],
+      updatedAt: DateTime.makeUnsafe(0),
+    } as unknown as OrchestrationV2ThreadProjection;
+    state.compactDue = true;
+    const composer = useThreadComposerState();
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ compactBeforeSend: true }),
+    );
+    state.freshPending = true;
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ compactBeforeSend: true }),
+    );
+    expect(state.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ freshContext: true }));
+  });
+
+  it("sends a typed /clear with an approval redirect as that reply's text", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.serverConfig = {
+      ...state.serverConfig,
+      environment: { capabilities: { freshContext: true } },
+    } as ServerConfig;
+    state.thread.latestRun = { runId: "run" };
+    state.draft = { ...state.draft, text: "/clear" };
+    const composer = useThreadComposerState();
+    const beforeDispatch = vi.fn(async () => "responded" as const);
+    expect(await composer.onSendMessage(undefined, beforeDispatch)).toBeNull();
+    expect(beforeDispatch).toHaveBeenCalledWith("/clear", false);
+    expect(state.setFreshPending).not.toHaveBeenCalled();
   });
 
   it("rechecks a retained send callback before clearing or queueing the draft", async () => {

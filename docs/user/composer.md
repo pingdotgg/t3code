@@ -198,8 +198,8 @@ voice input isn't available. On Android, keep T3 Code open while recording and
 transcribing.
 
 The first use may download a speech model and needs a network connection.
-Later transcription works offline for that language. On Android, transcription
-processes the full recording at roughly its original duration. Recordings can be up to five
+Later transcription works offline for that language. Android processes audio while
+you record, then finishes the transcript after you stop. Recordings can be up to five
 minutes long. Canceling or an audio interruption discards the recording and
 preserves your existing draft. Navigating to another screen keeps dictation active;
 use the floating controls to finish or cancel. While recording, the screen stays
@@ -263,6 +263,12 @@ Provider commands must start the message to run. T3 Code commands such as
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it, even with the context meter turned off.
+
+Send `/clear` on its own, or pick it from the slash menu, to start a fresh session
+in the same thread. Your next message goes to a new provider session that doesn't see the
+earlier messages, and the thread marks where it began with **New session**.
+Earlier messages and diffs stay in the thread. Dismiss the notice above the
+composer to keep the current session instead.
 
 On web and desktop, turn on **Settings → Labs → Legacy → Context
 window indicator (legacy)** to see context usage. The meter is off by default
