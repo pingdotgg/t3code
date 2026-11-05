@@ -245,6 +245,10 @@ describe("DevicePanel discovery warning", () => {
       .element(screen.getByText("iOS and Android lists on This Mac may be incomplete."))
       .toBeVisible();
 
+    currentState = withCause("second cause");
+    await screen.rerender(devicePanel(threadA));
+    await expect.element(screen.getByText(warning)).toBeVisible();
+
     currentState = withCause("third cause");
     await screen.rerender(devicePanel(threadA));
     await expect.element(screen.getByText(warning)).toBeVisible();
