@@ -1820,6 +1820,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
+            ...(changeRequest.mergeBlocked === undefined
+              ? {}
+              : { mergeBlocked: changeRequest.mergeBlocked }),
           })),
         ),
       ),

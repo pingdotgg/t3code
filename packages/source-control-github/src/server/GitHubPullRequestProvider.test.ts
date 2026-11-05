@@ -20,6 +20,7 @@ const coreFields = {
   canEditMaintainerEdits: false,
   reviewRequestTeams: [],
   checksTruncated: false,
+  mergeBlocked: false,
   comparison: { behindBy: 0, viewerCanUpdate: true },
   viewerAccess: {
     canWrite: true,
