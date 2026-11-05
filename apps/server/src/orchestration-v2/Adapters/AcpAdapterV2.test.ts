@@ -518,11 +518,11 @@ function makeMockRuntime(input: {
 
 it.live("does not detach an owned Windows ACP process and retains PID tree cleanup", () => {
   let finalizerPid = 0;
+  let spawnedPid = 0;
   return Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
     const terminated: number[] = [];
-    let spawnedPid = 0;
     const runtime = yield* AcpSessionRuntime.make({
       spawn: {
         command: process.execPath,
@@ -547,10 +547,9 @@ it.live("does not detach an owned Windows ACP process and retains PID tree clean
             return Effect.die("Expected standard command");
           if (command.command === "taskkill") {
             finalizerPid = Number(command.args[1]);
-            assert.equal(finalizerPid, spawnedPid);
             // Exercise the Windows finalizer while terminating the mock child on any host.
             return spawner.spawn(
-              ChildProcess.make(process.execPath, ["-e", `process.kill(${finalizerPid})`]),
+              ChildProcess.make(process.execPath, ["-e", `process.kill(${spawnedPid})`]),
             );
           }
           assert.equal(command.command, process.execPath);
@@ -573,7 +572,12 @@ it.live("does not detach an owned Windows ACP process and retains PID tree clean
   }).pipe(
     Effect.provide(layerTest),
     Effect.scoped,
-    Effect.tap(() => Effect.sync(() => assert.isAbove(finalizerPid, 0))),
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.isAbove(spawnedPid, 0);
+        assert.equal(finalizerPid, spawnedPid);
+      }),
+    ),
   );
 });
 
