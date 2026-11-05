@@ -428,6 +428,7 @@ const extractPdf = Effect.fn("course.extractPdf")(function* (source: string) {
     try: async () => {
       // The server bundle has no pdf.worker.mjs beside pdf.mjs, so hand pdf.js the bundled worker.
       Object.assign(globalThis, {
+        // @ts-expect-error pdfjs-dist ships no types for its worker module.
         pdfjsWorker: await import("pdfjs-dist/legacy/build/pdf.worker.mjs"),
       });
       return import("pdfjs-dist/legacy/build/pdf.mjs");
