@@ -1439,6 +1439,25 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
 
       // A hidden failure keeps its command until the next turn replaces the agent process.
       const refused = yield* startPrompt(3);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "finished-lint",
+        status: "completed",
+        rawOutput: { output: "Late lint summary" },
+      });
+      const lateLint = yield* takeUntil(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "finished-lint",
+      );
+      assert.deepInclude(lateLint.type === "turn_item.updated" ? lateLint.turnItem : {}, {
+        runId: erroredRunId,
+        providerTurnId: erroredTerminal.providerTurnId,
+        status: "completed",
+        type: "command_execution",
+        input: "npm run lint",
+      });
+      assert.deepEqual(toolStatuses(turnInput(3, false).runId, "finished-lint"), []);
       // A surviving command's progress during another prompt stays on its own run.
       yield* send({
         sessionUpdate: "tool_call_update",
@@ -1501,7 +1520,11 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       });
       assert.deepEqual(toolStatuses(continuation.runId, "replaced-build"), []);
       assert.deepEqual(toolStatuses(refusedRunId, "surviving-build"), []);
-      assert.deepEqual(toolStatuses(erroredRunId, "finished-lint"), ["running", "completed"]);
+      assert.deepEqual(toolStatuses(erroredRunId, "finished-lint"), [
+        "running",
+        "completed",
+        "completed",
+      ]);
       // A command known only from the replayed wake ends on the continuation.
       yield* TestClock.adjust(yield* Queue.take(finalizeScheduled));
       const continuationTerminal = yield* takeUntil(

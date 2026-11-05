@@ -2258,7 +2258,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
-        // Running tasks of failed turns, by task id; replacing the runtime ends each on its own run.
+        // Tool output may follow its terminal update; keep failed-turn owners until runtime teardown.
         const survivingTaskTurns = yield* Ref.make<ReadonlyMap<string, ActiveAcpTurn>>(new Map());
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
@@ -2285,13 +2285,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               } else {
                 next.delete(taskId);
               }
-              return next;
-            });
-            if (running) return;
-            yield* Ref.update(survivingTaskTurns, (current) => {
-              if (!current.has(taskId)) return current;
-              const next = new Map(current);
-              next.delete(taskId);
               return next;
             });
           });
