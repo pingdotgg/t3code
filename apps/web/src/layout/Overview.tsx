@@ -441,6 +441,15 @@ export function selectOverviewStage(
   return { rows, focusedRow, scale, gap: ROW_GAP / scale };
 }
 
+/** Rows a workspace on both stages moved down, as when a new workspace opens above the stack. */
+export function overviewRowShift(previous: OverviewRow[], next: OverviewRow[]): number {
+  for (const row of next) {
+    const before = previous.find((candidate) => candidate.workspace.id === row.workspace.id);
+    if (before) return row.index - before.index;
+  }
+  return 0;
+}
+
 /** Rows are centered on the stage; a row wider than the window starts left of it. */
 function rowLeftShare(row: OverviewRow): number {
   return (1 - row.stripWidth) / 2;
@@ -655,6 +664,17 @@ function fadePanes(
   }
 }
 
+function readStageTransform(element: HTMLElement): StageTransform {
+  const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+  return { x: matrix.m41, y: matrix.m42, scale: matrix.a };
+}
+
+/** Lands the stage on `transform` at once, so a transition set next starts from there. */
+function jumpStageTo(element: HTMLElement, transform: StageTransform): void {
+  applyStageTransform(element, transform, 0);
+  readStageTransform(element);
+}
+
 function applyStageTransform(
   element: HTMLElement,
   transform: StageTransform,
@@ -688,6 +708,7 @@ export function useOverviewStage(
   const manual = useRef<StageTransform | null>(null);
   const zoomShare = useRef(1);
   const selection = useRef("");
+  const shownRows = useRef<OverviewRow[]>([]);
   const frameSize = useRef("");
   const fades = useRef(new Map<HTMLElement, MotionRun | null>());
   const interactive = phaseNow === "opening" || phaseNow === "open";
@@ -706,8 +727,7 @@ export function useOverviewStage(
       // Read the visible transition once at handoff, never after our camera write.
       box = scroller.getBoundingClientRect();
       footerHeight = closeHintHeight();
-      const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
-      return { x: matrix.m41, y: matrix.m42, scale: matrix.a };
+      return readStageTransform(element);
     };
     // The camera only moves a landed stage. Taken mid-zoom, the in-between
     // pose would become the overview's resting one, full size at the start.
@@ -831,6 +851,8 @@ export function useOverviewStage(
     const nextSelection = `${stage.focusedRow.workspace.id}/${stage.focusedRow.workspace.focusedPaneId}`;
     const selectionChanged = selection.current !== nextSelection;
     selection.current = nextSelection;
+    const rowShift = overviewRowShift(shownRows.current, stage.rows);
+    shownRows.current = stage.rows;
     if (phaseNow === "closed") {
       manual.current = null;
       zoomShare.current = 1;
@@ -860,6 +882,13 @@ export function useOverviewStage(
         zoomShare.current = manual.current.scale / stage.scale;
         applyStageTransform(element, manual.current, 0);
       } else {
+        if (rowShift !== 0 && durationMs > 0) {
+          const from = readStageTransform(element);
+          jumpStageTo(element, {
+            ...from,
+            y: from.y - rowShift * (box.height + stage.gap) * from.scale,
+          });
+        }
         manual.current = null;
         const scale = Math.max(
           stage.scale * MIN_ZOOM_SHARE,
@@ -1022,6 +1051,14 @@ export function OverviewStageOverlay({
   const open = phaseNow === "open" || phaseNow === "opening";
   // Unscaled px that show as `px` on screen once zoomed out.
   const px = (value: number) => `calc(${value}px / var(--overview-scale, ${scale}))`;
+  const focusRing = (
+    <div
+      aria-hidden
+      data-chrome-scope=""
+      className="pointer-events-none absolute rounded-pane border-strong-foreground/70"
+      style={{ inset: px(-3), borderWidth: px(1.5) }}
+    />
+  );
 
   const resolveTarget = (
     point: { x: number; y: number },
@@ -1184,24 +1221,20 @@ export function OverviewStageOverlay({
                   style={paneBox(slot)}
                   onPointerDown={(event) => beginDrag(event, tab)}
                 >
-                  {focused ? (
-                    <div
-                      aria-hidden
-                      data-chrome-scope=""
-                      className="pointer-events-none absolute rounded-pane border-strong-foreground/70"
-                      style={{ inset: px(-3), borderWidth: px(1.5) }}
-                    />
-                  ) : null}
+                  {focused ? focusRing : null}
                 </div>
               );
             })}
             {row.workspace.columns.length === 0 && open ? (
-              <div
-                aria-hidden
-                data-chrome-scope=""
-                className="pointer-events-none absolute inset-0 rounded-pane border-dashed border-border"
-                style={{ borderWidth: px(1) }}
-              />
+              <>
+                <div
+                  aria-hidden
+                  data-chrome-scope=""
+                  className="pointer-events-none absolute inset-0 rounded-pane border-dashed border-border"
+                  style={{ borderWidth: px(1) }}
+                />
+                {focusedRow ? focusRing : null}
+              </>
             ) : null}
             {insertIndex !== null ? (
               <div
