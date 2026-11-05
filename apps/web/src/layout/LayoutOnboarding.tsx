@@ -154,7 +154,7 @@ export function LayoutOnboarding() {
             <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-2 md:grid-cols-4">
               {(
                 [
-                  ["tabs", "Everything is a tab", "Chat, terminal, diff, browser, settings."],
+                  ["tabs", "Everything is a tab", "Chat, terminal, diff, browser."],
                   ["split", "Drag to split", "Drop a tab on an edge to put it beside."],
                   [
                     "overview",
