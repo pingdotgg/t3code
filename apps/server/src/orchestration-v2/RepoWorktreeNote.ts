@@ -7,7 +7,7 @@ const RULES = [
   "- Before changing a repository, call `t3_repo_worktree_ensure` with its path relative to the folder, an exact branch, and a `baseRef` for a new branch. Do every edit, build, test, and commit for that repository in the returned `worktreePath`. Call it again whenever the work reaches another repository.",
   "- A worktree that already has the branch is reused as it is. Keep its uncommitted edits: never stash, reset, or clean them. Use a new branch name for new, independent work, and pass `useExistingBranch:true` only to continue an existing branch on purpose.",
   "- To change a submodule, ensure a worktree for the submodule's path too (for example `service/framework`) and commit there. Then call `t3_repo_worktree_set_submodule` to point the parent worktree's submodule at that commit and stage the gitlink, and commit the parent with ordinary git. Repeat after each new submodule commit.",
-  "- T3 checkpoints, diffs, and rollback cover only the project folder, not these worktrees. `t3_worktree_status` lists them; `t3_repo_worktree_detach` forgets one without deleting anything.",
+  "- T3 checkpoints these worktrees with every turn, from the moment `t3_repo_worktree_ensure` returns, so the user can review and roll back your changes in them. `t3_worktree_status` lists them; `t3_repo_worktree_detach` forgets one without deleting anything.",
 ].join("\n");
 
 /**

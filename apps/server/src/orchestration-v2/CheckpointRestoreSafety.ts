@@ -1,13 +1,144 @@
-import type { OrchestrationV2AppThread, OrchestrationV2CheckpointScope } from "@t3tools/contracts";
+import type {
+  OrchestrationV2AppThread,
+  OrchestrationV2Checkpoint,
+  OrchestrationV2CheckpointScope,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
+import {
+  type CheckpointRepositoryIdentity,
+  checkpointWorkspaceFiles,
+  checkpointWorkspaceStatus,
+} from "./CheckpointService.ts";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
 export const SHARED_WORKSPACE_RESTORE_MESSAGE =
   "File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead.";
+
+export const sharedRepositoryRestoreMessage = (
+  repository: Pick<CheckpointRepositoryIdentity, "repository" | "worktreePath">,
+) =>
+  `Another thread also works in the ${repository.repository} worktree at ${repository.worktreePath}, so files can't be restored. Rewind the conversation without restoring files instead.`;
+
+interface RestoreSafetyDependencies {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly projections: ProjectionStoreV2["Service"];
+  readonly projects: ProjectStore.ProjectStoreV2["Service"];
+  readonly path: Path.Path;
+}
+
+/**
+ * Real paths every other thread may write in: its workspace, its checkpoint
+ * scopes, live sessions, and its repository worktrees. Null when a thread's
+ * project is gone, so its workspace is unknown.
+ */
+const otherThreadPaths = Effect.fn("orchestrationV2.otherThreadPaths")(function* (
+  thread: Pick<OrchestrationV2AppThread, "id">,
+  dependencies: RestoreSafetyDependencies,
+) {
+  const { fileSystem, projections, projects } = dependencies;
+  const candidates = new Set<string>();
+  const shell = yield* projections.getShellSnapshot();
+  for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
+    if (otherThread.id === thread.id || otherThread.deletedAt !== null) continue;
+    const other = yield* projections.getCheckpointContext(otherThread.id);
+    const providerContext = yield* projections.getThreadProviderContext(otherThread.id);
+    for (const candidate of [
+      otherThread.worktreePath,
+      ...other.checkpointScopes.map((scope) => scope.cwd),
+      // A failed turn can leave an errored session with a live event stream.
+      // A session shared across threads keeps the cwd it was opened with,
+      // often another thread's; each turn runs in the thread's own
+      // worktree or project root, which this list already covers.
+      ...providerContext.providerSessions
+        .filter(
+          (session) =>
+            session.status !== "stopped" &&
+            !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
+        )
+        .map((session) => session.cwd),
+    ]) {
+      if (candidate !== null) candidates.add(candidate);
+    }
+    if (otherThread.worktreePath === null) {
+      const project = yield* projects.get(otherThread.projectId, { includeDeleted: true });
+      if (Option.isNone(project)) return null;
+      candidates.add(project.value.workspaceRoot);
+    }
+  }
+  // A folder thread can attach another thread's own checkout as a repository worktree.
+  for (const attachment of yield* projections.getThreadRepoWorktreePaths()) {
+    if (attachment.threadId !== thread.id) candidates.add(attachment.worktreePath);
+  }
+  const resolved: Array<string> = [];
+  for (const candidate of candidates) {
+    const real = yield* fileSystem
+      .realPath(candidate)
+      .pipe(
+        Effect.catch((error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
+        ),
+      );
+    if (real !== null) resolved.push(real);
+  }
+  return resolved;
+});
+
+const restoreIsolation = Effect.fn("orchestrationV2.restoreIsolation")(function* (
+  thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
+  targets: {
+    readonly workspace: Pick<OrchestrationV2CheckpointScope, "cwd"> | null;
+    readonly repositories: ReadonlyArray<CheckpointRepositoryIdentity>;
+  },
+  dependencies: RestoreSafetyDependencies,
+) {
+  const { fileSystem, path } = dependencies;
+  const contains = (parent: string, child: string) => {
+    const relative = path.relative(parent, child);
+    return (
+      relative === "" ||
+      (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+    );
+  };
+  // Storage cleanup may have removed a worktree; rollback recreates it.
+  const resolve = (target: string) =>
+    fileSystem
+      .realPath(target)
+      .pipe(
+        Effect.catch((error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(path.resolve(target))
+            : Effect.fail(error),
+        ),
+      );
+  // A checkpoint snapshots the whole checkout, so only the thread's own worktree is restorable.
+  let workspaceCwd: string | null = null;
+  let workspaceIsolated = targets.workspace === null ? null : thread.worktreePath != null;
+  if (targets.workspace !== null && thread.worktreePath != null) {
+    workspaceCwd = yield* resolve(targets.workspace.cwd);
+    workspaceIsolated = workspaceCwd === (yield* resolve(thread.worktreePath));
+  }
+  const repositoryCwds = yield* Effect.forEach(targets.repositories, (repository) =>
+    resolve(repository.worktreePath),
+  );
+  if (workspaceIsolated !== true && repositoryCwds.length === 0) {
+    return { workspace: workspaceIsolated, sharedRepository: null };
+  }
+  const others = yield* otherThreadPaths(thread, dependencies);
+  const shared = (cwd: string) =>
+    others === null || others.some((other) => contains(cwd, other) || contains(other, cwd));
+  if (workspaceIsolated === true && workspaceCwd !== null && shared(workspaceCwd)) {
+    workspaceIsolated = false;
+  }
+  const sharedIndex = repositoryCwds.findIndex(shared);
+  return {
+    workspace: workspaceIsolated,
+    sharedRepository: sharedIndex < 0 ? null : targets.repositories[sharedIndex]!,
+  };
+});
 
 // A checkpoint snapshots the whole checkout. Check at command admission and
 // again before provider rollback so a newly shared worktree is rejected too.
@@ -15,84 +146,112 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
     scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
-    dependencies: {
-      readonly fileSystem: FileSystem.FileSystem;
-      readonly projections: ProjectionStoreV2["Service"];
-      readonly projects: ProjectStore.ProjectStoreV2["Service"];
-      readonly path: Path.Path;
-    },
+    dependencies: RestoreSafetyDependencies,
   ) {
-    const { fileSystem, projections, projects, path } = dependencies;
-    const contains = (parent: string, child: string) => {
-      const relative = path.relative(parent, child);
-      return (
-        relative === "" ||
-        (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
-      );
-    };
-    const worktreePath = thread.worktreePath;
-    let shared = worktreePath == null;
-    if (!shared && worktreePath !== null) {
-      // Storage cleanup may have removed the worktree; rollback recreates it.
-      const resolve = (target: string) =>
-        fileSystem
-          .realPath(target)
-          .pipe(
-            Effect.catch((error) =>
-              error.reason._tag === "NotFound"
-                ? Effect.succeed(path.resolve(target))
-                : Effect.fail(error),
-            ),
-          );
-      const cwd = yield* resolve(scope.cwd);
-      const worktreeCwd = yield* resolve(worktreePath);
-      shared = cwd !== worktreeCwd;
-      if (!shared) {
-        const shell = yield* projections.getShellSnapshot();
-        const checkedPaths = new Set<string>();
-        for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
-          if (otherThread.id === thread.id || otherThread.deletedAt !== null) continue;
-          const other = yield* projections.getCheckpointContext(otherThread.id);
-          const providerContext = yield* projections.getThreadProviderContext(otherThread.id);
-          const paths = [
-            otherThread.worktreePath,
-            ...other.checkpointScopes.map((candidate) => candidate.cwd),
-            // A failed turn can leave an errored session with a live event stream.
-            // A session shared across threads keeps the cwd it was opened with,
-            // often another thread's; each turn runs in the thread's own
-            // worktree or project root, which this list already covers.
-            ...providerContext.providerSessions
-              .filter(
-                (session) =>
-                  session.status !== "stopped" &&
-                  !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
-              )
-              .map((session) => session.cwd),
-          ].filter((value): value is string => value !== null);
-          if (otherThread.worktreePath === null) {
-            const project = yield* projects.get(otherThread.projectId, { includeDeleted: true });
-            if (Option.isNone(project)) return false;
-            paths.push(project.value.workspaceRoot);
-          }
-          for (const candidate of paths) {
-            if (checkedPaths.has(candidate)) continue;
-            checkedPaths.add(candidate);
-            const otherCwd = yield* fileSystem
-              .realPath(candidate)
-              .pipe(
-                Effect.catch((error) =>
-                  error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-                ),
-              );
-            if (otherCwd !== null && (contains(cwd, otherCwd) || contains(otherCwd, cwd))) {
-              shared = true;
-              break;
-            }
-          }
-          if (shared) break;
-        }
-      }
-    }
-    return !shared;
+    const isolation = yield* restoreIsolation(
+      thread,
+      { workspace: scope, repositories: [] },
+      dependencies,
+    );
+    return isolation.workspace === true;
   },
 );
+
+/**
+ * Repository worktrees whose files a rollback to `targetOrdinal` must
+ * restore: the ones later checkpoints captured, detached since or not, and
+ * the ones attached now. The current attachment's identity wins.
+ */
+export function participatingRepositories(input: {
+  readonly thread: Pick<OrchestrationV2AppThread, "repoWorktrees">;
+  readonly scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">;
+  readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+  readonly targetOrdinal: number;
+}): ReadonlyArray<CheckpointRepositoryIdentity> {
+  const byWorktree = new Map<string, CheckpointRepositoryIdentity>();
+  const later = input.checkpoints
+    .filter(
+      (checkpoint) =>
+        checkpoint.scopeId === input.scope.id &&
+        checkpoint.status !== "stale" &&
+        checkpoint.ordinalWithinScope > input.targetOrdinal,
+    )
+    .toSorted((left, right) => left.ordinalWithinScope - right.ordinalWithinScope);
+  for (const checkpoint of later) {
+    for (const entry of checkpoint.repositories ?? []) {
+      byWorktree.set(entry.worktreePath, {
+        repository: entry.repository,
+        repositoryPath: entry.repositoryPath,
+        worktreePath: entry.worktreePath,
+        branch: entry.branch,
+      });
+    }
+  }
+  for (const attached of input.thread.repoWorktrees ?? []) {
+    // The workspace snapshot already covers a checkout the thread works in itself.
+    if (attached.worktreePath === input.scope.cwd) continue;
+    byWorktree.set(attached.worktreePath, {
+      repository: attached.repository,
+      repositoryPath: attached.repositoryPath,
+      worktreePath: attached.worktreePath,
+      branch: attached.branch,
+    });
+  }
+  return [...byWorktree.values()];
+}
+
+export type CheckpointRestorePlan =
+  | {
+      readonly _tag: "restore";
+      readonly workspace: boolean;
+      readonly repositories: ReadonlyArray<CheckpointRepositoryIdentity>;
+    }
+  | { readonly _tag: "shared-workspace" }
+  | { readonly _tag: "shared-repository"; readonly repository: CheckpointRepositoryIdentity };
+
+/**
+ * What a file restore to `checkpoint` may change. The workspace is restored
+ * only when it is the thread's own worktree; a shared one, such as the project
+ * folder, blocks the restore only when later turns changed files in it.
+ */
+export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRestore")(function* (
+  input: {
+    readonly thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath" | "repoWorktrees">;
+    readonly scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">;
+    readonly checkpoint: OrchestrationV2Checkpoint;
+    readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+  },
+  dependencies: RestoreSafetyDependencies,
+) {
+  const targetOrdinal = input.checkpoint.ordinalWithinScope;
+  const repositories = participatingRepositories({ ...input, targetOrdinal });
+  const workspaceReady = checkpointWorkspaceStatus(input.checkpoint) === "ready";
+  const isolation = yield* restoreIsolation(
+    input.thread,
+    { workspace: workspaceReady ? input.scope : null, repositories },
+    dependencies,
+  );
+  if (workspaceReady && isolation.workspace !== true) {
+    const workspaceChangedLater = input.checkpoints.some(
+      (checkpoint) =>
+        checkpoint.scopeId === input.scope.id &&
+        checkpoint.status !== "stale" &&
+        checkpoint.ordinalWithinScope > targetOrdinal &&
+        checkpointWorkspaceFiles(checkpoint).length > 0,
+    );
+    if (repositories.length === 0 || workspaceChangedLater) {
+      return { _tag: "shared-workspace" } satisfies CheckpointRestorePlan;
+    }
+  }
+  if (isolation.sharedRepository !== null) {
+    return {
+      _tag: "shared-repository",
+      repository: isolation.sharedRepository,
+    } satisfies CheckpointRestorePlan;
+  }
+  return {
+    _tag: "restore",
+    workspace: workspaceReady && isolation.workspace === true,
+    repositories,
+  } satisfies CheckpointRestorePlan;
+});

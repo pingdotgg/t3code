@@ -855,6 +855,9 @@ export const layer: Layer.Layer<
               .captureBaseline({
                 scope: input.checkpointScope,
                 ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+                ...(input.appThread.repoWorktrees === undefined
+                  ? {}
+                  : { repoWorktrees: input.appThread.repoWorktrees }),
               })
               .pipe(
                 Effect.catchCause((cause) =>

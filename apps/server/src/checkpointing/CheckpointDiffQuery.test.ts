@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -37,6 +38,7 @@ function makeProjection(): ProjectionCheckpointContext {
       {
         scopeId: secondScopeId,
         runId: secondRunId,
+        ordinalWithinScope: 2,
         appRunOrdinal: 2,
         status: "ready",
         ref: secondRef,
@@ -63,6 +65,7 @@ function layerFor(input: {
       ),
     ),
     Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(NodeServices.layer),
   );
 }
 
@@ -175,6 +178,7 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
           ...projection.checkpoints[0]!,
           scopeId: firstScopeId,
           runId: firstRunId,
+          ordinalWithinScope: 1,
           appRunOrdinal: 1,
           ref: CheckpointRef.make("refs/t3/test/first"),
         },

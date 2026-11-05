@@ -22,6 +22,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as CheckpointService from "../orchestration-v2/CheckpointService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -266,6 +267,14 @@ function parseWorktreeList(stdout: string): ReadonlyArray<WorktreeEntry> {
   });
 }
 
+const SETTLED_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+
 /** Records in `git status --porcelain=v1 -z`; renames and copies carry a second path. */
 function countStatusRecords(stdout: string): number {
   const records = stdout.split("\0").filter(Boolean);
@@ -283,6 +292,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const checkpoints = yield* CheckpointService.CheckpointServiceV2;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -573,6 +583,31 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // The snapshot the run's checkpoints compare against: the baseline of the
+  // run in progress, or of the next run when attached between turns.
+  const captureAttachBaseline = (threadId: ThreadId, repoWorktree: ThreadRepoWorktree) =>
+    threadManagement.getThreadRecords(threadId, ["runs"]).pipe(
+      Effect.flatMap(({ runs }) => {
+        const open = runs
+          .filter((run) => !SETTLED_RUN_STATUSES.has(run.status))
+          .map((run) => run.ordinal);
+        const ordinalWithinScope =
+          open.length > 0
+            ? Math.max(0, Math.min(...open) - 1)
+            : Math.max(0, ...runs.map((run) => run.ordinal));
+        return checkpoints.captureRepositoryBaseline({
+          threadId,
+          repoWorktree,
+          ordinalWithinScope,
+        });
+      }),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause as Cause.Cause<never>)
+          : Effect.logWarning("repository worktree baseline was not captured", { threadId }),
+      ),
+    );
+
   const ensureLocked = Effect.fnUntraced(function* (
     input: RepoWorktreeEnsureInput,
     context: Effect.Success<ReturnType<typeof loadEnabledContext>>,
@@ -622,7 +657,11 @@ const make = Effect.gen(function* () {
               attachedAt,
             }
           : { ...alreadyAttached, branch: input.branch };
-      if (alreadyAttached?.branch !== input.branch) yield* dispatchAttach(thread.id, repoWorktree);
+      if (alreadyAttached?.branch !== input.branch) {
+        yield* dispatchAttach(thread.id, repoWorktree);
+        // Its uncommitted edits predate this thread, so they are the baseline.
+        yield* captureAttachBaseline(thread.id, repoWorktree);
+      }
       return {
         status: "reused",
         branchCreated: false,
@@ -794,6 +833,7 @@ const make = Effect.gen(function* () {
         yield* dispatchAttach(thread.id, repoWorktree).pipe(
           Effect.onError((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : rollback)),
         );
+        yield* restore(captureAttachBaseline(thread.id, repoWorktree));
         return {
           status: "created",
           branchCreated: plan.newRefName !== undefined,

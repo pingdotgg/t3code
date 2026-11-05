@@ -27,6 +27,8 @@ export interface DiffCheckpointsInput {
   readonly format?: "patch" | "numstat";
   /** Limits the diff to these exact paths. An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
+  /** Shown before every patch path, so patches from several repositories stay apart. */
+  readonly pathPrefix?: string;
 }
 
 export interface ListAuthoredPathsInput {

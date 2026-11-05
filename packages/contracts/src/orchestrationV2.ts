@@ -1182,6 +1182,32 @@ export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
 });
 export type OrchestrationV2CheckpointFileSummary = typeof OrchestrationV2CheckpointFileSummary.Type;
 
+export const OrchestrationV2CheckpointStatus = Schema.Literals([
+  "ready",
+  "missing",
+  "error",
+  "stale",
+]);
+export type OrchestrationV2CheckpointStatus = typeof OrchestrationV2CheckpointStatus.Type;
+
+/**
+ * A repository worktree's snapshot in a checkpoint. Its ref lives in that
+ * repository. It keeps the worktree's identity, so diffs and rollback still
+ * find it after the thread detaches the worktree.
+ */
+export const OrchestrationV2CheckpointRepository = Schema.Struct({
+  /** Repository path relative to the project folder, as in `ThreadRepoWorktree`. */
+  repository: TrimmedNonEmptyString,
+  repositoryPath: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  /** Leads this repository's paths in the checkpoint's `files` and in its diffs. */
+  pathPrefix: TrimmedNonEmptyString,
+  ref: CheckpointRef,
+  status: OrchestrationV2CheckpointStatus,
+});
+export type OrchestrationV2CheckpointRepository = typeof OrchestrationV2CheckpointRepository.Type;
+
 export const OrchestrationV2Checkpoint = Schema.Struct({
   id: CheckpointId,
   threadId: ThreadId,
@@ -1191,9 +1217,13 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   parentCheckpointId: Schema.NullOr(CheckpointId),
   ordinalWithinScope: NonNegativeInt,
   appRunOrdinal: Schema.NullOr(PositiveInt),
+  /** The scope's own workspace snapshot. With `repositories`, `status` and `files` cover all of them. */
   ref: CheckpointRef,
-  status: Schema.Literals(["ready", "missing", "error", "stale"]),
+  status: OrchestrationV2CheckpointStatus,
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
+  /** Status of `ref` alone, present only with `repositories`. */
+  workspaceStatus: Schema.optional(OrchestrationV2CheckpointStatus),
+  repositories: Schema.optional(Schema.Array(OrchestrationV2CheckpointRepository)),
   capturedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;

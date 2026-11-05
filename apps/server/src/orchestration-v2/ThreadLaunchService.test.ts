@@ -55,6 +55,7 @@ import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -2654,7 +2655,17 @@ it.effect.each(["attached", "unattached"] as const)(
           input.threadId === ordinaryThreadId
             ? Deferred.succeed(setupEntered, undefined).pipe(Effect.andThen(Effect.never))
             : Effect.succeed({ status: "no-script" as const }),
-        repoWorktrees: (shared) => RepoWorktrees.layer.pipe(Layer.provide(shared)),
+        repoWorktrees: (shared) =>
+          RepoWorktrees.layer.pipe(
+            Layer.provide(
+              Layer.merge(
+                shared,
+                Layer.mock(CheckpointService.CheckpointServiceV2)({
+                  captureRepositoryBaseline: () => Effect.succeed("ready" as const),
+                }),
+              ),
+            ),
+          ),
       });
       yield* Effect.gen(function* () {
         const launches = yield* ThreadLaunch.ThreadLaunchService;

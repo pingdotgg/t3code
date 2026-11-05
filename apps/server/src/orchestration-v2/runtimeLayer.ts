@@ -114,8 +114,10 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   ),
 );
 
+// One instance serializes checkpoint Git work per checkout for every caller,
+// repository worktree attachment included.
 const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-  Layer.provide(IdAllocator.layer),
+  Layer.provide(Layer.merge(IdAllocator.layer, GitVcsDriver.layer)),
 );
 const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
   Layer.provide(IdAllocator.layer),
@@ -267,7 +269,12 @@ const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
 // pins stay serialized across every caller.
 const layerRepoWorktreeProvided = RepoWorktreeService.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(layerProjectService, layerThreadManagementProvided, ProjectionStore.layer),
+    Layer.mergeAll(
+      layerProjectService,
+      layerThreadManagementProvided,
+      ProjectionStore.layer,
+      layerCheckpointServiceProvided,
+    ),
   ),
 );
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(

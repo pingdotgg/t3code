@@ -107,19 +107,7 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
-      const threadStartCheckpoint =
-        baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
-          ? null
-          : yield* checkpoints.materializeBaselineCheckpoint({
-              scope,
-              ordinalWithinScope: 0,
-            });
-      const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
-        ? null
-        : yield* checkpoints.materializeBaselineCheckpoint({
-            scope,
-            ordinalWithinScope: baselineOrdinalWithinScope,
-          });
+      const { repoWorktrees } = yield* projections.getThread(input.threadId);
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
@@ -127,7 +115,35 @@ export const layer: Layer.Layer<
         ordinalWithinScope: run.ordinal,
         appRunOrdinal: run.ordinal,
         capturedAt,
+        ...(repoWorktrees === undefined ? {} : { repoWorktrees }),
       });
+      const hasRepositories = (checkpoint.repositories?.length ?? 0) > 0;
+      const backfilled = hasRepositories
+        ? yield* projections.getThreadRecords(input.threadId, ["checkpoints", "runs"]).pipe(
+            Effect.flatMap((history) =>
+              checkpoints.backfillRepositories({
+                scope,
+                checkpoint,
+                checkpoints: history.checkpoints,
+                runs: history.runs,
+              }),
+            ),
+          )
+        : [];
+      const threadStartCheckpoint =
+        hasRepositories || baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
+          ? null
+          : yield* checkpoints.materializeBaselineCheckpoint({
+              scope,
+              ordinalWithinScope: 0,
+            });
+      const baselineCheckpoint =
+        hasRepositories || hasReadyCheckpoint(baselineOrdinalWithinScope)
+          ? null
+          : yield* checkpoints.materializeBaselineCheckpoint({
+              scope,
+              ordinalWithinScope: baselineOrdinalWithinScope,
+            });
       // Match RunExecutionService: capture loaded the waiting run before
       // materializing baselines. Omit delegatedCompletion so a newer cohort
       // write during capture is not overwritten by this stale snapshot
@@ -141,6 +157,19 @@ export const layer: Layer.Layer<
         acceptedAt: capturedAt,
         effects: [],
         events: [
+          ...(yield* Effect.forEach(backfilled, (earlier) =>
+            Effect.map(ids.allocate.event({ threadId: input.threadId, commandId }), (id) => ({
+              id,
+              type: "checkpoint.captured" as const,
+              threadId: input.threadId,
+              ...(earlier.runId === null ? {} : { runId: earlier.runId }),
+              nodeId: earlier.nodeId,
+              driver: providerThread.driver,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: capturedAt,
+              payload: earlier,
+            })),
+          )),
           ...(threadStartCheckpoint === null
             ? []
             : [

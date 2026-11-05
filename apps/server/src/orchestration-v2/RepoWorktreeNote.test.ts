@@ -45,7 +45,7 @@ describe("repoWorktreeNote", () => {
     expect(rules).toContain("Use a new branch name for new, independent work");
     expect(rules).toContain("`useExistingBranch:true` only to continue an existing branch");
     expect(rules).toContain("t3_repo_worktree_set_submodule");
-    expect(rules).toContain("checkpoints, diffs, and rollback cover only the project folder");
+    expect(rules).toContain("checkpoints these worktrees with every turn");
   });
 
   it("repeats project guidance and where the work is on every turn", () => {

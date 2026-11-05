@@ -81,8 +81,9 @@ import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
 import {
-  isCheckpointRestoreIsolated,
+  planCheckpointRestore,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
+  sharedRepositoryRestoreMessage,
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
@@ -9675,12 +9676,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (command.restoreFiles !== false) {
-        const isolated = yield* isCheckpointRestoreIsolated(projection.thread, targetScope, {
-          projects,
-          path,
-          fileSystem,
-          projections: projectionStore,
-        }).pipe(
+        const plan = yield* planCheckpointRestore(
+          {
+            thread: projection.thread,
+            scope: targetScope,
+            checkpoint: targetCheckpoint,
+            checkpoints: projection.checkpoints,
+          },
+          { projects, path, fileSystem, projections: projectionStore },
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new OrchestratorDispatchError({
@@ -9690,11 +9694,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-        if (!isolated)
+        if (plan._tag !== "restore")
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: SHARED_WORKSPACE_RESTORE_MESSAGE,
+            cause:
+              plan._tag === "shared-workspace"
+                ? SHARED_WORKSPACE_RESTORE_MESSAGE
+                : sharedRepositoryRestoreMessage(plan.repository),
           });
       }
 

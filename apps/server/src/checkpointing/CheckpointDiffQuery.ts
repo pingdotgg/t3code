@@ -1,18 +1,26 @@
 import {
+  type CheckpointRef,
   OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffInput,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
+  type OrchestrationV2CheckpointRepository,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import {
+  checkpointRefForScopeOrdinal,
+  checkpointWorkspaceStatus,
+  resolveRepositorySnapshot,
+} from "../orchestration-v2/CheckpointService.ts";
+import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
@@ -62,6 +70,41 @@ export class CheckpointDiffQuery extends Context.Service<
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 
+/**
+ * Each repository worktree's last ready snapshot in the turns being compared,
+ * so a worktree the thread detached partway still shows its changes.
+ */
+function latestRepositoryEntries(
+  projection: ProjectionCheckpointContext,
+  to: ProjectionCheckpointContext["checkpoints"][number],
+  fromOrdinal: number,
+) {
+  const latest = new Map<
+    string,
+    { readonly entry: OrchestrationV2CheckpointRepository; readonly ordinal: number }
+  >();
+  for (const checkpoint of projection.checkpoints) {
+    if (
+      checkpoint.scopeId !== to.scopeId ||
+      checkpoint.status === "stale" ||
+      checkpoint.ordinalWithinScope <= fromOrdinal ||
+      checkpoint.ordinalWithinScope > to.ordinalWithinScope
+    ) {
+      continue;
+    }
+    for (const entry of checkpoint.repositories ?? []) {
+      const current = latest.get(entry.worktreePath);
+      if (
+        entry.status === "ready" &&
+        (current === undefined || current.ordinal < checkpoint.ordinalWithinScope)
+      ) {
+        latest.set(entry.worktreePath, { entry, ordinal: checkpoint.ordinalWithinScope });
+      }
+    }
+  }
+  return [...latest.values()];
+}
+
 function buildTurnDiffResult(
   input: {
     readonly threadId: ThreadId;
@@ -83,6 +126,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -165,6 +209,10 @@ export const make = Effect.gen(function* () {
         input.fromTurnCount === 0
           ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
           : undefined;
+      const fromCheckpoint =
+        input.fromTurnCount === 0
+          ? undefined
+          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount);
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined
@@ -173,9 +221,9 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Crypto.Crypto, crypto))
-          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount)
-              ?.ref;
-      if (fromCheckpointRef === undefined) {
+          : fromCheckpoint?.ref;
+      const hasRepositories = toCheckpoint.repositories !== undefined;
+      if (fromCheckpointRef === undefined && !hasRepositories) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
@@ -184,38 +232,107 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const comparison = {
-        cwd: toScope.cwd,
-        fromCheckpointRef,
-        toCheckpointRef: toCheckpoint.ref,
-        fallbackFromToHead: false,
-        ignoreWhitespace,
-      };
-      const authoredPaths = yield* checkpointStore
-        .listAuthoredPaths(comparison)
-        .pipe(Effect.orElseSucceed(() => null));
-      const files =
-        authoredPaths === null
-          ? []
-          : yield* checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
-              Effect.map(parseTurnDiffFilesFromNumstat),
-              Effect.orElseSucceed(() => []),
-            );
-      const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
-      // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
-      const diff =
-        retainedFiles.length === files.length
-          ? yield* checkpointStore
-              .diffCheckpoints(comparison)
-              .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"))
-          : (yield* Effect.forEach(
-              batchFilePaths(retainedFiles),
-              (filePaths) =>
-                checkpointStore
-                  .diffCheckpoints({ ...comparison, filePaths })
-                  .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints")),
-              { concurrency: 4 },
-            )).join("");
+      const diffPart = (comparison: {
+        readonly cwd: string;
+        readonly fromCheckpointRef: CheckpointRef;
+        readonly toCheckpointRef: CheckpointRef;
+        readonly fallbackFromToHead: boolean;
+        readonly ignoreWhitespace: boolean;
+        readonly pathPrefix?: string;
+      }) =>
+        Effect.gen(function* () {
+          const authoredPaths = yield* checkpointStore
+            .listAuthoredPaths(comparison)
+            .pipe(Effect.orElseSucceed(() => null));
+          const files =
+            authoredPaths === null
+              ? []
+              : yield* checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
+                  Effect.map(parseTurnDiffFilesFromNumstat),
+                  Effect.orElseSucceed(() => []),
+                );
+          const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
+          // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
+          return retainedFiles.length === files.length
+            ? yield* checkpointStore
+                .diffCheckpoints(comparison)
+                .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"))
+            : (yield* Effect.forEach(
+                batchFilePaths(retainedFiles),
+                (filePaths) =>
+                  checkpointStore
+                    .diffCheckpoints({ ...comparison, filePaths })
+                    .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints")),
+                { concurrency: 4 },
+              )).join("");
+        });
+
+      const workspaceComparison =
+        fromCheckpointRef === undefined ||
+        (hasRepositories &&
+          (checkpointWorkspaceStatus(toCheckpoint) !== "ready" ||
+            (fromCheckpoint !== undefined &&
+              checkpointWorkspaceStatus(fromCheckpoint) !== "ready")))
+          ? null
+          : {
+              cwd: toScope.cwd,
+              fromCheckpointRef,
+              toCheckpointRef: toCheckpoint.ref,
+              fallbackFromToHead: false,
+              ignoreWhitespace,
+            };
+      const workspaceDiff =
+        workspaceComparison === null
+          ? ""
+          : hasRepositories
+            ? // Repositories still show when the workspace's thread-start ref is gone.
+              yield* diffPart(workspaceComparison).pipe(Effect.orElseSucceed(() => ""))
+            : yield* diffPart(workspaceComparison);
+
+      const repositoryDiffs = hasRepositories
+        ? yield* Effect.forEach(
+            latestRepositoryEntries(projection, toCheckpoint, input.fromTurnCount),
+            ({ entry, ordinal }) =>
+              Effect.gen(function* () {
+                const cwd = (yield* fileSystem
+                  .exists(entry.worktreePath)
+                  .pipe(Effect.orElseSucceed(() => false)))
+                  ? entry.worktreePath
+                  : entry.repositoryPath;
+                const from = yield* resolveRepositorySnapshot({
+                  history: {
+                    scopeId: toCheckpoint.scopeId,
+                    checkpoints: projection.checkpoints,
+                    runs: projection.runs,
+                  },
+                  worktreePath: entry.worktreePath,
+                  cwd,
+                  targetOrdinal: input.fromTurnCount,
+                  beforeOrdinal: ordinal,
+                }).pipe(
+                  Effect.provideService(Crypto.Crypto, crypto),
+                  Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore),
+                );
+                if (from._tag !== "found") return "";
+                return yield* diffPart({
+                  cwd,
+                  fromCheckpointRef: from.ref,
+                  toCheckpointRef: entry.ref,
+                  fallbackFromToHead: false,
+                  ignoreWhitespace,
+                  pathPrefix: entry.pathPrefix,
+                }).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("repository worktree diff failed", {
+                      threadId: input.threadId,
+                      cause: String(cause),
+                    }).pipe(Effect.as("")),
+                  ),
+                );
+              }),
+          )
+        : [];
+      const diff = [workspaceDiff, ...repositoryDiffs].join("");
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {

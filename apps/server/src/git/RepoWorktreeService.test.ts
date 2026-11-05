@@ -14,8 +14,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CheckpointService from "../orchestration-v2/CheckpointService.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -25,6 +29,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as RepoWorktreeService from "./RepoWorktreeService.ts";
 
@@ -49,6 +55,22 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
 const layerGitDriver = GitVcsDriver.layer.pipe(
   Layer.provide(layerServerConfig),
   Layer.provideMerge(NodeServices.layer),
+);
+
+const layerCheckpoints = CheckpointService.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      CheckpointStore.layer.pipe(
+        Layer.provide(
+          VcsDriverRegistry.layer.pipe(
+            Layer.provide(VcsProcess.layer),
+            Layer.provide(layerServerConfig),
+          ),
+        ),
+      ),
+      IdAllocator.layer,
+    ),
+  ),
 );
 
 type CreateWorktree = GitWorkflowService.GitWorkflowService["Service"]["createWorktree"];
@@ -108,6 +130,7 @@ function makeLayer(input: {
         layerProjects,
         layerGitWorkflow(input.createWorktree),
         ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        layerCheckpoints,
       ),
     ),
     Layer.provideMerge(layerGitDriver),

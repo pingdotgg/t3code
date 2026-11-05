@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -15,6 +16,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -57,9 +59,11 @@ it.effect.each([false, true, "interrupt"] as const)(
             hasCheckpointRef,
             captureCheckpoint: () => Effect.void,
           }),
+          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         ),
       ),
       Layer.provideMerge(NodeCrypto.layer),
+      Layer.provideMerge(NodeServices.layer),
     );
 
     return Effect.gen(function* () {

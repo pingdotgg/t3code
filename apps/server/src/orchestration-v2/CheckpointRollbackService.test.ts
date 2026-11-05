@@ -99,6 +99,7 @@ it.effect.each(["initial", "waiting"])(
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadRecords,
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,
@@ -143,9 +144,10 @@ it.effect.each(["initial", "waiting"])(
       }
       const error = yield* Fiber.join(rollback);
 
-      assert.equal(getThreadRecords.mock.calls.length, 2);
+      // The lease read, the repository lease read, then the authoritative read.
+      assert.equal(getThreadRecords.mock.calls.length, 3);
       assert.deepEqual(getThreadRecords.mock.calls[0]?.[1], []);
-      assert.equal(getThreadRecords.mock.calls[1]?.[1].includes("checkpoints"), true);
+      assert.equal(getThreadRecords.mock.calls[2]?.[1].includes("checkpoints"), true);
       assert.equal(error.reason, "rollback-target-invalid");
       assert.equal(
         error.message,
@@ -201,6 +203,7 @@ it.effect("rejects a rollback when another provider thread became active", () =>
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords: () => Effect.succeed(projection),
+          getThreadRepoWorktreePaths: () => Effect.succeed([]),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -282,6 +285,7 @@ it.effect("rejects a rollback when provider selection changed before execution",
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords: () => Effect.succeed(projection),
+          getThreadRepoWorktreePaths: () => Effect.succeed([]),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -356,6 +360,7 @@ it.effect("rejects an unavailable rollback target before opening a session", () 
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords: () => Effect.succeed(projection),
+          getThreadRepoWorktreePaths: () => Effect.succeed([]),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -479,6 +484,7 @@ it.effect.each([
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadRecords: () => Effect.succeed(projection),
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,
@@ -662,6 +668,7 @@ it.effect.each([
                 runs: [],
                 checkpoints: [],
               } as never),
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,
@@ -726,6 +733,7 @@ it.effect.skipIf(!symlinksSupported)(
       const threadId = ThreadId.make("restore-alias-current");
       const otherId = ThreadId.make("restore-alias-archived");
       const projections = ProjectionStore.ProjectionStoreV2.of({
+        getThreadRepoWorktreePaths: () => Effect.succeed([]),
         getShellSnapshot: () =>
           Effect.succeed({
             schemaVersion: 1,

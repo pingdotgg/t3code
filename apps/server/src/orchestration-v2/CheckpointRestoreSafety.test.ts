@@ -41,6 +41,8 @@ it.effect.each([
   "errored-provider",
   "shared-provider",
   "conversation",
+  "repository-worktree",
+  ...(symlinksSupported ? (["aliased-repository-worktree"] as const) : []),
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -55,6 +57,14 @@ it.effect.each([
     yield* fs.writeFileString(otherFile, "other thread's uncommitted work");
     const alias = path.join(parent, "alias");
     if (owner === "aliased-nested") yield* fs.symlink(nested, alias);
+    if (owner === "aliased-repository-worktree") yield* fs.symlink(cwd, alias);
+    // A folder thread reused this thread's own checkout as a repository worktree.
+    const repositoryAttachment =
+      owner === "repository-worktree"
+        ? cwd
+        : owner === "aliased-repository-worktree"
+          ? alias
+          : null;
     const threadId = ThreadId.make("restore-current");
     const otherId = ThreadId.make("restore-other");
     const projectId = ProjectId.make("restore-project");
@@ -126,6 +136,12 @@ it.effect.each([
                 checkpoints: [],
                 checkpointScopes: owner === "scope" ? ([{ cwd: nested }] as never) : [],
               }),
+            getThreadRepoWorktreePaths: () =>
+              Effect.succeed(
+                repositoryAttachment === null
+                  ? []
+                  : [{ threadId: otherId, title: "Folder", worktreePath: repositoryAttachment }],
+              ),
             getThreadProviderContext: () =>
               Effect.succeed({
                 thread: otherThread as never,
@@ -213,6 +229,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
         path,
         projections: {
           getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
+          getThreadRepoWorktreePaths: () => Effect.succeed([]),
         } as never,
         projects: {} as never,
       },

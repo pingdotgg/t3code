@@ -16,6 +16,7 @@ import {
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
   OrchestrationV2AppThread,
+  OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2ExecutionNode,
   OrchestrationV2PlanArtifact,
@@ -42,7 +43,9 @@ import type {
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
+  OrchestrationV2CheckpointRepository,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
+  OrchestrationV2CheckpointStatus,
   OrchestrationV2ContextHandoffJson as OrchestrationV2ContextHandoffJsonSchema,
   OrchestrationV2ContextTransferJson as OrchestrationV2ContextTransferJsonSchema,
   OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessageJsonSchema,
@@ -220,18 +223,50 @@ const ProjectionCheckpointContext = Schema.Struct({
   ),
   checkpoints: Schema.Array(
     OrchestrationV2CheckpointJsonSchema.mapFields(
-      ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+      ({ scopeId, runId, ordinalWithinScope, appRunOrdinal, status, ref }) => ({
         scopeId,
         runId,
+        ordinalWithinScope,
         appRunOrdinal,
         status,
         ref,
+        // SQLite yields NULL for an absent field and the array as JSON text.
+        workspaceStatus: Schema.NullOr(OrchestrationV2CheckpointStatus),
+        repositories: Schema.NullOr(
+          Schema.fromJsonString(Schema.Array(OrchestrationV2CheckpointRepository)),
+        ),
       }),
     ),
   ),
 });
-export type ProjectionCheckpointContext = typeof ProjectionCheckpointContext.Type;
-const decodeCheckpointContext = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
+type ProjectionCheckpointContextRows = typeof ProjectionCheckpointContext.Type;
+export type ProjectionCheckpointContext = Omit<ProjectionCheckpointContextRows, "checkpoints"> & {
+  readonly checkpoints: ReadonlyArray<
+    Pick<
+      OrchestrationV2Checkpoint,
+      | "scopeId"
+      | "runId"
+      | "ordinalWithinScope"
+      | "appRunOrdinal"
+      | "status"
+      | "ref"
+      | "workspaceStatus"
+      | "repositories"
+    >
+  >;
+};
+const decodeCheckpointContextRows = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
+const decodeCheckpointContext = (rows: unknown) =>
+  decodeCheckpointContextRows(rows).pipe(
+    Effect.map((context): ProjectionCheckpointContext => ({
+      ...context,
+      checkpoints: context.checkpoints.map(({ workspaceStatus, repositories, ...checkpoint }) => ({
+        ...checkpoint,
+        ...(workspaceStatus === null ? {} : { workspaceStatus }),
+        ...(repositories === null ? {} : { repositories }),
+      })),
+    })),
+  );
 
 export interface ProjectionCheckpointCaptureContext {
   readonly run: OrchestrationV2Run | undefined;
@@ -4669,8 +4704,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `,
               sql`
               SELECT scope_id AS "scopeId", run_id AS "runId",
+                ordinal_within_scope AS "ordinalWithinScope",
                 app_run_ordinal AS "appRunOrdinal", status,
-                json_extract(payload_json, '$.ref') AS ref
+                json_extract(payload_json, '$.ref') AS ref,
+                json_extract(payload_json, '$.workspaceStatus') AS "workspaceStatus",
+                json_extract(payload_json, '$.repositories') AS repositories
               FROM orchestration_v2_projection_checkpoints
               WHERE thread_id = ${threadId}
               ORDER BY scope_id ASC, ordinal_within_scope ASC
@@ -6551,12 +6589,24 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               cwd,
             })),
             checkpoints: projection.checkpoints.map(
-              ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+              ({
                 scopeId,
                 runId,
+                ordinalWithinScope,
                 appRunOrdinal,
                 status,
                 ref,
+                workspaceStatus,
+                repositories,
+              }) => ({
+                scopeId,
+                runId,
+                ordinalWithinScope,
+                appRunOrdinal,
+                status,
+                ref,
+                ...(workspaceStatus === undefined ? {} : { workspaceStatus }),
+                ...(repositories === undefined ? {} : { repositories }),
               }),
             ),
           };
