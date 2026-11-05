@@ -196,6 +196,8 @@ export const DesktopSnapShotState = Schema.Struct({
   ),
   shortcutVerified: Schema.optional(Schema.Boolean),
   message: Schema.NullOr(Schema.String),
+  /** Why this device's policy keeps SnapShots off. The desktop enforces it with no server running. */
+  policyDenial: Schema.optional(Schema.String),
 });
 export type DesktopSnapShotState = typeof DesktopSnapShotState.Type;
 

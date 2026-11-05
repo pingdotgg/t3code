@@ -985,20 +985,38 @@ it.effect.each(["succeeds", "fails"] as const)(
 it.effect("a policy without SnapShots keeps capture off whatever the user saved", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      activeWindowMock.mockReset().mockResolvedValue({
+        platform: "macos",
+        id: 42,
+        title: "Setup",
+        owner: { name: "T3 Code", processId: 123 },
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+      });
+      macCaptureMock
+        .mockReset()
+        .mockResolvedValue({ source: { name: "Setup" }, png: Buffer.from("png") });
       const service = yield* DesktopSnapShot.make;
       registerShortcutMock.mockClear();
       yield* service.configure(enabledSettings());
       const refused = yield* service.capture.pipe(Effect.flip);
       assert.equal(refused.operation, "disabled");
       assert.equal(registerShortcutMock.mock.calls.length, 0);
+      yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(macCaptureMock.mock.calls.length, 0);
+      assert.equal(
+        (yield* service.state).policyDenial,
+        "Example Corp's policy does not allow SnapShots.",
+      );
     }),
   ).pipe(
     Effect.provide(
-      layerTest("darwin", {}, Option.none(), undefined, {
-        schemaVersion: 1,
-        organization: "Example Corp",
-        limits: { snapShot: false },
-      }),
+      layerTest(
+        "darwin",
+        { makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test") },
+        Option.none(),
+        undefined,
+        { schemaVersion: 1, organization: "Example Corp", limits: { snapShot: false } },
+      ),
     ),
   ),
 );

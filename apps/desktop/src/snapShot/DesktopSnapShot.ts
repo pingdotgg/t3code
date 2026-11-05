@@ -5,6 +5,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DesktopPendingSnapShot,
   isModifierPairShortcut,
+  managedPolicyDeniedMessage,
   snapShotModifierPairLabel,
   snapShotShortcutModifierPair,
   type DesktopSnapShot as DesktopSnapShotValue,
@@ -765,9 +766,13 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
-  const snapShotAllowed = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
-    Effect.map((found) => found?.document.limits?.snapShot !== false),
-    Effect.orElseSucceed(() => false),
+  const policyDenial = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+    Effect.map((found) =>
+      found?.document.limits?.snapShot === false
+        ? managedPolicyDeniedMessage(found.document.organization, "SnapShots")
+        : undefined,
+    ),
+    Effect.orElseSucceed(() => "SnapShots are off because this device's policy can't be read."),
   );
   const settingsRef = yield* Ref.make(DEFAULT_CLIENT_SETTINGS);
   const stateRef = yield* Ref.make<DesktopSnapShotState>({
@@ -1139,7 +1144,7 @@ export const make = Effect.gen(function* () {
     forceShortcut = false,
   ) {
     // The saved choice stays for when the policy allows it.
-    const settings = snapShotAllowed ? saved : { ...saved, snapShotEnabled: false };
+    const settings = policyDenial === undefined ? saved : { ...saved, snapShotEnabled: false };
     const previousSettings = yield* Ref.get(settingsRef);
     yield* Ref.set(settingsRef, settings);
 
@@ -1400,6 +1405,8 @@ export const make = Effect.gen(function* () {
     if (action === "test-mac-capture") {
       if (environment.platform !== "darwin")
         return yield* new DesktopSnapShotSetupError({ action, reason: "unsupported-session" });
+      if (policyDenial !== undefined)
+        return yield* new DesktopSnapShotSetupError({ action, reason: "setup-failed" });
       yield* Effect.scoped(
         Effect.gen(function* () {
           const directory = yield* fileSystem
@@ -1721,6 +1728,7 @@ export const make = Effect.gen(function* () {
                 }
               : {}),
             shortcutVerified,
+            ...(policyDenial === undefined ? {} : { policyDenial }),
           };
         }),
       ),

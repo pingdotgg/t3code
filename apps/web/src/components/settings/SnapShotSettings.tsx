@@ -1,7 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   isModifierPairShortcut,
-  managedCapabilityDenial,
   type ClientSettingsPatch,
   type DesktopSnapShotShortcutAvailability,
   type DesktopSnapShotSetupAction,
@@ -10,7 +9,7 @@ import {
 import { PlayIcon } from "lucide-react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { useContext, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
@@ -28,7 +27,6 @@ import {
   type SnapShotSetupError,
 } from "../../state/desktopSnapShot";
 import { toastManager } from "../ui/toast";
-import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import {
@@ -42,6 +40,7 @@ import {
   snapShotAccessibilityUnavailableMessage,
   snapShotSetupComplete,
   type SnapShotSoundSelection,
+  resumedCaptureSetup,
 } from "./SnapShotSettings.logic";
 import {
   SettingsUnavailableGroup,
@@ -90,12 +89,12 @@ export function SnapShotSettings() {
     snapShotShortcut: current.snapShotShortcut,
     snapShotSound: current.snapShotSound,
   }));
-  const policyDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "snapShot");
-  const enabled = settings.snapShotEnabled && policyDenial === undefined;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const bridge = getDesktopSnapShotBridge();
   const registry = useContext(RegistryContext);
   const { state, refreshError } = useAtomValue(desktopSnapShotAtom);
+  const policyDenial = state?.policyDenial;
+  const enabled = settings.snapShotEnabled && policyDenial === undefined;
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupError, setSetupError] = useState<SnapShotSetupError | null>(null);
   // macOS can quit the app from a permission prompt; until the user opens or closes the wizard
@@ -105,12 +104,12 @@ export function SnapShotSettings() {
     initialStep: CaptureSetupStep;
     wasEnabled: boolean;
   } | null>();
-  const wizard =
-    chosenWizard !== undefined
-      ? chosenWizard
-      : state?.macPermissions && resume
-        ? { initialStep: "access" as const, wasEnabled: resume.wasEnabled }
-        : null;
+  const wizard = chosenWizard !== undefined ? chosenWizard : resumedCaptureSetup(state, resume);
+  // The startup redirect follows the saved resume, and only the wizard would clear it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- localStorage is outside React.
+  useEffect(() => {
+    if (policyDenial !== undefined) clearSnapShotSetupResume();
+  }, [policyDenial]);
   // The wizard shows errors inline; outside it there is nowhere to, so they become a toast.
   const reportSetupError = (title: string, error: unknown) => {
     const report = snapShotSetupError(title, error);

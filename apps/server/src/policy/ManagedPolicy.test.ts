@@ -60,14 +60,10 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         JSON.stringify({
           schemaVersion: 1,
           organization: "Example Corp",
-          limits: { webhookTasks: false, telemetry: true, snapShot: false },
+          limits: { webhookTasks: false, telemetry: true },
         }),
       );
-      assert.deepEqual(policy.summary?.limits, {
-        webhookTasks: false,
-        telemetry: true,
-        snapShot: false,
-      });
+      assert.deepEqual(policy.summary?.limits, { webhookTasks: false, telemetry: true });
       assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
       assert.isUndefined(ManagedPolicy.deniedBy(policy, "telemetry"));
     }),

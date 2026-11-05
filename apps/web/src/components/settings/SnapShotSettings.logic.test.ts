@@ -3,6 +3,7 @@ import { DEFAULT_CLIENT_SETTINGS, type DesktopSnapShotState } from "@t3tools/con
 
 import {
   createRecordingRequestTracker,
+  resumedCaptureSetup,
   snapShotStatus,
   snapShotShortcutStatus,
   snapShotSetupSummary,
@@ -22,6 +23,25 @@ it("ignores a stale request after a newer request starts", () => {
   expect(requests.owns(firstRequest)).toBe(false);
   expect(requests.owns(secondRequest)).toBe(true);
   expect(requests.tryBegin()).toBeNull();
+});
+
+it("resumes macOS capture setup only while policy allows SnapShots", () => {
+  const state: DesktopSnapShotState = {
+    mode: "direct",
+    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
+    shortcutRegistered: false,
+    shortcutMessage: null,
+    macPermissions: { screenRecording: false, accessibility: false },
+    message: null,
+  };
+
+  expect(resumedCaptureSetup(state, { wasEnabled: true })).toEqual({
+    initialStep: "access",
+    wasEnabled: true,
+  });
+  expect(
+    resumedCaptureSetup({ ...state, policyDenial: "Not allowed." }, { wasEnabled: true }),
+  ).toBeNull();
 });
 
 it.each(["gnome-extension", "picker"] as const)(
