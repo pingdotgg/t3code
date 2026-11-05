@@ -32,6 +32,7 @@ const hosts = {
 function countingResolver() {
   const reads: Array<string> = [];
   const resolver = SecretResolver.SecretResolver.of({
+    label: (provider) => Effect.succeed(provider),
     read: (references) =>
       Effect.sync(() =>
         references.map((reference) => {
@@ -58,11 +59,11 @@ it.effect(
     }),
 );
 
-it.effect("treats a reference the provider cannot read as an unset credential", () =>
+it.effect("keeps a reference the provider cannot read, so it never passes for an unset one", () =>
   Effect.gen(function* () {
     const { reads, resolver } = countingResolver();
     const resolved = yield* resolveSourceControlHostSecrets(resolver, hosts, "gitcafe");
-    assert.deepEqual(resolved.gitcafe, { token: "" });
+    assert.deepEqual(resolved.gitcafe, { token: source("missing#token") });
     assert.deepEqual(reads, ["missing#token"]);
   }),
 );
@@ -109,6 +110,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     let current = "stale";
     const cache = new Map<string, string>();
     const resolver = SecretResolver.SecretResolver.of({
+      label: (provider) => Effect.succeed(provider),
       read: (references) =>
         Effect.sync(() =>
           references.map((reference) => {
