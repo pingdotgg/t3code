@@ -33,7 +33,7 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { probeCursorSkills } from "./skills.ts";
-import { makeCursorAuth } from "./auth.ts";
+import { isInvalidCursorTeamId, makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
@@ -238,7 +238,8 @@ export const CursorDriver: ProviderDriver<
               !(
                 effectiveConfig.enabled &&
                 snapshot.installed &&
-                snapshot.auth.status === "authenticated"
+                snapshot.auth.status === "authenticated" &&
+                !isInvalidCursorTeamId(processEnv.CURSOR_TEAM_ID)
               ),
             (snapshot) =>
               host.settings.get.pipe(

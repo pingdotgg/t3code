@@ -195,12 +195,28 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
-  it.effect("publishes the team id of a browser sign-in", () =>
+  it.effect.each([
+    {
+      name: "publishes the team id of a browser sign-in",
+      teamId: undefined,
+      team: { id: 42, name: "Secondary team" },
+      expected: { status: "ready", auth: { workspaceId: "42" } },
+    },
+    {
+      name: "warns about an invalid CURSOR_TEAM_ID",
+      teamId: "abc",
+      team: undefined,
+      expected: {
+        status: "warning",
+        message: 'CURSOR_TEAM_ID "abc" is not a Cursor team id. Runs fail until it is fixed.',
+      },
+    },
+  ])("$name", ({ teamId, team, expected }) =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(
         baseCursorSettings,
-        { CURSOR_API_KEY: "browser-key" },
-        { type: "browser", team: { id: 42, name: "Secondary team" } },
+        { CURSOR_API_KEY: "browser-key", ...(teamId ? { CURSOR_TEAM_ID: teamId } : {}) },
+        { type: "browser", team },
       ).pipe(
         Effect.provide(
           CursorSdkCatalog.layerTest(() =>
@@ -212,7 +228,7 @@ describe("checkCursorProviderStatus", () => {
         ),
       );
 
-      expect(provider.auth).toMatchObject({ workspaceId: "42" });
+      expect(provider).toMatchObject(expected);
     }),
   );
 

@@ -63,6 +63,12 @@ export interface CursorAuthOptions {
   readonly login?: (options: SdkLoginOptions) => Promise<SdkLoginResult>;
 }
 
+/** Cursor team ids are positive int32 values; a blank setting means the default team. */
+export const isInvalidCursorTeamId = (raw: string | undefined): boolean => {
+  const text = raw?.trim();
+  return !!text && !(/^[1-9]\d{0,9}$/.test(text) && Number(text) <= 2 ** 31 - 1);
+};
+
 export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: CursorAuthOptions) {
   const scope = yield* Scope.Scope;
   const random = yield* SecureRandom.SecureRandom;
@@ -108,7 +114,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
   });
 
   const teamIdText = options.teamId?.trim();
-  const teamId = teamIdText && /^[1-9]\d*$/.test(teamIdText) ? Number(teamIdText) : undefined;
+  const teamId = teamIdText && !isInvalidCursorTeamId(teamIdText) ? Number(teamIdText) : undefined;
   const readAccess: CursorAuth["readAccess"] = Effect.map(
     configuredKey ? Effect.succeed({ apiKey: configuredKey, team: undefined }) : loadAccess,
     (access) =>
@@ -118,7 +124,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
   );
 
   const requireAccess = Effect.gen(function* () {
-    if (teamIdText && teamId === undefined) {
+    if (isInvalidCursorTeamId(teamIdText)) {
       return yield* new ProviderSetupError({
         instanceId: options.instanceId,
         operation: "credentials",

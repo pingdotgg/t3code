@@ -302,7 +302,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       teamId: " 42 ",
       expected: { id: 42, name: undefined },
     },
-    ...["abc", "0", "-1", "1.5", "1e3"].map((teamId) => ({
+    ...["abc", "0", "-1", "1.5", "1e3", "2147483648", "9007199254740993"].map((teamId) => ({
       name: `no team for an invalid CURSOR_TEAM_ID "${teamId}"`,
       teamId,
       expected: "rejected" as const,

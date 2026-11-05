@@ -21,7 +21,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import type { CursorTeam } from "./auth.ts";
+import { isInvalidCursorTeamId, type CursorTeam } from "./auth.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const CURSOR_PRESENTATION = {
@@ -348,13 +348,20 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 
   const snapshot = catalogResult.success.value;
   const discoveredModels = buildCursorDiscoveredModelsFromSdk(snapshot.models);
+  const teamId = environment?.CURSOR_TEAM_ID?.trim();
+  const teamInvalid = isInvalidCursorTeamId(teamId);
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
     parsed: {
       version: null,
-      status: "ready",
+      status: teamInvalid ? "warning" : "ready",
       auth: cursorSdkAuth(snapshot.user, authentication),
+      ...(teamInvalid
+        ? {
+            message: `CURSOR_TEAM_ID "${teamId}" is not a Cursor team id. Runs fail until it is fixed.`,
+          }
+        : {}),
     },
     discoveredModels,
     ...(discoveredModels.length === 0
