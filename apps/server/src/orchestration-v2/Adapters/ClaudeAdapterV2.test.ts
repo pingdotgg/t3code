@@ -15090,6 +15090,472 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("does not give a subagent under a fork skill the root effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SKILL_TOOL_USE_ID = "toolu-effort-fork-skill";
+        const NESTED_TOOL_USE_ID = "toolu-effort-fork-nested";
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-subagent-fork-nested-effort"),
+            text: "Run the fork skill.",
+            attachments: [],
+            modelSelection: {
+              instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
+              model: "claude-opus-4-6",
+              options: [{ id: "effort", value: "high" }],
+            },
+          }),
+        );
+        const launch = (parentToolUseId: string | null, toolUse: object, uuid: string) =>
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: parentToolUseId,
+            message: {
+              model: "claude-opus-4-6",
+              id: `msg_${uuid}`,
+              type: "message",
+              role: "assistant",
+              content: [toolUse],
+            },
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const taskStarted = (id: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: `task-${id}`,
+            tool_use_id: id,
+            description: id,
+            task_type: "local_agent",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        for (const frame of [
+          launch(
+            null,
+            {
+              type: "tool_use",
+              id: SKILL_TOOL_USE_ID,
+              name: "Skill",
+              input: { skill: "fork-probe" },
+            },
+            "00000000-0000-4000-8000-000000000231",
+          ),
+          taskStarted(SKILL_TOOL_USE_ID, "00000000-0000-4000-8000-000000000232"),
+          launch(
+            SKILL_TOOL_USE_ID,
+            {
+              type: "tool_use",
+              id: NESTED_TOOL_USE_ID,
+              name: "Agent",
+              input: { description: "nested", subagent_type: "general-purpose", prompt: "Check." },
+            },
+            "00000000-0000-4000-8000-000000000233",
+          ),
+          taskStarted(NESTED_TOOL_USE_ID, "00000000-0000-4000-8000-000000000234"),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000235", result: "Done." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const efforts = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated"
+              ? [
+                  [
+                    event.subagent.nativeTaskRef?.nativeId,
+                    getModelSelectionStringOptionValue(event.subagent.modelSelection, "effort"),
+                  ] as const,
+                ]
+              : [],
+          ),
+        );
+        assert.deepEqual(Object.fromEntries(efforts), {
+          [`task-${SKILL_TOOL_USE_ID}`]: undefined,
+          [`task-${NESTED_TOOL_USE_ID}`]: undefined,
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  const FORK_SKILL_PARENT_SELECTION = {
+    instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
+    model: "claude-sonnet-4-6",
+    options: [{ id: "effort", value: "medium" }],
+  } satisfies ModelSelection;
+  const makeForkSkillTaskStartedFrame = (input: {
+    readonly taskId: string;
+    readonly toolUseId?: string;
+    readonly uuid: string;
+  }) =>
+    claudeSdkFrame({
+      type: "system",
+      subtype: "task_started",
+      task_id: input.taskId,
+      ...(input.toolUseId === undefined ? {} : { tool_use_id: input.toolUseId }),
+      description: "/fork-probe",
+      subagent_type: "general-purpose",
+      is_backgrounded: false,
+      task_type: "local_agent",
+      prompt: "Reply with exactly the word FORKED and nothing else.\n\n\nARGUMENTS: go",
+      skip_transcript: true,
+      ambient: true,
+      uuid: input.uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  const forkSkillSubagentSelections = (
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    taskId: string,
+  ) =>
+    events.flatMap((event) =>
+      event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId
+        ? [{ model: event.subagent.model, modelSelection: event.subagent.modelSelection }]
+        : [],
+    );
+
+  it.effect("records a slash-command fork skill with its own model and no parent effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const FORK_TASK_ID = "a0b69caf85bc9b232";
+        const FORK_PARENT_TOOL_USE_ID = "forked-command-fork-probe";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-fork-skill-slash-command"),
+            text: "/fork-probe go",
+            attachments: [],
+            modelSelection: FORK_SKILL_PARENT_SELECTION,
+          }),
+        );
+        for (const frame of [
+          makeForkSkillTaskStartedFrame({
+            taskId: FORK_TASK_ID,
+            uuid: "00000000-0000-4000-8000-000000000291",
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Reply with exactly the word FORKED." }],
+            },
+            parent_tool_use_id: FORK_PARENT_TOOL_USE_ID,
+            agent_id: FORK_TASK_ID,
+            uuid: "00000000-0000-4000-8000-000000000292",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: FORK_PARENT_TOOL_USE_ID,
+            message: {
+              model: "claude-opus-4-6",
+              id: "msg_fork_skill_reply",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "FORKED" }],
+            },
+            uuid: "00000000-0000-4000-8000-000000000293",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: FORK_TASK_ID,
+            status: "completed",
+            output_file: `/tmp/${FORK_TASK_ID}.output`,
+            summary: "FORKED",
+            uuid: "00000000-0000-4000-8000-000000000294",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000295",
+            result: "FORKED",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        assert.deepEqual(forkSkillSubagentSelections(harness.events, FORK_TASK_ID).at(-1), {
+          model: "claude-opus-4-6",
+          modelSelection: {
+            instanceId: FORK_SKILL_PARENT_SELECTION.instanceId,
+            model: "claude-opus-4-6",
+          },
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("routes a repeated slash-command fork skill to its own run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const FORK_PARENT_TOOL_USE_ID = "forked-command-fork-probe";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-fork-skill-repeated"),
+            text: "/fork-probe go",
+            attachments: [],
+            modelSelection: FORK_SKILL_PARENT_SELECTION,
+          }),
+        );
+        const forkRun = (taskId: string, model: string, uuidBase: number) => [
+          makeForkSkillTaskStartedFrame({
+            taskId,
+            uuid: `00000000-0000-4000-8000-${String(uuidBase).padStart(12, "0")}`,
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: { role: "user", content: [{ type: "text", text: "Reply FORKED." }] },
+            parent_tool_use_id: FORK_PARENT_TOOL_USE_ID,
+            agent_id: taskId,
+            uuid: `00000000-0000-4000-8000-${String(uuidBase + 1).padStart(12, "0")}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: FORK_PARENT_TOOL_USE_ID,
+            message: {
+              model,
+              id: `msg_${taskId}`,
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "FORKED" }],
+            },
+            uuid: `00000000-0000-4000-8000-${String(uuidBase + 2).padStart(12, "0")}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            status: "completed",
+            output_file: `/tmp/${taskId}.output`,
+            summary: "FORKED",
+            uuid: `00000000-0000-4000-8000-${String(uuidBase + 3).padStart(12, "0")}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ];
+        for (const frame of [
+          ...forkRun("a0b69caf85bc9b234", "claude-opus-4-6", 300),
+          ...forkRun("a0b69caf85bc9b235", "claude-haiku-4-5", 310),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000320", result: "FORKED" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        assert.deepEqual(
+          ["a0b69caf85bc9b234", "a0b69caf85bc9b235"].map(
+            (taskId) => forkSkillSubagentSelections(harness.events, taskId).at(-1)?.model,
+          ),
+          ["claude-opus-4-6", "claude-haiku-4-5"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { name: "first", earlyRuns: [true] },
+    { name: "repeated", earlyRuns: [false, true] },
+  ])("routes a $name slash-command fork skill whose frames precede its start", ({ earlyRuns }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-fork-skill-early-frames"),
+            text: "/fork-probe go",
+            attachments: [],
+            modelSelection: FORK_SKILL_PARENT_SELECTION,
+          }),
+        );
+        const runs = earlyRuns.map((early, index) => ({
+          early,
+          taskId: `a0b69caf85bc9b24${index}`,
+          model: index === 0 ? "claude-opus-4-6" : "claude-haiku-4-5",
+        }));
+        const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+        const frames = runs.flatMap(({ early, taskId, model }, index) => {
+          const base = 400 + index * 10;
+          const started = makeForkSkillTaskStartedFrame({ taskId, uuid: uuid(base) });
+          const childFrames = [
+            claudeSdkFrame({
+              type: "user",
+              message: { role: "user", content: [{ type: "text", text: "Reply FORKED." }] },
+              parent_tool_use_id: "forked-command-fork-probe",
+              agent_id: taskId,
+              uuid: uuid(base + 1),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "assistant",
+              parent_tool_use_id: "forked-command-fork-probe",
+              agent_id: taskId,
+              message: {
+                model,
+                id: `msg_${taskId}`,
+                type: "message",
+                role: "assistant",
+                content: [{ type: "text", text: `FORKED ${taskId}` }],
+              },
+              uuid: uuid(base + 2),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          ];
+          return [
+            ...(early ? [...childFrames, started] : [started, ...childFrames]),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: taskId,
+              status: "completed",
+              output_file: `/tmp/${taskId}.output`,
+              summary: "FORKED",
+              uuid: uuid(base + 3),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          ];
+        });
+        for (const frame of [...frames, makeResultFrame({ uuid: uuid(499), result: "FORKED" })]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const childTexts = (taskId: string) => {
+          const childThreadId = harness.events.find(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === taskId,
+          );
+          const texts = new Map<string, string>();
+          for (const event of harness.events) {
+            if (
+              event.type === "message.updated" &&
+              childThreadId?.type === "subagent.updated" &&
+              event.message.threadId === childThreadId.subagent.childThreadId &&
+              event.message.role === "assistant"
+            ) {
+              texts.set(event.message.id, event.message.text);
+            }
+          }
+          return [...texts.values()];
+        };
+        assert.deepEqual(
+          runs.map(({ taskId }) => ({
+            model: forkSkillSubagentSelections(harness.events, taskId).at(-1)?.model,
+            texts: childTexts(taskId),
+          })),
+          runs.map(({ taskId, model }) => ({ model, texts: [`FORKED ${taskId}`, "FORKED"] })),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not give a fork skill launched through the Skill tool the parent effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const FORK_TASK_ID = "a0b69caf85bc9b233";
+        const SKILL_TOOL_USE_ID = "toolu-fork-skill-tool";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-fork-skill-tool"),
+            text: "Invoke the fork-probe skill.",
+            attachments: [],
+            modelSelection: FORK_SKILL_PARENT_SELECTION,
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              model: FORK_SKILL_PARENT_SELECTION.model,
+              id: "msg_fork_skill_tool_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: SKILL_TOOL_USE_ID,
+                  name: "Skill",
+                  input: { skill: "fork-probe", args: "again" },
+                },
+              ],
+            },
+            uuid: "00000000-0000-4000-8000-000000000296",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeForkSkillTaskStartedFrame({
+            taskId: FORK_TASK_ID,
+            toolUseId: SKILL_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000297",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000298",
+            result: "FORKED",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const efforts = forkSkillSubagentSelections(harness.events, FORK_TASK_ID).map(
+          ({ modelSelection }) => getModelSelectionStringOptionValue(modelSelection, "effort"),
+        );
+        assert.isNotEmpty(efforts);
+        assert.deepEqual(
+          efforts.filter((effort) => effort !== undefined),
+          [],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("extracts text from direct content-block subagent results", () =>
     Effect.scoped(
       Effect.gen(function* () {
