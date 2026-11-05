@@ -1,3 +1,4 @@
+import type { EnvironmentSpeechModel } from "@t3tools/contracts";
 import catalog from "./catalog.json" with { type: "json" };
 
 export type SpeechModel = {
@@ -11,6 +12,7 @@ export type SpeechModel = {
   readonly languages: readonly string[];
   readonly accuracy: number;
   readonly speed: number;
+  readonly benchmark: NonNullable<EnvironmentSpeechModel["benchmark"]>;
   readonly recommended: boolean;
   readonly supportsStreaming: boolean;
   readonly supportsLanguageDetection: boolean;
