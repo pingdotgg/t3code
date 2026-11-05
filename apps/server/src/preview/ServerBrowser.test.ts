@@ -1073,10 +1073,9 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
         yield* viewer.input(message);
       expect(page.setViewportSize).not.toHaveBeenCalled();
       expect(session.send.mock.calls.some(([method]) => method.startsWith("Input."))).toBe(false);
-      const outputs = yield* Queue.takeAll(viewer.output);
-      expect(outputs).toContainEqual(
-        expect.objectContaining({ _tag: "frame", data: Buffer.from("frame") }),
-      );
+      const outputs = [yield* Queue.take(viewer.output)];
+      while (outputs.at(-1)!._tag !== "frame") outputs.push(yield* Queue.take(viewer.output));
+      expect(outputs.at(-1)).toMatchObject({ _tag: "frame", data: Buffer.from("frame") });
       expect(outputs).toContainEqual(expect.objectContaining({ _tag: "viewport" }));
       expect(outputs).toContainEqual(
         expect.objectContaining({ _tag: "control", canOperate: false, controller: "agent" }),
@@ -2473,7 +2472,9 @@ it.live.each([
         const answered = Promise.withResolvers<void>();
         const held = Promise.withResolvers<void>();
         const registered = Promise.withResolvers<void>();
+        const captureHeld = Promise.withResolvers<void>();
         popup.page.waitForLoadState = vi.fn(async () => registered.resolve());
+        const holding = dialogState.startsWith("holds");
         const holds = (method: string, input: unknown) =>
           dialogState === "holdsPdfProbe"
             ? method === "Runtime.evaluate" &&
@@ -2487,6 +2488,15 @@ it.live.each([
           session.send.mockImplementation(async (method, input) => {
             if (setUp && holds(method, input)) {
               held.resolve();
+              await answered.promise;
+            }
+            // The modal holds every session's frames, so a viewer's first frame waits too.
+            if (
+              !setUp &&
+              holding &&
+              (method === "Page.startScreencast" || method === "Page.captureScreenshot")
+            ) {
+              captureHeld.resolve();
               await answered.promise;
             }
             if (!changedDialog) {
@@ -2551,7 +2561,6 @@ it.live.each([
           });
         }
         if (host === "server") yield* Effect.promise(() => resized.promise);
-        const holding = dialogState.startsWith("holds");
         // A held setup waits for its dialog's answer; the others finish on their own.
         if (host === "desktop") yield* Effect.promise(() => (holding ? held : registered).promise);
         const status = yield* broker.invoke<PreviewAutomationStatus>({
@@ -2584,30 +2593,58 @@ it.live.each([
                 input: { accept },
               });
             const handoffs: Array<Fiber.Fiber<void>> = [];
+            const personAnswers = dialogState === "holdsPdfProbe";
+            let afterAnswer: Effect.Effect<void> = Effect.void;
             if (holding) {
               // The held setup has not finished, yet only the tab's owner can answer its dialog.
               expect(popup.page.waitForLoadState).not.toHaveBeenCalled();
               expect(yield* answerAs(asSession("intruder")).pipe(Effect.flip)).toMatchObject({
                 reason: "agentMismatch",
               });
+              // A viewer that leaves while its first frame is held never captures again.
+              const leaving = yield* Scope.make();
+              yield* browser
+                .attachViewer(viewerInput(adopted.tabId, true))
+                .pipe(Effect.provideService(Scope.Scope, leaving));
+              const leavingSession = popup.sessions.at(-1)!;
+              yield* Effect.promise(() => captureHeld.promise);
+              yield* Scope.close(leaving, Exit.void);
+              expect(leavingSession.detach).toHaveBeenCalledTimes(1);
+              // A fresh viewer gets control and can answer before its first frame.
               const person = yield* browser.attachViewer(viewerInput(adopted.tabId, true));
+              let framed = false;
               const controlled = (byPerson: boolean) =>
                 Effect.gen(function* () {
                   let control = yield* Queue.take(person.output);
-                  while (control._tag !== "control" || (control.controller === "you") !== byPerson)
+                  while (
+                    control._tag !== "control" ||
+                    (control.controller === "you") !== byPerson
+                  ) {
+                    if (control._tag === "frame") framed = true;
                     control = yield* Queue.take(person.output);
+                  }
                 });
               handoffs.push(yield* person.input({ type: "takeControl" }).pipe(Effect.forkScoped));
               yield* controlled(true);
+              expect(framed).toBe(false);
               expect(yield* answerAs(scope).pipe(Effect.flip)).toMatchObject({
                 reason: "humanControl",
               });
+              if (personAnswers) yield* person.input({ type: "dialog", accept });
               handoffs.push(
                 yield* person.input({ type: "releaseControl" }).pipe(Effect.forkScoped),
               );
               yield* controlled(false);
-              expect(pendingDialog.accept).not.toHaveBeenCalled();
+              expect(pendingDialog.accept).toHaveBeenCalledTimes(personAnswers ? 1 : 0);
               expect(pendingDialog.dismiss).not.toHaveBeenCalled();
+              afterAnswer = Effect.gen(function* () {
+                while (!framed) framed = (yield* Queue.take(person.output))._tag === "frame";
+                const detachedAt = leavingSession.detach.mock.invocationCallOrder[0]!;
+                const { calls, invocationCallOrder } = leavingSession.send.mock;
+                expect(
+                  calls.filter((_, index) => invocationCallOrder[index]! > detachedAt),
+                ).toEqual([]);
+              });
               // Its opener keeps working while the popup's setup is held.
               expect(
                 yield* broker.invoke({
@@ -2618,12 +2655,12 @@ it.live.each([
                 }),
               ).toBe("evaluated");
             }
-            const answer = yield* answerAs(scope);
-            expect(answer.dialog).toBeNull();
+            if (!personAnswers) expect((yield* answerAs(scope)).dialog).toBeNull();
             expect(pendingDialog.accept).toHaveBeenCalledTimes(accept ? 1 : 0);
             expect(pendingDialog.dismiss).toHaveBeenCalledTimes(accept ? 0 : 1);
             if (holding) yield* Effect.promise(() => registered.promise);
             for (const handoff of handoffs) yield* Fiber.join(handoff);
+            yield* afterAnswer;
           }
         }
         const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });

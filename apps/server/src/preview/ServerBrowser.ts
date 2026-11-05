@@ -2622,19 +2622,21 @@ const make = Effect.gen(function* () {
       capacity: VIEWER_OUTPUT_LIMIT,
       strategy: "dropping",
     });
+    let detached = false;
     const session = yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: () => tab.page.context().newCDPSession(tab.page),
         catch: (cause) => new ServerBrowserLaunchError({ cause }),
       }),
       (session) =>
-        Effect.promise(() =>
-          session
+        Effect.promise(() => {
+          detached = true;
+          return session
             .send("Page.stopScreencast")
             .catch(constVoid)
             .then(() => session.detach())
-            .catch(constVoid),
-        ),
+            .catch(constVoid);
+        }),
     );
     const quality = Math.min(100, Math.max(1, Math.round(input.quality)));
     // Chromium may drop the final frame during a burst; send a still when it settles.
@@ -2647,8 +2649,9 @@ const make = Effect.gen(function* () {
     const startScreencast = (scale: number) => {
       screencastScale = scale;
       screencastParams = screencastParams.then(async () => {
-        if (tab.capturing > 0) return;
+        if (detached || tab.capturing > 0) return;
         await session.send("Page.stopScreencast").catch(constVoid);
+        if (detached) return;
         await session
           .send("Page.startScreencast", {
             format: "jpeg",
@@ -2717,8 +2720,8 @@ const make = Effect.gen(function* () {
     broadcastControl(tab);
     pushFileChooser(tab);
     const pushStill = async () => {
-      const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+      const data = await withCaptureLock(tab, async () =>
+        detached ? null : ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
       ).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };
@@ -2774,10 +2777,15 @@ const make = Effect.gen(function* () {
       });
     });
     void broadcastViewport(tab).catch(constVoid);
-    yield* Effect.promise(() => startScreencast(1));
-    // An idle page does not repaint for a new screencast, so the viewer
-    // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.promise(pushStill);
+    // A page dialog can hold capture until it is answered, so the viewer
+    // returns first and can answer it. An idle page does not repaint for a
+    // new screencast, so the viewer starts from a still unless a live frame beat it.
+    yield* Effect.forkScoped(
+      Effect.promise(async () => {
+        await startScreencast(1);
+        if (!screencastStarted) await pushStill();
+      }),
+    );
     return {
       output,
       input: (raw: unknown) =>
