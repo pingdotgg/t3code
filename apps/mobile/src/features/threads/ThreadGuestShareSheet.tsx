@@ -20,28 +20,15 @@ import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useDeadlinePassed } from "../../lib/clock";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { serverEnvironment } from "../../state/server";
 import { environmentThreadDetails } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadGuestShare } from "./ThreadGuestShareBar";
-import { canShareWithGuest } from "./guestShareAvailability";
 
 const TITLE = "Share with guest";
 const COPY_FEEDBACK_DURATION_MS = 1200;
 const PENDING_MESSAGES_NOTICE =
   "Send or dismiss pending guest messages in the thread before creating a new link.";
-
-/**
- * Whether this environment offers "Share with guest": the user may create links there, and its
- * Guest links beta is on (Settings > Labs). The server refuses links while the beta is off.
- * Guests arrive through T3 Connect, so a policy that turns Connect off hides sharing too.
- */
-export function useCanShareWithGuest(environmentId: EnvironmentId | null): boolean {
-  const permitted = useAtomValue(serverEnvironment.createGuestShare.permissionAtom(environmentId));
-  return useAtomValue(environmentServerConfigsAtom, (configs) =>
-    canShareWithGuest(permitted, environmentId === null ? undefined : configs.get(environmentId)),
-  );
-}
 
 type CreateState =
   | { readonly status: "idle" }
