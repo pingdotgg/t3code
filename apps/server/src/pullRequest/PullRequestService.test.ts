@@ -1239,7 +1239,7 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
                       detail: "HTTP 504",
                     }),
                   )
-                : Effect.succeed({ ...changeRequest(1, mergedAt), state }),
+                : Effect.succeed({ ...changeRequest(1, mergedAt), state, mergedAt }),
           }),
         ],
       });
@@ -1248,7 +1248,7 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
         Effect.forkChild({ startImmediately: true }),
       );
 
-      yield* service.runAction({ ...reference, action: "merge" });
+      assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
       const queuedRefresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
       confirmationFails = true;
       yield* service.runAction({ ...reference, action: "merge" });
@@ -1258,7 +1258,8 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
       );
       confirmationFails = false;
       state = "merged";
-      yield* TestClock.setTime(Date.parse(mergedAt));
+      // The event carries the host's merge time, not the moment the confirmation ran.
+      yield* TestClock.setTime(Date.parse(mergedAt) + 60_000);
       yield* service.runAction({
         ...reference,
         repository: " ACME/WEB ",
@@ -1266,6 +1267,71 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
         mergeMethod: "merge",
       });
 
+      assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
+        ...reference,
+        mergedAt,
+      });
+    }),
+  ),
+);
+
+it.effect("returns the host's merged reply as a summary and trusts it without another read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const mergedAt = "2026-09-03T02:00:00.000Z";
+      const merged = {
+        number: 1,
+        title: "Change request 1",
+        url: "https://host/pull/1",
+        headBranch: "feat/1",
+        baseBranch: "main",
+        state: "merged" as const,
+        isDraft: false,
+        updatedAt: mergedAt,
+        mergedAt,
+        headSha: "abc123",
+        autoMergeEnabled: false,
+      };
+      let summaryReads = 0;
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            runAction: () => Effect.succeed(merged),
+            getChangeRequestSummary: () =>
+              Effect.sync(() => {
+                summaryReads++;
+                return { ...changeRequest(1, mergedAt), state: "merged" as const, mergedAt };
+              }),
+          }),
+        ],
+      });
+      const merges = yield* service.subscribeMerges;
+      const observedMerge = yield* Stream.runHead(merges).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const observedAt = Date.parse("2026-09-03T02:00:01.000Z");
+      yield* TestClock.setTime(observedAt);
+
+      // Clients that did not ask decode the success as void, so they must get nothing back.
+      assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
+      const result = yield* service.runAction({
+        ...reference,
+        action: "merge",
+        replyWithSummary: true,
+      });
+
+      assert.deepStrictEqual(result, {
+        ...merged,
+        provider: SourceControlProviderKind.make("github"),
+        projectId: reference.projectId,
+        repository: reference.repository,
+        observedAt,
+      });
+      assert.strictEqual(summaryReads, 0);
       assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
         ...reference,
         mergedAt,
