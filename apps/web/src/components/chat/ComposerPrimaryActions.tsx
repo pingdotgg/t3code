@@ -105,7 +105,7 @@ const COMPOSER_PILL_SLOT_CLASS_NAME =
 // An icon button inside the pill: send and the dictation mic share it. r7, concentric
 // with the r8 pill inside its 1px rim.
 export const COMPOSER_PILL_BUTTON_CLASS_NAME =
-  "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-item text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
+  "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-item text-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
 
 /** A labeled primary action on the message-action pill; callers add height, padding and split edges. */
 function MessageActionPill({ className, type = "button", ...props }: ComponentProps<"button">) {
