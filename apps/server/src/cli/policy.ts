@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -15,9 +16,15 @@ import { macosProfile, windowsAdml, windowsAdmx } from "../policy/policyTemplate
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
+type InstalledPolicy = Effect.Success<ReturnType<typeof ManagedPolicy.loadedPolicy>>;
+
+const encodeReport = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.toEncoded(Schema.Unknown), { space: 2 }),
+);
+
 const describePolicy = (
   policy: ManagedPolicy.ManagedPolicy["Service"],
-  loaded: Effect.Success<ReturnType<typeof ManagedPolicy.loadedPolicy>>,
+  loaded: InstalledPolicy,
 ) => {
   const { document } = policy;
   if (document === undefined || loaded === null) {
@@ -41,32 +48,50 @@ const describePolicy = (
 };
 
 /** Whether the server running from this T3 home loaded the installed policy, which waits for a restart. */
-export const describeRunningServer = Effect.fn("cli.policy.describeRunningServer")(function* (
+export const readRunningServer = Effect.fn("cli.policy.readRunningServer")(function* (
   statePath: string,
-  installed: Effect.Success<ReturnType<typeof ManagedPolicy.loadedPolicy>>,
+  installed: InstalledPolicy,
 ) {
   const state = yield* readPersistedServerRuntimeState(statePath);
   if (Option.isNone(state) || !isProcessAlive(state.value.pid)) {
-    return "No T3 Code server is running from this T3 home. The installed policy applies when one starts.";
+    return { status: "not-running" } as const;
   }
   const { pid, startedAt, managedPolicy: loaded } = state.value;
-  const server = `The running server (pid ${pid}, started ${startedAt})`;
-  if (loaded === undefined) {
-    return `${server} does not report which policy it loaded. Restart it to apply the installed policy.`;
+  if (loaded === undefined) return { status: "unknown", pid, startedAt } as const;
+  const current = (loaded?.fingerprint ?? null) === (installed?.fingerprint ?? null);
+  return { status: current ? "current" : "restart-required", pid, startedAt, loaded } as const;
+});
+
+export const describeRunningServer = (
+  server: Effect.Success<ReturnType<typeof readRunningServer>>,
+) => {
+  if (server.status === "not-running") {
+    return "No T3 Code server is running from this T3 home. The installed policy applies when one starts.";
   }
-  if ((loaded?.fingerprint ?? null) === (installed?.fingerprint ?? null)) {
+  const running = `The running server (pid ${server.pid}, started ${server.startedAt})`;
+  if (server.status === "unknown") {
+    return `${running} does not report which policy it loaded. Restart it to apply the installed policy.`;
+  }
+  const { loaded } = server;
+  if (server.status === "current") {
     return loaded === null
-      ? `${server} runs without a policy, as installed.`
-      : `${server} loaded this policy.`;
+      ? `${running} runs without a policy, as installed.`
+      : `${running} loaded this policy.`;
   }
   const what =
     loaded === null
       ? "no policy"
       : `${loaded.organization}'s policy from ${loaded.source} (fingerprint ${loaded.fingerprint})`;
-  return `${server} loaded ${what}. Restart T3 Code to apply the installed policy.`;
-});
+  return `${running} loaded ${what}. Restart T3 Code to apply the installed policy.`;
+};
 
-const showCommand = Command.make("show", projectLocationFlags).pipe(
+const showCommand = Command.make("show", {
+  ...projectLocationFlags,
+  json: Flag.Boolean("json").pipe(
+    Flag.withDescription("Emit JSON instead of human-readable output."),
+    Flag.withDefault(false),
+  ),
+}).pipe(
   Command.withDescription(
     "Show the policy installed on this machine, and whether the running server loaded it.",
   ),
@@ -76,14 +101,20 @@ const showCommand = Command.make("show", projectLocationFlags).pipe(
       const policy = yield* ManagedPolicy.ManagedPolicy.pipe(
         Effect.provide(
           ManagedPolicy.layer.pipe(
-            Layer.provide(Layer.succeed(References.MinimumLogLevel, "Warn")),
+            Layer.provide(Layer.succeed(References.MinimumLogLevel, flags.json ? "Error" : "Warn")),
           ),
         ),
       );
       const installed = yield* ManagedPolicy.loadedPolicy(policy);
-      yield* Console.log(describePolicy(policy, installed));
       const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
-      yield* Console.log(yield* describeRunningServer(config.serverRuntimeStatePath, installed));
+      const server = yield* readRunningServer(config.serverRuntimeStatePath, installed);
+      if (flags.json) {
+        const document = policy.document ?? null;
+        yield* Console.log(yield* encodeReport({ installed, document, server }));
+        return;
+      }
+      yield* Console.log(describePolicy(policy, installed));
+      yield* Console.log(describeRunningServer(server));
     }),
   ),
 );

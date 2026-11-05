@@ -12,7 +12,7 @@ import {
   makePersistedServerRuntimeState,
   PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { describeRunningServer } from "./policy.ts";
+import { describeRunningServer, readRunningServer } from "./policy.ts";
 
 const encodeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
 
@@ -39,19 +39,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) =>
             ...(managedPolicy === undefined ? {} : { managedPolicy }),
           });
           yield* fs.writeFileString(statePath, yield* encodeState(state));
-          return yield* describeRunningServer(statePath, current);
+          return yield* readRunningServer(statePath, current);
         });
+      const expectServer = (
+        server: Effect.Success<ReturnType<typeof readRunningServer>>,
+        status: typeof server.status,
+        text: string,
+      ) => {
+        assert.equal(server.status, status);
+        assert.include(describeRunningServer(server), text);
+      };
 
-      assert.include(yield* describeRunningServer(statePath, installed), "No T3 Code server");
-      assert.include(yield* running(installed), "loaded this policy.");
-      assert.include(
+      expectServer(
+        yield* readRunningServer(statePath, installed),
+        "not-running",
+        "No T3 Code server",
+      );
+      expectServer(yield* running(installed), "current", "loaded this policy.");
+      expectServer(
         yield* running(yield* loaded("Other Corp")),
+        "restart-required",
         "loaded Other Corp's policy from /etc/t3code/policy.json",
       );
-      assert.include(yield* running(null), "loaded no policy. Restart T3 Code");
-      assert.include(yield* running(installed, null), "Restart T3 Code to apply");
-      assert.include(yield* running(null, null), "runs without a policy, as installed");
-      assert.include(yield* running(undefined), "does not report which policy it loaded");
+      expectServer(yield* running(null), "restart-required", "loaded no policy. Restart T3 Code");
+      expectServer(yield* running(installed, null), "restart-required", "Restart T3 Code to apply");
+      expectServer(yield* running(null, null), "current", "runs without a policy, as installed");
+      expectServer(yield* running(undefined), "unknown", "does not report which policy it loaded");
     }),
   ),
 );
