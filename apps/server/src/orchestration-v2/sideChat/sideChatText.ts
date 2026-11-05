@@ -39,7 +39,11 @@ const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[A-Za-z]?:/;
  */
 export function lessonSectionAt(
   messages: ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>,
-  anchor: { readonly messageId: string; readonly start: number; readonly embedTitle?: string },
+  anchor: {
+    readonly messageId: string;
+    readonly start: number;
+    readonly embedTitle?: string | undefined;
+  },
 ): string | undefined {
   let section: string | undefined;
   for (const message of messages) {
@@ -78,7 +82,7 @@ export interface SideChatSectionBackfillInput {
       readonly threadId: string;
       readonly messageId: string;
       readonly start: number;
-      readonly embedTitle?: string;
+      readonly embedTitle?: string | undefined;
     };
     readonly section: string | null | undefined;
   }>;
