@@ -22,9 +22,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 export function UsageLimitRecoveryCard({
   thread,
   environmentId,
+  onCheckLimits,
 }: {
   thread: EnvironmentThreadShell;
   environmentId: EnvironmentId;
+  /** Resolves to an error message, or null once the limits panel is open. */
+  onCheckLimits: (() => Promise<string | null>) | null;
 }) {
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
@@ -40,6 +43,7 @@ export function UsageLimitRecoveryCard({
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
   const [copied, setCopied] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [checking, setChecking] = useState(false);
   const code = thread.runtime?.lastErrorCode;
   // OpenAI's partner guidelines specify the ChatGPT notice and its action.
   const workspaceLimit = code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
@@ -85,6 +89,13 @@ export function UsageLimitRecoveryCard({
       const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
     }
+  }
+  async function checkLimits() {
+    if (!onCheckLimits) return;
+    setChecking(true);
+    setError(null);
+    setError(await onCheckLimits());
+    setChecking(false);
   }
   const action = workspaceLimit
     ? {
@@ -153,6 +164,16 @@ export function UsageLimitRecoveryCard({
               "The provider did not report a reset time. Retry manually when your limit is available."}
           </Text>
         )}
+        {!chatGptLimit && resetAt === null && onCheckLimits ? (
+          <View className="flex-row flex-wrap gap-2">
+            <Button
+              label={checking ? "Checking..." : "Check limits"}
+              tone="secondary"
+              disabled={checking}
+              onPress={() => void checkLimits()}
+            />
+          </View>
+        ) : null}
         {canSchedule ? (
           <View className="flex-row flex-wrap gap-2">
             <Button

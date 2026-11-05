@@ -28,11 +28,12 @@ type RecoveryProps = {
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
+  checkLimits: { readonly pending: boolean; readonly run: () => void } | null;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, errorCode, resetAt, stoppedAt, timestampFormat } = props;
+  const { runId, errorCode, resetAt, stoppedAt, timestampFormat, checkLimits } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
@@ -49,7 +50,19 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
       icon: <GaugeIcon />,
       title: "Usage limit reached",
       description: resetDescription,
-      actions: recoveryActions,
+      actions:
+        resetAt === null && checkLimits !== null ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={checkLimits.pending}
+            onClick={checkLimits.run}
+          >
+            {checkLimits.pending ? "Checking..." : "Check limits"}
+          </Button>
+        ) : (
+          recoveryActions
+        ),
     };
   }
   // OpenAI's partner guidelines specify this ChatGPT notice and its actions.

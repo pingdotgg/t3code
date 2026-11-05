@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import type {
   EnvironmentId,
   ProviderInstanceId,
@@ -7,6 +9,8 @@ import type {
 import { collectProviderUsageLimits, hasProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import { useState } from "react";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { usageLimitsBannerItem } from "./ComposerUsageLimits";
 
@@ -37,6 +41,11 @@ export function useUsageLimitsPanel(input: {
   if (panel !== null && panelKey !== null && panel.key !== panelKey) {
     setPanel(null);
   }
+  const canCheck = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const [checkingKey, setCheckingKey] = useState<string | null>(null);
   const report =
     panel !== null && panelKey !== null && panel.key === panelKey && providerInstanceId !== null
       ? collectProviderUsageLimits(providerInstanceId, providers, sources, panel.now)
@@ -66,6 +75,25 @@ export function useUsageLimitsPanel(input: {
     toastManager.add({ type: "info", title: "Usage limits are unavailable for this provider" });
     return false;
   });
+  const check = useStableCallback(async () => {
+    if (providerInstanceId === null || panelKey === null) return;
+    setCheckingKey(panelKey);
+    const result = await refreshUsageLimits(environmentId, () =>
+      refreshProviders({ environmentId, input: {} }),
+    );
+    setCheckingKey(null);
+    if (result?._tag !== "Success") {
+      toastManager.add({ type: "error", title: "Could not check usage limits" });
+      return;
+    }
+    // Read the response: the config stream may not have rendered yet. A stale key closes itself.
+    const now = Date.now();
+    if (collectProviderUsageLimits(providerInstanceId, result.value.providers, sources, now)) {
+      setPanel({ key: panelKey, threadKey, now });
+      return;
+    }
+    toastManager.add({ type: "info", title: "Usage limits are unavailable for this provider" });
+  });
   // Async responses may clear only their originating thread's panel.
   const clearFor = useStableCallback((originThreadKey: string) =>
     setPanel((current) =>
@@ -73,5 +101,9 @@ export function useUsageLimitsPanel(input: {
     ),
   );
 
-  return { banner, offered, open, clearFor };
+  const checkLimits = canCheck
+    ? { pending: checkingKey !== null && checkingKey === panelKey, run: check }
+    : null;
+
+  return { banner, offered, open, clearFor, checkLimits };
 }

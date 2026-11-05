@@ -76,6 +76,7 @@ describe("UsageLimitRecoveryCard", () => {
         <UsageLimitRecoveryCard
           thread={failedThread(resetAt, code, errorClass)}
           environmentId={"env-1" as EnvironmentId}
+          onCheckLimits={null}
         />,
       ),
     );
@@ -84,6 +85,26 @@ describe("UsageLimitRecoveryCard", () => {
     expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual(
       actions,
     );
+  });
+
+  it("checks limits when the provider reported no reset, and shows why a check failed", async () => {
+    const onCheckLimits = vi.fn(async () => "Could not check usage limits.");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    act(() =>
+      root.render(
+        <UsageLimitRecoveryCard
+          thread={failedThread(null)}
+          environmentId={"env-1" as EnvironmentId}
+          onCheckLimits={onCheckLimits}
+        />,
+      ),
+    );
+    await act(async () => container.querySelector("button")!.click());
+    expect(onCheckLimits).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Could not check usage limits.");
+    expect(container.querySelector("button")!.textContent).toBe("Check limits");
   });
 
   it("drops a failed copy's error once a retry copies the request", async () => {
@@ -98,6 +119,7 @@ describe("UsageLimitRecoveryCard", () => {
         <UsageLimitRecoveryCard
           thread={failedThread(null, CHATGPT_WORKSPACE_USAGE_LIMIT_CODE)}
           environmentId={"env-1" as EnvironmentId}
+          onCheckLimits={null}
         />,
       ),
     );
@@ -120,6 +142,7 @@ describe("UsageLimitRecoveryCard", () => {
         <UsageLimitRecoveryCard
           thread={failedThread(null, CHATGPT_WORKSPACE_USAGE_LIMIT_CODE)}
           environmentId={"env-1" as EnvironmentId}
+          onCheckLimits={null}
         />,
       ),
     );
@@ -142,6 +165,7 @@ describe("UsageLimitRecoveryCard", () => {
         <UsageLimitRecoveryCard
           thread={failedThread(new Date(30 * DAY_MS).toISOString())}
           environmentId={"env-1" as EnvironmentId}
+          onCheckLimits={null}
         />,
       ),
     );
