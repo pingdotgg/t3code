@@ -1604,6 +1604,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
     }),
+    checkSecretSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:check-secret-source",
+      tag: WS_METHODS.serverCheckSecretSource,
+    }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
       tag: WS_METHODS.serverRetryResourceTelemetry,
