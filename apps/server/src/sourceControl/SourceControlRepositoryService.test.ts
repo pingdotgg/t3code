@@ -303,18 +303,21 @@ function rejectingSsh(
         const url = input.args.at(-2)!;
         urls.push(url);
         if (url.startsWith("https://") && !httpsFails) return processOutput();
+        const https = url.startsWith("https://");
         yield* (
           input.progress?.onStderrLine?.(
-            url.startsWith("https://")
+            https
               ? "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
-              : "git@github.com: Permission denied (publickey).",
+              : reason === "host_key_unverified"
+                ? "Host key verification failed."
+                : "git@github.com: Permission denied (publickey).",
           ) ?? Effect.void
         );
         return yield* new GitCommandError({
           operation: input.operation,
           command: "git",
           cwd: input.cwd,
-          reason,
+          reason: https ? "authentication_failed" : reason,
           detail: "Git command exited with a non-zero status.",
         });
       }),
@@ -362,7 +365,23 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
     assert.strictEqual(urls.length, 2);
     assert.strictEqual(
       error.detail,
-      "Git could not authenticate. Clones use this environment's Git credentials, not a token saved in Settings. git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: Git could not authenticate. fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      "Clones use this environment's Git credentials, not a token saved in Settings. Git could not authenticate. git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: Git could not authenticate. fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    );
+  }),
+);
+
+it.effect("leads with the credential note when only the HTTPS retry lacks credentials", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const error = yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, true, "host_key_unverified"), {
+        remoteUrl: CLONE_URLS.sshUrl,
+      }),
+    );
+
+    assert.strictEqual(
+      error.detail,
+      "Clones use this environment's Git credentials, not a token saved in Settings. Host key verification failed. Cloning over HTTPS instead also failed: Git could not authenticate. fatal: could not read Username for 'https://github.com': terminal prompts disabled",
     );
   }),
 );

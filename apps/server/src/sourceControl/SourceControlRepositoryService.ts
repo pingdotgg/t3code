@@ -189,6 +189,15 @@ function cloneFailureDetail(
   return `${explanation} ${CLONE_CREDENTIALS_NOTE}${output.length > 0 ? ` ${output}` : ""}`;
 }
 
+// The note leads once even when only the HTTPS attempt carries it.
+function combinedCloneFailureDetail(sshDetail: string, httpsDetail: string): string {
+  const withoutNote = (detail: string) => detail.replace(` ${CLONE_CREDENTIALS_NOTE}`, "");
+  const combined = `${withoutNote(sshDetail)} Cloning over HTTPS instead also failed: ${withoutNote(httpsDetail)}`;
+  return sshDetail.includes(CLONE_CREDENTIALS_NOTE) || httpsDetail.includes(CLONE_CREDENTIALS_NOTE)
+    ? `${CLONE_CREDENTIALS_NOTE} ${combined}`
+    : combined;
+}
+
 /**
  * SSH rejection can be retried over HTTPS when the host's credential helper is available.
  * Explicit SSH requests must not fall back; unknown URL shapes must not be guessed.
@@ -424,11 +433,7 @@ export const make = Effect.gen(function* () {
                   new SourceControlRepositoryError({
                     operation: "cloneRepository",
                     provider: sshError.provider,
-                    detail: `${sshError.detail} Cloning over HTTPS instead also failed: ${
-                      sshError.detail.includes(CLONE_CREDENTIALS_NOTE)
-                        ? httpsError.detail.replace(` ${CLONE_CREDENTIALS_NOTE}`, "")
-                        : httpsError.detail
-                    }`,
+                    detail: combinedCloneFailureDetail(sshError.detail, httpsError.detail),
                     cause: httpsError.cause,
                   }),
               ),
