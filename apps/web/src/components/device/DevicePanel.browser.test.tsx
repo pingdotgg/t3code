@@ -217,9 +217,12 @@ describe("DevicePanel host probe", () => {
 describe("DevicePanel discovery warning", () => {
   it("keeps Details open across causes and a dismissal only for the cause it hid", async () => {
     setup();
-    const withCause = (detail: string): DeviceServiceState => ({
+    const withCause = (
+      detail: string,
+      incompletePlatforms: ReadonlyArray<"ios" | "android"> = ["ios"],
+    ): DeviceServiceState => ({
       ...deviceState,
-      hostStatuses: { local: { status: "ready", detail, incompletePlatforms: ["ios"] } },
+      hostStatuses: { local: { status: "ready", detail, incompletePlatforms } },
     });
     const warning = "iOS list on This Mac may be incomplete.";
     currentState = withCause("first cause");
@@ -235,6 +238,12 @@ describe("DevicePanel discovery warning", () => {
     await screen.getByRole("button", { name: "Dismiss device warning for This Mac" }).click();
     await screen.rerender(devicePanel(threadA));
     await expect.element(screen.getByText(warning)).not.toBeInTheDocument();
+
+    currentState = withCause("second cause", ["ios", "android"]);
+    await screen.rerender(devicePanel(threadA));
+    await expect
+      .element(screen.getByText("iOS and Android lists on This Mac may be incomplete."))
+      .toBeVisible();
 
     currentState = withCause("third cause");
     await screen.rerender(devicePanel(threadA));

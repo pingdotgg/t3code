@@ -419,8 +419,9 @@ function DeviceDiscoveryWarning(props: {
 }) {
   const [open, setOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [dismissedDetail, setDismissedDetail] = useState<string | null>(null);
-  if (dismissedDetail === props.detail) return null;
+  const [dismissedCause, setDismissedCause] = useState<string | null>(null);
+  const cause = `${props.incompletePlatforms.join()}\u0000${props.detail}`;
+  if (dismissedCause === cause) return null;
   const platforms = props.incompletePlatforms.map((platform) =>
     platform === "ios" ? "iOS" : "Android",
   );
@@ -465,7 +466,7 @@ function DeviceDiscoveryWarning(props: {
             aria-label={`Dismiss device warning for ${props.label}`}
             onClick={() => {
               setOpen(false);
-              setDismissedDetail(props.detail);
+              setDismissedCause(cause);
             }}
           >
             <X />

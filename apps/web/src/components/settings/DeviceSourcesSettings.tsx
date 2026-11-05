@@ -120,7 +120,8 @@ function hostStatus(
       const incomplete = incompleteListings(status);
       if (incomplete.length === 0) return undefined;
       const list = incomplete.length > 1 ? "Device" : incomplete[0] === "ios" ? "iOS" : "Android";
-      return { tone: "warning", label: `${list} list may be incomplete`, detail: status.detail };
+      const label = `${list} list may be incomplete`;
+      return { tone: "warning", label, detail: status.detail && `${label}: ${status.detail}` };
     }
     case "installing":
     case "starting":
