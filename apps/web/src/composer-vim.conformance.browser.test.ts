@@ -6,11 +6,16 @@ import { describe, it } from "vite-plus/test";
 
 import { createComposerVimHost, Vim, ComposerVimEditor } from "./composer-vim-adapter";
 import { createTextareaVimHost } from "./textarea-vim";
+import { VimEditor } from "./vim-engine";
 import {
   ComposerVimExtension,
   handleComposerVimKeyDown,
   setComposerVimHost,
 } from "./composer-vim-editor";
+
+// The suite sends Ctrl keys that vim only receives on macOS; elsewhere most stay with the app.
+Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+Object.assign(VimEditor, { isMac: true });
 
 const testground = document.createElement("div");
 testground.id = "testground";
