@@ -21,10 +21,9 @@ import {
   type PullRequestRef,
   type PullRequestMergeMethod,
   PullRequestOperationError,
-  type PullRequestSummary,
+  PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
@@ -53,9 +52,10 @@ export {
 export * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 
 /** @public Required to name the error in consumers' inferred pull request results. */
-export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
+export class EnvironmentHttpConnectionNotReadyError extends Schema.TaggedError<EnvironmentHttpConnectionNotReadyError>()(
   "EnvironmentHttpConnectionNotReadyError",
-)<{ readonly message: string }> {}
+  { message: Schema.String },
+) {}
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
@@ -147,6 +147,7 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   const routedRequest = createPullRequestRouter();
   return createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:linked-summary",
+    persistence: persistQuery(PullRequestSummary),
     tag: WS_METHODS.pullRequestsSummary,
     execute: (input) => routedRequest(WS_METHODS.pullRequestsSummary, input),
     staleTimeMs: 60_000,
