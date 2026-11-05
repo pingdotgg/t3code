@@ -59,4 +59,27 @@ describe("announce", () => {
 
     expect(spokenText()).toEqual(["Opening in Zed"]);
   });
+
+  it("removes a spoken message from the page once it has had time to be read", () => {
+    using _timers = fakeTimers();
+
+    announce("Model: Claude Sonnet 5.5");
+    vi.advanceTimersByTime(250);
+    expect(spokenText()).toEqual(["Model: Claude Sonnet 5.5"]);
+
+    vi.advanceTimersByTime(60_000);
+    expect(spokenText()).toEqual([]);
+  });
+
+  it("removes a spoken message from the page when its source cancels it", () => {
+    using _timers = fakeTimers();
+
+    announce("Settled 1 thread, Ctrl+Z to undo", "thread-undo-notice");
+    vi.advanceTimersByTime(250);
+    expect(spokenText()).toEqual(["Settled 1 thread, Ctrl+Z to undo"]);
+
+    vi.advanceTimersByTime(4_750);
+    cancelAnnouncement("thread-undo-notice");
+    expect(spokenText()).toEqual([]);
+  });
 });
