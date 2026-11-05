@@ -65,6 +65,7 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustNotContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
+    entrypointMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
@@ -88,10 +89,16 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
+      T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE: input.entrypointMustBe,
     };
     const environment: NodeJS.ProcessEnv = {
       ...Object.fromEntries(
-        Object.entries(hostEnv).filter(([name]) => !name.startsWith("T3_FAKE_CLAUDE_")),
+        Object.entries(hostEnv).filter(
+          ([name]) =>
+            !name.startsWith("T3_FAKE_CLAUDE_") &&
+            name !== "CLAUDE_CODE_ENTRYPOINT" &&
+            name !== "ANTHROPIC_API_KEY",
+        ),
       ),
       ...Object.fromEntries(
         Object.entries(fakeClaudeEnv).filter(([, value]) => value !== undefined),
@@ -231,6 +238,39 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             expect(generated.title).toBe(sanitizeThreadTitle("Use Claude home"));
           }),
       );
+    }),
+  );
+
+  it.effect("labels a command from the Claude settings of its working directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-home-" });
+      const project = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-project-" });
+      yield* fs.makeDirectory(path.join(project, ".claude"));
+      const generate = (entrypointMustBe: string) =>
+        withFakeClaudeEnv(
+          {
+            output: JSON.stringify({ structured_output: { branch: "fix-it" } }),
+            entrypointMustBe,
+            claudeConfig: { homePath: home },
+          },
+          (textGeneration) =>
+            textGeneration.generateBranchName({
+              cwd: project,
+              message: "Fix it",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+        );
+      yield* generate("t3-code");
+      yield* fs.writeFileString(
+        path.join(project, ".claude", "settings.json"),
+        '{"env":{"ANTHROPIC_API_KEY":"key"}}',
+      );
+      yield* generate("unset");
     }),
   );
 
