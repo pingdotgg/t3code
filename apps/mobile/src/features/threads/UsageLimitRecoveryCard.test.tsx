@@ -1,5 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  CHATGPT_USAGE_LIMIT_CODE,
+  CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
+} from "@t3tools/shared/usageLimits";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -27,18 +31,41 @@ import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function failedThread(resetAt: string): EnvironmentThreadShell {
+function failedThread(resetAt: string | null, lastErrorCode?: string): EnvironmentThreadShell {
   return {
     id: "thread-1",
     updatedAt: new Date(0).toISOString(),
     snoozedUntil: null,
     latestRun: { runId: "run-1", completedAt: new Date(0).toISOString() },
     limitRecovery: null,
-    runtime: { status: "failed", lastErrorClass: "usage_limit", usageLimitResetAt: resetAt },
+    runtime: {
+      status: "failed",
+      lastErrorClass: "usage_limit",
+      lastErrorCode,
+      usageLimitResetAt: resetAt,
+    },
   } as unknown as EnvironmentThreadShell;
 }
 
 describe("UsageLimitRecoveryCard", () => {
+  it.each([CHATGPT_USAGE_LIMIT_CODE, CHATGPT_WORKSPACE_USAGE_LIMIT_CODE])(
+    "leaves the %s limit to the ChatGPT notice",
+    (code) => {
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+      act(() =>
+        root.render(
+          <UsageLimitRecoveryCard
+            thread={failedThread(null, code)}
+            environmentId={"env-1" as EnvironmentId}
+          />,
+        ),
+      );
+      expect(container.textContent).toBe("");
+    },
+  );
+
   it("disables Snooze once a reset more than 24.8 days away passes", () => {
     using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     vi.useFakeTimers({ now: 0 });

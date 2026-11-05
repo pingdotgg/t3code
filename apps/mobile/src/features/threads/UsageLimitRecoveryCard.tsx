@@ -3,6 +3,10 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  CHATGPT_USAGE_LIMIT_CODE,
+  CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
+} from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import { useState } from "react";
 import { View } from "react-native";
@@ -30,10 +34,14 @@ export function UsageLimitRecoveryCard({
   const recovery = thread.limitRecovery;
   const scheduled =
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
+  const code = thread.runtime?.lastErrorCode;
   if (
     thread.runtime?.status !== "failed" ||
     thread.runtime.lastErrorClass !== "usage_limit" ||
-    !runId
+    !runId ||
+    // ChatGptUsageLimitNotice owns these; sharing limits never report a reset time.
+    code === CHATGPT_USAGE_LIMIT_CODE ||
+    code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE
   )
     return null;
   const snoozed =
