@@ -208,6 +208,7 @@ export type ScheduledTaskDraft = {
   readonly baseRef: string;
   readonly checkoutPath: string;
   readonly enabled: boolean;
+  readonly runInBackground?: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
 };
@@ -236,6 +237,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.baseRef,
     draft.checkoutPath,
     draft.enabled,
+    draft.runInBackground ?? false,
     draft.startFromOrigin,
     draft.runtimeMode,
   ]);
@@ -285,6 +287,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? task.workspaceStrategy.worktreePath
         : "",
     enabled: task.enabled,
+    runInBackground: task.runInBackground ?? false,
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)

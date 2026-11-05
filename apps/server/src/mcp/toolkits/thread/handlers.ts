@@ -356,6 +356,17 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "unsettle":
           command = { ...common, type: `thread.${input.action}`, reason: "user" };
           break;
+        case "background":
+        case "foreground":
+          command = {
+            ...common,
+            type: "thread.metadata.update",
+            background: input.action === "background",
+          };
+          break;
+        case "acknowledge_background":
+          command = { ...common, type: "thread.metadata.update", acknowledgeBackground: true };
+          break;
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
           break;

@@ -656,6 +656,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   schedule: OrchestratorMcpSchedule,
   title: Schema.optional(OrchestratorMcpTitle),
   enabled: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
+  runInBackground: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
       description: "Default true: runs post in this thread. False: new thread per run.",
@@ -682,6 +683,8 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   enabled: Schema.Boolean,
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
+  runInBackground: Schema.optional(Schema.Boolean),
+  lastRunThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
@@ -723,6 +726,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   title: Schema.optional(OrchestratorMcpTitle),
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
+  runInBackground: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =

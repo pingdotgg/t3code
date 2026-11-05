@@ -43,6 +43,8 @@ export interface ProjectThreadAwarenessV2Input {
   readonly project: Pick<Project, "title">;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
+    | "background"
+    | "latestRunCompletedAt"
     | "activityRunStatus"
     | "id"
     | "lineage"
@@ -67,6 +69,15 @@ export function projectThreadAwarenessV2(
     return null;
   }
   if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  if (
+    thread.background != null &&
+    thread.background.reportedAt == null &&
+    (phase === "completed" ||
+      (phase === "failed" &&
+        thread.latestRunCompletedAt != null &&
+        DateTime.formatIso(thread.latestRunCompletedAt) <= thread.background.acknowledgedAt))
+  )
+    return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
   if (
     thread.settledOverride === "settled" &&

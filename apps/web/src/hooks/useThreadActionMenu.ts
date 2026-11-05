@@ -28,6 +28,7 @@ import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
 import {
+  readEnvironmentSupportsThreadBackground,
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
@@ -125,6 +126,7 @@ export function useThreadActionMenu(input: {
       const now = new Date();
       const configLoaded = readEnvironmentServerConfigLoaded(threadRef.environmentId);
       const supports = {
+        background: readEnvironmentSupportsThreadBackground(threadRef.environmentId),
         settlement: configLoaded,
         autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
         snooze: configLoaded,
@@ -140,6 +142,7 @@ export function useThreadActionMenu(input: {
         projectFilter: null,
         isPinned: thread.pinnedAt != null,
         isSettled: supports.settlement && thread.settledOverride === "settled",
+        background: thread.source.background != null,
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
@@ -253,6 +256,21 @@ export function useThreadActionMenu(input: {
             updateThreadMetadata({
               environmentId: threadRef.environmentId,
               input: { threadId: threadRef.threadId, regenerateTitle: true },
+            }),
+          );
+          return;
+        case "background":
+        case "foreground":
+        case "acknowledge-background":
+          await reportFailure("Failed to update background policy", () =>
+            updateThreadMetadata({
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: threadRef.threadId,
+                ...(action === "acknowledge-background"
+                  ? { acknowledgeBackground: true }
+                  : { background: action === "background" }),
+              },
             }),
           );
           return;

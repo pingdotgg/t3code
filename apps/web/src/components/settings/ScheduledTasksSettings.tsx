@@ -785,6 +785,14 @@ function ScheduledTaskRow({
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
+          {task.lastRunThreadId ? (
+            <Link
+              to="/$environmentId/$threadId"
+              params={{ environmentId, threadId: task.lastRunThreadId }}
+            >
+              Open latest run
+            </Link>
+          ) : null}
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
         </div>
       }
@@ -1353,6 +1361,7 @@ function ScheduledTaskEditorForm({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       enabled: draft.enabled,
+      runInBackground: draft.runInBackground ?? false,
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
@@ -1913,6 +1922,22 @@ function ScheduledTaskEditorForm({
             )}
           </div>
 
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="scheduled-task-background">Run in background</Label>
+              <p className="text-sm text-muted-foreground">
+                Keep routine runs out of Active. Questions, failures, and reported results still
+                surface.
+              </p>
+            </div>
+            <Switch
+              id="scheduled-task-background"
+              checked={draft.runInBackground ?? false}
+              onCheckedChange={(runInBackground) =>
+                setDraft((current) => ({ ...current, runInBackground }))
+              }
+            />
+          </div>
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0 space-y-1">
               <Label htmlFor="scheduled-task-enabled">Enabled</Label>

@@ -2,6 +2,9 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
+  | "background"
+  | "foreground"
+  | "acknowledge-background"
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -68,6 +71,7 @@ export function buildDraftActionMenuItems(options: {
 }
 
 export interface ThreadActionMenuState {
+  readonly background?: boolean;
   readonly canOperate: boolean;
   readonly canFind?: boolean;
   readonly branch: string | null;
@@ -84,6 +88,7 @@ export interface ThreadActionMenuState {
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
   readonly supports: {
+    readonly background?: boolean;
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
@@ -164,6 +169,24 @@ export function buildThreadActionMenuItems(
                   },
                 ],
               },
+        ]
+      : []),
+    ...(state.supports.background
+      ? [
+          {
+            id: state.background ? ("foreground" as const) : ("background" as const),
+            label: state.background ? "Move to Active" : "Run in background",
+            icon: "layers",
+          },
+          ...(state.background
+            ? [
+                {
+                  id: "acknowledge-background" as const,
+                  label: "Acknowledge and return to Background",
+                  icon: "check",
+                },
+              ]
+            : []),
         ]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },

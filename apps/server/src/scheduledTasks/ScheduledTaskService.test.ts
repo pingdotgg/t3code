@@ -181,6 +181,7 @@ it.effect(
         yield* insertRow(sql, { ...row, enabled: 1 }, now);
       }
 
+      yield* sql`UPDATE scheduled_tasks SET run_in_background = 1 WHERE task_id = 'due-healthy'`;
       yield* TestClock.setTime(Date.parse(now) + 1_000);
       const dispatched = yield* Ref.make(0);
       const lastDispatched = yield* Deferred.make<void>();
@@ -193,8 +194,13 @@ it.effect(
               Layer.mergeAll(
                 ManagedPolicy.layerTest(),
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-                  launch: () =>
-                    Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
+                  launch: (input) => {
+                    assert.equal(
+                      input.background,
+                      input.commandId?.includes("due-healthy") === true,
+                    );
+                    assert.isTrue(input.threadId?.startsWith("scheduled-run:") === true);
+                    return Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
                       Effect.andThen((n) =>
                         n === 4
                           ? Deferred.succeed(lastDispatched, undefined).pipe(
@@ -203,7 +209,8 @@ it.effect(
                           : Effect.void,
                       ),
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
-                    ),
+                    );
+                  },
                 }),
                 Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
                   namedProjectsRoot: "/projects",

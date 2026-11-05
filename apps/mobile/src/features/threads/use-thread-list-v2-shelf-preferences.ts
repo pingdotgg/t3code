@@ -12,6 +12,8 @@ export function useThreadListV2ShelfPreferences() {
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
+  const backgroundShelfExpanded =
+    loaded && preferencesResult.value.threadListBackgroundShelfExpanded === true;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
@@ -40,12 +42,22 @@ export function useThreadListV2ShelfPreferences() {
       }),
     });
   };
+  const toggleBackgroundShelf = () => {
+    if (!loaded) return;
+    savePreferences({
+      transform: (current) => ({
+        threadListBackgroundShelfExpanded: current.threadListBackgroundShelfExpanded !== true,
+      }),
+    });
+  };
 
   return {
     loaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
+    backgroundShelfExpanded,
+    toggleBackgroundShelf,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,

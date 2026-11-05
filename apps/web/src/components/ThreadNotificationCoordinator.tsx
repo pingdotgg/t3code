@@ -1,3 +1,4 @@
+import { isQuietBackgroundThread } from "@t3tools/client-runtime/state/thread-settled";
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -130,7 +131,9 @@ export function startThreadNotifications(
     };
     const title =
       kind === "completion"
-        ? "Thread completed"
+        ? thread.source.background?.reportedAt
+          ? "Result reported"
+          : "Thread completed"
         : status === "approval"
           ? "Approval needed"
           : status === "limited"
@@ -258,10 +261,14 @@ export function startThreadNotifications(
         status === "approval" ||
         status === "failed" ||
         status === "limited"
-          ? `${thread.latestRun?.runId ?? ""}:${status}`
+          ? `${rawThread.background?.reportedAt ?? thread.latestRun?.runId ?? ""}:${status}`
           : null;
-      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      const settled = status === "ready" && thread.latestRun?.status === "completed";
+      const completedAt = Date.parse(
+        rawThread.background?.reportedAt ?? thread.latestRun?.completedAt ?? "",
+      );
+      const settled =
+        rawThread.background?.reportedAt != null ||
+        (status === "ready" && thread.latestRun?.status === "completed");
       const state = {
         raw: rawThread,
         subagentRequest,
@@ -280,7 +287,7 @@ export function startThreadNotifications(
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true,
+        quiet: state.raw.latestRunStopRequested === true || isQuietBackgroundThread(state.thread),
       });
     }
   };

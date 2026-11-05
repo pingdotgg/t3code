@@ -134,6 +134,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
           "No project: a new Scratch folder. Not with `projectId` or `workspaceStrategy`.",
       }),
     ),
+    background: Schema.optional(Schema.Boolean),
     title: TrimmedNonEmptyString,
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
