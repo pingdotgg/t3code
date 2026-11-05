@@ -169,6 +169,7 @@ describe("mobile composer context", () => {
     expect(modelTokens("Use model:codex/gpt-6.1")).toEqual([]);
     expect(modelTokens("Use model:openai/gpt-4o then stop")).toEqual([]);
     expect(modelTokens("Use `model:codex/gpt-6.1` then stop")).toEqual([]);
+    expect(modelTokens(String.raw`\[\text{use model:codex/gpt-6.1 here}\] then stop`)).toEqual([]);
     const reference = formatComposerContextReference(terminal);
     expect(
       composerContextEditorTokens(`${reference} model:codex/gpt-6.1 `, [], new Set(), known).map(

@@ -26,6 +26,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,
+  composerMathRanges,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
 
@@ -179,7 +180,7 @@ export function composerContextEditorTokens(
       (token.type !== "skill" || knownSkills.has(token.value)) &&
       !references.some((ref) => token.start < ref.end && token.end > ref.start),
   );
-  const taken = [...inlineTokens, ...references];
+  const taken = [...inlineTokens, ...references, ...composerMathRanges(text)];
   const models = collectComposerModelMentions(text).filter(
     (mention) =>
       // Like `$skill`, a typed reference waits for whitespace so `gpt-6` cannot chip on the way to `gpt-6.1`.
