@@ -807,15 +807,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // The window is inclusive, so wake just past it.
   const snoozeGateNowMs = useNowAfter(snoozeGateExpiryMs === null ? null : snoozeGateExpiryMs + 1);
   const snoozeGateNow = new Date(snoozeGateNowMs).toISOString();
+  const snoozable = canSnooze(thread, { now: snoozeGateNow });
   const swipeActions = resolveThreadListV2SwipeActions({
     variant,
     settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
-    snoozable: canSnooze(thread, { now: snoozeGateNow }),
+    snoozable,
     snoozed: snoozedRow,
   });
+  // Snoozed rows keep reschedule in the context menu only, not as a swipe secondary.
+  const snoozeMenuSecondary =
+    swipeActions.secondary === "snooze" || (snoozedRow && props.snoozeSupported && snoozable)
+      ? ("snooze" as const)
+      : null;
   const snoozePresets = resolveThreadListV2SnoozePresets({
-    secondary: swipeActions.secondary,
+    secondary: snoozeMenuSecondary,
     now: props.snoozePresetMinute || snoozeGateNow,
     presets: props.snoozePresets,
   });
@@ -955,7 +961,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
       SNOOZED_MENU_ACTIONS[0]!,
-      ...(swipeActions.secondary === "snooze"
+      ...(snoozeMenuSecondary === "snooze"
         ? [
             {
               id: "snooze",
@@ -970,7 +976,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       LEGACY_MENU_ACTIONS[0]!,
       SNOOZED_MENU_ACTIONS[1]!,
     ],
-    [autoSettleMenuItems, snoozePresetActions, swipeActions.secondary, titleMenuItems],
+    [autoSettleMenuItems, snoozeMenuSecondary, snoozePresetActions, titleMenuItems],
   );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [

@@ -81,22 +81,13 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
-  it("offers Snooze as a secondary action on snoozed rows that can reschedule", () => {
+  it("keeps snoozed-row reschedule in the context menu, not as a swipe secondary", () => {
     expect(
       resolveThreadListV2SwipeActions({
         variant: "card",
         settlementSupported: true,
         snoozeSupported: true,
         snoozable: true,
-        snoozed: true,
-      }),
-    ).toEqual({ primary: "unsnooze", secondary: "snooze" });
-    expect(
-      resolveThreadListV2SwipeActions({
-        variant: "card",
-        settlementSupported: true,
-        snoozeSupported: true,
-        snoozable: false,
         snoozed: true,
       }),
     ).toEqual({ primary: "unsnooze", secondary: null });

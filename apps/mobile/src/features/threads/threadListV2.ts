@@ -121,10 +121,7 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly secondary: "snooze" | null;
 } {
   if (input.snoozed === true) {
-    return {
-      primary: "unsnooze",
-      secondary: input.snoozeSupported && input.snoozable ? "snooze" : null,
-    };
+    return { primary: "unsnooze", secondary: null };
   }
   const primary = input.settlementSupported
     ? input.variant === "slim"
