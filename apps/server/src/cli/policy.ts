@@ -96,26 +96,35 @@ const showCommand = Command.make("show", {
     "Show the policy installed on this machine, and whether the running server loaded it.",
   ),
   Command.withHandler(
-    Effect.fn("cli.policy.show")(function* (flags) {
-      // The command prints the policy itself; the server's startup log line would repeat it.
-      const policy = yield* ManagedPolicy.ManagedPolicy.pipe(
-        Effect.provide(
-          ManagedPolicy.layer.pipe(
-            Layer.provide(Layer.succeed(References.MinimumLogLevel, flags.json ? "Error" : "Warn")),
+    Effect.fn("cli.policy.show")(
+      function* (flags) {
+        // The command prints the policy itself; the server's startup log line would repeat it.
+        const policy = yield* ManagedPolicy.ManagedPolicy.pipe(
+          Effect.provide(
+            ManagedPolicy.layer.pipe(
+              Layer.provide(
+                Layer.succeed(References.MinimumLogLevel, flags.json ? "Error" : "Warn"),
+              ),
+            ),
           ),
-        ),
-      );
-      const installed = yield* ManagedPolicy.loadedPolicy(policy);
-      const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
-      const server = yield* readRunningServer(config.serverRuntimeStatePath, installed);
-      if (flags.json) {
-        const document = policy.document ?? null;
-        yield* Console.log(yield* encodeReport({ installed, document, server }));
-        return;
-      }
-      yield* Console.log(describePolicy(policy, installed));
-      yield* Console.log(describeRunningServer(server));
-    }),
+        );
+        const installed = yield* ManagedPolicy.loadedPolicy(policy);
+        const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
+        const server = yield* readRunningServer(config.serverRuntimeStatePath, installed);
+        if (flags.json) {
+          const document = policy.document ?? null;
+          yield* Console.log(yield* encodeReport({ installed, document, server }));
+          return;
+        }
+        yield* Console.log(describePolicy(policy, installed));
+        yield* Console.log(describeRunningServer(server));
+      },
+      // Logs go to stdout, where a script reads the JSON.
+      (effect, flags) =>
+        flags.json
+          ? effect.pipe(Effect.provideService(References.MinimumLogLevel, "Error"))
+          : effect,
+    ),
   ),
 );
 

@@ -6,7 +6,11 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { Command } from "effect/cli";
+import * as TestConsole from "effect/testing/TestConsole";
+import * as NetService from "@t3tools/shared/Net";
 
+import { cli } from "../binCli.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   makePersistedServerRuntimeState,
@@ -16,7 +20,7 @@ import { describeRunningServer, readRunningServer } from "./policy.ts";
 
 const encodeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
 
-it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) =>
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) => {
   it.effect("tells whether the running server loaded the installed policy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -66,5 +70,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) =>
       expectServer(yield* running(null, null), "current", "runs without a policy, as installed");
       expectServer(yield* running(undefined), "unknown", "does not report which policy it loaded");
     }),
-  ),
-);
+  );
+
+  it.effect("show --json prints only JSON when the runtime state cannot be read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-policy-show-" });
+      yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
+      yield* fs.writeFileString(path.join(baseDir, "userdata", "server-runtime.json"), "not json");
+
+      yield* Command.runWith(cli, { version: "0.0.0" })([
+        "policy",
+        "show",
+        "--json",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      const lines = yield* TestConsole.logLines;
+      assert.lengthOf(lines, 1);
+      assert.doesNotThrow(() => JSON.parse(String(lines[0])));
+    }).pipe(Effect.provide(Layer.mergeAll(NetService.layer, TestConsole.layer))),
+  );
+});
