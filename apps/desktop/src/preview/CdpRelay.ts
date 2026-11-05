@@ -203,10 +203,11 @@ export function createCdpRelayConnection(
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
     let params = command.params ?? {};
     if (command.method === "DOM.setFileInputFiles" && Array.isArray(params["files"])) {
-      const files: Array<unknown> = [];
-      for (const path of params["files"]) {
-        files.push(typeof path === "string" ? await target.serverPath(path) : path);
-      }
+      const files = await Promise.all(
+        params["files"].map((path: unknown) =>
+          typeof path === "string" ? target.serverPath(path) : path,
+        ),
+      );
       params = { ...params, files };
     }
     return target.send(command.method, params, child, owner);
