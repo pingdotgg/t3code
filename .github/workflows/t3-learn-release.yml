@@ -8,9 +8,12 @@ name: T3 Learn Release
 # release after install tests pass and the promote job marks it latest.
 # Builds are unsigned; macOS builds get an ad hoc signature. Upstream's
 # release.yml also matches these tags but only runs in pingdotgg/t3code.
-# Mac jobs run on GitHub's hosted Macs unless the repo variable
-# T3_LEARN_MAC_RUNNER names a self-hosted label, set only while a rented Mac
-# serves this workflow's jobs with one-job runners in throwaway VMs.
+# Mac jobs run on GitHub's hosted Macs unless a repo variable names a
+# self-hosted label: T3_LEARN_MAC_RUNNER for the desktop builds of CI-triggered
+# runs on main (hand-tagged runs stay hosted) and
+# T3_LEARN_MAC_INSTALL_RUNNER for the macOS install tests. Only a host that
+# gives each job a clean machine (the rented Mac's throwaway VMs) may take the
+# install tests, because they write /Applications.
 
 on:
   push:
@@ -146,14 +149,15 @@ jobs:
       clerk_cli_oauth_client_id: ""
       relay_url: ""
       label: macOS arm64
-      runner: ${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
+      runner: ${{ github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
       platform: mac
       target: dmg
       arch: arm64
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: true
-      launch_check: true
+      # med's MacBook runs jobs over SSH with no GUI session; the hosted install tests still launch the app.
+      launch_check: ${{ !(github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER == 't3-learn-macbook') }}
 
   # Cross-built on Apple silicon, as upstream does.
   desktop_mac_x64:
@@ -171,7 +175,7 @@ jobs:
       clerk_cli_oauth_client_id: ""
       relay_url: ""
       label: macOS x64
-      runner: ${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
+      runner: ${{ github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
       platform: mac
       target: dmg
       arch: x64
@@ -414,15 +418,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}", scenario: fresh }
-          - { os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}", scenario: next-to-t3-code }
+          - { os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-26' }}", scenario: fresh }
           - {
-              os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}",
+              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-26' }}",
+              scenario: next-to-t3-code,
+            }
+          - {
+              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-15-intel' }}",
               arch: x64,
               scenario: fresh,
             }
           - {
-              os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}",
+              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-15-intel' }}",
               arch: x64,
               scenario: next-to-t3-code,
             }
