@@ -113,7 +113,6 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
-import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -207,7 +206,6 @@ const SIDEBAR_STATUSES: Record<
   limited: { label: "Limited", Icon: CircleAlertIcon, className: "text-warning-foreground" },
   failed: { label: "Failed", Icon: CircleAlertIcon, className: "text-error-foreground" },
   woke: { label: "Woke", Icon: AlarmClockIcon, className: "text-warning-foreground" },
-  merged: { label: "Merged", Icon: PullRequestGlyph.merged, className: "text-merged-foreground" },
   done: { label: "Done", Icon: CircleCheckIcon, className: "text-success-foreground" },
 };
 
@@ -811,9 +809,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
-  // Merged comes from the shell PR snapshots, so rows without a live status
-  // lease still show it. It surfaces only while the thread stays in the active
-  // list: auto-settle on merge usually moves it to Settled first.
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
     : null;
@@ -823,7 +818,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     status,
     isUnread,
     isWoke,
-    isMerged: isPrMerged,
   });
   const topStatusLabel =
     topStatus === "working" && thread.goal?.status === "active"
