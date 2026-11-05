@@ -35,9 +35,26 @@ import {
   t3SystemAppend,
   t3SubagentContext,
   withDevices,
+  withSubagentResults,
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+
+it("words a failed child's result as T3 does wherever a case's result describes one", () => {
+  const failure = {
+    class: "provider_error",
+    message: "Tool crashed.",
+    code: null,
+    retryable: true,
+  };
+  const subagentFailure = { ...failure, providerInstanceId: "work-a" };
+  const malformed = { subagentFailure: { message: "No class." } };
+  const result = withSubagentResults({
+    tasks: [{ taskId: "task-1", summary: { subagentFailure } }],
+    malformed,
+  });
+  assert.deepEqual(result, { tasks: [{ taskId: "task-1", summary: "Tool crashed." }], malformed });
+});
 
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [

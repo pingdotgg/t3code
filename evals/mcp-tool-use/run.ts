@@ -45,6 +45,7 @@ import {
   PullRequestState,
   ThreadId,
 } from "@t3tools/contracts";
+import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -1326,6 +1327,30 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
   }
 };
 
+const SubagentFailure = Schema.Struct({
+  subagentFailure: Schema.Struct({
+    ...Contracts.OrchestrationV2ProviderFailure.fields,
+    providerInstanceId: ProviderInstanceId,
+  }),
+});
+const isSubagentFailure = Schema.is(SubagentFailure);
+
+/**
+ * Replaces each `{"subagentFailure": {class, message, code, retryable, resetAt?, providerInstanceId}}`
+ * in a case's results with the text T3 gives the parent for a child run that failed that way.
+ */
+export const withSubagentResults = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(withSubagentResults);
+  if (!isRecord(value)) return value;
+  if (!isSubagentFailure(value)) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withSubagentResults(v)]));
+  }
+  const { providerInstanceId, ...failure } = value.subagentFailure;
+  const run = { id: "run-failed", status: "failed", providerInstanceId };
+  const error = { id: "error", runId: run.id, type: "error", ordinal: 1, failure };
+  return subagentResultForRun({ messages: [], turnItems: [error] } as never, run as never).text;
+};
+
 /** Cases mock a Claude caller, so the inherited fields follow the model under test. */
 const capabilities = ({ base }: Sample, value: unknown) =>
   isRecord(value)
@@ -2324,7 +2349,7 @@ const main = Effect.gen(function* () {
         Effect.gen(function* () {
           const toolCalls = yield* Effect.forEach(turn.toolCalls ?? [], (call) =>
             call.resultFile === undefined
-              ? Effect.succeed(call)
+              ? Effect.succeed({ ...call, result: withSubagentResults(call.result) })
               : fs
                   .readFileString(path.resolve(import.meta.dirname, "../..", call.resultFile))
                   .pipe(Effect.map((result) => ({ ...call, result }))),
@@ -2337,6 +2362,11 @@ const main = Effect.gen(function* () {
         setup: {
           ...testCase.setup,
           priorTurns,
+          mocks:
+            testCase.setup.mocks &&
+            Object.fromEntries(
+              Object.entries(testCase.setup.mocks).map(([k, v]) => [k, withSubagentResults(v)]),
+            ),
         },
       };
     }),

@@ -291,6 +291,7 @@ it.effect.each([
           });
 
           const now = yield* DateTime.now;
+          const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
           const childFailed = yield* watch(
             (event) =>
               event.type === "run.updated" &&
@@ -317,7 +318,7 @@ it.effect.each([
                   message: "Claude usage limit reached.",
                   code: null,
                   retryable: null,
-                  resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+                  resetAt,
                 },
                 threadDisposition: "reusable",
               },
@@ -337,6 +338,11 @@ it.effect.each([
 
           // The sweep runs every few seconds, so it arms the child before a parent reacts.
           yield* sweep;
+          if (cancel === "never") {
+            const { summary } = yield* service.taskStatus(scope, task.id);
+            assert.include(summary, "Claude usage limit reached.");
+            assert.include(summary, resetAt);
+          }
           if (cancel === "after its limit") cancelled = yield* cancelTask;
           assert.equal(cancelled, cancelStatus);
 

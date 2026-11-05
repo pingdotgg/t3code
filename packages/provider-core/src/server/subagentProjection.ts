@@ -8,6 +8,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2CreationSource,
   OrchestrationV2DomainEvent,
+  OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderRef,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
@@ -176,6 +177,20 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
+function failureResultText(
+  failure: OrchestrationV2ProviderFailure,
+  run: OrchestrationV2Run,
+): string {
+  if (failure.class !== "usage_limit") return failure.message;
+  const reset = failure.resetAt ? `it resets at ${failure.resetAt}` : "its reset time is unknown";
+  // Clients preview only the first 280 characters, so the actionable details lead.
+  return (
+    `Usage limit hit on provider instance ${run.providerInstanceId}; ${reset}. ` +
+    "To continue elsewhere, move the child with t3_thread_configure (new modelSelection), " +
+    `then t3_thread_send; it keeps its history. Provider message: ${failure.message}`
+  );
+}
+
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
   run: OrchestrationV2Run,
@@ -217,7 +232,7 @@ export function subagentResultForRun(
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
   const text =
-    (failure?.type === "error" ? failure.failure.message : undefined) ??
+    (failure?.type === "error" ? failureResultText(failure.failure, run) : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"

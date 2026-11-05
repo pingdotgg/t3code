@@ -378,6 +378,49 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.isNull(result.messageId);
 });
 
+it("tells the parent which provider instance hit a usage limit and when it resets", () => {
+  const { projection, run } = taskFixture();
+  const failedRun = {
+    ...run,
+    status: "failed" as const,
+    providerInstanceId: ProviderInstanceId.make("work-a"),
+  };
+  const artifacts = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("limited"),
+    turnItemId: TurnItemId.make("limited-error"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "Starting the audit.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  if (artifacts.turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
+  const failure = {
+    class: "usage_limit" as const,
+    message: "Claude API rate limit reached. Try again later.",
+    code: null,
+    retryable: true,
+    resetAt: "2026-11-04T15:20:00.000Z",
+  };
+  const result = subagentResultForRun(
+    {
+      ...projection,
+      turnItems: [{ ...artifacts.turnItem, type: "error", runId: run.id, failure }],
+    },
+    failedRun,
+  );
+  assert.include(result.text, failure.message);
+  assert.match(result.text, /usage[ _]limit/i);
+  assert.include(result.text, "work-a");
+  assert.include(result.text, failure.resetAt);
+  // Clients preview a capped prefix, so a long provider message must not push the details out.
+  assert.isBelow(result.text.indexOf(failure.resetAt), result.text.indexOf(failure.message));
+});
+
 it("orders a task's assistant messages by turn item, not by timestamps", () => {
   const { projection, run } = taskFixture();
   const at = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
