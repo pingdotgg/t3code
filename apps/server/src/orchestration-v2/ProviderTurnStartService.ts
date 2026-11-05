@@ -1227,6 +1227,7 @@ export const layer: Layer.Layer<
         providerSessionId,
         session: deliverySession,
         run: runningRun,
+        runs: projection.runs,
         rootNode: runningRootNode,
         checkpointScope,
         providerThread: runningProviderThread,

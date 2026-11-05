@@ -577,6 +577,38 @@ describe("orchestration V2 contracts", () => {
     expect(checkpoint.parentCheckpointId).toBe(CheckpointId.make("checkpoint-root-1"));
   });
 
+  it("decodes repository snapshots stored before backfilled ones were marked", () => {
+    const entry = {
+      repository: "beta",
+      repositoryPath: "/folder/beta",
+      worktreePath: "/worktrees/beta/t3-thread",
+      branch: "t3/thread",
+      pathPrefix: "beta",
+      ref: "refs/t3/beta/ordinal/2",
+      status: "ready",
+    };
+    const decode = (repository: Record<string, unknown>) =>
+      decodeOrchestrationV2Checkpoint({
+        id: "checkpoint-2",
+        threadId: "thread-1",
+        scopeId: "scope-root-1",
+        runId: "run-2",
+        nodeId: "node-root-2",
+        parentCheckpointId: "checkpoint-1",
+        ordinalWithinScope: 2,
+        appRunOrdinal: 2,
+        ref: "refs/t3/workspace/ordinal/2",
+        status: "ready",
+        files: [],
+        workspaceStatus: "missing",
+        repositories: [repository],
+        capturedAt: now,
+      }).repositories?.[0];
+
+    expect(decode(entry)).toEqual(entry);
+    expect(decode({ ...entry, backfilled: true })?.backfilled).toBe(true);
+  });
+
   it("decodes command and domain event shapes for command-to-projection tests", () => {
     const command = decodeOrchestrationV2Command({
       type: "message.dispatch",

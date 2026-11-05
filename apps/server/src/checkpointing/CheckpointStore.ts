@@ -10,6 +10,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 export interface CaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** See `VcsCaptureCheckpointInput.baseline`. */
+  readonly baseline?: boolean;
 }
 
 export interface RestoreCheckpointInput {
@@ -52,6 +54,11 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<void, CheckpointStoreError>;
 
     readonly hasCheckpointRef: (
+      input: Omit<RestoreCheckpointInput, "fallbackToHead">,
+    ) => Effect.Effect<boolean, CheckpointStoreError>;
+
+    /** False when the ref is missing or was not captured as a baseline. */
+    readonly isBaselineCheckpoint: (
       input: Omit<RestoreCheckpointInput, "fallbackToHead">,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
 
@@ -115,6 +122,16 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.hasCheckpointRef(input);
   });
 
+  const isBaselineCheckpoint: CheckpointStore["Service"]["isBaselineCheckpoint"] = Effect.fn(
+    "isBaselineCheckpoint",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(
+      "CheckpointStore.isBaselineCheckpoint",
+      input.cwd,
+    );
+    return yield* checkpoints.isBaselineCheckpoint(input);
+  });
+
   const restoreCheckpoint: CheckpointStore["Service"]["restoreCheckpoint"] = Effect.fn(
     "restoreCheckpoint",
   )(function* (input) {
@@ -150,6 +167,7 @@ export const make = Effect.gen(function* () {
     isGitRepository,
     captureCheckpoint,
     hasCheckpointRef,
+    isBaselineCheckpoint,
     restoreCheckpoint,
     diffCheckpoints,
     listAuthoredPaths,

@@ -1205,6 +1205,12 @@ export const OrchestrationV2CheckpointRepository = Schema.Struct({
   pathPrefix: TrimmedNonEmptyString,
   ref: CheckpointRef,
   status: OrchestrationV2CheckpointStatus,
+  /**
+   * A later turn filled this in with the snapshot rewinding here restores.
+   * The checkpoint's own run never captured the worktree. Absent on entries
+   * stored before this was recorded, which count as captured.
+   */
+  backfilled: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2CheckpointRepository = typeof OrchestrationV2CheckpointRepository.Type;
 

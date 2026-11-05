@@ -612,6 +612,7 @@ const make = Effect.gen(function* () {
           threadId,
           repoWorktree,
           ordinalWithinScope,
+          runs,
         });
       }),
       Effect.catchCause((cause) =>

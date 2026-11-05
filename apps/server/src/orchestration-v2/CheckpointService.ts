@@ -193,6 +193,12 @@ export interface RepositoryCheckpointHistory {
   readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal">>;
 }
 
+/**
+ * The thread's runs. A snapshot left where a rolled-back run ended is reused
+ * as a baseline only if it was captured as one since.
+ */
+export type CheckpointRunHistory = ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>;
+
 export type RepositorySnapshot =
   | { readonly _tag: "found"; readonly ordinal: number; readonly ref: CheckpointRef }
   /** A snapshot this ordinal should have is missing or failed to capture. */
@@ -222,6 +228,7 @@ export interface CheckpointServiceV2Shape {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
     readonly repoWorktrees?: ReadonlyArray<ThreadRepoWorktree>;
+    readonly runs?: CheckpointRunHistory;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
   /**
    * Snapshots a worktree the thread is attaching, before the agent edits it,
@@ -231,10 +238,12 @@ export interface CheckpointServiceV2Shape {
     readonly threadId: ThreadId;
     readonly repoWorktree: ThreadRepoWorktree;
     readonly ordinalWithinScope: number;
+    readonly runs?: CheckpointRunHistory;
   }) => Effect.Effect<OrchestrationV2CheckpointStatus>;
   readonly materializeBaselineCheckpoint: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
+    readonly runs?: CheckpointRunHistory;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
   readonly capture: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
@@ -244,6 +253,8 @@ export interface CheckpointServiceV2Shape {
     readonly appRunOrdinal: number | null;
     readonly capturedAt: DateTime.Utc;
     readonly repoWorktrees?: ReadonlyArray<ThreadRepoWorktree>;
+    /** Decides whether the previous ordinal's snapshot can be counted against. */
+    readonly runs?: CheckpointRunHistory;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
   /**
    * Gives earlier checkpoints that have no usable snapshot (a folder that is
@@ -443,8 +454,10 @@ export const resolveRepositorySnapshot = Effect.fn("resolveRepositorySnapshot")(
     if (ordinal >= before) break;
     const ref = yield* existing(ordinal);
     if (ref !== null) return { _tag: "found", ordinal, ref } as const;
-    // A rolled-back run's stale checkpoint still records that it captured the worktree.
-    if (entryAt(runOrdinal, { includeStale: true }) !== undefined) {
+    // A rolled-back run's stale checkpoint still records that it captured the
+    // worktree. One a later turn backfilled records no such thing.
+    const entry = entryAt(runOrdinal, { includeStale: true });
+    if (entry !== undefined && entry.backfilled !== true) {
       return { _tag: "unavailable", ordinal } as const;
     }
   }
@@ -671,27 +684,57 @@ export const layer: Layer.Layer<
         ),
       );
 
+    // A rewind deletes the snapshots its runs took at their end, but Git can
+    // refuse, as when another process holds the ref's lock. One left where a
+    // rolled-back run ended still holds that run's files. Only a baseline
+    // captured there since matches what the next run starts from.
+    const isStaleSnapshot = (input: {
+      readonly cwd: string;
+      readonly checkpointRef: CheckpointRef;
+      readonly ordinalWithinScope: number;
+      readonly runs: CheckpointRunHistory | undefined;
+    }) =>
+      input.runs?.some(
+        (run) => run.ordinal === input.ordinalWithinScope && run.status === "rolled_back",
+      ) === true
+        ? checkpointStore
+            .isBaselineCheckpoint({ cwd: input.cwd, checkpointRef: input.checkpointRef })
+            .pipe(
+              Effect.map((baseline) => !baseline),
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration V2 checkpoint baseline lookup failed", {
+                  checkpointRef: input.checkpointRef,
+                  cause: String(cause),
+                }).pipe(Effect.as(true)),
+              ),
+            )
+        : Effect.succeed(false);
+
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
     const captureRepositorySnapshotIfMissing = (input: {
       readonly scopeId: CheckpointScopeId;
       readonly repoWorktree: ThreadRepoWorktree;
       readonly ordinalWithinScope: number;
+      readonly runs: CheckpointRunHistory | undefined;
     }): Effect.Effect<OrchestrationV2CheckpointStatus> =>
       withWorkspaceLock(
         input.repoWorktree.worktreePath,
         Effect.gen(function* () {
-          if (!(yield* isGitCheckpointable(input.repoWorktree.worktreePath))) return "missing";
+          const cwd = input.repoWorktree.worktreePath;
+          if (!(yield* isGitCheckpointable(cwd))) return "missing";
           const checkpointRef = yield* repositoryRefFor({
             scopeId: input.scopeId,
-            worktreePath: input.repoWorktree.worktreePath,
+            worktreePath: cwd,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          if (yield* refExists(input.repoWorktree.worktreePath, checkpointRef)) return "ready";
-          yield* checkpointStore.captureCheckpoint({
-            cwd: input.repoWorktree.worktreePath,
-            checkpointRef,
-          });
+          if (
+            (yield* refExists(cwd, checkpointRef)) &&
+            !(yield* isStaleSnapshot({ ...input, cwd, checkpointRef }))
+          ) {
+            return "ready";
+          }
+          yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef, baseline: true });
           return "ready" as const;
         }),
       ).pipe(
@@ -712,6 +755,7 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             repoWorktree,
             ordinalWithinScope: input.ordinalWithinScope,
+            runs: input.runs,
           }),
         { discard: true },
       ).pipe(
@@ -731,13 +775,22 @@ export const layer: Layer.Layer<
                 cwd: input.scope.cwd,
                 checkpointRef,
               });
-              if (exists) {
+              if (
+                exists &&
+                !(yield* isStaleSnapshot({
+                  cwd: input.scope.cwd,
+                  checkpointRef,
+                  ordinalWithinScope: input.ordinalWithinScope,
+                  runs: input.runs,
+                }))
+              ) {
                 return;
               }
 
               yield* checkpointStore.captureCheckpoint({
                 cwd: input.scope.cwd,
                 checkpointRef,
+                baseline: true,
               });
             }),
           ),
@@ -763,6 +816,7 @@ export const layer: Layer.Layer<
               scopeId,
               repoWorktree: input.repoWorktree,
               ordinalWithinScope: input.ordinalWithinScope,
+              runs: input.runs,
             }),
           ),
           Effect.catchTags({
@@ -804,6 +858,14 @@ export const layer: Layer.Layer<
                     ),
                   )
               : false;
+            const stale =
+              available &&
+              (yield* isStaleSnapshot({
+                cwd: input.scope.cwd,
+                checkpointRef,
+                ordinalWithinScope: input.ordinalWithinScope,
+                runs: input.runs,
+              }));
             return makeCheckpoint({
               id: checkpointId,
               scope: input.scope,
@@ -813,7 +875,7 @@ export const layer: Layer.Layer<
               ordinalWithinScope: input.ordinalWithinScope,
               appRunOrdinal: null,
               ref: checkpointRef,
-              status: available ? "ready" : "missing",
+              status: stale ? "error" : available ? "ready" : "missing",
               files: [],
               capturedAt: input.scope.createdAt,
             });
@@ -914,14 +976,21 @@ export const layer: Layer.Layer<
                 }).pipe(Effect.as(false)),
               ),
             );
-          const files = previousExists
-            ? yield* changedFiles({
-                scopeId: input.scope.id,
-                cwd: input.scope.cwd,
-                fromCheckpointRef: previousCheckpointRef,
-                toCheckpointRef: checkpointRef,
-              })
-            : [];
+          const files =
+            previousExists &&
+            !(yield* isStaleSnapshot({
+              cwd: input.scope.cwd,
+              checkpointRef: previousCheckpointRef,
+              ordinalWithinScope: input.ordinalWithinScope - 1,
+              runs: input.runs,
+            }))
+              ? yield* changedFiles({
+                  scopeId: input.scope.id,
+                  cwd: input.scope.cwd,
+                  fromCheckpointRef: previousCheckpointRef,
+                  toCheckpointRef: checkpointRef,
+                })
+              : [];
 
           return makeCheckpoint({
             id: checkpointId,
@@ -944,6 +1013,7 @@ export const layer: Layer.Layer<
       readonly repoWorktree: ThreadRepoWorktree;
       readonly pathPrefix: string;
       readonly ordinalWithinScope: number;
+      readonly runs: CheckpointRunHistory | undefined;
     }) =>
       withWorkspaceLock(
         input.repoWorktree.worktreePath,
@@ -985,7 +1055,14 @@ export const layer: Layer.Layer<
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });
           const files =
-            input.ordinalWithinScope > 0 && (yield* refExists(cwd, previousCheckpointRef))
+            input.ordinalWithinScope > 0 &&
+            (yield* refExists(cwd, previousCheckpointRef)) &&
+            !(yield* isStaleSnapshot({
+              cwd,
+              checkpointRef: previousCheckpointRef,
+              ordinalWithinScope: input.ordinalWithinScope - 1,
+              runs: input.runs,
+            }))
               ? yield* changedFiles({
                   scopeId: input.scopeId,
                   cwd,
@@ -1018,6 +1095,7 @@ export const layer: Layer.Layer<
             repoWorktree,
             pathPrefix: prefixes.get(repoWorktree.worktreePath) ?? repoWorktree.repository,
             ordinalWithinScope: input.ordinalWithinScope,
+            runs: input.runs,
           }),
         );
         return withRepositories(
@@ -1106,7 +1184,7 @@ export const layer: Layer.Layer<
               Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore),
             );
             if (snapshot._tag === "found") {
-              repositories.push({ ...entry, ref: snapshot.ref, status: "ready" });
+              repositories.push({ ...entry, ref: snapshot.ref, status: "ready", backfilled: true });
             } else if (snapshot._tag === "unavailable") {
               repositories.push({
                 ...entry,
@@ -1116,6 +1194,7 @@ export const layer: Layer.Layer<
                   ordinalWithinScope: snapshot.ordinal,
                 }),
                 status: "error",
+                backfilled: true,
               });
             }
           }
@@ -1418,7 +1497,8 @@ export const layer: Layer.Layer<
       readonly keep: ReadonlyArray<OrchestrationV2Checkpoint>;
     }) =>
       Effect.gen(function* () {
-        // Backfilled checkpoints share a baseline ref with later ones.
+        // Backfilled checkpoints share a baseline ref with later ones. Entries
+        // stored before backfills were marked rely on this.
         const kept = new Set(
           input.keep.flatMap(
             (checkpoint) =>
@@ -1431,6 +1511,9 @@ export const layer: Layer.Layer<
         >();
         for (const checkpoint of input.checkpoints) {
           for (const entry of checkpoint.repositories ?? []) {
+            // It names the snapshot taken when the worktree was attached, which
+            // an earlier rewind still restores.
+            if (entry.backfilled === true) continue;
             if (kept.has(`${entry.worktreePath}\0${entry.ref}`)) continue;
             const group = byWorktree.get(entry.worktreePath) ?? { entry, refs: new Set() };
             group.refs.add(entry.ref);
@@ -1450,6 +1533,7 @@ export const layer: Layer.Layer<
           ).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("orchestration V2 stale repository refs were kept", {
+                worktreePath: entry.worktreePath,
                 cause: String(cause),
               }),
             ),
@@ -1457,6 +1541,8 @@ export const layer: Layer.Layer<
         }
       });
 
+    // Cleanup only: a ref Git refuses to delete is never reused as a baseline
+    // (see `isStaleSnapshot`), so the rewind still completes without it.
     const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>
       Effect.gen(function* () {
         const workspaceRefs = input.checkpoints
@@ -1469,6 +1555,13 @@ export const layer: Layer.Layer<
               cwd: input.scope.cwd,
               checkpointRefs: workspaceRefs,
             }),
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration V2 stale checkpoint refs were kept", {
+                scopeId: input.scope.id,
+                cause: String(cause),
+              }),
+            ),
           );
         }
         yield* deleteStaleRepositoryRefs({

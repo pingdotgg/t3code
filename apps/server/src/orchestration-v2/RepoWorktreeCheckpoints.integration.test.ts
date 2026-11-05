@@ -1396,6 +1396,359 @@ describe("repository worktree checkpoints", () => {
     { timeout: 120_000 },
   );
 
+  /**
+   * Turn 1 attaches alpha, which is detached before turn 2, so turn 2 has no
+   * worktrees. Turn 3 attaches alpha again and beta for the first time. Turn
+   * 2's checkpoint borrows their attach snapshots, which is no sign that turn
+   * 2 captured either one.
+   */
+  const detachedAllThenAttached = (agent: Agent, name: string) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+      const threadId = yield* createThread({ threadId: `thread:${name}` });
+      const ensure = (repository: string) =>
+        repoWorktrees
+          .ensure({ threadId, repository, branch: `t3/${name}`, baseRef: "main" })
+          .pipe(Effect.map((result) => result.repoWorktree.worktreePath));
+      let alpha = "";
+      let beta = "";
+      yield* runTurn(
+        agent,
+        threadId,
+        Effect.gen(function* () {
+          alpha = yield* ensure("alpha");
+          yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
+        }),
+      );
+      yield* repoWorktrees.detach({ threadId, worktreePath: alpha });
+      assert.deepEqual((yield* projectionOf(threadId)).thread.repoWorktrees, []);
+      yield* runTurn(agent, threadId, Effect.void);
+      yield* runTurn(
+        agent,
+        threadId,
+        Effect.gen(function* () {
+          assert.equal(yield* ensure("alpha"), alpha);
+          beta = yield* ensure("beta");
+          yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\nturn 3\n");
+          yield* write(path.join(beta, "README.md"), "# beta\nturn 3\n");
+        }),
+      );
+      const borrowed = (yield* projectionOf(threadId)).checkpoints
+        .find((checkpoint) => checkpoint.appRunOrdinal === 2)
+        ?.repositories?.find((entry) => entry.repository === "beta");
+      assert.isDefined(borrowed);
+      return { threadId, alpha, beta, borrowed: borrowed! };
+    });
+
+  it.effect(
+    "restores an earlier turn after every worktree was detached and others attached",
+    () =>
+      withHarness(({ fixture, agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+          const { threadId, alpha, beta, borrowed } = yield* detachedAllThenAttached(
+            agent,
+            "detach-all",
+          );
+
+          const first = yield* rollback(threadId, 1);
+          assert.isNull(first.thread.rollbackFailure ?? null);
+          assert.deepEqual(
+            first.runs.map((run) => run.status),
+            ["completed", "rolled_back", "rolled_back"],
+          );
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
+          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
+          assert.equal((yield* Ref.get(agent.nativeTurns)).length, 1);
+
+          // Beta's attach snapshot outlives that rewind: a later turn diffs
+          // against it, and rewinding to the start restores it again.
+          yield* runTurn(agent, threadId, write(path.join(beta, "README.md"), "# beta\nturn 4\n"));
+          const fourth = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 4 });
+          assert.include(fourth.diff, "+turn 4");
+          assert.notInclude(fourth.diff, "turn 3");
+          const start = yield* rollback(threadId, 0);
+          assert.isNull(start.thread.rollbackFailure ?? null);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
+          assert.deepEqual(yield* Ref.get(agent.nativeTurns), []);
+          assert.equal(yield* Ref.get(agent.rollbacks), 2);
+          assert.isTrue(borrowed.backfilled);
+          for (const source of [fixture.alpha, fixture.beta]) {
+            assert.equal(yield* git(source, ["status", "--porcelain"]), "");
+            assert.equal(yield* git(source, ["branch", "--show-current"]), "main");
+          }
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.effect.skipIf(!permissionsBlockWrites)(
+    "finishes that rewind's file restore on a retry from the same attach snapshot",
+    () =>
+      withHarness(({ agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const { threadId, alpha, beta } = yield* detachedAllThenAttached(
+            agent,
+            "detach-all-retry",
+          );
+          // Git can read beta but not replace its files.
+          yield* fileSystem.chmod(beta, 0o555);
+          yield* Effect.addFinalizer(() => fileSystem.chmod(beta, 0o755).pipe(Effect.ignore));
+          const partial = yield* rollback(threadId, 1);
+          assert.include(
+            partial.thread.rollbackFailure?.message ?? "",
+            "restoring files stopped at the beta worktree",
+          );
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
+          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 3\n");
+
+          yield* fileSystem.chmod(beta, 0o755);
+          yield* TestClock.adjust(Duration.seconds(31));
+          yield* worker.drain();
+          const finished = yield* projectionOf(threadId);
+          assert.isNull(finished.thread.rollbackFailure ?? null);
+          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
+          // The provider already rewound; finishing the files does not ask it again.
+          assert.equal(yield* Ref.get(agent.rollbacks), 1);
+          assert.equal((yield* Ref.get(agent.nativeTurns)).length, 1);
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.effect(
+    "refuses that rewind once beta's attach snapshot is gone, not using a newer one",
+    () =>
+      withHarness(({ agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const { threadId, alpha, beta, borrowed } = yield* detachedAllThenAttached(
+            agent,
+            "detach-all-missing",
+          );
+          // Turn 3's own snapshot of beta, with its edit, is still there.
+          yield* git(beta, ["update-ref", "-d", borrowed.ref]);
+
+          yield* rollback(threadId, 1);
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            yield* TestClock.adjust(Duration.seconds(31));
+            yield* worker.drain();
+          }
+          const after = yield* projectionOf(threadId);
+          assert.include(after.thread.rollbackFailure?.message ?? "", "No checkpoint of beta");
+          assert.include(after.thread.rollbackFailure?.message ?? "", "Nothing was changed");
+          assert.deepEqual(
+            after.runs.map((run) => run.status),
+            ["completed", "completed", "completed"],
+          );
+          assert.equal(yield* Ref.get(agent.rollbacks), 0);
+          assert.equal((yield* Ref.get(agent.nativeTurns)).length, 3);
+          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\nturn 3\n");
+          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 3\n");
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
+  /**
+   * Turn 1 leaves alpha's README with a kept line, and turn 2 adds one that
+   * rewinding to turn 1 removes. With `lock`, a lock file on turn 2's
+   * snapshot ref, as another Git process leaves, makes Git refuse to delete
+   * that snapshot, so it still holds turn 2's edit where turn 3's baseline goes.
+   */
+  const rewindLeavingStaleSnapshot = (
+    fixture: Fixture,
+    agent: Agent,
+    input: { readonly name: string; readonly ordinary: boolean; readonly lock: boolean },
+  ) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+      const branch = `t3/${input.name}`;
+      let cwd = path.join(fixture.worktrees, "alpha", input.name);
+      let threadId: ThreadId;
+      if (input.ordinary) {
+        yield* createProject(alphaProjectId, fixture.alpha);
+        yield* git(fixture.alpha, ["worktree", "add", "-b", branch, cwd]);
+        threadId = yield* createThread({
+          threadId: `thread:${input.name}`,
+          projectId: alphaProjectId,
+          worktreePath: cwd,
+          branch,
+        });
+      } else {
+        threadId = yield* createThread({ threadId: `thread:${input.name}` });
+      }
+      yield* runTurn(
+        agent,
+        threadId,
+        Effect.gen(function* () {
+          if (!input.ordinary) {
+            cwd = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "alpha",
+              branch,
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+          }
+          yield* write(path.join(cwd, "README.md"), "# alpha\nkept\n");
+        }),
+      );
+      yield* runTurn(
+        agent,
+        threadId,
+        write(path.join(cwd, "README.md"), "# alpha\nkept\nturn 2\n"),
+      );
+      const second = (yield* projectionOf(threadId)).checkpoints.find(
+        (checkpoint) => checkpoint.appRunOrdinal === 2,
+      );
+      const ref = input.ordinary ? second!.ref : second!.repositories![0]!.ref;
+      const lockPath = yield* git(cwd, [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        `${ref}.lock`,
+      ]);
+      if (input.lock) {
+        yield* write(lockPath, "held by another Git process\n");
+        yield* Effect.addFinalizer(() => fileSystem.remove(lockPath).pipe(Effect.ignore));
+      }
+
+      const rewound = yield* rollback(threadId, 1);
+      assert.isNull(rewound.thread.rollbackFailure ?? null);
+      assert.equal(
+        rewound.checkpoints.find((checkpoint) => checkpoint.appRunOrdinal === 2)?.status,
+        "stale",
+      );
+      assert.equal(yield* read(path.join(cwd, "README.md")), "# alpha\nkept\n");
+      assert.equal(
+        yield* git(cwd, ["for-each-ref", "--format=%(refname)", ref]),
+        input.lock ? ref : "",
+      );
+      return { threadId, cwd, ref, lockPath, prefix: input.ordinary ? "" : "alpha/" };
+    });
+  const expectSourceUnchanged = (fixture: Fixture) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      assert.equal(yield* read(path.join(fixture.alpha, "README.md")), "# alpha\n");
+      assert.equal(yield* git(fixture.alpha, ["status", "--porcelain"]), "");
+      assert.equal(yield* git(fixture.alpha, ["branch", "--show-current"]), "main");
+    });
+  const turnCounts = (threadId: ThreadId, turn: number) =>
+    projectionOf(threadId).pipe(
+      Effect.map((projection) =>
+        projection.checkpoints
+          .find((checkpoint) => checkpoint.appRunOrdinal === turn)
+          ?.files.map((file) => [file.path, file.additions, file.deletions]),
+      ),
+    );
+
+  it.effect.each([
+    { worktree: "repository", lock: "released" },
+    { worktree: "repository", lock: "none" },
+    { worktree: "ordinary", lock: "released" },
+    { worktree: "ordinary", lock: "none" },
+  ] as const)(
+    "baselines the turn after a $worktree worktree rewind on its restored files, lock $lock",
+    ({ worktree, lock }) =>
+      withHarness(({ fixture, agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+          const { threadId, cwd, ref, lockPath, prefix } = yield* rewindLeavingStaleSnapshot(
+            fixture,
+            agent,
+            {
+              name: `stale-${worktree}-${lock}`,
+              ordinary: worktree === "ordinary",
+              lock: lock !== "none",
+            },
+          );
+          // Another Git process lets go before the next turn.
+          if (lock === "released") yield* fileSystem.remove(lockPath);
+
+          let baseline = "";
+          yield* runTurn(
+            agent,
+            threadId,
+            Effect.gen(function* () {
+              baseline = yield* git(cwd, ["show", `${ref}:README.md`]);
+              yield* write(path.join(cwd, "README.md"), "# alpha\nkept\nturn 3\n");
+            }),
+          );
+          assert.equal(baseline, "# alpha\nkept");
+          assert.deepEqual(yield* turnCounts(threadId, 3), [[`${prefix}README.md`, 1, 0]]);
+          const diff = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
+          assert.include(diff.diff, "+turn 3");
+          assert.notInclude(diff.diff, "turn 2");
+
+          const again = yield* rollback(threadId, 1);
+          assert.isNull(again.thread.rollbackFailure ?? null);
+          assert.equal(yield* read(path.join(cwd, "README.md")), "# alpha\nkept\n");
+          yield* expectSourceUnchanged(fixture);
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.effect.each(["repository", "ordinary"] as const)(
+    "leaves a %s worktree turn uncounted, not miscounted, while its stale baseline stays locked",
+    (worktree) =>
+      withHarness(({ fixture, agent }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+          const { threadId, cwd, ref, lockPath, prefix } = yield* rewindLeavingStaleSnapshot(
+            fixture,
+            agent,
+            { name: `locked-${worktree}`, ordinary: worktree === "ordinary", lock: true },
+          );
+
+          // Capture retries a locked ref after a short real delay before it gives up.
+          yield* TestClock.withLive(
+            runTurn(agent, threadId, write(path.join(cwd, "README.md"), "# alpha\nkept\nturn 3\n")),
+          );
+          // Git could not replace the stale snapshot, and nothing calls it a baseline.
+          assert.equal(yield* git(cwd, ["show", `${ref}:README.md`]), "# alpha\nkept\nturn 2");
+          assert.deepEqual(yield* turnCounts(threadId, 3), []);
+          const third = yield* projectionOf(threadId);
+          assert.notInclude(
+            third.checkpoints
+              .filter((checkpoint) => checkpoint.ordinalWithinScope === 2)
+              .map((checkpoint) => checkpoint.status),
+            "ready",
+          );
+          const diff = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
+          assert.include(diff.diff, "+turn 3");
+          assert.notInclude(diff.diff, "turn 2");
+
+          // Once Git lets go, the next turn counts against turn 3's own snapshot.
+          yield* fileSystem.remove(lockPath);
+          yield* runTurn(
+            agent,
+            threadId,
+            write(path.join(cwd, "README.md"), "# alpha\nkept\nturn 3\nturn 4\n"),
+          );
+          assert.deepEqual(yield* turnCounts(threadId, 4), [[`${prefix}README.md`, 1, 0]]);
+          const again = yield* rollback(threadId, 1);
+          assert.isNull(again.thread.rollbackFailure ?? null);
+          assert.equal(yield* read(path.join(cwd, "README.md")), "# alpha\nkept\n");
+          yield* expectSourceUnchanged(fixture);
+        }),
+      ),
+    { timeout: 120_000 },
+  );
+
   it.effect("recovers a rewind whose reply was lost without removing earlier turns", () =>
     withHarness(({ agent }) =>
       Effect.gen(function* () {

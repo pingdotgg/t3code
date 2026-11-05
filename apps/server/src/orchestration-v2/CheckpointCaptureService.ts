@@ -107,7 +107,10 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
-      const { repoWorktrees } = yield* projections.getThread(input.threadId);
+      const {
+        thread: { repoWorktrees },
+        runs,
+      } = yield* projections.getThreadRecords(input.threadId, ["runs"]);
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
@@ -116,6 +119,7 @@ export const layer: Layer.Layer<
         appRunOrdinal: run.ordinal,
         capturedAt,
         ...(repoWorktrees === undefined ? {} : { repoWorktrees }),
+        runs,
       });
       const hasRepositories = (checkpoint.repositories?.length ?? 0) > 0;
       const backfilled = hasRepositories
@@ -136,6 +140,7 @@ export const layer: Layer.Layer<
           : yield* checkpoints.materializeBaselineCheckpoint({
               scope,
               ordinalWithinScope: 0,
+              runs,
             });
       const baselineCheckpoint =
         hasRepositories || hasReadyCheckpoint(baselineOrdinalWithinScope)
@@ -143,6 +148,7 @@ export const layer: Layer.Layer<
           : yield* checkpoints.materializeBaselineCheckpoint({
               scope,
               ordinalWithinScope: baselineOrdinalWithinScope,
+              runs,
             });
       // Match RunExecutionService: capture loaded the waiting run before
       // materializing baselines. Omit delegatedCompletion so a newer cohort
