@@ -255,32 +255,17 @@ export function UsagePage() {
         Array.from(presentationsWithProviders, ([environmentId, presentation]) => {
           if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            const providers = (presentation.serverConfig?.providers ?? []).filter(
-              (provider) =>
-                ![...hiddenProviders].some(
-                  (hidden) =>
-                    hidden === (provider.driver === "claudeAgent" ? "claude" : provider.driver),
+            return refreshProviders({
+              environmentId,
+              input: {
+                usage: true,
+                usageProviders: PROVIDER_ORDER.filter(
+                  (provider) => !hiddenProviders.has(provider),
+                ).map((provider) =>
+                  ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
                 ),
-            );
-            return Promise.all([
-              refreshProviders({
-                environmentId,
-                input: {
-                  usageSources: true,
-                  usageProviders: PROVIDER_ORDER.filter(
-                    (provider) => !hiddenProviders.has(provider),
-                  ).map((provider) =>
-                    ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
-                  ),
-                },
-              }),
-              ...providers.map((provider) =>
-                refreshProviders({
-                  environmentId,
-                  input: { instanceId: provider.instanceId, usage: true },
-                }),
-              ),
-            ]);
+              },
+            });
           }
         }),
       ),

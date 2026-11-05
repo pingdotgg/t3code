@@ -482,6 +482,43 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("drops only the disproven credit balance after no_credit", () =>
+    Effect.gen(function* () {
+      let consumed = false;
+      const test = fixture({
+        upstream: (request) => {
+          if (request.url?.endsWith("/consume")) {
+            consumed = true;
+            return { status: 200, body: { code: "no_credit" } };
+          }
+          if (request.url?.endsWith("/rate-limit-reset-credits")) {
+            return request.auth_index === "b"
+              ? { status: 503, body: {} }
+              : { status: 200, body: { credits: consumed ? [] : [credit("first")] } };
+          }
+          return { status: 200, body: { plan_type: "pro", rate_limit: null } };
+        },
+      });
+      const api = yield* test.api;
+      const initial = yield* api.readAccounts(config);
+      expect(initial[0]?.usageLimits.resetCredits?.availableCount).toBe(1);
+      expect(yield* api.consume(config, "first.json", "first")).toEqual({ outcome: "noCredit" });
+      const refreshed = yield* api.readAccounts(config);
+      expect(refreshed[0]?.usageLimits.resetCredits?.availableCount).toBe(0);
+      expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
+        0,
+      );
+      expect(test.requests.filter((request) => request.body?.url?.endsWith("/usage"))).toHaveLength(
+        2,
+      );
+      expect(
+        test.requests
+          .filter((request) => request.body?.url?.endsWith("/rate-limit-reset-credits"))
+          .map((request) => request.body?.auth_index),
+      ).toEqual(["a", "b", "a"]);
+    }),
+  );
+
   it.effect("reports redemption success even if cooldown clearing fails", () =>
     Effect.gen(function* () {
       const api = yield* fixture({ cooldownStatus: 404 }).api;
