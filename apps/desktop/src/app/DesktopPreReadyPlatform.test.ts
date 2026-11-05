@@ -17,6 +17,8 @@ const {
   execFileSyncMock,
   readFileSyncMock,
   symlinkSyncMock,
+  existsSyncMock,
+  rmSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -29,6 +31,8 @@ const {
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   symlinkSyncMock: vi.fn(),
+  existsSyncMock: vi.fn(),
+  rmSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -54,6 +58,8 @@ vi.mock("node:fs", () => ({
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
   symlinkSync: symlinkSyncMock,
+  existsSync: existsSyncMock,
+  rmSync: rmSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -61,6 +67,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import * as DesktopConfig from "./DesktopConfig.ts";
+import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
 describe("DesktopPreReadyPlatform", () => {
@@ -76,6 +83,8 @@ describe("DesktopPreReadyPlatform", () => {
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
     symlinkSyncMock.mockReset();
+    existsSyncMock.mockReset().mockReturnValue(false);
+    rmSyncMock.mockReset();
   });
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
@@ -248,6 +257,57 @@ describe("DesktopPreReadyPlatform", () => {
           ([path]) => path === "/xdg/applications/com.t3tools.T3Code.desktop",
         )?.[1];
         assert.include(entry, 'Exec="/opt/T3 Code/t3code" %U');
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
+  it.effect.each([
+    {
+      label: "removes an earlier launch's entry",
+      previousEntry: renderUrlHandlerDesktopEntry({
+        displayName: "T3 Code (Beta)",
+        execTarget: "/usr/lib/electron/electron",
+        scheme: "t3code",
+      }),
+      removed: true,
+    },
+    {
+      label: "keeps a user's own entry",
+      previousEntry: "[Desktop Entry]\nType=Application\nExec=t3code %U\n",
+      removed: false,
+    },
+  ])("defers to an installed desktop entry and $label", ({ previousEntry, removed }) => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    getSwitchValueMock.mockReturnValue("");
+    const userEntry = "/xdg/applications/com.t3tools.T3Code.desktop";
+    existsSyncMock.mockImplementation(
+      (path: string) => path === "/opt/share/applications/com.t3tools.T3Code.desktop",
+    );
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === userEntry) return previousEntry;
+      throw new Error("ENOENT");
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          DesktopPreReadyPlatform.layer.pipe(
+            Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+            Layer.provide(
+              DesktopConfig.layerTest({
+                XDG_DATA_HOME: "/xdg",
+                XDG_DATA_DIRS: "relative/share:/opt/share",
+              }),
+            ),
+          ),
+        );
+        assert.isFalse(writeFileSyncMock.mock.calls.some(([path]) => path === userEntry));
+        assert.equal(copyFileSyncMock.mock.calls.length, 0);
+        assert.deepEqual(
+          rmSyncMock.mock.calls.map(([path]) => path),
+          removed ? [userEntry] : [],
+        );
+        assert.deepEqual(setDesktopNameMock.mock.calls, [["com.t3tools.T3Code.desktop"]]);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
