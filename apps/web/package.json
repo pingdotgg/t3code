@@ -8,8 +8,10 @@
     "dev": "vp dev",
     "dev:built": "vp build --watch",
     "build": "vp build",
+    "i18n:generate": "gt generate",
     "preview": "vp preview",
-    "test": "vp test run --passWithNoTests --project unit --project browser"
+    "test": "vp test run --passWithNoTests --project unit --project browser",
+    "i18n:translate": "gt translate"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -61,6 +63,7 @@
     "effect": "catalog:",
     "entities": "8.1.0",
     "fast-xml-parser": "5.7.3",
+    "gt-react": "11.4.18",
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",
     "heic-to": "^1.5.2",
@@ -110,6 +113,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/browser-playwright": "5.0.5",
     "compression": "^1.8.2",
+    "gt": "2.27.0",
     "micromark-util-types": "catalog:",
     "oxc-transform-react": "~0.152.0",
     "playwright": "1.60.0",
