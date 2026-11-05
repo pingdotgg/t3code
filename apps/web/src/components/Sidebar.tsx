@@ -578,6 +578,19 @@ function useSidebarThreads(input: {
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
   ];
+  // Settle-and-advance reads every tab, so the open thread still advances while another tab shows.
+  const navigationThreads =
+    sidebarTab === null
+      ? orderedThreads
+      : [
+          ...pinnedThreads,
+          ...(projectFolders !== null && activeSectionVisible
+            ? projectFolders.flatMap((folder) => folder.threads)
+            : activeThreads),
+          ...workingThreads,
+          ...snoozedThreads,
+          ...visibleSettledThreads,
+        ];
   const sectionByThreadKey = new Map<string, SidebarSection>();
   for (const [list, section] of [
     [pinnedThreads, "pinned"],
@@ -628,6 +641,9 @@ function useSidebarThreads(input: {
     visibleWorkingThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
+    navigationThreadByKey: new Map(
+      navigationThreads.map((thread) => [threadShellKey(thread), thread] as const),
+    ),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,
@@ -1353,6 +1369,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     visibleWorkingThreads,
     orderedThreadKeys,
     threadByKey,
+    navigationThreadByKey,
     settledThreadKeys,
     snoozedThreadKeys,
     sectionByThreadKey,
@@ -1455,6 +1472,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   // Read changing maps/sets through refs so streamed events preserve row callbacks.
   const threadByKeyRef = useRef(threadByKey);
+  const navigationThreadByKeyRef = useRef(navigationThreadByKey);
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
@@ -1614,8 +1632,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     coParkingKeys?: ReadonlySet<string>,
   ): (() => void) | null => {
     if (readRouteThreadKey(router) !== threadKey) return null;
-    const shell = threadByKeyRef.current.get(threadKey);
-    const orderedKeys = orderedThreadKeysRef.current;
+    const threadByKey = navigationThreadByKeyRef.current;
+    const shell = threadByKey.get(threadKey);
+    const orderedKeys = [...threadByKey.keys()];
     const settledKeys = settledThreadKeysRef.current;
     const snoozedKeys = snoozedThreadKeysRef.current;
     const currentIndex = orderedKeys.indexOf(threadKey);
@@ -1625,7 +1644,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : ([...orderedKeys.slice(currentIndex + 1), ...orderedKeys.slice(0, currentIndex)].find(
             (key) => !settledKeys.has(key) && !snoozedKeys.has(key) && !coParkingKeys?.has(key),
           ) ?? null);
-    const nextThread = nextCardKey ? threadByKeyRef.current.get(nextCardKey) : null;
+    const nextThread = nextCardKey ? threadByKey.get(nextCardKey) : null;
     return nextThread
       ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
       : shell
@@ -1810,6 +1829,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectGroupsRef.current = projectGroups;
     orderedThreadKeysRef.current = orderedThreadKeys;
     threadByKeyRef.current = threadByKey;
+    navigationThreadByKeyRef.current = navigationThreadByKey;
     settledThreadKeysRef.current = settledThreadKeys;
     snoozedThreadKeysRef.current = snoozedThreadKeys;
     sectionByThreadKeyRef.current = sectionByThreadKey;
@@ -3007,6 +3027,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     section: SidebarSection,
     // The tree row of the project folder this row sits in.
     folderRow?: string,
+    swipePreview = false,
   ) => {
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     const isCard = section === "active" || section === "pinned" || section === "working";
@@ -3058,7 +3079,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
         wokeAt={threadWokeAt(thread, { now: snoozeNow })}
         isActive={routeRowThreadKey === threadKey}
-        revealRef={routeRowThreadKey === threadKey ? revealActiveRow : undefined}
+        revealRef={!swipePreview && routeRowThreadKey === threadKey ? revealActiveRow : undefined}
         isRouteThread={routeThreadKey === threadKey}
         openPullRequestsInRightPanel={routeThreadRef !== null}
         jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
@@ -3111,7 +3132,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ...tabThreads.map((thread) => ({ thread, section })),
     ]
       .slice(0, SWIPE_PREVIEW_ROW_COUNT)
-      .map((row) => renderThreadRow(row.thread, row.section));
+      .map((row) => renderThreadRow(row.thread, row.section, undefined, true));
   };
 
   return (
