@@ -27,6 +27,7 @@ import {
 import {
   externalLinkContextReferences,
   figmaContextRecord,
+  issueContextRecord,
   jiraContextRecord,
 } from "@t3tools/shared/composerContextExternalLinks";
 import {
@@ -134,6 +135,16 @@ export function figmaComposerContext(input: {
   readonly nodeId?: string;
 }) {
   return figmaContextRecord(input);
+}
+
+export function issueComposerContext(input: {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly repository: string;
+  readonly state: "open" | "closed";
+}) {
+  return issueContextRecord(input);
 }
 
 export { externalLinkContextReferences };

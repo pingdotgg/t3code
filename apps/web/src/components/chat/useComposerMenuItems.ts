@@ -84,11 +84,13 @@ export function useComposerMenuItems({
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
   const composerTriggerKind = composerTrigger?.kind ?? null;
+  const wantsPullRequests =
+    composerTriggerKind === "pull-request" || composerTriggerKind === "hash";
+  const wantsIssues = composerTriggerKind === "issue" || composerTriggerKind === "hash";
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
-  const pullRequestTriggerQuery =
-    composerTrigger?.kind === "pull-request" ? composerTrigger.query : "";
+  const pullRequestTriggerQuery = wantsPullRequests ? (composerTrigger?.query ?? "") : "";
   const pullRequestTextQuery =
-    composerTriggerKind === "pull-request" &&
+    wantsPullRequests &&
     pullRequestTriggerQuery.length > 0 &&
     !/^\d+$/u.test(pullRequestTriggerQuery)
       ? pullRequestTriggerQuery
@@ -97,10 +99,14 @@ export function useComposerMenuItems({
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
-  const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
+  const isThreadTrigger = composerTriggerKind === "thread";
+  const threadTriggerQuery = composerTrigger?.kind === "thread" ? composerTrigger.query : "";
+  const environmentThreadShells = useVisibleThreadShells(isThreadTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
-  // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
+  useThreadSearch(isThreadTrigger ? [environmentId] : [], threadTriggerQuery, {
+    titlesOnly: true,
+  });
+  // The user's machines feed `@` / `@file:` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
@@ -114,15 +120,12 @@ export function useComposerMenuItems({
     query: isPathTrigger ? pathTriggerQuery : null,
   });
 
-  const mentionQueryForIndex =
-    composerTriggerKind === "pull-request"
-      ? (settledPullRequestTextQuery ??
-        (pullRequestTextQuery === null ? pullRequestTriggerQuery : null))
-      : null;
+  const mentionQueryForIndex = wantsPullRequests
+    ? (settledPullRequestTextQuery ??
+      (pullRequestTextQuery === null ? pullRequestTriggerQuery : null))
+    : null;
   const mentionIndexLookup = useEnvironmentQuery(
-    composerTriggerKind !== "pull-request" ||
-      pullRequestProjectId === null ||
-      mentionQueryForIndex === null
+    !wantsPullRequests || pullRequestProjectId === null || mentionQueryForIndex === null
       ? null
       : mentionIndexEnvironment.search({
           environmentId,
@@ -130,13 +133,14 @@ export function useComposerMenuItems({
             projectId: pullRequestProjectId,
             query: mentionQueryForIndex,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+            providers: ["pull-request"],
           }),
         }),
   );
-  const threadMentionQuery = isPathTrigger ? pathTriggerQuery : null;
+  const threadMentionQuery = isThreadTrigger ? threadTriggerQuery : null;
   const debouncedThreadMentionQuery = useDebouncedValue(threadMentionQuery, 180);
   const threadMentionIndexLookup = useEnvironmentQuery(
-    !isPathTrigger ||
+    !isThreadTrigger ||
       pullRequestProjectId === null ||
       threadMentionQuery !== debouncedThreadMentionQuery
       ? null
@@ -150,11 +154,62 @@ export function useComposerMenuItems({
           }),
         }),
   );
+  const jiraTriggerQuery = composerTrigger?.kind === "jira" ? composerTrigger.query : "";
+  const debouncedJiraTriggerQuery = useDebouncedValue(jiraTriggerQuery, 180);
+  const jiraMentionIndexLookup = useEnvironmentQuery(
+    composerTriggerKind !== "jira" ||
+      pullRequestProjectId === null ||
+      jiraTriggerQuery !== debouncedJiraTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedJiraTriggerQuery,
+            limit: 12,
+            providers: ["jira"],
+          }),
+        }),
+  );
+  const figmaTriggerQuery = composerTrigger?.kind === "figma" ? composerTrigger.query : "";
+  const debouncedFigmaTriggerQuery = useDebouncedValue(figmaTriggerQuery, 180);
+  const figmaMentionIndexLookup = useEnvironmentQuery(
+    composerTriggerKind !== "figma" ||
+      pullRequestProjectId === null ||
+      figmaTriggerQuery !== debouncedFigmaTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedFigmaTriggerQuery,
+            limit: 24,
+            providers: ["figma"],
+          }),
+        }),
+  );
+  const issueTriggerQuery = wantsIssues ? (composerTrigger?.query ?? "") : "";
+  const debouncedIssueTriggerQuery = useDebouncedValue(issueTriggerQuery, 180);
+  const issueMentionIndexLookup = useEnvironmentQuery(
+    !wantsIssues ||
+      pullRequestProjectId === null ||
+      issueTriggerQuery !== debouncedIssueTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedIssueTriggerQuery,
+            limit: 12,
+            providers: ["issue"],
+          }),
+        }),
+  );
   const pullRequestTriggerNumber = (() => {
-    if (composerTrigger?.kind !== "pull-request" || composerTrigger.query.length === 0) {
+    if (!wantsPullRequests || (composerTrigger?.query.length ?? 0) === 0) {
       return null;
     }
-    const number = Number(composerTrigger.query);
+    const number = Number(composerTrigger?.query ?? "");
     return Number.isSafeInteger(number) && number > 0 ? number : null;
   })();
   const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
@@ -193,7 +248,7 @@ export function useComposerMenuItems({
 
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
-    if (composerTrigger.kind === "path") {
+    if (composerTrigger.kind === "thread") {
       const shellThreadItems = matchComposerThreadItems({
         shells: environmentThreadShells,
         environmentId,
@@ -220,9 +275,10 @@ export function useComposerMenuItems({
           },
         ];
       });
+      return [...shellThreadItems, ...indexedThreadItems];
+    }
+    if (composerTrigger.kind === "path") {
       return [
-        ...shellThreadItems,
-        ...indexedThreadItems,
         // An answer to an agent's question carries thread links, not machines.
         ...(questionAttachmentTarget === null && offersMachines
           ? matchComposerEnvironmentItems({
@@ -241,6 +297,45 @@ export function useComposerMenuItems({
           description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
         })),
       ];
+    }
+    if (composerTrigger.kind === "jira") {
+      return (jiraMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.jira === undefined) return [];
+        return [
+          {
+            id: `jira:${hit.jira.key}`,
+            type: "jira" as const,
+            key: hit.jira.key,
+            url: hit.jira.url,
+            summary: hit.jira.summary,
+            label: hit.label,
+            description:
+              hit.jira.status !== undefined
+                ? `${hit.jira.status} · ${hit.description}`
+                : hit.description,
+          },
+        ];
+      });
+    }
+    if (composerTrigger.kind === "figma") {
+      if (pullRequestProjectId === null) return [];
+      return (figmaMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.figma === undefined) return [];
+        return [
+          {
+            id: `figma:${hit.figma.fileKey}`,
+            type: "figma" as const,
+            fileKey: hit.figma.fileKey,
+            url: hit.figma.url,
+            name: hit.figma.name,
+            hasThumbnail: hit.figma.hasThumbnail,
+            projectId: pullRequestProjectId,
+            environmentId,
+            label: hit.label,
+            description: hit.description,
+          },
+        ];
+      });
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
@@ -337,11 +432,26 @@ export function useComposerMenuItems({
           (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
       }));
     }
-    if (
-      composerTrigger.kind === "pull-request" &&
-      pullRequestProjectId !== null &&
-      pullRequestRepository !== null
-    ) {
+    const issueItems = (): ComposerCommandItem[] =>
+      (issueMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.issue === undefined) return [];
+        return [
+          {
+            id: `issue:${hit.issue.repository.toLowerCase()}#${hit.issue.number}`,
+            type: "issue" as const,
+            number: hit.issue.number,
+            title: hit.issue.title,
+            url: hit.issue.url,
+            repository: hit.issue.repository,
+            state: hit.issue.state,
+            label: hit.label,
+            description: `${hit.issue.state} · ${hit.issue.repository} · ${hit.description}`,
+          },
+        ];
+      });
+
+    const pullRequestItems = (): ComposerCommandItem[] => {
+      if (pullRequestProjectId === null || pullRequestRepository === null) return [];
       const indexed = (mentionIndexLookup.data?.hits ?? []).flatMap((hit) =>
         hit.pullRequest === undefined
           ? []
@@ -385,7 +495,7 @@ export function useComposerMenuItems({
       });
       return matches.map((pullRequest) => ({
         id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
-        type: "pull-request",
+        type: "pull-request" as const,
         pullRequest: {
           number: pullRequest.number,
           title: pullRequest.title,
@@ -401,7 +511,11 @@ export function useComposerMenuItems({
             ? pullRequest.title
             : `${pullRequest.repository} · ${pullRequest.title}`,
       }));
-    }
+    };
+
+    if (composerTrigger.kind === "issue") return issueItems();
+    if (composerTrigger.kind === "pull-request") return pullRequestItems();
+    if (composerTrigger.kind === "hash") return [...pullRequestItems(), ...issueItems()];
     return [];
   })();
   const mentionIndexSyncingEmpty =
@@ -409,12 +523,24 @@ export function useComposerMenuItems({
   const threadMentionIndexSyncingEmpty =
     threadMentionIndexLookup.data?.status === "syncing" &&
     threadMentionIndexLookup.data.hits.length === 0;
+  const jiraMentionIndexSyncingEmpty =
+    jiraMentionIndexLookup.data?.status === "syncing" &&
+    jiraMentionIndexLookup.data.hits.length === 0;
+  const figmaMentionIndexSyncingEmpty =
+    figmaMentionIndexLookup.data?.status === "syncing" &&
+    figmaMentionIndexLookup.data.hits.length === 0;
+  const issueMentionIndexSyncingEmpty =
+    issueMentionIndexLookup.data?.status === "syncing" &&
+    issueMentionIndexLookup.data.hits.length === 0;
   // Cold index returns { hits: [], status: "syncing" }; keep querying until ready.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes a stale SWR mention-index read while the server finishes its first sync
   useEffect(() => {
     const refreshers: Array<() => void> = [];
     if (mentionIndexSyncingEmpty) refreshers.push(mentionIndexLookup.refresh);
     if (threadMentionIndexSyncingEmpty) refreshers.push(threadMentionIndexLookup.refresh);
+    if (jiraMentionIndexSyncingEmpty) refreshers.push(jiraMentionIndexLookup.refresh);
+    if (figmaMentionIndexSyncingEmpty) refreshers.push(figmaMentionIndexLookup.refresh);
+    if (issueMentionIndexSyncingEmpty) refreshers.push(issueMentionIndexLookup.refresh);
     if (refreshers.length === 0) return;
     const interval = window.setInterval(() => {
       for (const refresh of refreshers) refresh();
@@ -423,17 +549,39 @@ export function useComposerMenuItems({
   }, [
     mentionIndexSyncingEmpty,
     threadMentionIndexSyncingEmpty,
+    jiraMentionIndexSyncingEmpty,
+    figmaMentionIndexSyncingEmpty,
+    issueMentionIndexSyncingEmpty,
     mentionIndexLookup.refresh,
     threadMentionIndexLookup.refresh,
+    jiraMentionIndexLookup.refresh,
+    figmaMentionIndexLookup.refresh,
+    issueMentionIndexLookup.refresh,
   ]);
   const isLoading =
-    (composerTriggerKind === "path" &&
-      ((pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
-        threadMentionIndexSyncingEmpty ||
-        threadMentionIndexLookup.isPending)) ||
+    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "thread" &&
+      (threadMentionIndexSyncingEmpty ||
+        threadMentionIndexLookup.isPending ||
+        threadMentionQuery !== debouncedThreadMentionQuery)) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
-    (composerTriggerKind === "pull-request" &&
+    (composerTriggerKind === "jira" &&
+      pullRequestProjectId !== null &&
+      (jiraMentionIndexLookup.isPending ||
+        jiraMentionIndexSyncingEmpty ||
+        jiraTriggerQuery !== debouncedJiraTriggerQuery)) ||
+    (composerTriggerKind === "figma" &&
+      pullRequestProjectId !== null &&
+      (figmaMentionIndexLookup.isPending ||
+        figmaMentionIndexSyncingEmpty ||
+        figmaTriggerQuery !== debouncedFigmaTriggerQuery)) ||
+    (wantsIssues &&
+      pullRequestProjectId !== null &&
+      (issueMentionIndexLookup.isPending ||
+        issueMentionIndexSyncingEmpty ||
+        issueTriggerQuery !== debouncedIssueTriggerQuery)) ||
+    (wantsPullRequests &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&
       (mentionIndexLookup.isPending ||
@@ -444,6 +592,85 @@ export function useComposerMenuItems({
   const emptyState = (() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
+    }
+    if (composerTriggerKind === "thread") {
+      return composerTrigger?.query
+        ? `No thread matches ${composerTrigger.query}.`
+        : "No matching threads.";
+    }
+    if (composerTriggerKind === "jira") {
+      if (pullRequestProjectId === null) {
+        return "Jira search needs an open project.";
+      }
+      if (
+        jiraMentionIndexLookup.error !== null ||
+        jiraMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          jiraMentionIndexLookup.data?.detail ??
+          "Jira issues could not be read. Set Jira spaces in Settings → Chat and configure a Jira MCP server."
+        );
+      }
+      if (jiraMentionIndexLookup.data?.status === "empty") {
+        return (
+          jiraMentionIndexLookup.data.detail ??
+          "No Jira issues indexed. Set Jira spaces in Settings → Chat and configure a Jira MCP server."
+        );
+      }
+      return composerTrigger?.query
+        ? `No Jira issue matches ${composerTrigger.query}.`
+        : "No Jira issues found.";
+    }
+    if (composerTriggerKind === "figma") {
+      if (pullRequestProjectId === null) {
+        return "Figma search needs an open project.";
+      }
+      if (
+        figmaMentionIndexLookup.error !== null ||
+        figmaMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          figmaMentionIndexLookup.data?.detail ??
+          "Figma designs could not be read. Add Figma files in Settings → Chat."
+        );
+      }
+      if (figmaMentionIndexLookup.data?.status === "empty") {
+        return (
+          figmaMentionIndexLookup.data.detail ??
+          "No Figma files indexed. Paste design links in Settings → Chat → Mentions."
+        );
+      }
+      return composerTrigger?.query
+        ? `No Figma design matches ${composerTrigger.query}.`
+        : "No Figma designs found.";
+    }
+    if (composerTriggerKind === "issue") {
+      if (pullRequestProjectId === null) {
+        return "Issue search needs an open project.";
+      }
+      if (
+        issueMentionIndexLookup.error !== null ||
+        issueMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          issueMentionIndexLookup.data?.detail ??
+          "GitHub issues could not be read for this project."
+        );
+      }
+      if (issueMentionIndexLookup.data?.status === "empty") {
+        return issueMentionIndexLookup.data.detail ?? "No GitHub issues indexed for this project.";
+      }
+      return composerTrigger?.query
+        ? `No GitHub issue matches ${composerTrigger.query}.`
+        : "No GitHub issues found.";
+    }
+    if (composerTriggerKind === "hash") {
+      if (pullRequestProjectId === null || pullRequestRepository === null) {
+        return "Pull requests and issues are not available for this project.";
+      }
+      return composerTrigger?.query
+        ? `No pull request or issue matches ${composerTrigger.query}.`
+        : "No pull requests or issues found.";
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {

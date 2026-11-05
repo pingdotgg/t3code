@@ -1,6 +1,11 @@
 export type ComposerTriggerKind =
   | "path"
+  | "thread"
   | "pull-request"
+  | "jira"
+  | "issue"
+  | "figma"
+  | "hash"
   | "slash-command"
   | "slash-model"
   | "skill";
@@ -11,6 +16,46 @@ export interface ComposerTrigger {
   query: string;
   rangeStart: number;
   rangeEnd: number;
+}
+
+const AT_MENTION_KIND_BY_ALIAS = {
+  file: "path",
+  thread: "thread",
+  pr: "pull-request",
+  jira: "jira",
+  issue: "issue",
+  figma: "figma",
+} as const satisfies Record<string, ComposerTriggerKind>;
+
+/**
+ * `@file:`, `@thread:`, `@pr:`, `@jira:`, `@issue:`, `@figma:` are explicit scopes. Bare `@` is `@file:`.
+ * `#` opens pull requests and GitHub issues together (`@pr:` / `@issue:` stay scoped).
+ */
+export function detectAtMentionTrigger(
+  token: string,
+  tokenStart: number,
+  cursor: number,
+): ComposerTrigger | null {
+  if (!token.startsWith("@")) return null;
+
+  const scoped = /^@(file|thread|pr|jira|issue|figma):(.*)$/iu.exec(token);
+  if (scoped) {
+    const alias = scoped[1]!.toLowerCase() as keyof typeof AT_MENTION_KIND_BY_ALIAS;
+    const query = scoped[2] ?? "";
+    return {
+      kind: AT_MENTION_KIND_BY_ALIAS[alias],
+      query,
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
+
+  return {
+    kind: "path",
+    query: token.slice(1),
+    rangeStart: tokenStart,
+    rangeEnd: cursor,
+  };
 }
 
 function composerFileLinkBasename(path: string): string {
@@ -128,11 +173,11 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch)
+  const hashMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (hashMatch)
     return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
+      kind: "hash",
+      query: hashMatch[1] ?? "",
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
@@ -146,16 +191,7 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  if (!token.startsWith("@")) {
-    return null;
-  }
-
-  return {
-    kind: "path",
-    query: token.slice(1),
-    rangeStart: tokenStart,
-    rangeEnd: cursor,
-  };
+  return detectAtMentionTrigger(token, tokenStart, cursor);
 }
 
 export function replaceTextRange(

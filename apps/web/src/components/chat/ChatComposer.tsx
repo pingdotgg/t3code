@@ -146,6 +146,11 @@ import {
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  figmaContextRecord,
+  issueContextRecord,
+  jiraContextRecord,
+} from "@t3tools/shared/composerContextExternalLinks";
+import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
@@ -180,6 +185,9 @@ import {
   threadContextReference,
   environmentContextRecord,
   environmentContextReference,
+  jiraContextReference,
+  figmaContextReference,
+  issueContextReference,
 } from "~/lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
@@ -331,6 +339,7 @@ export interface ChatComposerHandle {
     environmentContexts: EnvironmentContextRecord[];
     jiraContexts: import("@t3tools/contracts").JiraContextRecord[];
     figmaContexts: import("@t3tools/contracts").FigmaContextRecord[];
+    issueContexts: import("@t3tools/contracts").IssueContextRecord[];
     selectedPromptEffort: string | null;
     selectedModelSelection: ModelSelection;
     multipleModelSelections: ReadonlyArray<ModelSelection> | null;
@@ -715,6 +724,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerEnvironmentContexts = composerDraft.environmentContexts;
   const composerJiraContexts = composerDraft.jiraContexts;
   const composerFigmaContexts = composerDraft.figmaContexts;
+  const composerIssueContexts = composerDraft.issueContexts;
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
@@ -768,6 +778,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentContexts: composerEnvironmentContexts,
     jiraContexts: composerJiraContexts,
     figmaContexts: composerFigmaContexts,
+    issueContexts: composerIssueContexts,
     images: composerImages,
     files: composerFiles,
     uploadsByImageId,
@@ -1318,8 +1329,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.setEnvironmentContexts,
   );
+  const addComposerDraftJiraContexts = useComposerDraftStore((store) => store.addJiraContexts);
+  const addComposerDraftFigmaContexts = useComposerDraftStore((store) => store.addFigmaContexts);
   const setComposerDraftJiraContexts = useComposerDraftStore((store) => store.setJiraContexts);
   const setComposerDraftFigmaContexts = useComposerDraftStore((store) => store.setFigmaContexts);
+  const addComposerDraftIssueContexts = useComposerDraftStore((store) => store.addIssueContexts);
+  const setComposerDraftIssueContexts = useComposerDraftStore((store) => store.setIssueContexts);
   const buildContextClipboardFragment = (contextIds: ReadonlyArray<string>): string | null => {
     const wanted = new Set(contextIds);
     const copiedFiles = new Map<string, File>();
@@ -1339,6 +1354,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ...composerEnvironmentContexts.filter((record) => wanted.has(record.contextId)),
       ...composerJiraContexts.filter((record) => wanted.has(record.contextId)),
       ...composerFigmaContexts.filter((record) => wanted.has(record.contextId)),
+      ...composerIssueContexts.filter((record) => wanted.has(record.contextId)),
       ...composerReviewComments
         .filter((c) => wanted.has(reviewCommentDraftContextId(c)))
         .map(reviewCommentContextRecord),
@@ -1726,6 +1742,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftFigmaContexts(composerDraftTarget, nextFigma);
     }
 
+    const liveIssueIds = new Set<string>(composerIssueContexts.map((record) => record.contextId));
+    const restoredIssues = [...referenced].flatMap((contextId) => {
+      if (liveIssueIds.has(contextId)) return [];
+      const record = retained.issues.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextIssues = [
+      ...composerIssueContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredIssues,
+    ];
+    for (const record of composerIssueContexts) {
+      if (!referenced.has(record.contextId)) retained.issues.set(record.contextId, record);
+    }
+    if (nextIssues.length !== composerIssueContexts.length || restoredIssues.length > 0) {
+      setComposerDraftIssueContexts(composerDraftTarget, nextIssues);
+    }
+
     for (const comment of composerReviewComments) {
       const contextId = reviewCommentDraftContextId(comment);
       if (!referenced.has(contextId)) {
@@ -1988,7 +2021,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "pull-request") {
       if (
-        trigger.kind !== "pull-request" ||
+        (trigger.kind !== "pull-request" && trigger.kind !== "hash") ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
         return;
@@ -2014,7 +2047,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "thread") {
-      if (trigger.kind !== "path") return;
+      if (trigger.kind !== "thread") return;
       const shell = readThreadShell(item.thread);
       const record = threadContextRecord(item.thread, shell?.title ?? item.label);
       const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
@@ -2048,6 +2081,95 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "jira") {
+      if (
+        trigger.kind !== "jira" ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = jiraContextRecord({
+        key: item.key,
+        url: item.url,
+        summary: item.summary,
+      });
+      const replacement = `${formatInlineContextReference(jiraContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftJiraContexts(composerDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "figma") {
+      if (
+        trigger.kind !== "figma" ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = figmaContextRecord({
+        fileKey: item.fileKey,
+        url: item.url,
+        name: item.name,
+      });
+      const replacement = `${formatInlineContextReference(figmaContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftFigmaContexts(composerDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "issue") {
+      if (
+        (trigger.kind !== "issue" && trigger.kind !== "hash") ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = issueContextRecord({
+        number: item.number,
+        title: item.title,
+        url: item.url,
+        repository: item.repository,
+        state: item.state,
+      });
+      const replacement = `${formatInlineContextReference(issueContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftIssueContexts(composerDraftTarget, [record], {
           appendReference: false,
         });
         setComposerHighlightedItemId(null);
@@ -3042,6 +3164,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         environmentContexts: composerEnvironmentContexts,
         jiraContexts: composerJiraContexts,
         figmaContexts: composerFigmaContexts,
+        issueContexts: composerIssueContexts,
         selectedPromptEffort,
         selectedModelSelection,
         multipleModelSelections:
@@ -3100,6 +3223,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerEnvironmentContexts,
       composerJiraContexts,
       composerFigmaContexts,
+      composerIssueContexts,
       focusComposer,
       environmentId,
       primaryEnvironmentId,
@@ -3381,9 +3505,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
                       ? "Finding pull request..."
-                      : composerTriggerKind === "skill" || composerTriggerKind === "slash-command"
-                        ? "Searching workspace skills..."
-                        : "Searching workspace files..."
+                      : composerTriggerKind === "hash"
+                        ? "Finding pull requests and issues..."
+                        : composerTriggerKind === "jira"
+                          ? "Finding Jira issues..."
+                          : composerTriggerKind === "issue"
+                            ? "Finding GitHub issues..."
+                            : composerTriggerKind === "thread"
+                              ? "Finding threads..."
+                              : composerTriggerKind === "skill" ||
+                                  composerTriggerKind === "slash-command"
+                                ? "Searching workspace skills..."
+                                : "Searching workspace files..."
                     : composerMenuEmptyState
                   : ""}
               </div>

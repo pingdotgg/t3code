@@ -213,7 +213,16 @@ import {
   PullRequestUnavailableError,
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
-import { MentionIndexSearchInput, MentionIndexSearchResult } from "./mentionIndex.ts";
+import {
+  MentionIndexFigmaBrowseInput,
+  MentionIndexFigmaBrowseTeamsResult,
+  MentionIndexFigmaListProjectsInput,
+  MentionIndexFigmaListProjectsResult,
+  MentionIndexSearchInput,
+  MentionIndexSearchResult,
+  MentionIndexThumbnailInput,
+  MentionIndexThumbnailResult,
+} from "./mentionIndex.ts";
 import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
@@ -557,6 +566,9 @@ export const WS_METHODS = {
   pullRequestsListStats: "pullRequests.listStats",
   mentionsSearch: "mentions.search",
   mentionsEnsureIndexed: "mentions.ensureIndexed",
+  mentionsThumbnail: "mentions.thumbnail",
+  mentionsFigmaListTeams: "mentions.figmaListTeams",
+  mentionsFigmaListProjects: "mentions.figmaListProjects",
   pullRequestsFilterOptions: "pullRequests.filterOptions",
   pullRequestsSummary: "pullRequests.summary",
   pullRequestsRouting: "pullRequests.routing",
@@ -1020,6 +1032,24 @@ const WsMentionsSearchRpc = Rpc.make(WS_METHODS.mentionsSearch, {
 const WsMentionsEnsureIndexedRpc = Rpc.make(WS_METHODS.mentionsEnsureIndexed, {
   payload: Schema.Struct({ projectId: ProjectId }),
   success: MentionIndexSearchResult,
+  error: MentionIndexRpcError,
+});
+
+const WsMentionsThumbnailRpc = Rpc.make(WS_METHODS.mentionsThumbnail, {
+  payload: MentionIndexThumbnailInput,
+  success: MentionIndexThumbnailResult,
+  error: MentionIndexRpcError,
+});
+
+const WsMentionsFigmaListTeamsRpc = Rpc.make(WS_METHODS.mentionsFigmaListTeams, {
+  payload: MentionIndexFigmaBrowseInput,
+  success: MentionIndexFigmaBrowseTeamsResult,
+  error: MentionIndexRpcError,
+});
+
+const WsMentionsFigmaListProjectsRpc = Rpc.make(WS_METHODS.mentionsFigmaListProjects, {
+  payload: MentionIndexFigmaListProjectsInput,
+  success: MentionIndexFigmaListProjectsResult,
   error: MentionIndexRpcError,
 });
 
@@ -2076,6 +2106,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsListRpc,
   WsMentionsSearchRpc,
   WsMentionsEnsureIndexedRpc,
+  WsMentionsThumbnailRpc,
+  WsMentionsFigmaListTeamsRpc,
+  WsMentionsFigmaListProjectsRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsFilterOptionsRpc,
   WsPullRequestsSummaryRpc,

@@ -1,5 +1,8 @@
 import type {
+  MentionIndexFigmaPayload,
   MentionIndexHit,
+  MentionIndexIssuePayload,
+  MentionIndexJiraPayload,
   MentionIndexProviderId,
   MentionIndexPullRequestPayload,
   MentionIndexSearchInput,
@@ -22,7 +25,18 @@ import * as ServerConfig from "../config.ts";
 
 const SCOPE_PREFIX = "scope:";
 const META_PREFIX = "meta:";
+const THUMB_PREFIX = "thumb:";
 const MAX_ROWS_PER_SCOPE = 2_000;
+const MAX_THUMB_BASE64_CHARS = 350_000;
+
+const ThumbnailBlob = Schema.fromJsonString(
+  Schema.Struct({
+    mimeType: Schema.String,
+    dataBase64: Schema.String,
+  }),
+);
+const encodeThumbnail = Schema.encodeSync(ThumbnailBlob);
+const decodeThumbnail = Schema.decodeUnknownOption(ThumbnailBlob);
 
 export interface MentionIndexRow {
   readonly providerId: MentionIndexProviderId;
@@ -33,7 +47,15 @@ export interface MentionIndexRow {
   readonly tokens: string;
   readonly pullRequest?: MentionIndexPullRequestPayload;
   readonly thread?: MentionIndexThreadPayload;
+  readonly jira?: MentionIndexJiraPayload;
+  readonly issue?: MentionIndexIssuePayload;
+  readonly figma?: MentionIndexFigmaPayload;
   readonly updatedAt: number;
+}
+
+export interface MentionIndexThumbnailBlob {
+  readonly mimeType: string;
+  readonly dataBase64: string;
 }
 
 interface ScopeMeta {
@@ -51,7 +73,7 @@ const ScopeBlob = Schema.fromJsonString(
   Schema.Struct({
     rows: Schema.Array(
       Schema.Struct({
-        providerId: Schema.Literals(["pull-request", "thread"]),
+        providerId: Schema.Literals(["pull-request", "thread", "jira", "issue", "figma"]),
         itemKey: Schema.String,
         label: Schema.String,
         description: Schema.String,
@@ -76,6 +98,33 @@ const ScopeBlob = Schema.fromJsonString(
             threadId: Schema.String,
             title: Schema.String,
             projectId: Schema.String,
+          }),
+        ),
+        jira: Schema.optionalKey(
+          Schema.Struct({
+            key: Schema.String,
+            summary: Schema.String,
+            url: Schema.String,
+            projectKey: Schema.optionalKey(Schema.String),
+            status: Schema.optionalKey(Schema.String),
+          }),
+        ),
+        issue: Schema.optionalKey(
+          Schema.Struct({
+            number: Schema.Number,
+            title: Schema.String,
+            url: Schema.String,
+            repository: Schema.String,
+            state: Schema.Literals(["open", "closed"]),
+            projectId: Schema.String,
+          }),
+        ),
+        figma: Schema.optionalKey(
+          Schema.Struct({
+            fileKey: Schema.String,
+            name: Schema.String,
+            url: Schema.String,
+            hasThumbnail: Schema.Boolean,
           }),
         ),
         updatedAt: Schema.Number,
@@ -137,8 +186,21 @@ export class MentionIndex extends Context.Service<
       scopeKey: string,
       rows: ReadonlyArray<MentionIndexRow>,
     ) => Effect.Effect<void>;
+    readonly putThumbnail: (
+      thumbKey: string,
+      blob: MentionIndexThumbnailBlob,
+    ) => Effect.Effect<void>;
+    readonly getThumbnail: (thumbKey: string) => Effect.Effect<MentionIndexThumbnailBlob | null>;
   }
 >()("t3/mention/MentionIndex") {}
+
+export function mentionIndexThumbKey(
+  providerId: "figma",
+  projectId: ProjectId,
+  itemKey: string,
+): string {
+  return `${providerId}:${projectId}:${itemKey}`;
+}
 
 export const make = Effect.gen(function* () {
   const store = yield* KeyValueStore.KeyValueStore;
@@ -251,6 +313,9 @@ export const make = Effect.gen(function* () {
             score,
             ...(row.pullRequest ? { pullRequest: row.pullRequest } : {}),
             ...(row.thread ? { thread: row.thread } : {}),
+            ...(row.jira ? { jira: row.jira } : {}),
+            ...(row.issue ? { issue: row.issue } : {}),
+            ...(row.figma ? { figma: row.figma } : {}),
           });
         }
       }
@@ -327,6 +392,31 @@ export const make = Effect.gen(function* () {
           status: merged.length === 0 ? "empty" : "ready",
         },
       });
+    }),
+
+    putThumbnail: Effect.fn("MentionIndex.putThumbnail")(function* (thumbKey, blob) {
+      if (blob.dataBase64.length === 0 || blob.dataBase64.length > MAX_THUMB_BASE64_CHARS) return;
+      yield* store
+        .set(
+          `${THUMB_PREFIX}${thumbKey}`,
+          encodeThumbnail({ mimeType: blob.mimeType, dataBase64: blob.dataBase64 }),
+        )
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to persist mention thumbnail", { thumbKey, cause }),
+          ),
+        );
+    }),
+
+    getThumbnail: Effect.fn("MentionIndex.getThumbnail")(function* (thumbKey) {
+      const raw = yield* store
+        .get(`${THUMB_PREFIX}${thumbKey}`)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (raw === undefined) return null;
+      const decoded = decodeThumbnail(raw);
+      if (Option.isNone(decoded)) return null;
+      if (decoded.value.dataBase64.length > MAX_THUMB_BASE64_CHARS) return null;
+      return decoded.value;
     }),
   });
 });

@@ -279,18 +279,18 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, text.length)).toBeNull();
   });
 
-  it("detects a pull request number at a token boundary", () => {
+  it("detects a # number at a token boundary for PRs and issues", () => {
     const text = "Compare this with #8737";
 
     expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "pull-request",
+      kind: "hash",
       query: "8737",
       rangeStart: "Compare this with ".length,
       rangeEnd: text.length,
     });
   });
 
-  it("does not keep pull request completion active for headings or embedded hashes", () => {
+  it("does not keep # completion active for headings or embedded hashes", () => {
     expect(detectComposerTrigger("# Heading", "# Heading".length)).toBeNull();
     expect(detectComposerTrigger("issue#123", "issue#123".length)).toBeNull();
   });
@@ -306,6 +306,45 @@ describe("detectComposerTrigger", () => {
       query: "",
       rangeStart: "Please inspect ".length,
       rangeEnd: cursorAfterAt,
+    });
+  });
+
+  it("scopes @kind: mentions; bare @ is @file:; # is PRs and issues", () => {
+    expect(detectComposerTrigger("@jira:", "@jira:".length)).toEqual({
+      kind: "jira",
+      query: "",
+      rangeStart: 0,
+      rangeEnd: "@jira:".length,
+    });
+    expect(detectComposerTrigger("See @jira:ABC-12", "See @jira:ABC-12".length)).toEqual({
+      kind: "jira",
+      query: "ABC-12",
+      rangeStart: "See ".length,
+      rangeEnd: "See @jira:ABC-12".length,
+    });
+    expect(detectComposerTrigger("@file:app.ts", "@file:app.ts".length)).toMatchObject({
+      kind: "path",
+      query: "app.ts",
+    });
+    expect(detectComposerTrigger("@thread:review", "@thread:review".length)).toMatchObject({
+      kind: "thread",
+      query: "review",
+    });
+    expect(detectComposerTrigger("@pr:42", "@pr:42".length)).toMatchObject({
+      kind: "pull-request",
+      query: "42",
+    });
+    expect(detectComposerTrigger("@issue:7", "@issue:7".length)).toMatchObject({
+      kind: "issue",
+      query: "7",
+    });
+    expect(detectComposerTrigger("@app.ts", "@app.ts".length)).toMatchObject({
+      kind: "path",
+      query: "app.ts",
+    });
+    expect(detectComposerTrigger("#42", "#42".length)).toMatchObject({
+      kind: "hash",
+      query: "42",
     });
   });
 });

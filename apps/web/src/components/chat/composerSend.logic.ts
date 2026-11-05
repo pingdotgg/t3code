@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   FigmaContextRecord,
+  IssueContextRecord,
   JiraContextRecord,
   ThreadContextRecord,
 } from "@t3tools/contracts";
@@ -37,6 +38,14 @@ export function referencedFigmaContexts(draft: {
   readonly figmaContexts: ReadonlyArray<FigmaContextRecord>;
 }): ReadonlyArray<FigmaContextRecord> {
   return referencedContextRecords(draft.prompt, draft.figmaContexts);
+}
+
+/** Attached GitHub issues the prompt still links to. */
+export function referencedIssueContexts(draft: {
+  readonly prompt: string;
+  readonly issueContexts: ReadonlyArray<IssueContextRecord>;
+}): ReadonlyArray<IssueContextRecord> {
+  return referencedContextRecords(draft.prompt, draft.issueContexts);
 }
 
 /** Why a send waits for the user to pick a machine when no machine was chosen automatically. */

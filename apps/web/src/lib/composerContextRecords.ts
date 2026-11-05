@@ -132,7 +132,7 @@ export function terminalContextReference(context: TerminalContextDraft): Compose
   };
 }
 
-export function reviewCommentContextId(commentId: string): ComposerContextId {
+function reviewCommentContextId(commentId: string): ComposerContextId {
   return toKindScopedComposerContextId("review-comment", commentId);
 }
 
@@ -243,6 +243,12 @@ export function figmaContextReference(
   record: import("@t3tools/contracts").FigmaContextRecord,
 ): ComposerContextReference {
   return { kind: "figma", contextId: record.contextId, label: record.label };
+}
+
+export function issueContextReference(
+  record: import("@t3tools/contracts").IssueContextRecord,
+): ComposerContextReference {
+  return { kind: "issue", contextId: record.contextId, label: record.label };
 }
 
 export function environmentContextRecord(
@@ -407,6 +413,7 @@ export function buildMessageContext(input: {
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
   jiraContexts?: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
   figmaContexts?: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
+  issueContexts?: ReadonlyArray<import("@t3tools/contracts").IssueContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -421,6 +428,7 @@ export function buildMessageContext(input: {
     ...(input.environmentContexts ?? []),
     ...(input.jiraContexts ?? []),
     ...(input.figmaContexts ?? []),
+    ...(input.issueContexts ?? []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,

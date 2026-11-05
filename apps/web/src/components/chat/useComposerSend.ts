@@ -96,6 +96,7 @@ import {
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedFigmaContexts,
+  referencedIssueContexts,
   referencedJiraContexts,
   referencedThreadContexts,
 } from "./composerSend.logic";
@@ -513,7 +514,8 @@ export function useComposerSend(input: ComposerSendInput) {
         sendCtx.threadContexts.length > 0 ||
         sendCtx.environmentContexts.length > 0 ||
         sendCtx.jiraContexts.length > 0 ||
-        sendCtx.figmaContexts.length > 0
+        sendCtx.figmaContexts.length > 0 ||
+        sendCtx.issueContexts.length > 0
       ) {
         toastManager.add(
           stackedThreadToast({
@@ -591,6 +593,7 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentContexts: composerEnvironmentContexts,
       jiraContexts: composerJiraContexts,
       figmaContexts: composerFigmaContexts,
+      issueContexts: composerIssueContexts,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -653,6 +656,10 @@ export function useComposerSend(input: ComposerSendInput) {
             prompt: promptForSend,
             figmaContexts: composerFigmaContexts,
           }),
+          issueContexts: referencedIssueContexts({
+            prompt: promptForSend,
+            issueContexts: composerIssueContexts,
+          }),
         },
         setThreadError,
       );
@@ -673,7 +680,8 @@ export function useComposerSend(input: ComposerSendInput) {
         composerThreadContexts.length +
         composerEnvironmentContexts.length +
         composerJiraContexts.length +
-        composerFigmaContexts.length,
+        composerFigmaContexts.length +
+        composerIssueContexts.length,
     });
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
@@ -685,7 +693,8 @@ export function useComposerSend(input: ComposerSendInput) {
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0 &&
       composerJiraContexts.length === 0 &&
-      composerFigmaContexts.length === 0
+      composerFigmaContexts.length === 0 &&
+      composerIssueContexts.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
     if (feedbackCommand && multipleModelSelections === null) {
@@ -764,6 +773,7 @@ export function useComposerSend(input: ComposerSendInput) {
       const followUpEnvironmentContexts = [...composerEnvironmentContexts];
       const followUpJiraContexts = [...composerJiraContexts];
       const followUpFigmaContexts = [...composerFigmaContexts];
+      const followUpIssueContexts = [...composerIssueContexts];
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -777,6 +787,7 @@ export function useComposerSend(input: ComposerSendInput) {
           environmentContexts: composerEnvironmentContexts,
           jiraContexts: composerJiraContexts,
           figmaContexts: composerFigmaContexts,
+          issueContexts: composerIssueContexts,
         }),
         interactionMode: followUp.interactionMode,
       });
@@ -791,6 +802,7 @@ export function useComposerSend(input: ComposerSendInput) {
             environmentContexts: followUpEnvironmentContexts,
             jiraContexts: followUpJiraContexts,
             figmaContexts: followUpFigmaContexts,
+            issueContexts: followUpIssueContexts,
           },
           draftHasUserContent: composerDraftHasUserContent(
             useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
@@ -819,6 +831,10 @@ export function useComposerSend(input: ComposerSendInput) {
             useComposerDraftStore
               .getState()
               .addFigmaContexts(composerDraftTarget, records, { appendReference: false }),
+          writeIssueContexts: (records) =>
+            useComposerDraftStore
+              .getState()
+              .addIssueContexts(composerDraftTarget, records, { appendReference: false }),
           resetCursor: (options) => composerRef.current?.resetCursorState(options),
         });
       } else if (
@@ -839,7 +855,8 @@ export function useComposerSend(input: ComposerSendInput) {
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0 &&
       composerJiraContexts.length === 0 &&
-      composerFigmaContexts.length === 0
+      composerFigmaContexts.length === 0 &&
+      composerIssueContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
@@ -888,6 +905,7 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentContexts: composerEnvironmentContexts,
       jiraContexts: composerJiraContexts,
       figmaContexts: composerFigmaContexts,
+      issueContexts: composerIssueContexts,
     });
     const {
       files: composerFilesSnapshot,
@@ -899,6 +917,7 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentContexts: composerEnvironmentContextsSnapshot,
       jiraContexts: composerJiraContextsSnapshot,
       figmaContexts: composerFigmaContextsSnapshot,
+      issueContexts: composerIssueContextsSnapshot,
       messageText: messageTextForSend,
     } = sendSnapshot;
     const {
@@ -936,6 +955,7 @@ export function useComposerSend(input: ComposerSendInput) {
         environmentContexts: composerEnvironmentContextsSnapshot,
         jiraContexts: composerJiraContextsSnapshot,
         figmaContexts: composerFigmaContextsSnapshot,
+        issueContexts: composerIssueContextsSnapshot,
         attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
           attachment,
           attachmentId: attachmentIds[index] ?? attachment.id,

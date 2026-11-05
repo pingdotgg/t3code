@@ -1,14 +1,23 @@
 import type {
+  MentionIndexFigmaBrowseInput,
+  MentionIndexFigmaBrowseTeamsResult,
+  MentionIndexFigmaListProjectsInput,
+  MentionIndexFigmaListProjectsResult,
   MentionIndexProviderId,
   MentionIndexSearchInput,
   MentionIndexSearchResult,
+  MentionIndexThumbnailInput,
+  MentionIndexThumbnailResult,
   ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { MentionIndex } from "./MentionIndex.ts";
+import { MentionIndex, mentionIndexThumbKey } from "./MentionIndex.ts";
+import { MentionIndexFigmaSyncer } from "./MentionIndexFigmaSyncer.ts";
+import { MentionIndexIssueSyncer } from "./MentionIndexIssueSyncer.ts";
+import { MentionIndexJiraSyncer } from "./MentionIndexJiraSyncer.ts";
 import { MentionIndexPrSyncer } from "./MentionIndexPrSyncer.ts";
 import { MentionIndexThreadSyncer } from "./MentionIndexThreadSyncer.ts";
 
@@ -17,6 +26,15 @@ export class MentionIndexService extends Context.Service<
   {
     readonly search: (input: MentionIndexSearchInput) => Effect.Effect<MentionIndexSearchResult>;
     readonly ensureIndexed: (projectId: ProjectId) => Effect.Effect<MentionIndexSearchResult>;
+    readonly thumbnail: (
+      input: MentionIndexThumbnailInput,
+    ) => Effect.Effect<MentionIndexThumbnailResult>;
+    readonly figmaListTeams: (
+      input: MentionIndexFigmaBrowseInput,
+    ) => Effect.Effect<MentionIndexFigmaBrowseTeamsResult>;
+    readonly figmaListProjects: (
+      input: MentionIndexFigmaListProjectsInput,
+    ) => Effect.Effect<MentionIndexFigmaListProjectsResult>;
   }
 >()("t3/mention/MentionIndexService") {}
 
@@ -24,6 +42,9 @@ const make = Effect.gen(function* () {
   const index = yield* MentionIndex;
   const pullRequests = yield* MentionIndexPrSyncer;
   const threads = yield* MentionIndexThreadSyncer;
+  const jira = yield* MentionIndexJiraSyncer;
+  const issues = yield* MentionIndexIssueSyncer;
+  const figma = yield* MentionIndexFigmaSyncer;
 
   const ensureProviders = Effect.fn("MentionIndexService.ensureProviders")(function* (
     projectId: ProjectId,
@@ -31,6 +52,9 @@ const make = Effect.gen(function* () {
   ) {
     if (providers.includes("pull-request")) yield* pullRequests.ensureIndexed(projectId);
     if (providers.includes("thread")) yield* threads.ensureIndexed(projectId);
+    if (providers.includes("jira")) yield* jira.ensureIndexed(projectId);
+    if (providers.includes("issue")) yield* issues.ensureIndexed(projectId);
+    if (providers.includes("figma")) yield* figma.ensureIndexed(projectId);
   });
 
   return MentionIndexService.of({
@@ -49,6 +73,26 @@ const make = Effect.gen(function* () {
         query: "",
         limit: 1,
       });
+    }),
+
+    thumbnail: Effect.fn("MentionIndexService.thumbnail")(function* (input) {
+      const blob = yield* index.getThumbnail(
+        mentionIndexThumbKey(input.providerId, input.projectId, input.itemKey),
+      );
+      if (blob === null) return { _tag: "Missing" as const };
+      return {
+        _tag: "Present" as const,
+        mimeType: blob.mimeType,
+        dataBase64: blob.dataBase64,
+      };
+    }),
+
+    figmaListTeams: Effect.fn("MentionIndexService.figmaListTeams")(function* (input) {
+      return yield* figma.listTeams(input);
+    }),
+
+    figmaListProjects: Effect.fn("MentionIndexService.figmaListProjects")(function* (input) {
+      return yield* figma.listProjects(input);
     }),
   });
 });

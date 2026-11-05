@@ -64,6 +64,10 @@ const DEFINITIONS = [
     kind: "figma",
     capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
   },
+  {
+    kind: "issue",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
 ] as const satisfies ReadonlyArray<ContextPresentationDefinition>;
 
 function buildDefinitionRegistry(

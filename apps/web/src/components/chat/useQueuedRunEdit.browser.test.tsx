@@ -173,6 +173,7 @@ const savedContent = (prompt: string) => ({
   environmentContexts: [],
   jiraContexts: [],
   figmaContexts: [],
+  issueContexts: [],
 });
 
 const promptOf = (ref: ScopedThreadRef) =>

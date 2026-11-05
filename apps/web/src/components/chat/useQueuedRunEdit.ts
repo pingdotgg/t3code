@@ -84,6 +84,7 @@ interface QueuedRunEditContent {
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
   readonly jiraContexts: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
   readonly figmaContexts: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
+  readonly issueContexts: ReadonlyArray<import("@t3tools/contracts").IssueContextRecord>;
 }
 
 function queuedEditDraftTarget(routeThreadRef: ScopedThreadRef, runId: RunId) {
@@ -149,6 +150,7 @@ async function submitQueuedRunEdit(input: {
         environmentContexts: content.environmentContexts,
         jiraContexts: content.jiraContexts,
         figmaContexts: content.figmaContexts,
+        issueContexts: content.issueContexts,
         attachments: newAttachments.map((attachment, index) => ({
           attachment,
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,

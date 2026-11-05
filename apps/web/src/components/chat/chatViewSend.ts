@@ -276,6 +276,9 @@ export function restoreComposerDraft(
   if (snapshot.figmaContexts.length > 0) {
     store.addFigmaContexts(draftTarget, snapshot.figmaContexts, { appendReference: false });
   }
+  if (snapshot.issueContexts.length > 0) {
+    store.addIssueContexts(draftTarget, snapshot.issueContexts, { appendReference: false });
+  }
   return images;
 }
 

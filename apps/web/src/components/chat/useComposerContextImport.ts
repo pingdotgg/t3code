@@ -124,6 +124,7 @@ export function useComposerContextImport(input: {
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
   const addComposerDraftJiraContexts = useComposerDraftStore((store) => store.addJiraContexts);
   const addComposerDraftFigmaContexts = useComposerDraftStore((store) => store.addFigmaContexts);
+  const addComposerDraftIssueContexts = useComposerDraftStore((store) => store.addIssueContexts);
   const addComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.addEnvironmentContexts,
   );
@@ -346,7 +347,8 @@ export function useComposerContextImport(input: {
                 : existing?.kind === "thread" ||
                     existing?.kind === "environment" ||
                     existing?.kind === "jira" ||
-                    existing?.kind === "figma"
+                    existing?.kind === "figma" ||
+                    existing?.kind === "issue"
                   ? existing.record
                   : existing
                     ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -467,6 +469,21 @@ export function useComposerContextImport(input: {
               }
             : record;
           addComposerDraftFigmaContexts(composerDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
+          break;
+        }
+        case "issue": {
+          // Question answers carry no issue chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = conflicts
+            ? {
+                ...record,
+                contextId: toKindScopedComposerContextId("issue", randomUUID()),
+              }
+            : record;
+          addComposerDraftIssueContexts(composerDraftTarget, [imported], {
             appendReference: false,
           });
           rewritten.set(record.contextId, imported.contextId);

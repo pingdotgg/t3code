@@ -45,6 +45,37 @@ export type ComposerCommandItem =
     }
   | {
       readonly id: string;
+      readonly type: "jira";
+      readonly key: string;
+      readonly url: string;
+      readonly summary: string;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "figma";
+      readonly fileKey: string;
+      readonly url: string;
+      readonly name: string;
+      readonly hasThumbnail: boolean;
+      readonly label: string;
+      readonly description: string;
+      readonly thumbnailUri?: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "issue";
+      readonly number: number;
+      readonly title: string;
+      readonly url: string;
+      readonly repository: string;
+      readonly state: "open" | "closed";
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
       readonly type: "environment";
       readonly environmentId: EnvironmentId;
       readonly machine: EnvironmentMachineKind;
@@ -121,6 +152,12 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return null;
     case "thread":
       return "text.bubble";
+    case "jira":
+      return "tag";
+    case "figma":
+      return "photo";
+    case "issue":
+      return "exclamationmark.circle";
     case "environment":
       return ENVIRONMENT_MACHINE_SYMBOLS[item.machine];
   }
@@ -130,6 +167,16 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   switch (triggerKind) {
     case "pull-request":
       return "Pull requests";
+    case "hash":
+      return "Pull requests and issues";
+    case "jira":
+      return "Jira issues";
+    case "figma":
+      return "Figma designs";
+    case "issue":
+      return "GitHub issues";
+    case "thread":
+      return "Threads";
     case "slash-command":
       return "Commands";
     case "skill":
@@ -143,11 +190,33 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
 
 function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
   if (isLoading) {
-    return triggerKind === "path" ? "Searching files…" : "Loading…";
+    return triggerKind === "path"
+      ? "Searching files…"
+      : triggerKind === "hash"
+        ? "Finding pull requests and issues…"
+        : triggerKind === "jira"
+          ? "Finding Jira issues…"
+          : triggerKind === "figma"
+            ? "Finding Figma designs…"
+            : triggerKind === "issue"
+              ? "Finding GitHub issues…"
+              : triggerKind === "thread"
+                ? "Finding threads…"
+                : "Loading…";
   }
   switch (triggerKind) {
     case "pull-request":
       return "No matching pull requests.";
+    case "hash":
+      return "No matching pull requests or issues.";
+    case "jira":
+      return "No matching Jira issues.";
+    case "figma":
+      return "No matching Figma designs.";
+    case "issue":
+      return "No matching GitHub issues.";
+    case "thread":
+      return "No matching threads.";
     case "path":
       return "No matching files or folders.";
     case "skill":

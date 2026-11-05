@@ -147,6 +147,16 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     name: "Checkout flow",
     nodeId: "1:2",
   },
+  issue: {
+    ...base,
+    kind: "issue",
+    label: "#42",
+    number: 42,
+    title: "Wire mention chips",
+    url: "https://github.com/acme/app/issues/42",
+    repository: "acme/app",
+    state: "open",
+  },
 };
 
 describe("ComposerContextRecord", () => {

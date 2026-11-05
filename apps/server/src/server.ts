@@ -128,6 +128,10 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as MentionIndex from "./mention/MentionIndex.ts";
+import * as MentionIndexIssueSyncer from "./mention/MentionIndexIssueSyncer.ts";
+import * as MentionIndexFigmaSyncer from "./mention/MentionIndexFigmaSyncer.ts";
+import * as MentionIndexJiraSyncer from "./mention/MentionIndexJiraSyncer.ts";
+import * as MentionIndexMcpClient from "./mention/MentionIndexMcpClient.ts";
 import * as MentionIndexPrSyncer from "./mention/MentionIndexPrSyncer.ts";
 import * as MentionIndexService from "./mention/MentionIndexService.ts";
 import * as MentionIndexThreadSyncer from "./mention/MentionIndexThreadSyncer.ts";
@@ -425,6 +429,10 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 const layerMentionIndex = MentionIndexService.layer.pipe(
   Layer.provide(MentionIndexPrSyncer.layer),
   Layer.provide(MentionIndexThreadSyncer.layer),
+  Layer.provide(MentionIndexJiraSyncer.layer),
+  Layer.provide(MentionIndexIssueSyncer.layer),
+  Layer.provide(MentionIndexFigmaSyncer.layer),
+  Layer.provide(MentionIndexMcpClient.layer),
   Layer.provide(MentionIndex.layer),
   Layer.provide(layerPullRequestService),
 );

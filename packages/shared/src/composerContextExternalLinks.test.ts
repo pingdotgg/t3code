@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   externalLinkContextReferences,
   parseFigmaDesignUrl,
+  parseGitHubIssueUrl,
   parseJiraBrowseUrl,
 } from "./composerContextExternalLinks.ts";
 
@@ -52,12 +53,24 @@ describe("composerContextExternalLinks", () => {
     ).toBe("see https://www.figma.com/design/AbCdEf123/% here");
   });
 
+  it("parses GitHub issue URLs", () => {
+    expect(parseGitHubIssueUrl("https://github.com/acme/app/issues/42")).toEqual({
+      number: 42,
+      title: "#42",
+      url: "https://github.com/acme/app/issues/42",
+      repository: "acme/app",
+      state: "open",
+    });
+    expect(parseGitHubIssueUrl("https://acme.atlassian.net/browse/T3-42")).toBeNull();
+  });
+
   it("rewrites pasted URLs into context references", () => {
     const rewritten = externalLinkContextReferences(
-      "See https://acme.atlassian.net/browse/T3-42 and https://www.figma.com/design/AbCdEf123/Flow",
+      "See https://acme.atlassian.net/browse/T3-42 and https://www.figma.com/design/AbCdEf123/Flow and https://github.com/acme/app/issues/7",
     );
-    expect(rewritten.records.map((record) => record.kind)).toEqual(["jira", "figma"]);
+    expect(rewritten.records.map((record) => record.kind)).toEqual(["jira", "figma", "issue"]);
     expect(rewritten.text).toContain("](t3-context://v1/jira/");
     expect(rewritten.text).toContain("](t3-context://v1/figma/");
+    expect(rewritten.text).toContain("](t3-context://v1/issue/");
   });
 });

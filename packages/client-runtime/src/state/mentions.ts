@@ -22,6 +22,18 @@ export function createMentionIndexAtoms<R, E>(
       label: "environment-data:mentions:ensure-indexed",
       tag: WS_METHODS.mentionsEnsureIndexed,
     }),
+    thumbnail: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mentions:thumbnail",
+      tag: WS_METHODS.mentionsThumbnail,
+    }),
+    figmaListTeams: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mentions:figma-list-teams",
+      tag: WS_METHODS.mentionsFigmaListTeams,
+    }),
+    figmaListProjects: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mentions:figma-list-projects",
+      tag: WS_METHODS.mentionsFigmaListProjects,
+    }),
   };
 }
 

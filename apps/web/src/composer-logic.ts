@@ -9,7 +9,12 @@ import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { isCurrencyAmountQuery, isPathWord } from "@t3tools/shared/composerTrigger";
+import {
+  detectAtMentionTrigger,
+  isCurrencyAmountQuery,
+  isPathWord,
+  type ComposerTriggerKind as SharedComposerTriggerKind,
+} from "@t3tools/shared/composerTrigger";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
@@ -17,7 +22,7 @@ import {
 
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind = Exclude<SharedComposerTriggerKind, "slash-model">;
 export type ComposerSlashCommand = "model" | "plan" | "default" | "side" | "btw";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
@@ -261,11 +266,11 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch) {
+  const hashMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (hashMatch) {
     return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
+      kind: "hash",
+      query: hashMatch[1] ?? "",
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
@@ -280,16 +285,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  if (!token.startsWith("@")) {
-    return null;
-  }
-
-  return {
-    kind: "path",
-    query: token.slice(1),
-    rangeStart: tokenStart,
-    rangeEnd: cursor,
-  };
+  return detectAtMentionTrigger(token, tokenStart, cursor) as ComposerTrigger | null;
 }
 
 export function pastedPathQueryLength(

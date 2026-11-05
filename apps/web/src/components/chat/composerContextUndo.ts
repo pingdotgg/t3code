@@ -1,6 +1,7 @@
 import type {
   EnvironmentContextRecord,
   FigmaContextRecord,
+  IssueContextRecord,
   JiraContextRecord,
   PreviewAnnotationPayload,
   ThreadContextRecord,
@@ -29,6 +30,7 @@ export interface RetainedContextPayloads extends RetainedAttachmentContextPayloa
   environments: Map<string, EnvironmentContextRecord>;
   jira: Map<string, JiraContextRecord>;
   figma: Map<string, FigmaContextRecord>;
+  issues: Map<string, IssueContextRecord>;
 }
 
 function createRetainedContextPayloads(): RetainedContextPayloads {
@@ -39,6 +41,7 @@ function createRetainedContextPayloads(): RetainedContextPayloads {
     environments: new Map(),
     jira: new Map(),
     figma: new Map(),
+    issues: new Map(),
     files: new Map(),
     previewAnnotations: new Map(),
   };

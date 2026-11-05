@@ -24,7 +24,13 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
-import { LinkIcon, MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
+import {
+  CircleDotIcon,
+  LinkIcon,
+  MessageCircleIcon,
+  MousePointerClickIcon,
+  PaintbrushIcon,
+} from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
@@ -560,6 +566,19 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <ContextChip kind="file" data-markdown-copy={context.copyMarkdown}>
             <PaintbrushIcon />
             <ContextChipLabel>{record.label}</ContextChipLabel>
+          </ContextChip>
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "issue",
+      canRender: (record) => record.kind === "issue",
+      render: (record, context) =>
+        record.kind === "issue" ? (
+          <ContextChip kind="file" data-markdown-copy={context.copyMarkdown}>
+            <CircleDotIcon />
+            <ContextChipLabel>{`${record.label} ${record.title}`.trim()}</ContextChipLabel>
           </ContextChip>
         ) : (
           <UnavailableUserMessageContextChip {...context} />
