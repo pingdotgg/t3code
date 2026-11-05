@@ -45,7 +45,10 @@ export function MiddleTruncate({
           <span ref={headRef} className="peer min-w-0 overflow-hidden">
             {split.head}
           </span>
-          <span className="shrink-0 peer-data-overflow:before:content-['…']">{split.tail}</span>
+          <span className="shrink-0 [&>span]:hidden peer-data-overflow:[&>span]:inline">
+            <span aria-hidden="true">…</span>
+            {split.tail}
+          </span>
         </>
       ) : (
         // Keyed so React does not reuse the head node and its imperative clip.
