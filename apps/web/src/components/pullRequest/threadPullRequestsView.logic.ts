@@ -52,6 +52,9 @@ export function linkedPullRequestStatus(link: ThreadPullRequestLink): LinkedPull
   return snapshot.state;
 }
 
+const isOpen = (link: ThreadPullRequestLink) =>
+  link.snapshot === null || link.snapshot.state === "open";
+
 const rank = (link: ThreadPullRequestLink) =>
   LINKED_PULL_REQUEST_STATUS_ORDER.indexOf(linkedPullRequestStatus(link));
 
@@ -155,7 +158,7 @@ export function linkedPullRequestRows(
           stack: index === 0 && size > 1 ? { kind: unit.chain.kind, size } : null,
         },
         position: unit.layerOf?.position ?? null,
-        dimmed: isHidden(link) || rank(link) > unit.rank,
+        dimmed: isHidden(link) || (rank(link) > unit.rank && !isOpen(link)),
       });
     });
   }

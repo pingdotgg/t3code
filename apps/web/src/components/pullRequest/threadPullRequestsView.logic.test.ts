@@ -99,6 +99,16 @@ describe("linkedPullRequestRows", () => {
     expect(
       summarize(linkedPullRequestRows(chains, { ...DEFAULT_VIEW, hiddenStatuses: ["open"] })),
     ).toEqual(["[Merged 4]", "#20", "#1", "#2", "#3 dim"]);
+    const draftStack: ThreadPullRequestChain = {
+      kind: "native",
+      layers: [link(4, "open", "2026-11-01T01:00:00Z"), link(5, "draft", "2026-11-01T02:00:00Z")],
+      depths: [0, 1],
+    };
+    expect(summarize(linkedPullRequestRows([draftStack], DEFAULT_VIEW))).toEqual([
+      "[Draft 2]",
+      "#4",
+      "#5",
+    ]);
   });
 
   it("flattens stacks into their own status groups with each layer's position", () => {
