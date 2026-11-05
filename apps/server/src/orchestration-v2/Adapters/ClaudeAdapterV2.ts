@@ -11046,7 +11046,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.openedPermissionMode =
                       processInit.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
-                    context.capabilities = new Set(message.capabilities ?? []);
+                    context.capabilities = new Set(processInit.capabilities ?? []);
                   }
                   if (
                     message.type === "system" &&
