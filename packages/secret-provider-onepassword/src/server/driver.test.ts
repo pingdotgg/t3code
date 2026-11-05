@@ -13,7 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as NodeFS from "node:fs";
 
 import { OnePasswordAccount } from "../shared/definition.ts";
-import { driver } from "./driver.ts";
+import { driver, listAccounts } from "./driver.ts";
 
 const encoder = new TextEncoder();
 const account = OnePasswordAccount.make("my.1password.com");
@@ -150,6 +150,40 @@ describe("1Password driver", () => {
 
       assert.deepStrictEqual(yield* Fiber.join(reading), [undefined, undefined]);
       assert.strictEqual(op.invocations.length, 1);
+    }).pipe(Effect.provide(op.layer));
+  });
+});
+
+describe("1Password listAccounts", () => {
+  it.effect("offers each signed-in account by the address `op --account` accepts", () => {
+    const op = fakeOp(() => ({
+      stdout: JSON.stringify([
+        { url: "my.1password.com", email: "me@example.com", user_uuid: "U1" },
+        { url: "acme.1password.com", email: "me@acme.example", user_uuid: "U2" },
+      ]),
+    }));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* listAccounts(), [
+        { account: "my.1password.com", email: "me@example.com" },
+        { account: "acme.1password.com", email: "me@acme.example" },
+      ]);
+      assert.deepStrictEqual(op.invocations, [
+        ["--cache=false", "account", "list", "--format", "json"],
+      ]);
+    }).pipe(Effect.provide(op.layer));
+  });
+
+  it.effect("offers no accounts when `op` fails", () => {
+    const op = fakeOp(() => ({ code: 1, stderr: "not configured" }));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* listAccounts(), []);
+    }).pipe(Effect.provide(op.layer));
+  });
+
+  it.effect("offers no accounts when `op` prints something unexpected", () => {
+    const op = fakeOp(() => ({ stdout: "not json" }));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* listAccounts(), []);
     }).pipe(Effect.provide(op.layer));
   });
 });

@@ -8,7 +8,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import { ChildProcess } from "effect/process";
 
-import { definition, type OnePasswordAccount } from "../shared/definition.ts";
+import type { OnePasswordAccountSummary } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+import { definition, OnePasswordAccount } from "../shared/definition.ts";
 
 const ONE_PASSWORD_BINARY = "op";
 // Bounds a read long enough to reach for a fingerprint reader, short enough not to wedge a rebuild.
@@ -109,4 +112,26 @@ export const driver = defineSecretProviderDriver({
       bounded("read", readOne(account, reference)).pipe(Effect.map(Option.getOrUndefined)),
     );
   }),
+});
+
+const AccountListJson = Schema.fromJsonString(
+  Schema.Array(Schema.Struct({ url: OnePasswordAccount, email: Schema.String })),
+);
+const decodeAccountList = Schema.decodeUnknownOption(AccountListJson);
+
+/** Signed-in accounts by the address `op --account` accepts; empty when `op` cannot answer. */
+export const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function* () {
+  const result = yield* runOnePassword(["account", "list", "--format", "json"]).pipe(
+    Effect.timeoutOption(READ_TIMEOUT),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  if (Option.isNone(result) || result.value.code !== 0) {
+    yield* Effect.logWarning("Could not list 1Password accounts");
+    return [];
+  }
+  return Option.match(decodeAccountList(result.value.stdout), {
+    onNone: (): ReadonlyArray<OnePasswordAccountSummary> => [],
+    onSome: (accounts) =>
+      accounts.map(({ url, email }): OnePasswordAccountSummary => ({ account: url, email })),
+  });
 });
