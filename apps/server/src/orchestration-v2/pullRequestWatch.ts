@@ -16,7 +16,7 @@ const SNIPPET_LENGTH = 200;
 // Review bots open with badge markup. Only lowercase element names match, so Promise<void>
 // and type parameters like Promise<A> survive.
 const HTML_TAG =
-  /<\/?(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])[^>]*>/g;
+  /<\/?(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>/g;
 const MARKDOWN_CODE = /(```[\s\S]*?```|`[^`]*`)/;
 
 // Split keeps the captured code regions at odd indexes, and those keep their tags.

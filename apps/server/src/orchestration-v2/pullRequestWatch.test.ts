@@ -354,7 +354,7 @@ describe("evaluatePullRequestWatch", () => {
 
   it("quotes a remark's text instead of its leading HTML, and keeps tags in prose and code", () => {
     const badge =
-      '<a href="https://app.coderabbit.ai/change-stack/o/r/pull/1?cs_source=review_comment"><picture><source media="(prefers-color-scheme: dark)" srcset="https://coderabbit.ai/badge-dark.svg"><img alt="Review" src="https://coderabbit.ai/badge.svg"></picture></a>';
+      '<a href="https://app.coderabbit.ai/change-stack/o/r/pull/1?cs_source=review_comment"><picture><source media="(prefers-color-scheme: dark)" srcset="https://coderabbit.ai/badge-dark.svg"><img alt="Severity > Minor" src="https://coderabbit.ai/badge.svg"></picture></a>';
     const report = evaluatePullRequestWatch(watch(), detail(), [
       remark(
         "coderabbitai",
