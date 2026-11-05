@@ -26,6 +26,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { toastManager } from "../ui/toast";
 import { LimitWindows } from "./UsageLimits";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -231,21 +232,41 @@ export function QuickUsagePopover({
     setIsRefreshing(true);
     void settlePromise(() =>
       Promise.all(
-        Array.from(presentations, ([environmentId, presentation]) => {
-          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            return refreshUsageLimits(
+        Array.from(presentations, async ([environmentId, presentation]) => {
+          if (presentation.connection.phase !== "connected" || presentation.serverConfig === null) {
+            return undefined;
+          }
+          return {
+            label: presentation.entry.target.label,
+            result: await refreshUsageLimits(
               environmentId,
               () => refreshProviders({ environmentId, input: {} }),
               false,
-            );
-          }
-          return undefined;
+            ),
+          };
         }),
       ),
     )
       .then(async (result) => {
         setNow(Date.now());
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+        const failures = result.value.flatMap((environment) =>
+          environment !== undefined &&
+          environment.result !== undefined &&
+          AsyncResult.isFailure(environment.result)
+            ? [{ ...environment, failure: environment.result }]
+            : [],
+        );
+        const defect = failures.find(({ failure }) => Cause.hasDies(failure.cause));
+        if (defect !== undefined) throw Cause.squash(defect.failure.cause);
+        if (failures.length > 0) {
+          toastManager.add({
+            type: "error",
+            title: "Could not refresh usage limits",
+            description: `Refresh failed for ${failures.map(({ label }) => label).join(", ")}.`,
+          });
+          return;
+        }
         await refreshUsage({
           registry: appAtomRegistry,
           server: serverEnvironment,
