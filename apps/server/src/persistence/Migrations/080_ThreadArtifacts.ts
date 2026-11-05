@@ -6,14 +6,15 @@ export default Effect.gen(function* () {
 
   yield* sql`
     CREATE TABLE orchestration_v2_projection_artifacts (
-      artifact_id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       run_id TEXT,
       message_id TEXT,
       kind TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      payload_json TEXT NOT NULL
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (thread_id, artifact_id)
     )
   `;
   yield* sql`
