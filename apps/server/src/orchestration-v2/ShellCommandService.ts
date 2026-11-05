@@ -44,7 +44,7 @@ export function shellCommandContext(item: ShellItem): string {
   const shell = item.userShell;
   let result: string;
   if (item.status === "running") {
-    result = `Still running in the background (did not finish within 120s). Output file: ${shell.outputFile}`;
+    result = `Still running in the background (did not finish within 120s). Output file: ${shell.outputFile ?? "unavailable"}`;
   } else {
     let stopped = "";
     if (shell.stoppedByUser) stopped = "Stopped by the user.\n";
@@ -53,7 +53,7 @@ export function shellCommandContext(item: ShellItem): string {
 
     let output = item.output ?? "";
     if (shell.outputTruncated || (item.output === undefined && shell.outputFile !== undefined)) {
-      output = `Output file: ${shell.outputFile}\n${
+      output = `Output file: ${shell.outputFile ?? "unavailable"}\n${
         shell.outputTruncated && item.exitCode !== 0 ? output : output.slice(0, 2000)
       }`;
     }
@@ -384,9 +384,17 @@ const make = Effect.gen(function* () {
         turnItemTypes: ["command_execution"],
         pendingUserShellCommands: true,
       });
-      return turnItems.filter(
+      const items = turnItems.filter(
         (item): item is ShellItem => isUserShellItem(item) && item.userShell.delivery === "pending",
       );
+      // Archiving removes output files but keeps pending results, so drop paths that are gone.
+      return yield* Effect.forEach(items, (item) => {
+        const { outputFile, ...userShell } = item.userShell;
+        if (outputFile === undefined) return Effect.succeed(item);
+        return fs
+          .exists(outputFile)
+          .pipe(Effect.map((exists): ShellItem => (exists ? item : { ...item, userShell })));
+      });
     },
     (effect, threadId) =>
       effect.pipe(Effect.mapError((cause) => new ShellCommandError({ threadId, cause }))),
