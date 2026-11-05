@@ -107,7 +107,7 @@ import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { pullRequestAutolinkPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
-import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
+import { PullRequestFixChecksButton, PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
   buildAddSelectionToAgentHandoff,
@@ -118,6 +118,7 @@ import {
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
+  classifyPullRequestChecks,
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
@@ -1606,31 +1607,43 @@ export function PullRequestDetailPanel({
             }}
           >
             {tab === "summary" ? (
-              showsApproveWorkflows ? (
-                <PullRequestApproveWorkflowsButton
-                  pullRequestKey={pullRequestKey}
-                  pendingAction={pendingAction}
-                  perform={perform}
-                />
-              ) : (
-                <PullRequestChecksStatusLine
-                  className="text-muted-foreground"
-                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
-                  icon={
-                    checksState !== null ? (
-                      <PullRequestChecksPopover
-                        checks={detail.checks}
-                        stale={checksStale}
-                        checksState={checksState}
-                        threadRef={threadRef}
-                      />
-                    ) : (
-                      <CircleDotIcon aria-hidden className="size-3.5" />
-                    )
-                  }
-                  label={checksSummary}
-                />
-              )
+              <>
+                {showsApproveWorkflows ? (
+                  <PullRequestApproveWorkflowsButton
+                    pullRequestKey={pullRequestKey}
+                    pendingAction={pendingAction}
+                    perform={perform}
+                  />
+                ) : (
+                  <PullRequestChecksStatusLine
+                    className="text-muted-foreground"
+                    aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                    icon={
+                      checksState !== null ? (
+                        <PullRequestChecksPopover
+                          checks={detail.checks}
+                          stale={checksStale}
+                          checksState={checksState}
+                          threadRef={threadRef}
+                        />
+                      ) : (
+                        <CircleDotIcon aria-hidden className="size-3.5" />
+                      )
+                    }
+                    label={checksSummary}
+                  />
+                )}
+                {canFixFindings &&
+                !checksStale &&
+                classifyPullRequestChecks(detail.checks) === "failing" ? (
+                  <PullRequestFixChecksButton
+                    label="Fix all"
+                    accessibleLabel={handoffLabels.fixChecks}
+                    pendingFinding={handoff}
+                    onClick={startFixChecks}
+                  />
+                ) : null}
+              </>
             ) : tab === "timeline" ? (
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                 <PullRequestMetaLine

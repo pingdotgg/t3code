@@ -309,6 +309,32 @@ function MetaRow({
   );
 }
 
+export function PullRequestFixChecksButton({
+  label,
+  accessibleLabel,
+  pendingFinding,
+  onClick,
+}: {
+  label: string;
+  accessibleLabel?: string;
+  pendingFinding: string | null | undefined;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      className="shrink-0"
+      aria-label={accessibleLabel}
+      disabled={pendingFinding !== null && pendingFinding !== undefined}
+      onClick={onClick}
+    >
+      <HammerIcon className="size-3" />
+      {pendingFinding === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : label}
+    </Button>
+  );
+}
+
 function Section({
   title,
   defaultOpen = true,
@@ -803,16 +829,11 @@ export function PullRequestSummaryTab({
         defaultOpen={false}
         actions={
           onFixChecks && !checksStale && classifyPullRequestChecks(detail.checks) === "failing" ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              className="shrink-0"
-              disabled={pendingFinding !== null && pendingFinding !== undefined}
+            <PullRequestFixChecksButton
+              label={fixChecksLabel}
+              pendingFinding={pendingFinding}
               onClick={onFixChecks}
-            >
-              <HammerIcon className="size-3" />
-              {pendingFinding === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : fixChecksLabel}
-            </Button>
+            />
           ) : undefined
         }
       >
