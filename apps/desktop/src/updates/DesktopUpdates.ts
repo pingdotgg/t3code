@@ -76,12 +76,7 @@ const UpdateInfo = Schema.Struct({
   // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
   releaseDate: Schema.optional(Schema.String),
-  // Decoded separately so a malformed file list only skips cached-download recovery.
-  files: Schema.optional(Schema.Unknown),
 });
-
-const ReleaseFile = Schema.Struct({ url: Schema.String, sha512: Schema.String });
-type ReleaseFile = typeof ReleaseFile.Type;
 
 const CachedDownloadInfo = Schema.fromJsonString(
   Schema.Struct({ fileName: Schema.String, sha512: Schema.String }),
@@ -100,7 +95,6 @@ const encodeInstallRecord = Schema.encodeEffect(DesktopUpdateInstallRecord);
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
-const decodeReleaseFiles = Schema.decodeUnknownOption(Schema.Array(ReleaseFile));
 const decodeCachedDownloadInfo = Schema.decodeUnknownEffect(CachedDownloadInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -378,24 +372,20 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 // Mirrors electron-updater 6.8.9's MacUpdater.filterFilesForArch and Provider.findFile: resuming
 // a cached artifact the updater would not select makes it download the selected one instead.
 function selectUpdateFile(
-  files: ReadonlyArray<ReleaseFile>,
+  files: ElectronUpdater.ElectronUpdaterOfferedFiles["files"],
   platform: NodeJS.Platform,
   isDebPackage: boolean,
   runtimeInfo: DesktopRuntimeInfo,
-): ReleaseFile | undefined {
-  const resolved: Array<{ readonly file: ReleaseFile; readonly pathname: string }> = [];
-  for (const file of files) {
-    const pathname = URL.parse(file.url, "file:///")?.pathname;
-    if (pathname === undefined) return undefined;
-    resolved.push({ file, pathname });
-  }
-  const mentions = ({ file, pathname }: (typeof resolved)[number], text: string) =>
-    pathname.includes(text) || file.url.includes(text);
-  let candidates = resolved;
+) {
+  // findFile matches process.arch, which "other" does not preserve.
+  if (runtimeInfo.appArch === "other") return undefined;
+  const mentions = (file: (typeof files)[number], text: string) =>
+    file.pathname.includes(text) || file.infoUrl.includes(text);
+  let candidates = files;
   if (platform === "darwin") {
-    const isArm64File = (candidate: (typeof resolved)[number]) => mentions(candidate, "arm64");
-    const preferArm64 = runtimeInfo.hostArch === "arm64" && resolved.some(isArm64File);
-    candidates = resolved.filter((candidate) => isArm64File(candidate) === preferArm64);
+    const isArm64File = (file: (typeof files)[number]) => mentions(file, "arm64");
+    const preferArm64 = runtimeInfo.hostArch === "arm64" && files.some(isArm64File);
+    candidates = files.filter((file) => isArm64File(file) === preferArm64);
   }
   const extension =
     platform === "darwin"
@@ -405,12 +395,8 @@ function selectUpdateFile(
         : isDebPackage
           ? ".deb"
           : ".appimage";
-  const packageFiles = candidates.filter((candidate) =>
-    candidate.pathname.toLowerCase().endsWith(extension),
-  );
-  return (
-    packageFiles.find((candidate) => mentions(candidate, runtimeInfo.appArch)) ?? packageFiles[0]
-  )?.file;
+  const packageFiles = candidates.filter((file) => file.pathname.toLowerCase().endsWith(extension));
+  return packageFiles.find((file) => mentions(file, runtimeInfo.appArch)) ?? packageFiles[0];
 }
 
 /** @public */
@@ -436,9 +422,6 @@ export const make = Effect.gen(function* () {
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
-  const offeredUpdateFileRef = yield* Ref.make(
-    Option.none<{ readonly version: string; readonly sha512: string }>(),
-  );
   // The release a track switch's database check cleared. A build crosses to another track only
   // through such a switch, and never below that release: version order alone cannot tell whether
   // a Stable knows a Nightly's migrations.
@@ -707,9 +690,16 @@ export const make = Effect.gen(function* () {
   // A launch that quit without installing leaves its verified package in electron-updater's cache.
   // downloadUpdate re-hashes it and emits update-downloaded without fetching it again.
   const resumeCachedDownload = Effect.gen(function* () {
-    const offered = yield* Ref.get(offeredUpdateFileRef);
+    const offered = yield* electronUpdater.offeredUpdateFiles;
     if (Option.isNone(offered)) return;
-    const { version, sha512 } = offered.value;
+    const { version } = offered.value;
+    const sha512 = selectUpdateFile(
+      offered.value.files,
+      environment.platform,
+      isDebPackage,
+      environment.runtimeInfo,
+    )?.sha512;
+    if (sha512 === undefined) return;
     const isOffered = Ref.get(updateStateRef).pipe(
       Effect.flatMap((state) =>
         state.status === "available" && state.availableVersion === version
@@ -1030,14 +1020,6 @@ export const make = Effect.gen(function* () {
             yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
             return;
           }
-
-          const updateFile = Option.flatMapNullishOr(decodeReleaseFiles(info.files), (files) =>
-            selectUpdateFile(files, environment.platform, isDebPackage, environment.runtimeInfo),
-          );
-          yield* Ref.set(
-            offeredUpdateFileRef,
-            Option.map(updateFile, (file) => ({ version: info.version, sha512: file.sha512 })),
-          );
 
           const checkedAt = yield* currentIsoTimestamp;
           const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(

@@ -30,6 +30,8 @@ export interface UpdatesHarnessOptions {
   readonly downloadUpdate?: Effect.Effect<void>;
   /** electron-updater's pending cache directory; its files are read from disk. */
   readonly pendingDownloadDirectory?: string;
+  /** What electron-updater's provider resolved for the offered release. */
+  readonly offeredUpdateFiles?: ElectronUpdater.ElectronUpdaterOfferedFiles;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -37,6 +39,7 @@ export interface UpdatesHarnessOptions {
   readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
+  readonly processArch?: string;
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
   readonly policy?: DesktopUpdatePolicy.UpdatePolicy;
@@ -98,6 +101,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     pendingDownloadDirectory: Effect.succeed(
       Option.fromUndefinedOr(options.pendingDownloadDirectory),
     ),
+    offeredUpdateFiles: Effect.succeed(Option.fromUndefinedOr(options.offeredUpdateFiles)),
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
       checkAllowedDowngrade.push(allowDowngrade);
@@ -181,7 +185,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     dirname: "/repo/apps/desktop/src",
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
     platform: options.platform ?? "darwin",
-    processArch: "x64",
+    processArch: options.processArch ?? "x64",
     appVersion: options.appVersion ?? "1.2.3",
     appPath: "/repo",
     isPackaged: true,

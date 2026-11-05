@@ -29,37 +29,72 @@ import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 const sha512Of = (bytes: string) => NodeCrypto.createHash("sha512").update(bytes).digest("base64");
 const x64Package = "T3 Code 1.2.4 x64";
+const arm64Package = "T3 Code 1.2.4 arm64";
 
 // What electron-updater leaves in `<cache>/<updaterCacheDirName>/pending` after a verified download.
 const pendingDownloadCache = Effect.fn("test.pendingDownloadCache")(function* (cache: {
   readonly packageBytes: string;
+  readonly fileName?: string;
   readonly sha512?: string;
   readonly packageFile?: boolean;
   readonly updateInfo?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-updater-pending-" });
+  const fileName = cache.fileName ?? "T3-Code-1.2.4-mac.zip";
   if (cache.packageFile !== false) {
-    yield* fs.writeFileString(`${directory}/T3-Code-1.2.4-mac.zip`, cache.packageBytes);
+    yield* fs.writeFileString(`${directory}/${fileName}`, cache.packageBytes);
   }
   if (cache.updateInfo !== false) {
     yield* fs.writeFileString(
       `${directory}/update-info.json`,
-      JSON.stringify({
-        fileName: "T3-Code-1.2.4-mac.zip",
-        sha512: cache.sha512 ?? sha512Of(cache.packageBytes),
-      }),
+      JSON.stringify({ fileName, sha512: cache.sha512 ?? sha512Of(cache.packageBytes) }),
     );
   }
   return directory;
 });
 
-const relaunchedUpdateInfo = (x64Url = "T3-Code-1.2.4-mac.zip") => ({
+// The provider resolves each manifest `files[].url` against the feed URL.
+const offeredUpdateFiles = (
+  feedUrl: string,
+  files: ReadonlyArray<readonly [url: string, packageBytes: string]>,
+) => ({
   version: "1.2.4",
-  files: [
-    { url: "T3-Code-1.2.4-arm64-mac.zip", sha512: sha512Of("T3 Code 1.2.4 arm64") },
-    { url: x64Url, sha512: sha512Of(x64Package) },
-  ],
+  files: files.map(([url, packageBytes]) => ({
+    pathname: new URL(url, feedUrl).pathname,
+    infoUrl: url,
+    sha512: sha512Of(packageBytes),
+  })),
+});
+
+const macUpdateFiles = offeredUpdateFiles("https://updates.example/", [
+  ["T3-Code-1.2.4-arm64-mac.zip", arm64Package],
+  ["T3-Code-1.2.4-mac.zip", x64Package],
+]);
+
+const checkWithPendingDownload = Effect.fn("test.checkWithPendingDownload")(function* (options: {
+  readonly cache: Parameters<typeof pendingDownloadCache>[0];
+  readonly offeredUpdateFiles?: ReturnType<typeof offeredUpdateFiles>;
+  readonly platform?: NodeJS.Platform;
+  readonly processArch?: string;
+}) {
+  const { cache, ...harnessOptions } = options;
+  const harness = makeHarness({
+    offeredUpdateFiles: macUpdateFiles,
+    ...harnessOptions,
+    pendingDownloadDirectory: yield* pendingDownloadCache(cache),
+    checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+    // electron-updater satisfies the download from its verified cache.
+    downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+  });
+
+  return yield* Effect.gen(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.configure;
+    yield* updates.check("startup");
+    yield* flushCallbacks;
+    return { state: yield* updates.getState, downloadCount: harness.downloadCount() };
+  }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
 });
 
 describe("DesktopUpdates", () => {
@@ -150,78 +185,58 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect.each([
-    { name: "", url: "T3-Code-1.2.4-mac.zip" },
-    { name: " from a URL with a query string", url: "T3-Code-1.2.4-mac.zip?download=1" },
-  ])("restores a verified cached download after quitting without installing$name", ({ url }) =>
-    Effect.scoped(
+    { name: "on an Intel Mac", processArch: "x64", cache: { packageBytes: x64Package } },
+    {
+      name: "on an Apple Silicon Mac",
+      processArch: "arm64",
+      cache: { packageBytes: arm64Package, fileName: "T3-Code-1.2.4-arm64-mac.zip" },
+    },
+  ])(
+    "restores a verified cached download after quitting without installing $name",
+    ({ processArch, cache }) =>
       Effect.gen(function* () {
-        const directory = yield* pendingDownloadCache({ packageBytes: x64Package });
-        const harness = makeHarness({
-          pendingDownloadDirectory: directory,
-          checkForUpdates: Effect.sync(() =>
-            harness.emit("update-available", relaunchedUpdateInfo(url)),
-          ),
-          // electron-updater satisfies the download from its verified cache.
-          downloadUpdate: Effect.sync(() =>
-            harness.emit("update-downloaded", { version: "1.2.4" }),
-          ),
-        });
+        const { state, downloadCount } = yield* checkWithPendingDownload({ cache, processArch });
 
-        yield* Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-          yield* updates.check("startup");
-          yield* flushCallbacks;
-
-          const state = yield* updates.getState;
-          assert.equal(
-            state.status,
-            "downloaded",
-            "the update downloaded before quitting is offered for download again",
-          );
-          assert.equal(state.downloadedVersion, "1.2.4");
-          assert.equal(harness.downloadCount(), 1);
-        }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+        assert.equal(
+          state.status,
+          "downloaded",
+          "the update downloaded before quitting is offered for download again",
+        );
+        assert.equal(state.downloadedVersion, "1.2.4");
+        assert.equal(downloadCount, 1);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
-    { name: "a cached package for another release", packageBytes: "T3 Code 1.2.3 x64" },
+    { name: "a cached package for another release", cache: { packageBytes: "T3 Code 1.2.3 x64" } },
     // The harness is an Intel Mac, so electron-updater would fetch the x64 zip instead.
-    { name: "a cached package for another architecture", packageBytes: "T3 Code 1.2.4 arm64" },
+    { name: "a cached package for another architecture", cache: { packageBytes: arm64Package } },
     {
       name: "a cached package whose bytes are damaged",
-      packageBytes: "T3 Code 1.2.4 x6",
-      sha512: sha512Of(x64Package),
+      cache: { packageBytes: "T3 Code 1.2.4 x6", sha512: sha512Of(x64Package) },
     },
-    { name: "a missing cached package", packageBytes: x64Package, packageFile: false },
-    { name: "a cache without update-info.json", packageBytes: x64Package, updateInfo: false },
-  ])("keeps the update click-to-download with $name", (cache) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const directory = yield* pendingDownloadCache(cache);
-        const harness = makeHarness({
-          pendingDownloadDirectory: directory,
-          checkForUpdates: Effect.sync(() =>
-            harness.emit("update-available", relaunchedUpdateInfo()),
-          ),
-          downloadUpdate: Effect.sync(() =>
-            harness.emit("update-downloaded", { version: "1.2.4" }),
-          ),
-        });
+    { name: "a missing cached package", cache: { packageBytes: x64Package, packageFile: false } },
+    {
+      name: "a cache without update-info.json",
+      cache: { packageBytes: x64Package, updateInfo: false },
+    },
+    {
+      // Both resolved paths contain the feed's /x64/, so electron-updater picks the first .exe.
+      name: "an x64 installer listed after arm64 on an /x64/ feed",
+      platform: "win32" as const,
+      cache: { packageBytes: x64Package, fileName: "T3-Code-Setup-1.2.4-x64.exe" },
+      offeredUpdateFiles: offeredUpdateFiles("https://mirror.example/t3/x64/", [
+        ["T3-Code-Setup-1.2.4-arm64.exe", arm64Package],
+        ["T3-Code-Setup-1.2.4-x64.exe", x64Package],
+      ]),
+    },
+  ])("keeps the update click-to-download with $name", (options) =>
+    Effect.gen(function* () {
+      const { state, downloadCount } = yield* checkWithPendingDownload(options);
 
-        yield* Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-          yield* updates.check("startup");
-          yield* flushCallbacks;
-
-          assert.equal((yield* updates.getState).status, "available");
-          assert.equal(harness.downloadCount(), 0);
-        }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+      assert.equal(state.status, "available");
+      assert.equal(downloadCount, 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves a queued installer when the feed has no update", () => {
