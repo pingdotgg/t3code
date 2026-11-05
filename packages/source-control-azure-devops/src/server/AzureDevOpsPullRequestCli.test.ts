@@ -522,6 +522,10 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         new Set(["2026-07-20T00:00:00.000Z"]),
       );
       expect(threadReads).toBe(count);
+
+      yield* provider.forgetChangeRequestReads!({ repository: "platform/web" });
+      yield* (yield* list).settleUpdatedAt!;
+      expect(threadReads).toBe(count * 2);
     }),
   );
 

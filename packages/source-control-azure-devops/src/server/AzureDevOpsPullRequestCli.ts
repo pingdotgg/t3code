@@ -446,7 +446,11 @@ export const make = Effect.gen(function* () {
   ];
 
   const activityReads = yield* Semaphore.make(ACTIVITY_READ_CONCURRENCY);
+  /** Least recently used first. */
   const activity = new Map<string, ActivityRecord>();
+  /** Records a trim found protected, set aside until `keptUntil` so no trim walks them again. */
+  const kept = new Map<string, ActivityRecord>();
+  let keptUntil = Infinity;
 
   type ActivitySubject = {
     readonly cwd: string;
@@ -459,9 +463,9 @@ export const make = Effect.gen(function* () {
 
   const activityRecord = (input: ActivitySubject, repository?: string): ActivityRecord => {
     const key = activityKey(input);
-    let record = activity.get(key);
+    let record = kept.get(key);
     if (record === undefined) {
-      record = {
+      record = activity.get(key) ?? {
         number: input.number,
         repository: null,
         at: null,
@@ -472,10 +476,9 @@ export const make = Effect.gen(function* () {
         generation: 0,
         readGeneration: 0,
       };
-    } else {
       activity.delete(key);
+      activity.set(key, record);
     }
-    activity.set(key, record);
     if (repository !== undefined) record.repository = repository.toLowerCase();
     return record;
   };
@@ -492,24 +495,49 @@ export const make = Effect.gen(function* () {
     record.readGeneration === record.generation &&
     now - record.readAt < Duration.toMillis(maxAge);
 
+  /** Until when some reader would still take the record as fresh, or it is being read. */
+  const protectedUntil = (record: ActivityRecord) =>
+    record.reading !== null
+      ? Infinity
+      : record.readAt !== null && record.readGeneration === record.generation
+        ? record.readAt + Duration.toMillis(LISTED_ACTIVITY_MAX_AGE)
+        : -Infinity;
+
+  /** A read that ended may have unprotected a kept record. */
+  const release = (key: string, record: ActivityRecord) => {
+    if (kept.get(key) === record) keptUntil = Math.min(keptUntil, protectedUntil(record));
+  };
+
   /**
-   * Least recently used first, but never a record being read or one some reader would still take
-   * as fresh: a list larger than the capacity would otherwise evict its own dates and read them
-   * all again. What stays past the capacity is bounded by the reads of the last few minutes.
+   * Least recently used first, but never a protected record: a list larger than the capacity
+   * would otherwise evict its own dates and read them all again. So the capacity is soft; past it
+   * stay only the reads out now or finished in the last few minutes. Protected records wait in
+   * `kept` and rejoin as most recent, so a trim walks each one once per protection.
    */
   const trimActivity = (now: number) => {
-    for (let visits = activity.size; activity.size > ACTIVITY_CACHE_CAPACITY && visits > 0;) {
-      visits -= 1;
+    if (activity.size + kept.size <= ACTIVITY_CACHE_CAPACITY) return;
+    if (now >= keptUntil) {
+      keptUntil = Infinity;
+      for (const [key, record] of kept) {
+        const until = protectedUntil(record);
+        if (until > now) {
+          keptUntil = Math.min(keptUntil, until);
+        } else {
+          kept.delete(key);
+          activity.set(key, record);
+        }
+      }
+    }
+    while (activity.size + kept.size > ACTIVITY_CACHE_CAPACITY) {
       const oldest = activity.entries().next().value;
       if (oldest === undefined) return;
       const [key, record] = oldest;
       activity.delete(key);
-      const kept =
-        record.reading !== null ||
-        (record.readAt !== null &&
-          record.readGeneration === record.generation &&
-          now - record.readAt < Duration.toMillis(LISTED_ACTIVITY_MAX_AGE));
-      if (kept) activity.set(key, record);
+      const until = protectedUntil(record);
+      if (until > now) {
+        kept.set(key, record);
+        keptUntil = Math.min(keptUntil, until);
+      }
     }
   };
 
@@ -557,11 +585,13 @@ export const make = Effect.gen(function* () {
         Effect.sync(() => {
           if (record.reading === read) record.reading = null;
           // A read nobody saw finish must not count as one; a failed read still does.
-          if (Exit.hasInterrupts(exit)) return;
-          record.readAt = startedAt;
-          record.readGeneration = read.generation;
-          record.failed = Exit.isFailure(exit);
-          if (read.revision !== null) record.revision = read.revision;
+          if (!Exit.hasInterrupts(exit)) {
+            record.readAt = startedAt;
+            record.readGeneration = read.generation;
+            record.failed = Exit.isFailure(exit);
+            if (read.revision !== null) record.revision = read.revision;
+          }
+          release(activityKey(input), record);
         }).pipe(Effect.andThen(Deferred.done(read.done, exit))),
       ),
     );
@@ -631,6 +661,7 @@ export const make = Effect.gen(function* () {
             Effect.suspend(() => {
               if (!claim(read)) return Effect.void;
               if (record.reading === read) record.reading = null;
+              release(activityKey(input), record);
               return Deferred.interrupt(read.done);
             }),
           ),
@@ -878,7 +909,11 @@ export const make = Effect.gen(function* () {
           input.repository,
         );
       }
-      return latestAzureDevOpsTime([pullRequest.updatedAt, activity.get(activityKey(subject))?.at]);
+      const key = activityKey(subject);
+      return latestAzureDevOpsTime([
+        pullRequest.updatedAt,
+        (kept.get(key) ?? activity.get(key))?.at,
+      ]);
     }),
 
     listedActivity: Effect.fn("AzureDevOpsPullRequestCli.listedActivity")(function* (input) {
@@ -922,15 +957,18 @@ export const make = Effect.gen(function* () {
     forgetActivity: Effect.fn("AzureDevOpsPullRequestCli.forgetActivity")(function (scope) {
       return Effect.sync(() => {
         const repository = scope?.repository.toLowerCase();
-        for (const record of activity.values()) {
-          if (
-            scope === undefined ||
-            ((record.repository === null || record.repository === repository) &&
-              (scope.number === undefined || record.number === scope.number))
-          ) {
-            record.generation += 1;
+        for (const records of [activity, kept]) {
+          for (const record of records.values()) {
+            if (
+              scope === undefined ||
+              ((record.repository === null || record.repository === repository) &&
+                (scope.number === undefined || record.number === scope.number))
+            ) {
+              record.generation += 1;
+            }
           }
         }
+        keptUntil = -Infinity;
       });
     }),
 
