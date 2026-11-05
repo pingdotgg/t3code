@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { RecordingPresets, type RecordingStatus } from "expo-audio";
+import { AudioModule, RecordingPresets, type RecordingStatus } from "expo-audio";
 import { File } from "expo-file-system";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSyncExternalStore } from "react";
@@ -89,7 +89,11 @@ const voiceInputAtom = Atom.make((get) => {
     void session.controller.appMovedToBackground();
   });
   const recorder = createLazyVoiceRecorder({
-    create: () => createVoiceRecorder(VOICE_RECORDING_OPTIONS),
+    getDestination: () => (registry.get(voiceRouteAtom) === null ? "local" : "environment"),
+    create: (destination) =>
+      destination === "local"
+        ? createVoiceRecorder(VOICE_RECORDING_OPTIONS)
+        : new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS),
     onStatus: (status: RecordingStatus) => {
       session.controller.handleRecorderStatus({
         isFinished: status.isFinished,

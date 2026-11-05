@@ -78,10 +78,10 @@ function runSpeech<A, E>(
         effect.pipe(
           Effect.provideService(FetchHttpClient.Fetch, async (url, options) => {
             if (signal.aborted || !canSend())
-              throw new VoiceTranscriptionError(
-                "cancelled",
-                "The transcription destination changed.",
-              );
+              throw new VoiceTranscriptionError({
+                code: "cancelled",
+                message: "The transcription destination changed.",
+              });
             return expoFetch(url, { ...options, redirect: "error" });
           }),
           Effect.provide(context),
@@ -96,12 +96,14 @@ function environmentTranscriber(prepared: PreparedConnection, canSend: () => boo
     canSend,
     prepare: async (signal) => {
       const status = await runSpeech(getEnvironmentSpeechStatus(prepared), signal, canSend);
-      if (!status.supported) throw new VoiceTranscriptionError("unavailable", status.reason);
+      if (!status.supported)
+        throw new VoiceTranscriptionError({ code: "unavailable", message: status.reason });
       if (status.state === "missing-model")
-        throw new VoiceTranscriptionError(
-          "unavailable",
-          "Install a transcription model in this environment’s Voice settings, then try again.",
-        );
+        throw new VoiceTranscriptionError({
+          code: "unavailable",
+          message:
+            "Install a transcription model in this environment’s Voice settings, then try again.",
+        });
       return status.languages
         ? effectiveSpeechLanguage(
             {
@@ -114,10 +116,10 @@ function environmentTranscriber(prepared: PreparedConnection, canSend: () => boo
     },
     decode: (uri) => {
       if (!native?.decodeRecording)
-        throw new VoiceTranscriptionError(
-          "unavailable",
-          "Update the app to use environment transcription.",
-        );
+        throw new VoiceTranscriptionError({
+          code: "unavailable",
+          message: "Update the app to use environment transcription.",
+        });
       return native.decodeRecording(uri);
     },
     upload: async (pcm, signal) =>

@@ -17,7 +17,10 @@ export function createEnvironmentTranscriber(input: {
   function check(signal: AbortSignal) {
     throwIfVoiceTranscriptionAborted(signal);
     if (!input.canSend()) {
-      throw new VoiceTranscriptionError("cancelled", "The transcription destination changed.");
+      throw new VoiceTranscriptionError({
+        code: "cancelled",
+        message: "The transcription destination changed.",
+      });
     }
   }
   return {
@@ -36,7 +39,10 @@ export function createEnvironmentTranscriber(input: {
             decoded.length % 2 ||
             decoded.length > maxPcmBytes + pcmBytesPerSecond
           ) {
-            throw new VoiceTranscriptionError("transcription-failed", "Invalid voice recording.");
+            throw new VoiceTranscriptionError({
+              code: "transcription-failed",
+              message: "Invalid voice recording.",
+            });
           }
           // A timed native stop can include a final encoder packet beyond the recording limit.
           const bytes = decoded.subarray(0, maxPcmBytes);

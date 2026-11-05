@@ -17,7 +17,7 @@ it("never uploads a recording whose grant changed while the phone decoded it", a
   const transcription = recording.transcribe("file:///draft.m4a", options);
   grant++;
   decoded.resolve(new Uint8Array([0, 128, 0, 64]));
-  await expect(transcription).rejects.toThrow();
+  await expect(transcription).rejects.toMatchObject({ code: "cancelled" });
   expect(upload).not.toHaveBeenCalled();
 });
 
