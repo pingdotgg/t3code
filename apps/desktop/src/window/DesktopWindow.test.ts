@@ -5,9 +5,11 @@ import { DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -1232,6 +1234,40 @@ describe("DesktopWindow", () => {
         ]);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect("never replaces a file already in Downloads", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const downloads = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-downloads-test-",
+      });
+      yield* fileSystem.writeFileString(path.join(downloads, "clip.mp4"), "existing");
+      using _downloads = vi.spyOn(Electron.app, "getPath").mockReturnValue(downloads);
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const savePaths: string[] = [];
+        fakeWindow.sessionListeners.get("will-download")?.(
+          { preventDefault: vi.fn() },
+          {
+            getFilename: () => "clip.mp4",
+            setSavePath: (savePath: string) => void savePaths.push(savePath),
+            once: vi.fn(),
+          },
+          fakeWindow.window.webContents,
+        );
+
+        assert.deepEqual(savePaths, [path.join(downloads, "clip (1).mp4")]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
