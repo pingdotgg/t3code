@@ -1,4 +1,7 @@
-import { collectComposerModelMentions } from "@t3tools/client-runtime/composerModelMentions";
+import {
+  collectComposerModelMentions,
+  type ComposerModelMentionOccurrence,
+} from "@t3tools/client-runtime/composerModelMentions";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
@@ -165,13 +168,30 @@ export function composerSkillLabels(
   );
 }
 
-const NO_KNOWN_MODELS: ReadonlySet<string> = new Set();
+/**
+ * Like `$skill`, a typed reference waits for whitespace so `gpt-6` cannot chip on the way to
+ * `gpt-6.1`. A chip already shown stays one when backspace removes the space after it.
+ */
+export function collectComposerModelTokens(
+  text: string,
+  knownModels: { has(source: string): boolean },
+  preserveTrailingFrom: ReadonlyArray<ComposerModelMentionOccurrence> = [],
+): ReadonlyArray<ComposerModelMentionOccurrence> {
+  return collectComposerModelMentions(text).filter(
+    (mention) =>
+      knownModels.has(mention.source) &&
+      (/\s/u.test(text[mention.end] ?? "") ||
+        preserveTrailingFrom.some(
+          (token) => token.start === mention.start && token.source === mention.source,
+        )),
+  );
+}
 
 export function composerContextEditorTokens(
   text: string,
   tokens: readonly ComposerInlineToken[],
   knownSkills: { has(name: string): boolean },
-  knownModels: { has(source: string): boolean } = NO_KNOWN_MODELS,
+  modelTokens: ReadonlyArray<ComposerModelMentionOccurrence> = [],
 ) {
   const references = collectComposerContextReferences(text);
   const inlineTokens = tokens.filter(
@@ -181,12 +201,8 @@ export function composerContextEditorTokens(
       !references.some((ref) => token.start < ref.end && token.end > ref.start),
   );
   const taken = [...inlineTokens, ...references, ...composerMathRanges(text)];
-  const models = collectComposerModelMentions(text).filter(
-    (mention) =>
-      // Like `$skill`, a typed reference waits for whitespace so `gpt-6` cannot chip on the way to `gpt-6.1`.
-      /\s/u.test(text[mention.end] ?? "") &&
-      knownModels.has(mention.source) &&
-      !taken.some((range) => mention.start < range.end && mention.end > range.start),
+  const models = modelTokens.filter(
+    (mention) => !taken.some((range) => mention.start < range.end && mention.end > range.start),
   );
   return [
     ...inlineTokens,
