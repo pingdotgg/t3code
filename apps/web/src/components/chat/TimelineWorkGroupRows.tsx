@@ -811,7 +811,7 @@ function WorkingWindowText({
   const textRef = useCarriedTextFade(item.message.id);
   if (text.trim().length === 0) return null;
   return (
-    <div ref={textRef} className="min-w-0 py-2">
+    <div ref={textRef} className="min-w-0 px-1 py-2">
       <AssistantCitationSource
         messageId={item.message.id}
         {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
