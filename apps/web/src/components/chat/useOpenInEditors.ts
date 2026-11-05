@@ -19,7 +19,12 @@ export function useOpenInEditors(
   const remoteCapableEditors = useRemoteCapableEditors();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const launchable = remoteMode === "local-exec" ? availableEditors : remoteCapableEditors;
+  const launchable =
+    remoteMode === "local-exec"
+      ? availableEditors
+      : remoteMode === "remote-links"
+        ? remoteCapableEditors
+        : [];
   return [
     ...launchable.filter((id) => !isTerminalEditor(id)),
     ...(canOperateTerminal ? (serverConfig?.availableEditors ?? []).filter(isTerminalEditor) : []),

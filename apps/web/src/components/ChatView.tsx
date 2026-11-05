@@ -1908,22 +1908,30 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalUiLaunchContext,
     setThreadError,
   });
+  const openTerminalEditorStable = useStableCallback((command: string) => {
+    if (activeThreadRef) {
+      const panels = useRightPanelStore.getState();
+      panels.setMaximized(activeThreadRef, false);
+      // At this width the panel is a modal sheet that would cover the drawer.
+      if (prefersPlanSidebarSheet) panels.close(activeThreadRef);
+    }
+    return runProjectScriptStable(
+      { id: "terminal-editor", name: "editor", command },
+      { rememberAsLastInvoked: false, preferNewTerminal: true },
+    );
+  });
   const terminalEditorEnvironmentId =
-    !backgroundThread && activeThread && activeProject ? activeThread.environmentId : null;
+    !backgroundThread && !embedded && activeThread && activeProject
+      ? activeThread.environmentId
+      : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this thread's terminal to openers outside its tree, such as the persistent drawer
   useEffect(() => {
     if (terminalEditorEnvironmentId === null) return;
     return registerTerminalEditorHost({
       environmentId: terminalEditorEnvironmentId,
-      open: (command) => {
-        if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
-        return runProjectScriptStable(
-          { id: "terminal-editor", name: "editor", command },
-          { rememberAsLastInvoked: false, preferNewTerminal: true },
-        );
-      },
+      open: openTerminalEditorStable,
     });
-  }, [terminalEditorEnvironmentId, activeThreadRef, runProjectScriptStable]);
+  }, [terminalEditorEnvironmentId, openTerminalEditorStable]);
   const {
     saveProjectScript: saveProjectScriptStable,
     updateProjectScript: updateProjectScriptStable,

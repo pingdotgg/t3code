@@ -250,11 +250,12 @@ export const OpenInPicker = memo(function OpenInPicker({
   const canLaunchEditor = remote.mode !== "remote-unavailable" && !isHostEditorDenied;
   const canOpenEditor = (editor: EditorId | null) =>
     editor !== null && (isTerminalEditor(editor) || canLaunchEditor);
-  const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
   const effectiveEditors = useOpenInEditors(environmentId, availableEditors, remote.mode);
+  const isMenuDenied = isHostEditorDenied && !effectiveEditors.some(isTerminalEditor);
+  const [menuOpen, setMenuOpen] = useComposerMenuState(isMenuDenied);
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 
   const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
@@ -302,10 +303,6 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   const backgroundThread = use(BackgroundThreadContext);
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
-  const menuOptions =
-    remote.mode === "remote-unavailable"
-      ? options.filter(({ value }) => isTerminalEditor(value))
-      : options;
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
 
@@ -321,7 +318,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           No installed editors found
         </MenuItem>
       )}
-      {menuOptions.map(({ label, Icon, value, kind }) => (
+      {options.map(({ label, Icon, value, kind }) => (
         <MenuItem
           density={presentation === "menu" ? "touch" : "default"}
           disabled={!openInCwd || !canOpenEditor(value)}
@@ -366,7 +363,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           </MenuItem>
         )}
         <MenuSub>
-          <MenuSubTrigger density="touch" disabled={isHostEditorDenied}>
+          <MenuSubTrigger density="touch" disabled={isMenuDenied}>
             <SquareArrowOutUpRightIcon className="size-4" />
             <MenuItemLabel>Open in…</MenuItemLabel>
           </MenuSubTrigger>
@@ -432,7 +429,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       )}
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
         <MenuTrigger
-          disabled={isHostEditorDenied}
+          disabled={isMenuDenied}
           render={
             <ThreadDetailsControl
               aria-label="Choose editor"

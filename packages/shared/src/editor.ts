@@ -117,6 +117,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
             path.join(root, name, "zed.exe"),
           );
         }
+        if (editor.id === "neovide") candidates.push(path.join(root, name, "neovide.exe"));
       }
     }
   } else if (platform === "linux") {

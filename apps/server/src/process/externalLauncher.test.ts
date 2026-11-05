@@ -749,6 +749,35 @@ for (const { platform, installPath, onPath } of [
   );
 }
 
+it.effect("discovers Neovide from its Windows install directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const programFiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-neovide-win-" });
+    const executable = path.join(programFiles, "Neovide", "neovide.exe");
+    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+    yield* fs.writeFileString(executable, "");
+    yield* fs.chmod(executable, 0o755);
+
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.resolveAvailableEditors();
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: {
+            ProgramFiles: programFiles,
+            PATH: path.join(programFiles, "empty"),
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          },
+        }),
+      ),
+    );
+    assert.include(editors, "neovide");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launchers first", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

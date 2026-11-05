@@ -1,4 +1,9 @@
-import { AuthOrchestrationOperateScope, EnvironmentId, type EditorId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  EnvironmentId,
+  type EditorId,
+} from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
@@ -9,6 +14,8 @@ import type { RemoteOpenState } from "../../remoteOpen";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
+  terminalAllowed: new Set<string>(),
+  serverEditors: [] as readonly EditorId[],
   remote: { mode: "local-exec" } as RemoteOpenState,
   clientEditors: ["vscode"] as readonly EditorId[],
   run: vi.fn(),
@@ -21,7 +28,8 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/session"), async (importOriginal) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (environmentId: string, scope: string) =>
-    scope === AuthOrchestrationOperateScope && state.allowed.has(environmentId);
+    (scope === AuthOrchestrationOperateScope && state.allowed.has(environmentId)) ||
+    (scope === AuthTerminalOperateScope && state.terminalAllowed.has(environmentId));
   return {
     ...(await importOriginal()),
     readEnvironmentScope: readEnvironmentScope as never,
@@ -33,6 +41,17 @@ vi.mock(import("../../state/session"), async (importOriginal) => {
         },
         () => readEnvironmentScope(environmentId, scope),
       )) as never,
+  };
+});
+vi.mock(import("../../state/server"), async (importOriginal) => {
+  const actual = await importOriginal();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      configValueAtom: (() => Atom.make({ availableEditors: state.serverEditors })) as never,
+    },
   };
 });
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
@@ -65,6 +84,7 @@ vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   openRemoteEditorUrl: state.openUrl,
 }));
 
+import { registerTerminalEditorHost } from "../../terminalEditorHost";
 import { OpenInPicker } from "./OpenInPicker";
 import {
   registerOpenFavoriteEditorCommand,
@@ -77,6 +97,8 @@ const editors: readonly EditorId[] = ["vscode"];
 
 async function setup() {
   state.allowed.clear();
+  state.terminalAllowed.clear();
+  state.serverEditors = [];
   state.remote = { mode: "local-exec" };
   state.clientEditors = editors;
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -186,6 +208,45 @@ describe("host editor access", () => {
     expect(primaryButton().disabled).toBe(true);
     expect(byLabel("Choose editor").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+  });
+});
+
+describe("terminal editors", () => {
+  it("stays choosable with terminal access alone, keeping launchable editors disabled", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, menuItems, click } = fixture;
+    state.terminalAllowed.add(selected);
+    state.serverEditors = ["neovim"];
+    await renderPicker(["vscode"]);
+
+    expect(byLabel("Choose editor").disabled).toBe(false);
+    await click(byLabel("Choose editor"));
+    const isDisabled = (label: string) =>
+      menuItems()
+        .find((item) => item.textContent?.startsWith(label))
+        ?.getAttribute("aria-disabled") === "true";
+    expect(isDisabled("VS Code")).toBe(true);
+    expect(isDisabled("Neovim")).toBe(false);
+  });
+
+  it("defaults to the terminal editor without an SSH route and reports a failed launch", async () => {
+    await using fixture = await setup();
+    const { renderPicker, primaryButton, click } = fixture;
+    state.remote = { mode: "remote-unavailable" };
+    state.terminalAllowed.add(selected);
+    state.serverEditors = ["neovim"];
+    const open = vi.fn().mockResolvedValue(false);
+    using _host = {
+      [Symbol.dispose]: registerTerminalEditorHost({ environmentId: selected, open }),
+    };
+    await renderPicker();
+
+    expect(primaryButton().disabled).toBe(false);
+    await click(primaryButton());
+    expect(open).toHaveBeenCalledWith("nvim -- '/work/project'");
+    expect(state.run).not.toHaveBeenCalled();
+    const spoken = [...document.querySelectorAll('body > [aria-live="polite"]')];
+    expect(spoken.map((region) => region.textContent).join("")).toBe("");
   });
 });
 

@@ -77,7 +77,7 @@ it("runs a terminal editor in the foreground thread of the same environment", as
   state.allowed.add(primary);
   state.terminalAllowed.add(primary);
   state.getPreference.mockReturnValue("neovim");
-  const hostOpen = vi.fn().mockResolvedValue(undefined);
+  const hostOpen = vi.fn().mockResolvedValue(true);
   using _host = {
     [Symbol.dispose]: registerTerminalEditorHost({ environmentId: primary, open: hostOpen }),
   };
@@ -91,14 +91,25 @@ it("runs a terminal editor in the foreground thread of the same environment", as
 });
 
 it.each([
-  { name: "no foreground thread", hostEnvironment: null, terminalAllowed: true },
-  { name: "a thread on another environment", hostEnvironment: secondary, terminalAllowed: true },
-  { name: "no terminal access", hostEnvironment: primary, terminalAllowed: false },
+  { name: "no foreground thread", hostEnvironment: null, terminalAllowed: true, attempts: 0 },
+  {
+    name: "a thread on another environment",
+    hostEnvironment: secondary,
+    terminalAllowed: true,
+    attempts: 0,
+  },
+  { name: "no terminal access", hostEnvironment: primary, terminalAllowed: false, attempts: 0 },
+  {
+    name: "a failed terminal launch",
+    hostEnvironment: primary,
+    terminalAllowed: true,
+    attempts: 1,
+  },
 ])("falls back without changing the preference with $name", async (input) => {
   state.allowed.add(primary);
   if (input.terminalAllowed) state.terminalAllowed.add(primary);
   state.getPreference.mockReturnValue("neovim");
-  const hostOpen = vi.fn();
+  const hostOpen = vi.fn().mockResolvedValue(false);
   using _host = {
     [Symbol.dispose]:
       input.hostEnvironment === null
@@ -110,7 +121,7 @@ it.each([
 
   assert(result._tag === "Success");
   expect(result.value).toBe("zed");
-  expect(hostOpen).not.toHaveBeenCalled();
+  expect(hostOpen).toHaveBeenCalledTimes(input.attempts);
   expect(state.run).toHaveBeenCalledWith({
     environmentId: primary,
     input: { cwd: "/work/a.ts", editor: "zed" },

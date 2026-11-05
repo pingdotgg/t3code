@@ -9,7 +9,8 @@ import { readEnvironmentScope } from "./state/session";
 
 interface TerminalEditorHost {
   readonly environmentId: EnvironmentId;
-  readonly open: (command: string) => Promise<void>;
+  /** Resolves false when the command did not reach a terminal. */
+  readonly open: (command: string) => Promise<boolean>;
 }
 
 // Openers span the drawer, panels and per-message links; one slot avoids a subscription in each.
@@ -39,6 +40,5 @@ export async function openInTerminalEditor(
   if (command === undefined || activeHost === null || !canOpenTerminalEditor(environmentId)) {
     return false;
   }
-  await activeHost.open(command);
-  return true;
+  return activeHost.open(command);
 }
