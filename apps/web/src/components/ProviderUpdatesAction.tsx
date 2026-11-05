@@ -1,8 +1,10 @@
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
-import { useMemo, useRef, useState } from "react";
+import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { useRef, useState } from "react";
 
-import { useEnvironments } from "~/state/environments";
+import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
+import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   canOneClickUpdateProviderCandidate,
@@ -16,25 +18,26 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export function useProviderUpdates() {
   const { environments } = useEnvironments();
+  const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
+  const providersByEnvironment = useEnvironmentProviders();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
-  const machines = useMemo(
-    () =>
-      environments.flatMap((environment) => {
-        const providers = environment.serverConfig?.providers ?? [];
-        if (environment.connection.phase !== "connected") {
-          return [];
-        }
-        const candidates = collectProviderUpdateCandidates(providers).filter((candidate) =>
-          canOneClickUpdateProviderCandidate(candidate, providers),
-        );
-        return candidates.length > 0
-          ? [{ environmentId: environment.environmentId, label: environment.label, candidates }]
-          : [];
-      }),
-    [environments],
-  );
+  const machines = environments.flatMap((environment) => {
+    const providers = providersByEnvironment.get(environment.environmentId) ?? [];
+    if (
+      environment.connection.phase !== "connected" ||
+      !manageableIds.has(environment.environmentId)
+    ) {
+      return [];
+    }
+    const candidates = collectProviderUpdateCandidates(providers).filter((candidate) =>
+      canOneClickUpdateProviderCandidate(candidate, providers),
+    );
+    return candidates.length > 0
+      ? [{ environmentId: environment.environmentId, label: environment.label, candidates }]
+      : [];
+  });
 
   const updateAll = async ({ quiet = false }: { readonly quiet?: boolean } = {}) => {
     const runs = await Promise.all(
@@ -78,12 +81,9 @@ export function ProviderUpdatesAction() {
     if (pending.current) return;
     pending.current = true;
     setIsPending(true);
-    try {
-      await updateAll();
-    } finally {
-      pending.current = false;
-      setIsPending(false);
-    }
+    await settlePromise(() => updateAll());
+    pending.current = false;
+    setIsPending(false);
   };
 
   return (

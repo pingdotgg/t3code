@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -11,7 +12,6 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -54,7 +54,7 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
 
 const layerGitDriver = GitVcsDriver.layer.pipe(
   Layer.provide(layerServerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const layerCheckpoints = CheckpointService.layer.pipe(
@@ -120,7 +120,7 @@ function makeLayer(input: {
   );
   const layerProjects = Layer.mock(ProjectService.ProjectService)({
     getById: () =>
-      Effect.succeed(Option.some({ id: projectId, workspaceRoot: input.workspaceRoot } as never)),
+      Effect.succeedSome({ id: projectId, workspaceRoot: input.workspaceRoot } as never),
   });
   return RepoWorktreeService.layer.pipe(
     Layer.provideMerge(
@@ -198,15 +198,6 @@ const fixturePaths = Effect.gen(function* () {
   const path = yield* Path.Path;
   const root = yield* fileSystem.realPath(
     yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repo-worktrees-" }),
-  );
-  // Submodules clone from a local path in these fixtures.
-  const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
-  process.env.GIT_ALLOW_PROTOCOL = "file";
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      if (previousAllowedProtocol === undefined) delete process.env.GIT_ALLOW_PROTOCOL;
-      else process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
-    }),
   );
   return {
     root,
@@ -318,7 +309,7 @@ const withFixture = <A, E, R>(
         }),
       ),
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("RepoWorktreeService", () => {
   it.effect("creates a worktree for a repository in the folder while the thread stays put", () =>
@@ -473,12 +464,12 @@ describe("RepoWorktreeService", () => {
       Effect.gen(function* () {
         const service = yield* RepoWorktreeService.RepoWorktreeService;
         const threadId = yield* createThread;
-        const reasons = yield* Effect.all(
-          [fixture.frameworkSource, "../framework-source", "missing-repo"].map((repository) =>
+        const reasons = yield* Effect.forEach(
+          [fixture.frameworkSource, "../framework-source", "missing-repo"],
+          (repository) =>
             service
               .ensure({ threadId, repository, branch: "feature/x", baseRef: "main" })
               .pipe(Effect.flip, Effect.map(requestReason)),
-          ),
         );
         assert.deepEqual(reasons, ["outside_project", "outside_project", "not_a_repository"]);
       }),

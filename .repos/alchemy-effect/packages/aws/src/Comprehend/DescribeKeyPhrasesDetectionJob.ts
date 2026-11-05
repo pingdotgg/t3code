@@ -1,0 +1,40 @@
+import type * as comprehend from "@distilled.cloud/aws/comprehend";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `comprehend:DescribeKeyPhrasesDetectionJob` — get the
+ * properties (status, input/output config, timings) of an asynchronous
+ * key-phrase detection job started with {@link StartKeyPhrasesDetectionJob}.
+ *
+ * The binding takes no arguments and grants the action on `*` (job APIs
+ * have no resource-level IAM).
+ *
+ * ### Monitoring Analysis Jobs
+ * **Example:** Poll a KeyPhrasesDetection Job
+ * ```typescript
+ * // init
+ * const describeKeyPhrasesDetectionJob = yield* AWS.Comprehend.DescribeKeyPhrasesDetectionJob();
+ *
+ * // runtime
+ * const job = yield* describeKeyPhrasesDetectionJob({ JobId: jobId });
+ * // job.KeyPhrasesDetectionJobProperties?.JobStatus: "SUBMITTED" | "IN_PROGRESS" | "COMPLETED" | …
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeKeyPhrasesDetectionJob extends Binding.Service<
+  DescribeKeyPhrasesDetectionJob,
+  "AWS.Comprehend.DescribeKeyPhrasesDetectionJob",
+  () => Effect.Effect<
+    (
+      request: comprehend.DescribeKeyPhrasesDetectionJobRequest,
+    ) => Effect.Effect<
+      comprehend.DescribeKeyPhrasesDetectionJobResponse,
+      comprehend.DescribeKeyPhrasesDetectionJobError
+    >
+  >
+> {}
+export const DescribeKeyPhrasesDetectionJob = Binding.Service<DescribeKeyPhrasesDetectionJob>(
+  "AWS.Comprehend.DescribeKeyPhrasesDetectionJob",
+);

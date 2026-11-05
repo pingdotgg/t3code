@@ -1,0 +1,12 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  // Code shown in the intro. Every file here is type-checked by `intro/build.ts`;
+  // files named *.error.ts must fail, and their errors are what the slides show.
+  "include": ["*.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["bun", "@cloudflare/workers-types"],
+    "noUnusedLocals": false
+  }
+}

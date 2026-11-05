@@ -12,7 +12,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -305,7 +305,7 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const isWindows = yield* HostProcess.isWindows;
   const repositoryLocks = yield* KeyedLock.make<string>();
 
@@ -568,13 +568,13 @@ const make = Effect.gen(function* () {
     yield* gitWorkflow.removeWorktree(input);
   });
 
-  const dispatchAttach = (
-    threadId: ThreadId,
-    repoWorktree: ThreadRepoWorktree,
-    options: { readonly relabelOnly?: boolean } = {},
-  ) =>
-    Effect.gen(function* () {
-      const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+  const dispatchAttach = Effect.fn("RepoWorktreeService.dispatchAttach")(
+    function* (
+      threadId: ThreadId,
+      repoWorktree: ThreadRepoWorktree,
+      options: { readonly relabelOnly?: boolean } = {},
+    ) {
+      const uuid = yield* random.uuidV4().pipe(Effect.orDie);
       yield* threadManagement.dispatch({
         type: "thread.repo-worktree.attach",
         commandId: CommandId.make(`repo-worktree:attach:${uuid}`),
@@ -582,19 +582,22 @@ const make = Effect.gen(function* () {
         repoWorktree,
         ...(options.relabelOnly === true ? { relabelOnly: true } : {}),
       });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause as Cause.Cause<never>)
-          : Effect.fail(
-              new RepoWorktreeDispatchError({
-                threadId,
-                operation: "attach",
-                cause: Cause.squash(cause),
-              }),
-            ),
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause as Cause.Cause<never>)
+            : Effect.fail(
+                new RepoWorktreeDispatchError({
+                  threadId,
+                  operation: "attach",
+                  cause: Cause.squash(cause),
+                }),
+              ),
+        ),
       ),
-    );
+  );
 
   // The snapshot the run's checkpoints compare against: the baseline of the
   // run in progress, or of the next run when attached between turns.
@@ -890,7 +893,7 @@ const make = Effect.gen(function* () {
       const thread = yield* loadThread(input.threadId);
       const attached = yield* attachedWorktree(thread, input.worktreePath);
       if (attached === undefined) return { detached: false, worktreePath: input.worktreePath };
-      const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const uuid = yield* random.uuidV4().pipe(Effect.orDie);
       yield* threadManagement
         .dispatch({
           type: "thread.repo-worktree.detach",

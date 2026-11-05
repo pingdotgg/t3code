@@ -7,19 +7,21 @@ import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadSourceControl } from "./use-selected-thread-worktree";
+import {
+  useSelectedThreadSourceControl,
+  useSelectedThreadWorktree,
+} from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState() {
-  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  // Git actions follow the chosen repository worktree; branch controls stay on the thread.
   const { sourceControlCwd } = useSelectedThreadSourceControl();
 
-  const selectedThreadGitTarget = useMemo(
-    () => ({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: sourceControlCwd,
-    }),
-    [selectedThread?.environmentId, sourceControlCwd],
-  );
+  const selectedThreadGitTarget = {
+    environmentId: selectedThread?.environmentId ?? null,
+    cwd: sourceControlCwd,
+  };
   const gitActionState = useVcsActionState(selectedThreadGitTarget);
   const sourceControlDiscovery = useEnvironmentQuery(
     selectedThread === null
@@ -30,14 +32,11 @@ export function useSelectedThreadGitState() {
         }),
   );
 
-  const selectedThreadBranchTarget = useMemo(
-    () => ({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadProject?.workspaceRoot ?? null,
-      query: null,
-    }),
-    [selectedThread?.environmentId, selectedThreadProject?.workspaceRoot],
-  );
+  const selectedThreadBranchTarget = {
+    environmentId: selectedThread?.environmentId ?? null,
+    cwd: selectedThreadCwd,
+    query: null,
+  };
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
   const selectedThreadBranches = useMemo(
     () =>

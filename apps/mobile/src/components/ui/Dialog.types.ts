@@ -10,6 +10,8 @@ export type ConfirmDialogRequest = {
 
 export type TextInputDialogRequest = {
   readonly title: string;
+  readonly message?: string;
+  readonly placeholder?: string;
   readonly initialValue: string;
   readonly cancelText?: string;
   readonly confirmText: string;

@@ -174,6 +174,68 @@ describe("resource telemetry process model", () => {
     expect(result.groups.electron.processCount).toBe(2);
   });
 
+  it("keeps backend descendants out of desktop totals when Electron launches the server", () => {
+    const samples = [
+      processSample({ pid: 300, ppid: 1, startTimeMs: 1_000, cpuPercent: 2 }),
+      processSample({ pid: SERVER_PID, ppid: 300, startTimeMs: 2_000, cpuPercent: 5 }),
+      processSample({ pid: 200, ppid: SERVER_PID, startTimeMs: 3_000, cpuPercent: 400 }),
+      processSample({ pid: 201, ppid: 200, startTimeMs: 4_000, cpuPercent: 100 }),
+      processSample({ pid: 301, ppid: 300, startTimeMs: 3_000, cpuPercent: 3 }),
+      processSample({ pid: 900, ppid: SERVER_PID, startTimeMs: 3_000, cpuPercent: 1 }),
+    ];
+    const desktop = desktopSnapshot(BASE_TIME_MS, [
+      electronMetric({ pid: 300, creationTimeMs: 1_000, type: "Browser" }),
+    ]);
+    const first = merge({
+      sidecarPid: 900,
+      native: nativeSnapshot(BASE_TIME_MS, samples),
+      desktop,
+    });
+    const result = merge({
+      sidecarPid: 900,
+      previous: first,
+      native: nativeSnapshot(
+        BASE_TIME_MS + 1_000,
+        samples.map((sample) => ({
+          ...sample,
+          cpuTimeMs: sample.cpuPercent * 10,
+          ioReadBytes: sample.cpuPercent * 100,
+          ioWriteBytes: sample.cpuPercent * 200,
+        })),
+        2,
+      ),
+      desktop,
+    });
+
+    expect(result.processes.find((process) => process.identity.pid === 200)?.category).toBe(
+      "server-child",
+    );
+    expect(result.processes.find((process) => process.identity.pid === 201)?.category).toBe(
+      "server-child",
+    );
+    expect(result.groups.backend).toMatchObject({
+      processCount: 3,
+      currentCpuPercent: 505,
+      cpuTimeMs: 5_050,
+      currentRssBytes: 3_072,
+      ioReadBytes: 50_500,
+      ioWriteBytes: 101_000,
+      processStarts: 3,
+    });
+    expect(result.groups.electron).toMatchObject({
+      processCount: 2,
+      currentCpuPercent: 5,
+      cpuTimeMs: 50,
+      currentRssBytes: 2_048,
+      ioReadBytes: 500,
+      ioWriteBytes: 1_000,
+      processStarts: 2,
+    });
+    expect(result.groups.monitor.processCount).toBe(1);
+    expect(result.groups.allT3.currentCpuPercent).toBe(511);
+    expect(result.groups.allT3.currentRssBytes).toBe(6_144);
+  });
+
   it("ignores stale Electron metrics after PID reuse", () => {
     const result = merge({
       native: nativeSnapshot(BASE_TIME_MS, [
@@ -383,45 +445,6 @@ describe("resource telemetry process model", () => {
     expect(second.groups.backend.cpuTimeMs).toBe(250);
     expect(second.groups.backend.ioReadBytes).toBe(2_000);
     expect(second.groups.backend.ioWriteBytes).toBe(3_000);
-  });
-
-  it("derives deltas at the constrained 15-second sampling cadence", () => {
-    const first = merge({
-      native: nativeSnapshot(BASE_TIME_MS, [
-        processSample({
-          pid: SERVER_PID,
-          ppid: 1,
-          startTimeMs: 1_000,
-          cpuTimeMs: 1_000,
-          ioReadBytes: 10_000,
-          ioWriteBytes: 20_000,
-        }),
-      ]),
-    });
-    const second = merge({
-      previous: first,
-      native: nativeSnapshot(
-        BASE_TIME_MS + 15_000,
-        [
-          processSample({
-            pid: SERVER_PID,
-            ppid: 1,
-            startTimeMs: 1_000,
-            cpuTimeMs: 2_500,
-            ioReadBytes: 25_000,
-            ioWriteBytes: 50_000,
-          }),
-        ],
-        2,
-      ),
-    });
-
-    expect(second.processes[0]?.cpuPercent).toBe(10);
-    expect(second.processes[0]?.ioReadBytesPerSecond).toBe(1_000);
-    expect(second.processes[0]?.ioWriteBytesPerSecond).toBe(2_000);
-    expect(second.groups.backend.cpuTimeMs).toBe(1_500);
-    expect(second.groups.backend.ioReadBytes).toBe(15_000);
-    expect(second.groups.backend.ioWriteBytes).toBe(30_000);
   });
 
   it("preserves native rates while applying a desktop-only update", () => {

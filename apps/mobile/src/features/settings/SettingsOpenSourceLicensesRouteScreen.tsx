@@ -1,3 +1,5 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { SearchField } from "../../components/ui/SearchField";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { LegendList } from "@legendapp/list/react-native";
@@ -9,12 +11,13 @@ import {
   thirdPartyLicenseEntryKey,
   type ThirdPartyLicenseEntry,
 } from "@t3tools/shared/thirdPartyLicenses";
-import { useCallback, useMemo, useState } from "react";
-import { Linking, Platform, Pressable, View } from "react-native";
+import { useMemo, useRef, useState } from "react";
+import { Linking, Platform, Pressable, type TextInputInstance, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ListRow } from "../../components/ui/ListRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
@@ -40,62 +43,34 @@ function LicenseRow(props: {
   readonly onPress: () => void;
 }) {
   return (
-    <Pressable
-      accessibilityHint="Opens the complete license notice"
-      accessibilityLabel={`${props.entry.name}, ${props.entry.license}`}
-      accessibilityRole="button"
-      onPress={props.onPress}
-      className="border-b border-border bg-grouped-card px-5 py-4 active:bg-card-alt"
-    >
-      <View className="flex-row items-start gap-3">
-        <View className="min-w-0 flex-1 gap-1">
-          <Text className="text-base font-t3-medium text-foreground" numberOfLines={2}>
-            {props.entry.name}
-          </Text>
-          <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-            {props.entry.version ? `${props.entry.version} · ` : ""}
-            {props.entry.license}
-          </Text>
-        </View>
-        <SymbolView
-          name="chevron.right"
-          size={16}
-          tintColorClassName={"accent-chevron"}
-          type="monochrome"
-          weight="semibold"
-        />
-      </View>
-    </Pressable>
+    <View className="border-b border-border">
+      <ListRow
+        label={props.entry.name}
+        description={[props.entry.version, props.entry.license].filter(Boolean).join(" · ")}
+        onPress={props.onPress}
+      />
+    </View>
   );
 }
 
 export function SettingsOpenSourceLicensesRouteScreen() {
+  const searchRef = useRef<TextInputInstance>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const manifest = useMobileThirdPartyLicenses();
   const entries = manifest?.entries ?? [];
-  const filteredEntries = useMemo(
-    () => filterThirdPartyLicenseEntries(entries, query),
-    [entries, query],
-  );
-  const renderItem = useCallback(
-    ({ item }: { readonly item: ThirdPartyLicenseEntry }) => (
-      <LicenseRow
-        entry={item}
-        onPress={() =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: {
-              screen: "SettingsOpenSourceLicense",
-              params: { entryKey: thirdPartyLicenseEntryKey(item) },
-            },
-          })
-        }
-      />
-    ),
-    [navigation],
+  const filteredEntries = filterThirdPartyLicenseEntries(entries, query);
+  const renderItem = ({ item }: { readonly item: ThirdPartyLicenseEntry }) => (
+    <LicenseRow
+      entry={item}
+      onPress={() =>
+        navigation.navigate("SettingsOpenSourceLicense", {
+          entryKey: thirdPartyLicenseEntryKey(item),
+        })
+      }
+    />
   );
 
   if (!manifest) {
@@ -147,6 +122,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
       ) : null}
 
       <LegendList
+        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
         className="flex-1"
         contentContainerStyle={{
           paddingBottom: usesNativeMailSearchToolbar
@@ -171,14 +147,13 @@ export function SettingsOpenSourceLicensesRouteScreen() {
         ListHeaderComponent={
           Platform.OS !== "ios" ? (
             <View className="px-5 pt-4 pb-5">
-              <TextInput
+              <SearchField
+                inputRef={searchRef}
+                autoFocus={false}
                 accessibilityLabel="Search open-source licenses"
-                autoCapitalize="none"
-                autoCorrect={false}
-                clearButtonMode="while-editing"
+                clearAccessibilityLabel="Clear package search"
                 onChangeText={setQuery}
                 placeholder="Search packages"
-                returnKeyType="search"
                 value={query}
               />
             </View>

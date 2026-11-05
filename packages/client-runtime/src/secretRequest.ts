@@ -5,7 +5,11 @@ export type SecretRequestItem = Extract<
   { readonly type: "secret_request" }
 >;
 
-export const SECRET_REQUEST_PRIVACY_NOTE = "Stored securely, never shown to the agent";
+/** A `file` request lets the agent's commands read the value, so its card must not promise more. */
+export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery">) =>
+  item.delivery === "file"
+    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
+    : "Stored securely, never shown to the agent";
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 
 export type SecretRequestDisplay =

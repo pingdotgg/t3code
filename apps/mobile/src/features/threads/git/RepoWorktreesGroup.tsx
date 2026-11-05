@@ -1,13 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId, ThreadRepoWorktree } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
-import { Platform, View } from "react-native";
 
 import * as Dialog from "../../../components/ui/Dialog";
-import { AppText as Text } from "../../../components/ui/AppText";
+import { ListRow } from "../../../components/ui/ListRow";
+import { ListSection } from "../../../components/ui/ListSection";
 import { environmentThreadDetails, threadEnvironment } from "../../../state/threads";
 import { useAtomCommand } from "../../../state/use-atom-command";
-import { SheetListRow } from "./gitSheetComponents";
 
 /**
  * Where this thread's work lives when its project holds several repositories,
@@ -53,34 +52,27 @@ export function RepoWorktreesGroup(props: {
   };
 
   return (
-    <View className="gap-2">
-      <Text className="px-1 text-xs font-t3-bold text-foreground-muted">Repository worktrees</Text>
-      <View className="overflow-hidden bg-card android:rounded-[20px] ios:rounded-2xl ios:border ios:border-border ios:px-3 ios:py-1">
-        {repoWorktrees.map((entry, index) => (
-          <View key={entry.worktreePath}>
-            {index > 0 && Platform.OS !== "android" ? (
-              <View className="ml-12 h-px bg-border" />
-            ) : null}
-            <SheetListRow
-              icon="folder"
-              title={`${entry.repository} · ${entry.branch}`}
-              subtitle={
-                props.selected?.worktreePath === entry.worktreePath
-                  ? `Git and changes above · ${entry.worktreePath}`
-                  : entry.worktreePath
-              }
-              onPress={() => showActions(entry)}
-            />
-          </View>
-        ))}
-      </View>
-      <Text className="px-1 text-xs text-foreground-muted">
-        {props.selected === null
+    <ListSection
+      title="Repository worktrees"
+      footer={`${
+        props.selected === null
           ? `Git and changes above use the ${props.workspaceLabel.toLowerCase()}. `
-          : ""}
-        Turn diffs and rollback include these. Rollback restores no files while another thread also
-        works in one.
-      </Text>
-    </View>
+          : ""
+      }Turn diffs and rollback include these. Rollback restores no files while another thread also works in one.`}
+    >
+      {repoWorktrees.map((entry) => (
+        <ListRow
+          key={entry.worktreePath}
+          icon="folder"
+          label={`${entry.repository} · ${entry.branch}`}
+          description={
+            props.selected?.worktreePath === entry.worktreePath
+              ? `Git and changes above · ${entry.worktreePath}`
+              : entry.worktreePath
+          }
+          onPress={() => showActions(entry)}
+        />
+      ))}
+    </ListSection>
   );
 }

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -26,7 +27,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -278,7 +278,7 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provide(NodeServices.layer));
 const layerGitDriver = GitVcsDriver.layer.pipe(
   Layer.provide(layerServerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
@@ -342,14 +342,6 @@ const makeFixture = Effect.gen(function* () {
   const path = yield* Path.Path;
   const root = yield* fileSystem.realPath(
     yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repo-checkpoints-" }),
-  );
-  const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
-  process.env.GIT_ALLOW_PROTOCOL = "file";
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      if (previousAllowedProtocol === undefined) delete process.env.GIT_ALLOW_PROTOCOL;
-      else process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
-    }),
   );
   const fixture: Fixture = {
     root,
@@ -439,9 +431,7 @@ function makeLayer(fixture: Fixture, agent: Agent) {
         layerSettings,
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(
-              Option.some({ id: folderProjectId, workspaceRoot: fixture.folder } as never),
-            ),
+            Effect.succeedSome({ id: folderProjectId, workspaceRoot: fixture.folder } as never),
         }),
         layerGitWorkflow,
         ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
@@ -604,7 +594,7 @@ const withHarness = <A, E, R>(
       yield* createProject(folderProjectId, fixture.folder);
       return yield* test({ fixture, agent });
     }).pipe(Effect.provide(makeLayer(fixture, agent)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("repository worktree checkpoints", () => {
   it.effect(
@@ -740,7 +730,6 @@ describe("repository worktree checkpoints", () => {
           assert.equal(yield* agent.rollbacks.pipe(Ref.get), 2);
         }),
       ),
-    { timeout: 120_000 },
   );
 
   it.effect(
@@ -842,198 +831,188 @@ describe("repository worktree checkpoints", () => {
           );
         }),
       ),
-    { timeout: 120_000 },
   );
 
-  it.effect(
-    "restores a worktree first attached after the target, and one detached since",
-    () =>
-      withHarness(({ fixture, agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
-          const settings = yield* ServerSettings.ServerSettingsService;
-          const threadId = yield* createThread({ threadId: "thread:late" });
-          let alpha = "";
-          let beta = "";
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              alpha = (yield* repoWorktrees.ensure({
-                threadId,
-                repository: "alpha",
-                branch: "t3/late",
-                baseRef: "main",
-              })).repoWorktree.worktreePath;
-              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
-            }),
-          );
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              beta = (yield* repoWorktrees.ensure({
-                threadId,
-                repository: "beta",
-                branch: "t3/late",
-                baseRef: "main",
-              })).repoWorktree.worktreePath;
-              yield* write(path.join(beta, "README.md"), "# beta\nturn 2\n");
-              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
-            }),
-          );
-          // The worktree is let go and the feature turned off; the history still restores it.
-          yield* repoWorktrees.detach({ threadId, worktreePath: beta });
-          yield* settings.updateSettings({ repoWorktrees: false });
+  it.effect("restores a worktree first attached after the target, and one detached since", () =>
+    withHarness(({ fixture, agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const threadId = yield* createThread({ threadId: "thread:late" });
+        let alpha = "";
+        let beta = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            alpha = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "alpha",
+              branch: "t3/late",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
+          }),
+        );
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            beta = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "beta",
+              branch: "t3/late",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* write(path.join(beta, "README.md"), "# beta\nturn 2\n");
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
+          }),
+        );
+        // The worktree is let go and the feature turned off; the history still restores it.
+        yield* repoWorktrees.detach({ threadId, worktreePath: beta });
+        yield* settings.updateSettings({ repoWorktrees: false });
 
-          const rewound = yield* rollback(threadId, 1);
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
-          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
-          assert.isNull(rewound.thread.rollbackFailure ?? null);
-          assert.equal(yield* read(path.join(fixture.beta, "README.md")), "# beta\n");
-        }),
-      ),
-    { timeout: 120_000 },
+        const rewound = yield* rollback(threadId, 1);
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
+        assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
+        assert.isNull(rewound.thread.rollbackFailure ?? null);
+        assert.equal(yield* read(path.join(fixture.beta, "README.md")), "# beta\n");
+      }),
+    ),
   );
 
-  it.effect(
-    "refuses file restore of a checkout another thread works in, both ways",
-    () =>
-      withHarness(({ fixture, agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
-          const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-          yield* createProject(alphaProjectId, fixture.alpha);
-          // An ordinary thread's own worktree, reached through a link.
-          const worktree = path.join(fixture.worktrees, "alpha", "ordinary");
-          yield* git(fixture.alpha, ["worktree", "add", "-b", "t3/ordinary", worktree]);
-          const alias = path.join(fixture.root, "alias");
-          yield* fileSystem.symlink(fixture.worktrees, alias);
-          const ordinary = yield* createThread({
-            threadId: "thread:ordinary",
-            projectId: alphaProjectId,
-            worktreePath: path.join(alias, "alpha", "ordinary"),
-            branch: "t3/ordinary",
-          });
-          yield* runTurn(
-            agent,
-            ordinary,
-            write(path.join(worktree, "README.md"), "# alpha\nordinary\n"),
+  it.effect("refuses file restore of a checkout another thread works in, both ways", () =>
+    withHarness(({ fixture, agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        yield* createProject(alphaProjectId, fixture.alpha);
+        // An ordinary thread's own worktree, reached through a link.
+        const worktree = path.join(fixture.worktrees, "alpha", "ordinary");
+        yield* git(fixture.alpha, ["worktree", "add", "-b", "t3/ordinary", worktree]);
+        const alias = path.join(fixture.root, "alias");
+        yield* fileSystem.symlink(fixture.worktrees, alias);
+        const ordinary = yield* createThread({
+          threadId: "thread:ordinary",
+          projectId: alphaProjectId,
+          worktreePath: path.join(alias, "alpha", "ordinary"),
+          branch: "t3/ordinary",
+        });
+        yield* runTurn(
+          agent,
+          ordinary,
+          write(path.join(worktree, "README.md"), "# alpha\nordinary\n"),
+        );
+
+        const folder = yield* createThread({ threadId: "thread:folder-reuse" });
+        yield* runTurn(
+          agent,
+          folder,
+          Effect.gen(function* () {
+            const reused = yield* repoWorktrees.ensure({
+              threadId: folder,
+              repository: "alpha",
+              branch: "t3/ordinary",
+            });
+            assert.equal(reused.repoWorktree.worktreePath, worktree);
+            yield* write(path.join(worktree, "README.md"), "# alpha\nordinary\nfolder\n");
+          }),
+        );
+        const otherFolder = yield* createThread({ threadId: "thread:folder-second" });
+        yield* repoWorktrees.ensure({
+          threadId: otherFolder,
+          repository: "alpha",
+          branch: "t3/ordinary",
+        });
+
+        const before = yield* read(path.join(worktree, "README.md"));
+        for (const threadId of [ordinary, folder]) {
+          const error = yield* orchestrator
+            .dispatch(yield* rollbackCommand(threadId, 0, true))
+            .pipe(Effect.flip);
+          assert.equal(error._tag, "OrchestratorDispatchError");
+          assert.include(
+            error._tag === "OrchestratorDispatchError" ? String(error.cause) : "",
+            threadId === ordinary
+              ? SHARED_WORKSPACE_RESTORE_MESSAGE
+              : "Another thread also works in the alpha worktree",
           );
+        }
+        assert.equal(yield* read(path.join(worktree, "README.md")), before);
+        assert.equal(yield* agent.rollbacks.pipe(Ref.get), 0);
 
-          const folder = yield* createThread({ threadId: "thread:folder-reuse" });
-          yield* runTurn(
-            agent,
-            folder,
-            Effect.gen(function* () {
-              const reused = yield* repoWorktrees.ensure({
-                threadId: folder,
-                repository: "alpha",
-                branch: "t3/ordinary",
-              });
-              assert.equal(reused.repoWorktree.worktreePath, worktree);
-              yield* write(path.join(worktree, "README.md"), "# alpha\nordinary\nfolder\n");
-            }),
-          );
-          const otherFolder = yield* createThread({ threadId: "thread:folder-second" });
-          yield* repoWorktrees.ensure({
-            threadId: otherFolder,
-            repository: "alpha",
-            branch: "t3/ordinary",
-          });
-
-          const before = yield* read(path.join(worktree, "README.md"));
-          for (const threadId of [ordinary, folder]) {
-            const error = yield* orchestrator
-              .dispatch(yield* rollbackCommand(threadId, 0, true))
-              .pipe(Effect.flip);
-            assert.equal(error._tag, "OrchestratorDispatchError");
-            assert.include(
-              error._tag === "OrchestratorDispatchError" ? String(error.cause) : "",
-              threadId === ordinary
-                ? SHARED_WORKSPACE_RESTORE_MESSAGE
-                : "Another thread also works in the alpha worktree",
-            );
-          }
-          assert.equal(yield* read(path.join(worktree, "README.md")), before);
-          assert.equal(yield* agent.rollbacks.pipe(Ref.get), 0);
-
-          // Reading stays open: diffs, and rewinding the conversation alone.
-          const folderDiff = yield* diffs.getFullThreadDiff({ threadId: folder, toTurnCount: 1 });
-          assert.include(folderDiff.diff, "diff --git a/alpha/README.md b/alpha/README.md");
-          yield* rollback(folder, 0, false);
-          assert.equal(yield* read(path.join(worktree, "README.md")), before);
-          assert.equal(yield* agent.rollbacks.pipe(Ref.get), 1);
-        }),
-      ),
-    { timeout: 120_000 },
+        // Reading stays open: diffs, and rewinding the conversation alone.
+        const folderDiff = yield* diffs.getFullThreadDiff({ threadId: folder, toTurnCount: 1 });
+        assert.include(folderDiff.diff, "diff --git a/alpha/README.md b/alpha/README.md");
+        yield* rollback(folder, 0, false);
+        assert.equal(yield* read(path.join(worktree, "README.md")), before);
+        assert.equal(yield* agent.rollbacks.pipe(Ref.get), 1);
+      }),
+    ),
   );
 
-  it.effect(
-    "changes nothing when one repository cannot be restored",
-    () =>
-      withHarness(({ agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const threadId = yield* createThread({ threadId: "thread:failure" });
-          let alpha = "";
-          let beta = "";
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              alpha = (yield* repoWorktrees.ensure({
-                threadId,
-                repository: "alpha",
-                branch: "t3/failure",
-                baseRef: "main",
-              })).repoWorktree.worktreePath;
-              beta = (yield* repoWorktrees.ensure({
-                threadId,
-                repository: "beta",
-                branch: "t3/failure",
-                baseRef: "main",
-              })).repoWorktree.worktreePath;
-              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
-              yield* write(path.join(beta, "README.md"), "# beta\nturn 1\n");
-            }),
-          );
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
-              yield* write(path.join(beta, "README.md"), "# beta\nturn 2\n");
-            }),
-          );
-          // Beta's snapshot for turn 1 is gone.
-          const projection = yield* projectionOf(threadId);
-          const betaRef = projection.checkpoints
-            .find((checkpoint) => checkpoint.appRunOrdinal === 1)
-            ?.repositories?.find((entry) => entry.repository === "beta")?.ref;
-          yield* git(beta, ["update-ref", "-d", betaRef!]);
+  it.effect("changes nothing when one repository cannot be restored", () =>
+    withHarness(({ agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* createThread({ threadId: "thread:failure" });
+        let alpha = "";
+        let beta = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            alpha = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "alpha",
+              branch: "t3/failure",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            beta = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "beta",
+              branch: "t3/failure",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
+            yield* write(path.join(beta, "README.md"), "# beta\nturn 1\n");
+          }),
+        );
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 2\n");
+            yield* write(path.join(beta, "README.md"), "# beta\nturn 2\n");
+          }),
+        );
+        // Beta's snapshot for turn 1 is gone.
+        const projection = yield* projectionOf(threadId);
+        const betaRef = projection.checkpoints
+          .find((checkpoint) => checkpoint.appRunOrdinal === 1)
+          ?.repositories?.find((entry) => entry.repository === "beta")?.ref;
+        yield* git(beta, ["update-ref", "-d", betaRef!]);
 
-          yield* rollback(threadId, 1);
-          for (let attempt = 0; attempt < 5; attempt += 1) {
-            yield* TestClock.adjust(Duration.seconds(31));
-            yield* worker.drain();
-          }
-          const after = yield* projectionOf(threadId);
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 2\n");
-          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 2\n");
-          assert.equal(after.runs.find((run) => run.ordinal === 2)?.status, "completed");
-          assert.equal(yield* agent.rollbacks.pipe(Ref.get), 0);
-          assert.include(after.thread.rollbackFailure?.message ?? "", "No checkpoint of beta");
-          assert.include(after.thread.rollbackFailure?.message ?? "", "Nothing was changed");
-        }),
-      ),
-    { timeout: 120_000 },
+        yield* rollback(threadId, 1);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          yield* TestClock.adjust(Duration.seconds(31));
+          yield* worker.drain();
+        }
+        const after = yield* projectionOf(threadId);
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 2\n");
+        assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 2\n");
+        assert.equal(after.runs.find((run) => run.ordinal === 2)?.status, "completed");
+        assert.equal(yield* agent.rollbacks.pipe(Ref.get), 0);
+        assert.include(after.thread.rollbackFailure?.message ?? "", "No checkpoint of beta");
+        assert.include(after.thread.rollbackFailure?.message ?? "", "Nothing was changed");
+      }),
+    ),
   );
 
   // Permissions do not stop root or Windows from writing.
@@ -1171,12 +1150,10 @@ describe("repository worktree checkpoints", () => {
   it.effect.skipIf(!permissionsBlockWrites)(
     "keeps the retained turns when restoring files fails partway, then finishes on a later rollback",
     () => failsPartway("rollback"),
-    { timeout: 120_000 },
   );
   it.effect.skipIf(!permissionsBlockWrites)(
     "finishes restoring files on the outbox's next attempt once the worktree is fixed",
     () => failsPartway("outbox"),
-    { timeout: 120_000 },
   );
 
   /**
@@ -1246,58 +1223,55 @@ describe("repository worktree checkpoints", () => {
       assert.equal(yield* git(beta, ["status", "--porcelain"]), "M README.md\n?? notes.txt");
     });
 
-  it.effect(
-    "restores a worktree first attached in a rewound turn on each earlier rewind",
-    () =>
-      withHarness(({ fixture, agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-          const { threadId, alpha, beta } = yield* attachedInRewoundTurn(
-            fixture,
-            agent,
-            "rewound-attach",
-          );
+  it.effect("restores a worktree first attached in a rewound turn on each earlier rewind", () =>
+    withHarness(({ fixture, agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        const { threadId, alpha, beta } = yield* attachedInRewoundTurn(
+          fixture,
+          agent,
+          "rewound-attach",
+        );
 
-          const first = yield* rollback(threadId, 1);
-          assert.isNull(first.thread.rollbackFailure ?? null);
-          assert.equal(first.runs.find((run) => run.ordinal === 2)?.status, "rolled_back");
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
-          yield* expectBetaBaseline(beta);
+        const first = yield* rollback(threadId, 1);
+        assert.isNull(first.thread.rollbackFailure ?? null);
+        assert.equal(first.runs.find((run) => run.ordinal === 2)?.status, "rolled_back");
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+        yield* expectBetaBaseline(beta);
 
-          // A turn after the gap diffs beta against that baseline, and rewinding it finds it again.
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              yield* write(path.join(alpha, "README.md"), "# alpha\nturn 4\n");
-              yield* write(path.join(beta, "README.md"), "# beta\nearlier edit\nturn 4\n");
-              yield* write(path.join(beta, "draft.txt"), "turn 4\n");
-            }),
-          );
-          const fourth = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 4 });
-          assert.include(fourth.diff, "diff --git a/beta/README.md b/beta/README.md");
-          assert.include(fourth.diff, "+turn 4");
-          assert.notInclude(fourth.diff, "+earlier edit");
-          assert.notInclude(fourth.diff, "notes.txt");
-          const second = yield* rollback(threadId, 1);
-          assert.isNull(second.thread.rollbackFailure ?? null);
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
-          yield* expectBetaBaseline(beta);
+        // A turn after the gap diffs beta against that baseline, and rewinding it finds it again.
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 4\n");
+            yield* write(path.join(beta, "README.md"), "# beta\nearlier edit\nturn 4\n");
+            yield* write(path.join(beta, "draft.txt"), "turn 4\n");
+          }),
+        );
+        const fourth = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 4 });
+        assert.include(fourth.diff, "diff --git a/beta/README.md b/beta/README.md");
+        assert.include(fourth.diff, "+turn 4");
+        assert.notInclude(fourth.diff, "+earlier edit");
+        assert.notInclude(fourth.diff, "notes.txt");
+        const second = yield* rollback(threadId, 1);
+        assert.isNull(second.thread.rollbackFailure ?? null);
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+        yield* expectBetaBaseline(beta);
 
-          const start = yield* rollback(threadId, 0);
-          assert.isNull(start.thread.rollbackFailure ?? null);
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
-          yield* expectBetaBaseline(beta);
-          assert.deepEqual(yield* Ref.get(agent.nativeTurns), []);
-          assert.equal(yield* Ref.get(agent.rollbacks), 4);
-          // The source checkouts never change.
-          assert.equal(yield* read(path.join(fixture.beta, "README.md")), "# beta\n");
-          assert.equal(yield* git(fixture.beta, ["status", "--porcelain"]), "");
-          assert.equal(yield* git(fixture.alpha, ["branch", "--show-current"]), "main");
-        }),
-      ),
-    { timeout: 120_000 },
+        const start = yield* rollback(threadId, 0);
+        assert.isNull(start.thread.rollbackFailure ?? null);
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+        yield* expectBetaBaseline(beta);
+        assert.deepEqual(yield* Ref.get(agent.nativeTurns), []);
+        assert.equal(yield* Ref.get(agent.rollbacks), 4);
+        // The source checkouts never change.
+        assert.equal(yield* read(path.join(fixture.beta, "README.md")), "# beta\n");
+        assert.equal(yield* git(fixture.beta, ["status", "--porcelain"]), "");
+        assert.equal(yield* git(fixture.alpha, ["branch", "--show-current"]), "main");
+      }),
+    ),
   );
 
   it.effect(
@@ -1337,7 +1311,6 @@ describe("repository worktree checkpoints", () => {
           yield* expectBetaBaseline(beta);
         }),
       ),
-    { timeout: 120_000 },
   );
 
   it.effect.skipIf(!permissionsBlockWrites)(
@@ -1393,7 +1366,6 @@ describe("repository worktree checkpoints", () => {
           yield* expectBetaBaseline(beta);
         }),
       ),
-    { timeout: 120_000 },
   );
 
   /**
@@ -1441,48 +1413,45 @@ describe("repository worktree checkpoints", () => {
       return { threadId, alpha, beta, borrowed: borrowed! };
     });
 
-  it.effect(
-    "restores an earlier turn after every worktree was detached and others attached",
-    () =>
-      withHarness(({ fixture, agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-          const { threadId, alpha, beta, borrowed } = yield* detachedAllThenAttached(
-            agent,
-            "detach-all",
-          );
+  it.effect("restores an earlier turn after every worktree was detached and others attached", () =>
+    withHarness(({ fixture, agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        const { threadId, alpha, beta, borrowed } = yield* detachedAllThenAttached(
+          agent,
+          "detach-all",
+        );
 
-          const first = yield* rollback(threadId, 1);
-          assert.isNull(first.thread.rollbackFailure ?? null);
-          assert.deepEqual(
-            first.runs.map((run) => run.status),
-            ["completed", "rolled_back", "rolled_back"],
-          );
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
-          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
-          assert.equal((yield* Ref.get(agent.nativeTurns)).length, 1);
+        const first = yield* rollback(threadId, 1);
+        assert.isNull(first.thread.rollbackFailure ?? null);
+        assert.deepEqual(
+          first.runs.map((run) => run.status),
+          ["completed", "rolled_back", "rolled_back"],
+        );
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
+        assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
+        assert.equal((yield* Ref.get(agent.nativeTurns)).length, 1);
 
-          // Beta's attach snapshot outlives that rewind: a later turn diffs
-          // against it, and rewinding to the start restores it again.
-          yield* runTurn(agent, threadId, write(path.join(beta, "README.md"), "# beta\nturn 4\n"));
-          const fourth = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 4 });
-          assert.include(fourth.diff, "+turn 4");
-          assert.notInclude(fourth.diff, "turn 3");
-          const start = yield* rollback(threadId, 0);
-          assert.isNull(start.thread.rollbackFailure ?? null);
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
-          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
-          assert.deepEqual(yield* Ref.get(agent.nativeTurns), []);
-          assert.equal(yield* Ref.get(agent.rollbacks), 2);
-          assert.isTrue(borrowed.backfilled);
-          for (const source of [fixture.alpha, fixture.beta]) {
-            assert.equal(yield* git(source, ["status", "--porcelain"]), "");
-            assert.equal(yield* git(source, ["branch", "--show-current"]), "main");
-          }
-        }),
-      ),
-    { timeout: 120_000 },
+        // Beta's attach snapshot outlives that rewind: a later turn diffs
+        // against it, and rewinding to the start restores it again.
+        yield* runTurn(agent, threadId, write(path.join(beta, "README.md"), "# beta\nturn 4\n"));
+        const fourth = yield* diffs.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 4 });
+        assert.include(fourth.diff, "+turn 4");
+        assert.notInclude(fourth.diff, "turn 3");
+        const start = yield* rollback(threadId, 0);
+        assert.isNull(start.thread.rollbackFailure ?? null);
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\n");
+        assert.equal(yield* read(path.join(beta, "README.md")), "# beta\n");
+        assert.deepEqual(yield* Ref.get(agent.nativeTurns), []);
+        assert.equal(yield* Ref.get(agent.rollbacks), 2);
+        assert.isTrue(borrowed.backfilled);
+        for (const source of [fixture.alpha, fixture.beta]) {
+          assert.equal(yield* git(source, ["status", "--porcelain"]), "");
+          assert.equal(yield* git(source, ["branch", "--show-current"]), "main");
+        }
+      }),
+    ),
   );
 
   it.effect.skipIf(!permissionsBlockWrites)(
@@ -1519,42 +1488,38 @@ describe("repository worktree checkpoints", () => {
           assert.equal((yield* Ref.get(agent.nativeTurns)).length, 1);
         }),
       ),
-    { timeout: 120_000 },
   );
 
-  it.effect(
-    "refuses that rewind once beta's attach snapshot is gone, not using a newer one",
-    () =>
-      withHarness(({ agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const { threadId, alpha, beta, borrowed } = yield* detachedAllThenAttached(
-            agent,
-            "detach-all-missing",
-          );
-          // Turn 3's own snapshot of beta, with its edit, is still there.
-          yield* git(beta, ["update-ref", "-d", borrowed.ref]);
+  it.effect("refuses that rewind once beta's attach snapshot is gone, not using a newer one", () =>
+    withHarness(({ agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const { threadId, alpha, beta, borrowed } = yield* detachedAllThenAttached(
+          agent,
+          "detach-all-missing",
+        );
+        // Turn 3's own snapshot of beta, with its edit, is still there.
+        yield* git(beta, ["update-ref", "-d", borrowed.ref]);
 
-          yield* rollback(threadId, 1);
-          for (let attempt = 0; attempt < 5; attempt += 1) {
-            yield* TestClock.adjust(Duration.seconds(31));
-            yield* worker.drain();
-          }
-          const after = yield* projectionOf(threadId);
-          assert.include(after.thread.rollbackFailure?.message ?? "", "No checkpoint of beta");
-          assert.include(after.thread.rollbackFailure?.message ?? "", "Nothing was changed");
-          assert.deepEqual(
-            after.runs.map((run) => run.status),
-            ["completed", "completed", "completed"],
-          );
-          assert.equal(yield* Ref.get(agent.rollbacks), 0);
-          assert.equal((yield* Ref.get(agent.nativeTurns)).length, 3);
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\nturn 3\n");
-          assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 3\n");
-        }),
-      ),
-    { timeout: 120_000 },
+        yield* rollback(threadId, 1);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          yield* TestClock.adjust(Duration.seconds(31));
+          yield* worker.drain();
+        }
+        const after = yield* projectionOf(threadId);
+        assert.include(after.thread.rollbackFailure?.message ?? "", "No checkpoint of beta");
+        assert.include(after.thread.rollbackFailure?.message ?? "", "Nothing was changed");
+        assert.deepEqual(
+          after.runs.map((run) => run.status),
+          ["completed", "completed", "completed"],
+        );
+        assert.equal(yield* Ref.get(agent.rollbacks), 0);
+        assert.equal((yield* Ref.get(agent.nativeTurns)).length, 3);
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\nturn 3\n");
+        assert.equal(yield* read(path.join(beta, "README.md")), "# beta\nturn 3\n");
+      }),
+    ),
   );
 
   /**
@@ -1697,7 +1662,6 @@ describe("repository worktree checkpoints", () => {
           yield* expectSourceUnchanged(fixture);
         }),
       ),
-    { timeout: 120_000 },
   );
 
   it.effect.each(["repository", "ordinary"] as const)(
@@ -1746,7 +1710,6 @@ describe("repository worktree checkpoints", () => {
           yield* expectSourceUnchanged(fixture);
         }),
       ),
-    { timeout: 120_000 },
   );
 
   it.effect("recovers a rewind whose reply was lost without removing earlier turns", () =>
@@ -1856,7 +1819,6 @@ describe("repository worktree checkpoints", () => {
           assert.equal(yield* read(path.join(fixture.alpha, "README.md")), "# alpha\n");
         }),
       ),
-    { timeout: 120_000 },
   );
 
   it.effect("recreates a removed worktree on the branch a Git action switched it to", () =>
@@ -1893,44 +1855,41 @@ describe("repository worktree checkpoints", () => {
     ),
   );
 
-  it.effect(
-    "rejects rollback for a provider that cannot rewind before any file changes",
-    () =>
-      withHarness(({ agent }) =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
-          const threadId = yield* createThread({
-            threadId: "thread:no-rollback",
-            instanceId: noRollbackInstanceId,
-          });
-          let alpha = "";
-          yield* runTurn(
-            agent,
-            threadId,
-            Effect.gen(function* () {
-              alpha = (yield* repoWorktrees.ensure({
-                threadId,
-                repository: "alpha",
-                branch: "t3/no-rollback",
-                baseRef: "main",
-              })).repoWorktree.worktreePath;
-              yield* write(path.join(alpha, "README.md"), "# alpha\nkept\n");
-            }),
-          );
-          const error = yield* orchestrator
-            .dispatch(yield* rollbackCommand(threadId, 0, true))
-            .pipe(Effect.flip);
-          assert.equal(error._tag, "OrchestratorDispatchError");
-          assert.include(
-            error._tag === "OrchestratorDispatchError" ? String(error.cause) : "",
-            "rollback",
-          );
-          assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nkept\n");
-          assert.equal(yield* agent.rollbacks.pipe(Ref.get), 0);
-        }),
-      ),
-    { timeout: 120_000 },
+  it.effect("rejects rollback for a provider that cannot rewind before any file changes", () =>
+    withHarness(({ agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const threadId = yield* createThread({
+          threadId: "thread:no-rollback",
+          instanceId: noRollbackInstanceId,
+        });
+        let alpha = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            alpha = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "alpha",
+              branch: "t3/no-rollback",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* write(path.join(alpha, "README.md"), "# alpha\nkept\n");
+          }),
+        );
+        const error = yield* orchestrator
+          .dispatch(yield* rollbackCommand(threadId, 0, true))
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestratorDispatchError");
+        assert.include(
+          error._tag === "OrchestratorDispatchError" ? String(error.cause) : "",
+          "rollback",
+        );
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nkept\n");
+        assert.equal(yield* agent.rollbacks.pipe(Ref.get), 0);
+      }),
+    ),
   );
 });

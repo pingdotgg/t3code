@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
-import { filePreviewDelimiter, parseDelimitedPreview } from "./delimitedPreview.ts";
+import { parseDelimitedPreview } from "./delimitedPreview.ts";
 
 describe("delimited file previews", () => {
-  it("respects a specific MIME type before the extension", () => {
-    expect(filePreviewDelimiter({ name: "data.CSV", mimeType: "text/plain" })).toBe(",");
-    expect(filePreviewDelimiter({ name: "data.csv", mimeType: "application/pdf" })).toBeNull();
-  });
   it("preserves quoted separators, escaped quotes, blank cells and line breaks", () => {
     expect(
       parseDelimitedPreview('\ufeffname,notes,empty\r\n"A, B","say ""hi""\nagain",\r\n', ","),
@@ -62,5 +58,58 @@ describe("delimited file previews", () => {
     expect(table.rows[0]).toHaveLength(30);
     expect(table.rows[0]?.[0]).toHaveLength(2000);
     expect(parseDelimitedPreview('a,"unfinished', ",").truncated).toBe(true);
+  });
+  describe.each([",", "\t"] as const)("Unicode cells with delimiter %j", (delimiter) => {
+    it.each([false, true])("does not split surrogate pairs in quoted=%s cells", (quoted) => {
+      const prefix = "x".repeat(1999);
+      const value = `${prefix}😀tail`;
+      const input = `${quoted ? `"${value}"` : value}${delimiter}next\nlast`;
+      expect(parseDelimitedPreview(input, delimiter)).toEqual({
+        rows: [[prefix, "next"], ["last"]],
+        truncated: true,
+      });
+    });
+    it("keeps pairs that fit and truncates later characters", () => {
+      const value = `${"x".repeat(1998)}😀`;
+      expect(parseDelimitedPreview(value, delimiter)).toEqual({
+        rows: [[value]],
+        truncated: false,
+      });
+      expect(parseDelimitedPreview(`${value}tail`, delimiter)).toEqual({
+        rows: [[value]],
+        truncated: true,
+      });
+    });
+    it("keeps escaped quotes and BMP text at the same limit", () => {
+      const prefix = "x".repeat(1999);
+      expect(parseDelimitedPreview(`"${prefix}""tail"`, delimiter)).toEqual({
+        rows: [[`${prefix}"`]],
+        truncated: true,
+      });
+      expect(parseDelimitedPreview(`${prefix}éextra`, delimiter)).toEqual({
+        rows: [[`${prefix}é`]],
+        truncated: true,
+      });
+    });
+  });
+  it("reads worker pages beyond the old row, column and cell limits", () => {
+    const text = Array.from({ length: 128 }, (_, row) =>
+      Array.from({ length: 40 }, (_, column) => `${row}:${column}`).join(","),
+    ).join("\n");
+    const result = parseDelimitedPreview(text, ",", {
+      maxRows: 128,
+      maxColumns: 40,
+      maxCellLength: 4096,
+    });
+    expect(result.rows).toHaveLength(128);
+    expect(result.rows.at(-1)?.at(-1)).toBe("127:39");
+    expect(result.truncated).toBe(false);
+    expect(
+      parseDelimitedPreview(`"${"x".repeat(3000)}"`, ",", {
+        maxRows: 1,
+        maxColumns: 1,
+        maxCellLength: 4096,
+      }).rows[0]?.[0],
+    ).toHaveLength(3000);
   });
 });

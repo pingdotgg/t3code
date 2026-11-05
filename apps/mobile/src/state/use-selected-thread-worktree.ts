@@ -2,7 +2,6 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { resolveSelectedRepoWorktree } from "@t3tools/client-runtime/state/threads";
 import type { ThreadRepoWorktree } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useCallback, useMemo } from "react";
 
 import { useEnvironmentQuery } from "./query";
 import { environmentThreadDetails } from "./threads";
@@ -18,14 +17,10 @@ export function useSelectedThreadWorktree() {
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const detailWorktreePath = useSelectedThreadWorktreePath();
 
-  const selectedThreadWorktreePath = useMemo(
-    () =>
-      resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: selectedThread?.worktreePath ?? null,
-        threadDetailWorktreePath: detailWorktreePath,
-      }),
-    [detailWorktreePath, selectedThread?.worktreePath],
-  );
+  const selectedThreadWorktreePath = resolvePreferredThreadWorktreePath({
+    threadShellWorktreePath: selectedThread?.worktreePath ?? null,
+    threadDetailWorktreePath: detailWorktreePath,
+  });
 
   return {
     selectedThreadWorktreePath,
@@ -67,10 +62,7 @@ export function useSelectedThreadSourceControl() {
     selection,
     workspaceIsRepository: workspaceStatus.data?.isRepo ?? true,
   });
-  const select = useCallback(
-    (worktreePath: string | null) => setSelection(worktreePath),
-    [setSelection],
-  );
+  const select = (worktreePath: string | null) => setSelection(worktreePath);
   return {
     repoWorktrees,
     repoWorktree,

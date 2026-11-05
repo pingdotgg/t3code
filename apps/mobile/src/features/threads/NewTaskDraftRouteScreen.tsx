@@ -1,129 +1,68 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CommonActions,
+  useRoute,
+  usePreventRemove,
+  usePreventRemoveContext,
+  type StaticScreenProps,
+} from "@react-navigation/native";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
+import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
+  runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useProjects } from "../../state/entities";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { rootNavigationRef } from "../../lib/rootNavigation";
+import { threadSelectionDeferral } from "../layout/deferred-navigation";
 import { useWorkspaceState } from "../../state/workspace";
 import { vcsEnvironment } from "../../state/vcs";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
+import { resolveNewTaskBranchWorktreePath } from "./new-task-context-presentation";
+import {
+  type BranchCheckoutResult,
+  branchCheckoutRequestKey,
+  makeNewTaskBranchCheckouts,
+} from "./new-task-branch-checkout";
+import { liveNewTaskFlowKeys, newTaskFlowKey } from "./new-task-flow-state";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 
+import { ThreadScreenFallback } from "./ThreadScreenHost";
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
 
-type NewTaskDraftRouteParams = {
-  readonly environmentId?: string | string[];
-  readonly projectId?: string | string[];
-  readonly branch?: string | null;
-  readonly worktreePath?: string | null;
-  readonly title?: string | string[];
-  readonly cloning?: string | string[];
-  readonly pendingTaskId?: string | string[];
-  readonly draftId?: string | string[];
-  readonly incomingShareId?: string | string[];
-};
+import type { NewTaskDraftRouteParams } from "./thread-route-state";
+export type { NewTaskDraftRouteParams } from "./thread-route-state";
 
-export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
-  const params = useMemo(() => route.params ?? {}, [route.params]);
-  const pendingTaskId = Array.isArray(params.pendingTaskId)
-    ? params.pendingTaskId[0]
-    : params.pendingTaskId;
-  const draftId = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
-  const projects = useProjects();
-  const { state: catalogState } = useWorkspaceState();
-  const navigation = useNavigation();
-  const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
-
-  const initialProjectRef = useMemo(
-    () => ({
-      environmentId: Array.isArray(params.environmentId)
-        ? params.environmentId[0]
-        : params.environmentId,
-      projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
-      branch: params.branch,
-      worktreePath: params.worktreePath,
-      cloning: (Array.isArray(params.cloning) ? params.cloning[0] : params.cloning) === "1",
+const branchCheckouts = makeNewTaskBranchCheckouts({
+  run: (request) =>
+    checkoutNewTaskBranch({
+      branch: {
+        name: request.branch,
+        current: false,
+        isDefault: false,
+        worktreePath: request.worktreePath,
+      },
+      project:
+        request.environmentId !== null && request.workspaceRoot !== null
+          ? { environmentId: request.environmentId, workspaceRoot: request.workspaceRoot }
+          : null,
+      workspaceMode: "local",
+      readRefs: (input) =>
+        runAtomCommand(appAtomRegistry, vcsEnvironment.readRefs, input, {
+          reportFailure: false,
+        }),
+      switchRef: (input) =>
+        runAtomCommand(appAtomRegistry, vcsEnvironment.switchRef, input, {
+          reportFailure: false,
+        }),
     }),
-    [params],
-  );
-
-  const [preparation, setPreparation] = useState<{
-    request: typeof initialProjectRef;
-    result: Awaited<ReturnType<typeof checkoutNewTaskBranch>>;
-    workspaceRoot: string | undefined;
-  } | null>(null);
-  const project = projects.find(
-    (candidate) =>
-      candidate.environmentId === initialProjectRef.environmentId &&
-      candidate.id === initialProjectRef.projectId,
-  );
-  const environmentId = project?.environmentId;
-  const workspaceRoot = project?.workspaceRoot;
-  const needsPreparation = Boolean(initialProjectRef.branch && !pendingTaskId && !draftId);
-
-  const [pendingCheckouts, setPendingCheckouts] = useState(0);
-  const checkoutTail = useRef(Promise.resolve());
-  const waitingForProject =
-    !project &&
-    (catalogState.isLoadingConnections ||
-      (!catalogState.hasLoadedShellSnapshot &&
-        catalogState.hasConnectingEnvironment &&
-        catalogState.connectionError === null));
-
-  useEffect(() => {
-    if (!needsPreparation || !initialProjectRef.branch || waitingForProject) return;
-    const branchName = initialProjectRef.branch;
-    let active = true;
-    setPendingCheckouts((count) => count + 1);
-    // Serialize replacements: ignoring a stale result cannot undo its Git mutation.
-    checkoutTail.current = checkoutTail.current.then(async () => {
-      if (!active) {
-        setPendingCheckouts((count) => count - 1);
-        return;
-      }
-      const result = await checkoutNewTaskBranch({
-        // A thread's branch is historical; only switchRef can establish that
-        // the shared project checkout now matches it.
-        branch: {
-          name: branchName,
-          current: false,
-          isDefault: false,
-          worktreePath: initialProjectRef.worktreePath ?? null,
-        },
-        project: environmentId && workspaceRoot ? { environmentId, workspaceRoot } : null,
-        workspaceMode: "local",
-        switchRef,
-      });
-      setPendingCheckouts((count) => count - 1);
-      if (active) setPreparation({ request: initialProjectRef, result, workspaceRoot });
-    });
-    return () => {
-      active = false;
-    };
-  }, [
-    environmentId,
-    workspaceRoot,
-    initialProjectRef,
-    needsPreparation,
-    switchRef,
-    waitingForProject,
-  ]);
-
-  const result =
-    preparation?.request === initialProjectRef && preparation.workspaceRoot === workspaceRoot
-      ? preparation.result
-      : null;
-  // The native-stack guard covers iOS swipe dismissal as well as back actions.
-  // A replaced request must settle too before the shared checkout is left behind.
-  const checkoutPending = pendingCheckouts > 0 || (needsPreparation && result === null);
-  usePreventRemove(checkoutPending, () => undefined);
-  useEffect(() => {
-    if (checkoutPending || result?._tag !== "Failure") return;
+  holdNavigation: threadSelectionDeferral.waitFor,
+  onFailure: (request, result) => {
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
@@ -131,29 +70,139 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
         error instanceof Error ? error.message : "The branch could not be checked out.",
       );
     }
-    navigation.goBack();
-  }, [checkoutPending, result, navigation]);
+    rootNavigationRef.dispatch({
+      ...CommonActions.goBack(),
+      source: request.routeKey,
+      target: rootNavigationRef.getRootState()?.key,
+    });
+  },
+});
 
-  const preparedProjectRef = useMemo(
-    () =>
-      result?._tag === "Success"
-        ? { ...initialProjectRef, branch: result.value.name }
-        : initialProjectRef,
-    [initialProjectRef, result],
+/** Abandons the branch checkouts of draft routes that left the stack. */
+export function pruneNewTaskBranchCheckouts(state: Parameters<typeof liveNewTaskFlowKeys>[0]) {
+  branchCheckouts.prune(liveNewTaskFlowKeys(state));
+}
+
+const idleBranchCheckoutAtom = Atom.make(AsyncResult.initial<BranchCheckoutResult, never>()).pipe(
+  Atom.withLabel("mobile:new-task-branch-checkout:idle"),
+);
+
+export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
+  const currentRoute = useRoute();
+  const params = route.params ?? {};
+  const draftId = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
+  const projects = useProjects();
+  const { state: catalogState } = useWorkspaceState();
+
+  const initialProjectRef = {
+    environmentId: Array.isArray(params.environmentId)
+      ? params.environmentId[0]
+      : params.environmentId,
+    projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
+    branch: params.branch,
+    worktreePath: params.worktreePath,
+    cloning: (Array.isArray(params.cloning) ? params.cloning[0] : params.cloning) === "1",
+  };
+
+  const project = projects.find(
+    (candidate) =>
+      candidate.environmentId === initialProjectRef.environmentId &&
+      candidate.id === initialProjectRef.projectId,
   );
+  // A project can drop out of the list and come back while its catalog stays ready. The checkout
+  // keeps the last project this route resolved, so that gap reads the same checkout.
+  const [resolvedProject, setResolvedProject] = useState<Pick<
+    NonNullable<typeof project>,
+    "environmentId" | "workspaceRoot"
+  > | null>(null);
+  if (
+    project &&
+    (resolvedProject?.environmentId !== project.environmentId ||
+      resolvedProject.workspaceRoot !== project.workspaceRoot)
+  ) {
+    setResolvedProject({
+      environmentId: project.environmentId,
+      workspaceRoot: project.workspaceRoot,
+    });
+  }
+  const checkoutProject = project ?? resolvedProject;
+  const workspaceRoot = project?.workspaceRoot;
+  const needsPreparation = Boolean(initialProjectRef.branch && !draftId);
+  const waitingForProject =
+    !project &&
+    (catalogState.isLoadingConnections ||
+      (!catalogState.hasLoadedShellSnapshot &&
+        catalogState.hasConnectingEnvironment &&
+        catalogState.connectionError === null));
+
+  // The checkout is keyed by its request, so a reconnect that drops and
+  // restores the project reads the same checkout instead of running another.
+  const flowKey = newTaskFlowKey(currentRoute);
+  const checkoutKey =
+    needsPreparation && initialProjectRef.branch && !waitingForProject && flowKey !== undefined
+      ? branchCheckoutRequestKey({
+          flowKey,
+          routeKey: currentRoute.key,
+          environmentId: checkoutProject?.environmentId ?? null,
+          workspaceRoot: checkoutProject?.workspaceRoot ?? null,
+          branch: initialProjectRef.branch,
+          worktreePath: initialProjectRef.worktreePath ?? null,
+        })
+      : null;
+  const checkout = useAtomValue(
+    checkoutKey === null ? idleBranchCheckoutAtom : branchCheckouts.atom(checkoutKey),
+  );
+  const result = AsyncResult.isSuccess(checkout) ? checkout.value : null;
+  // The native-stack guard covers iOS swipe dismissal as well as back actions.
+  const checkoutPending = needsPreparation && result === null;
+  usePreventRemove(checkoutPending, () => undefined);
+  const { preventedRoutes } = usePreventRemoveContext();
+  const removalBlocked = preventedRoutes[currentRoute.key]?.preventRemove === true;
+  // Native-stack reads the provider's prevent state, which commits a render
+  // after usePreventRemove updates its registry; the deferred thread selection
+  // (and the failure goBack) must wait for that commit.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the branch checkout to its route once native-stack has committed the prevent-remove state
+  useEffect(() => {
+    if (checkoutKey === null || checkoutPending || removalBlocked) return;
+    branchCheckouts.release(checkoutKey);
+  }, [checkoutKey, checkoutPending, removalBlocked]);
+
+  const prepared =
+    result?._tag === "Success" && workspaceRoot
+      ? {
+          branch: result.value.name,
+          worktreePath: resolveNewTaskBranchWorktreePath({
+            workspaceMode: "local",
+            projectCwd: workspaceRoot,
+            branchWorktreePath: result.value.worktreePath,
+          }),
+        }
+      : null;
+  const preparedBranch = prepared ? prepared.branch : initialProjectRef.branch;
+  const preparedWorktreePath = prepared ? prepared.worktreePath : initialProjectRef.worktreePath;
+  // NewTaskDraftScreen re-applies the route project (and rewrites the draft's
+  // workspace) whenever this object's identity changes. initialProjectRef is new
+  // every render, so read its fields first: the compiler then memoizes this
+  // object on them, instead of on initialProjectRef.
+  const { environmentId, projectId, cloning } = initialProjectRef;
+  const preparedProjectRef = {
+    environmentId,
+    projectId,
+    branch: preparedBranch,
+    worktreePath: preparedWorktreePath,
+    cloning,
+  };
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");
 
   return (
     <>
-      <NativeStackScreenOptions
-        options={{
-          title: Array.isArray(params.title) ? params.title[0] : (params.title ?? "New task"),
-        }}
-      />
       {preparingBranch ? (
-        <View className="flex-1 items-center justify-center bg-screen">
-          <Text className="text-foreground">Switching branch...</Text>
-        </View>
+        <ThreadScreenFallback>
+          <NativeStackScreenOptions options={{ title: "New thread" }} />
+          <View className="flex-1 items-center justify-center bg-screen">
+            <Text className="text-foreground">Switching branch...</Text>
+          </View>
+        </ThreadScreenFallback>
       ) : (
         <NewTaskDraftScreen
           initialProjectRef={preparedProjectRef}
@@ -162,7 +211,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
               ? params.incomingShareId[0]
               : params.incomingShareId
           }
-          pendingTaskId={pendingTaskId}
           draftId={draftId}
         />
       )}

@@ -17,7 +17,7 @@ diff --git a/lib/windowsConoutConnection.js b/lib/windowsConoutConnection.js
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
-@@ -218,8 +218,14 @@
+@@ -218,13 +218,31 @@
              return Promise.resolve([]);
          }
          return new Promise(function (resolve) {
@@ -25,11 +25,31 @@ diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
 +            // Node's watch mode sends its own messages over the helper's IPC channel.
 +            var agentEnv = Object.assign({}, process.env);
 +            delete agentEnv.WATCH_REPORT_DEPENDENCIES;
-+            var agent = (0, child_process_1.fork)(path.join(__dirname, 'conpty_console_list_agent'), [_this._innerPid.toString()], { env: agentEnv, execArgv: [] });
++            var settled = false;
++            var finish = function (list) {
++                if (settled) return;
++                settled = true;
++                clearTimeout(timeout);
++                resolve(list);
++            };
++            var agent = (0, child_process_1.fork)(path.join(__dirname, 'conpty_console_list_agent'), [_this._innerPid.toString()], { env: agentEnv, execArgv: [], windowsHide: true });
              agent.on('message', function (message) {
-+                if (!Array.isArray(message.consoleProcessList)) {
+-                clearTimeout(timeout);
+-                resolve(message.consoleProcessList);
++                if (!message || !Array.isArray(message.consoleProcessList)) {
 +                    return;
 +                }
-                 clearTimeout(timeout);
-                 resolve(message.consoleProcessList);
++                finish(message.consoleProcessList);
++            });
++            agent.on('error', function () {
++                finish([_this._innerPid]);
++            });
++            agent.on('close', function () {
++                finish([_this._innerPid]);
              });
+             var timeout = setTimeout(function () {
+                 // Something went wrong, just send back the shell PID
+                 agent.kill();
+-                resolve([_this._innerPid]);
++                finish([_this._innerPid]);
+             }, 5000);

@@ -7,6 +7,7 @@ import {
   type OrchestrationV2DomainEvent,
   ProviderThreadId,
   ThreadId,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +19,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import type * as ServerConfig from "../config.ts";
+import type * as ServerSettings from "../serverSettings.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { withRepositoryLeases, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   participatingRepositories,
@@ -28,15 +32,17 @@ import {
 import {
   CheckpointRepositoryUnavailableError,
   type CheckpointRepositoryIdentity,
+  CheckpointRestoreError,
   CheckpointServiceV2,
 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { GIT_INDEX_LOCKED_DETAIL } from "../vcs/VcsProcess.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { RuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 export const ROLLBACK_FAILED_MESSAGE =
@@ -117,6 +123,9 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
 }
 
 const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
+const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
 
 const FILE_RESTORE_REFUSALS: ReadonlySet<CheckpointRollbackExecutionError["reason"]> = new Set([
   "shared-workspace",
@@ -127,8 +136,24 @@ const FILE_RESTORE_REFUSALS: ReadonlySet<CheckpointRollbackExecutionError["reaso
 ]);
 
 /** A rollback stopped over the files it would restore, with a message for the user. */
-export const isFileRestoreRefusal = (error: CheckpointRollbackExecutionError) =>
+const isFileRestoreRefusal = (error: CheckpointRollbackExecutionError) =>
   FILE_RESTORE_REFUSALS.has(error.reason);
+
+/**
+ * The message clients see when a rollback fails. A file restore refusal names
+ * what blocked it and a held Git index lock gets its own explanation; other
+ * reasons carry internal ids or raw Git output, so they get the generic message.
+ */
+export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
+  if (isRuntimePolicyAboveCeilingError(error.cause)) return error.cause.message;
+  const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
+  const indexLocked =
+    isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL;
+  if (isFileRestoreRefusal(error)) {
+    return indexLocked ? `${error.message} ${GIT_INDEX_LOCKED_DETAIL}` : error.message;
+  }
+  return indexLocked ? GIT_INDEX_LOCKED_DETAIL : ROLLBACK_FAILED_MESSAGE;
+}
 
 export interface CheckpointRollbackServiceV2Shape {
   readonly execute: (input: {
@@ -160,6 +185,8 @@ export const layer: Layer.Layer<
   | FileSystem.FileSystem
   | Path.Path
   | ProjectStore.ProjectStoreV2
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService
   | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   CheckpointRollbackServiceV2,
@@ -175,83 +202,64 @@ export const layer: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const path = yield* Path.Path;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
-    const prepareRepositoryRestore = (input: {
+    const prepareRepositoryRestore = Effect.fn(
+      "CheckpointRollbackService.prepareRepositoryRestore",
+    )(function* (input: {
       readonly repository: CheckpointRepositoryIdentity;
       readonly history: Parameters<
         CheckpointServiceV2["Service"]["resolveRepositorySnapshot"]
       >[0]["history"];
       readonly targetOrdinal: number;
-    }) =>
-      Effect.gen(function* () {
-        const snapshot = yield* checkpoints.resolveRepositorySnapshot(input);
-        if (snapshot._tag !== "found") {
-          return yield* new CheckpointRepositoryUnavailableError({
-            repository: input.repository.repository,
-            worktreePath: input.repository.worktreePath,
-            reason: "checkpoint-missing",
-          });
-        }
-        const { recreate } = yield* checkpoints.inspectRepositoryRestore({
-          repository: input.repository,
-          ref: snapshot.ref,
+    }) {
+      const snapshot = yield* checkpoints.resolveRepositorySnapshot(input);
+      if (snapshot._tag !== "found") {
+        return yield* new CheckpointRepositoryUnavailableError({
+          repository: input.repository.repository,
+          worktreePath: input.repository.worktreePath,
+          reason: "checkpoint-missing",
         });
-        return { repository: input.repository, ref: snapshot.ref, recreate };
+      }
+      const { recreate } = yield* checkpoints.inspectRepositoryRestore({
+        repository: input.repository,
+        ref: snapshot.ref,
       });
+      return { repository: input.repository, ref: snapshot.ref, recreate };
+    });
 
     // Attaching and removing a repository's worktrees take its lease, so the
-    // checks hold until the files are restored.
-    const repositoryLeaseKeys = (input: {
-      readonly threadId: ThreadId;
-      readonly checkpointId: CheckpointId;
-      readonly scopeId: CheckpointScopeId;
-      readonly restoreFiles?: boolean;
-    }) =>
-      Effect.gen(function* () {
+    // checks hold until the files are restored. Every repository the scope ever
+    // recorded counts, which covers any target in it.
+    const repositoryLeaseKeys = Effect.fn("CheckpointRollbackService.repositoryLeaseKeys")(
+      function* (input: {
+        readonly thread: OrchestrationV2AppThread;
+        readonly scopeId: CheckpointScopeId;
+        readonly restoreFiles?: boolean;
+      }) {
         if (input.restoreFiles === false) return [];
-        const projection = yield* projections.getThreadRecords(input.threadId, [
-          "checkpoints",
-          "checkpointScopes",
-        ]);
-        const checkpoint = projection.checkpoints.find(
-          (candidate) => candidate.id === input.checkpointId,
-        );
-        const scope = projection.checkpointScopes.find(
-          (candidate) => candidate.id === input.scopeId,
-        );
-        if (checkpoint === undefined || scope === undefined) return [];
+        const history = yield* projections.getCheckpointContext(input.thread.id);
+        const scope = history.checkpointScopes.find((candidate) => candidate.id === input.scopeId);
+        if (scope === undefined) return [];
         const keys = yield* Effect.forEach(
           participatingRepositories({
-            thread: projection.thread,
+            thread: input.thread,
             scope,
-            checkpoints: projection.checkpoints,
-            targetOrdinal: checkpoint.ordinalWithinScope,
+            checkpoints: history.checkpoints,
+            targetOrdinal: -1,
           }),
           (repository) => checkpoints.repositoryLeaseKey(repository),
         );
         return keys.filter((key): key is string => key !== null);
-      });
+      },
+    );
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (
       input: Parameters<CheckpointRollbackServiceV2Shape["execute"]>[0],
     ) {
-      const projection = yield* projections.getThreadRecords(input.threadId, [
-        "providerThreads",
-        "providerSessions",
-        "checkpoints",
-        "checkpointScopes",
-        "runs",
-        "attempts",
-        "nodes",
-        "providerTurns",
-      ]);
-      const providerThread = projection.providerThreads.find(
-        (candidate) => candidate.id === input.providerThreadId,
-      );
-      const checkpoint = projection.checkpoints.find(
-        (candidate) => candidate.id === input.checkpointId,
-      );
-      const scope = projection.checkpointScopes.find((candidate) => candidate.id === input.scopeId);
+      const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
+      const { providerThread, checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } =
+        context;
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||
@@ -268,8 +276,8 @@ export const layer: Layer.Layer<
         });
       }
       if (
-        providerThread.id !== projection.thread.activeProviderThreadId ||
-        providerThread.providerInstanceId !== projection.thread.modelSelection.instanceId
+        providerThread.id !== context.thread.activeProviderThreadId ||
+        providerThread.providerInstanceId !== context.thread.modelSelection.instanceId
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "active-provider-changed",
@@ -278,6 +286,16 @@ export const layer: Layer.Layer<
           checkpointId: input.checkpointId,
         });
       }
+      // Metadata only, without files or run payloads; the later ready checkpoints carry files.
+      const history = yield* projections.getCheckpointContext(input.threadId);
+      const laterReady = new Map(
+        staleCheckpoints.map((candidate) => [candidate.ordinalWithinScope, candidate]),
+      );
+      const planCheckpoints = history.checkpoints.map((candidate) =>
+        candidate.scopeId === scope.id
+          ? (laterReady.get(candidate.ordinalWithinScope) ?? { ...candidate, files: [] })
+          : { ...candidate, files: [] },
+      );
 
       const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
       const rollbackTarget: ProviderAdapter.ProviderAdapterV2RollbackTarget =
@@ -288,7 +306,7 @@ export const layer: Layer.Layer<
               appRunOrdinal: 0,
             }
           : yield* Effect.gen(function* () {
-              const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
+              const targetRun = history.runs.find((run) => run.ordinal === targetOrdinal);
               // Its checkpoint stays ready while an earlier rollback finishes restoring files.
               if (targetRun?.status === "rolled_back") {
                 return yield* new CheckpointRollbackExecutionError({
@@ -298,13 +316,14 @@ export const layer: Layer.Layer<
                   checkpointId: input.checkpointId,
                 });
               }
-              const targetAttempt = projection.attempts.find(
-                (attempt) => attempt.id === targetRun?.activeAttemptId,
-              );
               const targetTurn =
-                latestProviderTurnForAttempt(projection.providerTurns, targetAttempt?.id) ??
-                projection.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
-              if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
+                latestProviderTurnForAttempt(context.providerTurns, targetAttempt?.id) ??
+                context.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
+              if (
+                targetAttempt === undefined ||
+                targetTurn === undefined ||
+                targetTurn.providerThreadId !== providerThread.id
+              ) {
                 return yield* new CheckpointRollbackExecutionError({
                   reason: "provider-turn-unavailable",
                   threadId: input.threadId,
@@ -312,17 +331,33 @@ export const layer: Layer.Layer<
                   checkpointId: input.checkpointId,
                 });
               }
+              const { attempt } = yield* projections.getProviderControlContext(input.threadId, {
+                providerThreadId: providerThread.id,
+                providerTurnId: targetTurn.id,
+                attemptId: targetAttempt.id,
+              });
+              const message =
+                attempt === undefined
+                  ? undefined
+                  : yield* projections.getRunMessage(input.threadId, attempt.runId);
               return {
                 type: "provider_turn" as const,
                 checkpointId: checkpoint.id,
                 appRunOrdinal: targetOrdinal,
                 providerTurn: targetTurn,
+                ...(message === undefined ? {} : { message }),
               };
             });
 
-      const { worktreePath, branch } = projection.thread;
-      if (worktreePath != null && branch != null && !(yield* fileSystem.exists(worktreePath))) {
-        const project = yield* projects.get(projection.thread.projectId);
+      const { worktreePath, branch } = context.thread;
+      // Recreated only where the server would have made it, as turn start does.
+      if (
+        worktreePath != null &&
+        branch != null &&
+        !(yield* fileSystem.exists(worktreePath)) &&
+        (yield* isManagedWorktreePath(worktreePath))
+      ) {
+        const project = yield* projects.get(context.thread.projectId);
         if (Option.isSome(project)) {
           yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
           yield* gitWorkflow.createWorktree({
@@ -338,10 +373,10 @@ export const layer: Layer.Layer<
           ? null
           : yield* planCheckpointRestore(
               {
-                thread: projection.thread,
+                thread: context.thread,
                 scope,
                 checkpoint,
-                checkpoints: projection.checkpoints,
+                checkpoints: planCheckpoints,
               },
               { fileSystem, projections, projects, path },
             );
@@ -373,8 +408,8 @@ export const layer: Layer.Layer<
                 repository,
                 history: {
                   scopeId: scope.id,
-                  checkpoints: projection.checkpoints,
-                  runs: projection.runs,
+                  checkpoints: history.checkpoints,
+                  runs: history.runs,
                 },
                 targetOrdinal: checkpoint.ordinalWithinScope,
               }).pipe(
@@ -396,14 +431,12 @@ export const layer: Layer.Layer<
               ),
             );
 
-      const modelSelection = projection.thread.modelSelection;
+      const modelSelection = context.thread.modelSelection;
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
-        thread: projection.thread,
+        thread: context.thread,
         modelSelection,
       });
-      const existingSession = projection.providerSessions.find(
-        (candidate) => candidate.id === providerThread.providerSessionId,
-      );
+      const existingSession = context.providerSession;
       const session = yield* sessions.open({
         threadId: input.threadId,
         providerSessionId: providerThread.providerSessionId,
@@ -420,25 +453,9 @@ export const layer: Layer.Layer<
             }),
       });
 
-      const runsToRollback = projection.runs.filter(
-        (run) =>
-          run.ordinal > targetOrdinal &&
-          (run.status === "completed" ||
-            run.status === "interrupted" ||
-            run.status === "failed" ||
-            run.status === "cancelled"),
-      );
-      // Rolled-back turns stay in the audit history, but no longer exist in
-      // the provider conversation and must not be counted by a later rewind.
-      const rolledBackRunIds = new Set(
-        projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
-      );
-      const rolledBackAttemptIds = new Set(
-        projection.attempts
-          .filter((attempt) => rolledBackRunIds.has(attempt.runId))
-          .map((attempt) => attempt.id),
-      );
-      const providerThreadTurns = projection.providerTurns.filter(
+      // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
+      const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
+      const providerThreadTurns = context.providerTurns.filter(
         (turn) =>
           turn.providerThreadId === providerThread.id &&
           (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
@@ -452,15 +469,11 @@ export const layer: Layer.Layer<
               target: rollbackTarget,
               providerThreadTurns,
             });
-      const staleCheckpoints = projection.checkpoints.filter(
-        (candidate) =>
-          candidate.scopeId === scope.id &&
-          candidate.appRunOrdinal !== null &&
-          candidate.appRunOrdinal > targetOrdinal &&
-          candidate.status === "ready",
-      );
       // An earlier attempt that rewound the conversation, then stopped
       // restoring files, left its runs rolled back with ready checkpoints.
+      const rolledBackRunIds = new Set(
+        history.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+      );
       const conversationRewound =
         runsToRollback.length > 0 ||
         staleCheckpoints.some(
@@ -515,15 +528,17 @@ export const layer: Layer.Layer<
           restoredRepositories.push(target.repository.repository);
         }
         if (staleCheckpoints.length > 0) {
-          const staleIds = new Set(staleCheckpoints.map((candidate) => candidate.id));
+          const staleOrdinals = new Set(
+            staleCheckpoints.map((candidate) => candidate.ordinalWithinScope),
+          );
           yield* checkpoints.deleteStaleRefs({
             scope,
             checkpoints: staleCheckpoints,
-            keep: projection.checkpoints.filter(
+            keep: history.checkpoints.filter(
               (candidate) =>
                 candidate.scopeId === scope.id &&
                 candidate.status !== "stale" &&
-                !staleIds.has(candidate.id),
+                !staleOrdinals.has(candidate.ordinalWithinScope),
             ),
           });
         }
@@ -538,14 +553,9 @@ export const layer: Layer.Layer<
               id,
             }) as Event,
         );
-      // Thread commands write full provider thread rows under this lock. Without
-      // it, a message sent during the rollback can plan against the old native
-      // session and commit after this, undoing the provider's fork.
-      //
-      // A commit before the files are restored records only the conversation,
-      // with the failure in the same write, so no client reads the rewind as
-      // finished. Its checkpoints stay ready, so a retry restores the same
-      // files and the provider has nothing left to remove.
+      // Lock against full-row thread writes that could restore the old native session after rollback.
+      // A commit before the files are restored records only the conversation and the failure,
+      // with checkpoints still ready, so a retry restores the same files and rewinds nothing more.
       const commit = (outcome: { readonly complete: boolean; readonly failure?: string }) =>
         threadCommands.withLock(
           input.threadId,
@@ -580,7 +590,7 @@ export const layer: Layer.Layer<
               );
             }
             for (const run of runsToRollback) {
-              const rootNode = projection.nodes.find(
+              const rootNode = context.rootNodes.find(
                 (candidate) => candidate.id === run.rootNodeId,
               );
               events.push(
@@ -642,7 +652,7 @@ export const layer: Layer.Layer<
             : commit({
                 complete: false,
                 ...(isCheckpointRollbackExecutionError(error) && isFileRestoreRefusal(error)
-                  ? { failure: error.message }
+                  ? { failure: rollbackFailureClientMessage(error) }
                   : {}),
               }),
         ),
@@ -651,30 +661,34 @@ export const layer: Layer.Layer<
     });
 
     return CheckpointRollbackServiceV2.of({
-      execute: (input) =>
-        Effect.gen(function* () {
+      // The inner execute owns the rollback span; this wrapper selects the leases.
+      execute: Effect.fnUntraced(
+        function* (input) {
           // Storage cleanup removes worktrees under the same lease.
-          const { thread } = yield* projections.getThreadRecords(input.threadId, []);
+          const thread = yield* projections.getThread(input.threadId);
           const locked = Effect.gen(function* () {
-            const keys = yield* repositoryLeaseKeys(input);
+            const keys = yield* repositoryLeaseKeys({ ...input, thread });
             yield* keys.length === 0 ? execute(input) : withRepositoryLeases(keys, execute(input));
           });
           yield* thread.worktreePath === null
             ? locked
             : withWorkspaceLease(path.resolve(thread.worktreePath), locked);
-        }).pipe(
-          Effect.mapError((cause) =>
-            isCheckpointRollbackExecutionError(cause)
-              ? cause
-              : new CheckpointRollbackExecutionError({
-                  reason: "unexpected-failure",
-                  threadId: input.threadId,
-                  providerThreadId: input.providerThreadId,
-                  checkpointId: input.checkpointId,
-                  cause,
-                }),
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.mapError((cause) =>
+              isCheckpointRollbackExecutionError(cause)
+                ? cause
+                : new CheckpointRollbackExecutionError({
+                    reason: "unexpected-failure",
+                    threadId: input.threadId,
+                    providerThreadId: input.providerThreadId,
+                    checkpointId: input.checkpointId,
+                    cause,
+                  }),
+            ),
           ),
-        ),
+      ),
     });
   }),
 );

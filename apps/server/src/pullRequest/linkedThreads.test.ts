@@ -9,7 +9,7 @@ import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect(
-  "finds active and archived threads for exactly one pull request, excluding deleted and dismissed links",
+  "finds active and archived threads for exactly one pull request, excluding deleted, dismissed, and side chat links",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -56,6 +56,13 @@ it.effect(
         },
         { id: "deleted", host: "github.com", repository: "acme/web", number: 7, source: "manual" },
         {
+          id: "side-chat",
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+          source: "manual",
+        },
+        {
           id: "dismissed",
           host: "github.com",
           repository: "acme/web",
@@ -87,6 +94,7 @@ it.effect(
       for (const fixture of fixtures) {
         const payload = yield* encodePayload({
           linkedPullRequest: null,
+          ...(fixture.id === "side-chat" ? { lineage: { sideChat: true } } : {}),
           pullRequests: [{ ...fixture, linkedAt: createdAt, snapshot: null, stack: null }],
         });
         yield* sql`
@@ -101,16 +109,6 @@ it.effect(
         )
       `;
       }
-      yield* sql`
-        INSERT INTO orchestration_v2_projection_threads (
-          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
-          created_at, updated_at, payload_json
-        ) VALUES (
-          'legacy-single', 'project-1', 'legacy-single', 'codex', 'full-access', 'default',
-          ${createdAt}, ${createdAt},
-          '{"linkedPullRequest":{"projectId":"project-1","repository":"acme/web","number":7,"url":"https://github.com/acme/web/pull/7"}}'
-        )
-      `;
       yield* sql`
         INSERT INTO orchestration_v2_projection_threads (
           thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
@@ -169,7 +167,6 @@ it.effect(
         threads: [
           { id: "archived", projectId: "project-1", title: "archived", archivedAt },
           { id: "active", projectId: "project-1", title: "active", archivedAt: null },
-          { id: "legacy-single", projectId: "project-1", title: "legacy-single", archivedAt: null },
         ],
       });
       assert.deepStrictEqual(

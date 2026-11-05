@@ -12,7 +12,7 @@ export const REVIEW_MONO_FONT_FAMILY = Platform.select({
   default: "monospace",
 });
 
-export const REVIEW_DIFF_LINE_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
+const REVIEW_DIFF_LINE_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 
 export function renderVisibleWhitespace(value: string): string {
   const expandedTabs = value.replace(/\t/g, "    ");
@@ -25,7 +25,7 @@ export function changeTone(change: ReviewRenderableLineRow["change"]): string {
   return "bg-card";
 }
 
-export function changeBarTone(change: ReviewRenderableLineRow["change"]): string {
+function changeBarTone(change: ReviewRenderableLineRow["change"]): string {
   if (change === "add") return "bg-emerald-400";
   if (change === "delete") return "bg-rose-400";
   return "bg-border/50";
@@ -103,11 +103,10 @@ export function DiffTokenText(props: {
       }}
     >
       {(() => {
-        let offset = 0;
+        const starts = tokenStartOffsets(props.tokens);
 
-        return props.tokens.map((token) => {
-          const start = offset;
-          offset += token.content.length;
+        return props.tokens.map((token, index) => {
+          const start = starts[index]!;
 
           const fontWeight =
             token.fontStyle !== null && (token.fontStyle & 2) === 2
@@ -141,4 +140,14 @@ export function DiffTokenText(props: {
       })()}
     </NativeText>
   );
+}
+
+function tokenStartOffsets(tokens: ReadonlyArray<{ readonly content: string }>): number[] {
+  const starts: number[] = [];
+  let offset = 0;
+  for (const token of tokens) {
+    starts.push(offset);
+    offset += token.content.length;
+  }
+  return starts;
 }

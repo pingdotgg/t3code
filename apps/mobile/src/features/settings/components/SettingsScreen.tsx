@@ -1,36 +1,70 @@
-import { useNavigation } from "@react-navigation/native";
+import { useRoute } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
 import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
+import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
+import { useDeviceType } from "../../../native/native-layout-metrics";
+import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
+import { useAdaptiveWorkspaceLayout } from "../../layout/adaptive-workspace-context";
+import { useSettingsPageBack } from "../useSettingsPageBack";
+import {
+  ScreenScrollViewBottomInset,
+  ScreenScrollViewSurface,
+} from "../../../components/ui/ScreenScrollView";
 
 export { SettingsScreenContent };
 
 export function SettingsScreen(
-  props: Pick<AppBarProps, "title" | "actions" | "trailing"> & {
+  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search" | "menus" | "options"> & {
     readonly children: ReactNode;
     readonly formSheet?: boolean;
+    readonly workspaceRoot?: boolean;
   },
 ) {
-  const navigation = useNavigation();
+  const route = useRoute();
+  const workspace = useWorkspaceTabs();
+  const deviceType = useDeviceType();
+  const compactTabs = useCompactWorkspaceTabs();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const back = useSettingsPageBack();
+  const cover = deviceType === "duo-folded";
+  // Android opens Settings as a workspace tab; its root page has nothing to go back to.
+  const workspaceRoot =
+    props.workspaceRoot ||
+    (Platform.OS === "android" && workspace !== null && route.name === "Settings");
+
+  const surfaceClassName = workspaceRoot || cover ? "bg-screen" : "bg-sheet";
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>
       <AppBar
         title={props.title}
         actions={props.actions}
+        search={props.search}
         trailing={Platform.OS === "android" ? props.trailing : undefined}
-        sidebar={false}
-        onBack={() => navigation.goBack()}
-        hideBottomBorder={!props.formSheet}
+        // iOS screens put their filter menus in native header items themselves.
+        menus={Platform.OS === "android" ? props.menus : undefined}
+        sheet={Platform.OS === "android" && props.formSheet}
+        onBack={workspaceRoot ? undefined : back}
+        hideBottomBorder={!props.formSheet || Platform.OS === "android"}
+        options={props.options}
       />
-      {props.formSheet ? (
-        props.children
-      ) : (
-        <SettingsScreenContent>{props.children}</SettingsScreenContent>
-      )}
+      <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
+        <ScreenScrollViewSurface value={surfaceClassName}>
+          {props.formSheet && Platform.OS !== "android" ? (
+            props.children
+          ) : (
+            <SettingsScreenContent
+              insetHorizontal={Platform.OS === "android" && layout.usesSplitView}
+            >
+              {props.children}
+            </SettingsScreenContent>
+          )}
+        </ScreenScrollViewSurface>
+      </ScreenScrollViewBottomInset>
     </View>
   );
 }

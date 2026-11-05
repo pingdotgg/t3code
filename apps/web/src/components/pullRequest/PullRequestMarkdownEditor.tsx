@@ -41,9 +41,6 @@ export function PullRequestMarkdownEditor({
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
-  // React keeps a component instance wherever the same position and key come round again, so an
-  // editor opened on one remark can be handed another's words without being rebuilt — and saving
-  // would then write the first remark's text onto the second.
   const [seed, setSeed] = useState(value);
   if (seed !== value) {
     setSeed(value);

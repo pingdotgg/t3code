@@ -1,9 +1,8 @@
 # Updating T3 Code
 
 The app you use and the server running your agents can be on different machines.
-When a server is behind your web or desktop app, an update notice appears in the
-conversation and **Settings → Connections**. Update the machine named in that
-notice.
+When a server is behind your web or desktop app, the update button at the bottom
+of the sidebar and **Settings → Environments** offer to update it.
 
 ## Update everything at once
 
@@ -23,10 +22,11 @@ restart from the update button when you are ready. A server still restarting
 finishes on its own, and the button keeps showing it after the desktop app
 restarts.
 
-Server updates appear only after that version is published to npm. Remote
-desktop apps do not wait for npm. The confirmation lists each machine it skips
-and why, such as a machine that is offline or needs a manual update. Use the
-notice or **Settings → Connections** for those.
+Each server checks that it can install the release before it restarts. If the
+release is not available to a server yet, its update fails, the server keeps
+running, and you can retry. The confirmation lists each machine it skips and
+why, such as a machine that is offline or needs a manual update. Use
+**Settings → Environments** for those.
 
 If a desktop app restarts on its old version, T3 Code tells you the update did
 not apply. It does not install that version again on its own, even when another
@@ -36,12 +36,35 @@ The confirmation counts the running threads that the restarts will interrupt,
 and how many can resume afterwards. See **Continue threads after restarts**
 below.
 
+## Switch between Stable and Nightly
+
+In the desktop app, change **Settings → About → Update track**. T3 Code shows each
+connected machine it will move and each one it skips, then moves them in one
+step. Remote servers install the latest release on the new track. Remote desktop
+apps reinstall on the new track. This app reinstalls last. Your threads,
+settings, and data stay.
+
+A background service cannot move to an older release remotely. When Stable is
+older than its Nightly, run `t3 update --channel stable --allow-downgrade` on
+that machine.
+
+A switch is blocked for a machine whose database already has changes the
+target release does not support, or when T3 Code cannot confirm that it does.
+The dialog says why: update a machine on its current track first when its
+release is too old to check, or wait until the target track includes the
+changes. A Mac running the desktop app must switch on that Mac.
+
+Each machine keeps the new track even if its switch did not finish, but it
+moves to that track only through a switch. **Update track** shows how many
+machines still run the other track. **Review** opens the same dialog with fresh
+checks.
+
 ## Before you update
 
 Server updates restart the connection and can interrupt active agents and
 terminal commands. Saved threads, settings, and project files remain.
 
-**Settings → General → Continue threads after restarts** is on by default.
+**Settings → Maintenance → Continue threads after restarts** is on by default.
 It resumes supported active threads after an update, crash, or machine
 restart. Changes are saved to connected environments that support this setting;
 update older servers first. If a supported environment was offline or has a
@@ -49,9 +72,10 @@ different value, use **Apply to all** in Settings after it connects.
 T3 Code must start again on that machine;
 the setting does not enable automatic startup. Terminal commands may still be
 interrupted, and threads without saved provider resume state need a new message.
-A thread that finished its turn to wait on a monitor, subagent, or background task
-is woken and told that this work stopped. A background shell, such as a dev server,
-does not wake it; the thread learns about it with your next message.
+A thread that finished its turn to wait on a subagent, a background task, or a
+command or monitor the agent said it was waiting on is woken and told that this work
+stopped. Other background shells and monitors, such as a dev server and its
+watchdog, do not wake it; the thread learns about them with your next message.
 A thread is not resumed while it waits for your approval, answer, or secret, or
 while it is archived, snoozed, or settled. After three automatic resumes in a row,
 the thread waits for your next message.
@@ -111,12 +135,52 @@ Only one server can use a T3 home directory at a time. If startup reports that
 another server owns it, stop that server before retrying, or use a separate home
 directory and pair with the running server.
 
+### macOS app does not reopen after an Alpha update
+
+Updating an older **T3 Code (Alpha)** installation can replace it with
+**T3 Code (Beta)** without reopening the app. Open **T3 Code (Beta)** from
+Applications, or run:
+
+```sh
+open "/Applications/T3 Code (Beta).app"
+```
+
+If an old Dock shortcut no longer opens the app, remove it and add the Beta app
+from Applications again.
+
+## If the desktop app does not start
+
+If the desktop app's server keeps failing at startup, T3 Code shows a "T3 Code
+could not start" window instead of the app. If a newer version is available,
+choose **Update** to install it. If not, the window links to the last version
+that started on your computer. Download and install it to go back. Use **Copy
+details** to include the error in a bug report.
+
+## Registries and proxies
+
+Each server checks T3 Code releases, and providers installed with npm, through
+its own npm, so the checks use npm's configured registry, authentication, and
+proxy settings. Providers installed with Homebrew or pnpm check through those
+tools.
+Configure npm on the server's machine. If that registry cannot be reached, the
+release shows as unavailable; T3 Code does not try the public registry instead.
+Machines without npm check the public npm registry directly.
+
 ## Update providers
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
 at once. Hover it to see which providers it will update. Providers that only
 offer a manual update command are not included.
+
+After a successful provider CLI update, T3 Code refreshes model discovery for
+every enabled instance of that provider using its own configuration. Connected
+clients receive the refreshed catalogs automatically. Provider update checks
+must be enabled to download the latest T3 Code model catalog.
+
+Provider updates do not restart running chats. An existing session can keep
+using the previous CLI until it ends. If discovery fails, check the provider
+status and refresh it again.
 
 ## Mobile updates
 

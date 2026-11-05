@@ -1,6 +1,6 @@
 import { getFiletypeFromFileName } from "@pierre/diffs";
 import type { ProjectContentMatch } from "@t3tools/contracts";
-import { memo, Suspense, use, useMemo, type CSSProperties } from "react";
+import { memo, Suspense, use, type CSSProperties } from "react";
 
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -125,6 +125,20 @@ function HighlightedTokens(props: {
     );
 }
 
+function firstLineTokens(
+  highlighter: Awaited<ReturnType<typeof getSyntaxHighlighterPromise>>,
+  line: string,
+  language: string,
+  theme: "light" | "dark",
+) {
+  try {
+    return highlighter.codeToTokens(line, { lang: language, theme: resolveDiffThemeName(theme) })
+      .tokens[0];
+  } catch {
+    return undefined;
+  }
+}
+
 function SyntaxHighlightedTokens(props: {
   readonly line: string;
   readonly language: string;
@@ -132,16 +146,7 @@ function SyntaxHighlightedTokens(props: {
   readonly theme: "light" | "dark";
 }) {
   const highlighter = use(getSyntaxHighlighterPromise(props.language));
-  const tokens = useMemo(() => {
-    try {
-      return highlighter.codeToTokens(props.line, {
-        lang: props.language,
-        theme: resolveDiffThemeName(props.theme),
-      }).tokens[0];
-    } catch {
-      return undefined;
-    }
-  }, [highlighter, props.language, props.line, props.theme]);
+  const tokens = firstLineTokens(highlighter, props.line, props.language, props.theme);
 
   return tokens ? (
     <HighlightedTokens line={props.line} ranges={props.ranges} tokens={tokens} />
@@ -159,7 +164,7 @@ export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: 
   readonly path: string;
   readonly theme: "light" | "dark";
 }) {
-  const ranges = useMemo(() => normalizeRanges(props.match), [props.match]);
+  const ranges = normalizeRanges(props.match);
   const fallback = (
     <HighlightedTokens
       line={props.match.lineContent}

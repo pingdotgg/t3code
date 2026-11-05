@@ -25,26 +25,46 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   yield* Console.log(
     `Database: ${formatBytes(status.databaseBytes)}, ${formatBytes(status.reclaimableBytes)} reclaimable.`,
   );
-  if (status.incrementalVacuumEnabled && status.reclaimableBytes === 0) {
+  if (status.legacyDatabaseBytes !== null) {
+    yield* Console.log(
+      `Database from before 0.1.0: ${formatBytes(status.legacyDatabaseBytes)}, kept for rolling back.`,
+    );
+  }
+  const repairs = [
+    ...(status.incrementalVacuumEnabled && status.reclaimableBytes === 0
+      ? []
+      : [
+          {
+            id: "database" as const,
+            title: "Reclaim database space",
+            description: `${
+              status.incrementalVacuumEnabled
+                ? "Returns unused space to disk."
+                : "Returns unused space to disk and turns on automatic shrinking."
+            }\n  Pauses the background service, if installed, while it runs and may need temporary disk space.`,
+            recommended:
+              !status.incrementalVacuumEnabled ||
+              status.reclaimableBytes >= DATABASE_COMPACTION_RECOMMENDED_BYTES,
+          },
+        ]),
+    ...(status.legacyDatabaseBytes === null
+      ? []
+      : [
+          {
+            id: "legacy" as const,
+            title: "Delete the database from before 0.1.0",
+            description: `Frees ${formatBytes(status.legacyDatabaseBytes)}. Your threads and settings are already in the current database.\n  Warning: after this, a T3 Code version before 0.1.0 starts with no threads or settings, so you can no longer roll back.`,
+            recommended: false,
+          },
+        ]),
+  ];
+  if (repairs.length === 0) {
     yield* Console.log("Nothing to repair.");
     return;
   }
-  const recommended =
-    !status.incrementalVacuumEnabled ||
-    status.reclaimableBytes >= DATABASE_COMPACTION_RECOMMENDED_BYTES;
-  const repairs = [
-    {
-      id: "database" as const,
-      title: "Reclaim database space",
-      description: status.incrementalVacuumEnabled
-        ? "Returns unused space to disk."
-        : "Returns unused space to disk and turns on automatic shrinking.",
-      recommended,
-    },
-  ];
   for (const repair of repairs) {
     yield* Console.log(
-      `\n${repair.title}${repair.recommended ? " (recommended)" : ""}\n  ${repair.description}\n  Pauses the background service, if installed, while it runs and may need temporary disk space.`,
+      `\n${repair.title}${repair.recommended ? " (recommended)" : ""}\n  ${repair.description}`,
     );
   }
   if (options.dryRun) {
@@ -78,21 +98,27 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
     );
     return;
   }
-  const service = yield* BootService.BootService;
-  yield* Console.log("\nReclaiming database space. This can take several minutes...");
-  // Report inside the pause: a repair that succeeded is worth knowing about
-  // even when starting the service again fails afterwards.
-  yield* service.withStopped(
-    maintenance
-      .compact(databasePath)
-      .pipe(
-        Effect.tap((result) =>
-          Console.log(
-            `Done: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
+  if (selected.includes("database")) {
+    const service = yield* BootService.BootService;
+    yield* Console.log("\nReclaiming database space. This can take several minutes...");
+    // Report the repair before restarting, which can fail independently.
+    yield* service.withStopped(
+      maintenance
+        .compact(databasePath)
+        .pipe(
+          Effect.tap((result) =>
+            Console.log(
+              `Done: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
+            ),
           ),
         ),
-      ),
-  );
+    );
+  }
+  if (selected.includes("legacy")) {
+    // Only pre-0.1.0 servers use this file; removal refuses while they hold it open.
+    yield* maintenance.removeLegacyDatabase(databasePath);
+    yield* Console.log("\nDeleted the database from before 0.1.0.");
+  }
 });
 
 export const doctorCommand = Command.make("doctor", {

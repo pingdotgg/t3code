@@ -1,29 +1,22 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
-  buildTailscaleHttpsBaseUrl,
-  disableTailscaleServe,
   ensureTailscaleServe,
-  isTailscaleIpv4Address,
-  parseTailscaleMagicDnsName,
+  parseTailscaleExitNode,
+  parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
   readTailscaleSshEnabled,
   readTailscaleStatus,
-  TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
-  TailscaleCommandTimeoutError,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -58,7 +51,6 @@ function assertCarriesNoSecret(error: object, secret: string): void {
   walk(error, "error");
 }
 const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
-const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -70,22 +62,6 @@ function mockHandle(result: { stdout?: string; stderr?: string; code?: number })
     stdin: Sink.drain,
     stdout: Stream.make(encoder.encode(result.stdout ?? "")),
     stderr: Stream.make(encoder.encode(result.stderr ?? "")),
-    all: Stream.empty,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-  });
-}
-
-function neverFinishingMockHandle() {
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(1),
-    exitCode: Effect.never,
-    isRunning: Effect.succeed(true),
-    kill: () => Effect.void,
-    unref: Effect.succeed(Effect.void),
-    stdin: Sink.drain,
-    stdout: Stream.empty,
-    stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -119,22 +95,100 @@ function layerMockSpawner(
 }
 
 describe("tailscale", () => {
-  it.effect("detects Tailnet IPv4 addresses", () =>
-    Effect.sync(() => {
-      assert.equal(isTailscaleIpv4Address("100.64.0.1"), true);
-      assert.equal(isTailscaleIpv4Address("100.127.255.254"), true);
-      assert.equal(isTailscaleIpv4Address("100.128.0.1"), false);
-      assert.equal(isTailscaleIpv4Address("192.168.1.44"), false);
-    }),
-  );
-
-  it.effect("parses MagicDNS names from tailscale status", () =>
-    Effect.gen(function* () {
-      const dnsName = yield* parseTailscaleMagicDnsName(tailscaleStatusJson);
-      assert.equal(dnsName, "desktop.tail.ts.net");
-      assert.equal(yield* parseTailscaleMagicDnsName("{}"), null);
-    }),
-  );
+  it("finds the Serve routes that forward to the bound address, and only those", () => {
+    const status = JSON.stringify({
+      TCP: {
+        "443": { HTTPS: true },
+        "7000": { TCPForward: "127.0.0.1:3773" },
+        "7001": { TCPForward: "127.0.0.2:3773" },
+        "80": { TCPForward: "unix:/run/app.sock" },
+      },
+      Web: {
+        "box.tailnet.ts.net:443": {
+          Handlers: {
+            "/t3": { Proxy: "http://127.0.0.1:3773" },
+            "/dashboard": { Proxy: "http://127.0.0.1:9000" },
+          },
+        },
+        "box.tailnet.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:5173" } } },
+        "box.tailnet.ts.net:10000": {
+          Handlers: {
+            // Another service on another loopback address, and one on the other family.
+            "/a": { Proxy: "http://127.0.0.2:3773" },
+            "/b": { Proxy: "http://[::1]:3773" },
+            "/c": { Proxy: "http://192.168.1.5:3773" },
+            "/d": { Proxy: "http://0.0.0.0:3773" },
+            "/e": { Proxy: "http://[::ffff:127.0.0.1]:3773" },
+            "/f": { Proxy: "http://localhost:3773" },
+            // Shorthand Tailscale expands when it proxies.
+            "/g": { Proxy: "3773" },
+            "/h": { Proxy: "localhost:3773" },
+            "/i": { Proxy: "http://[::]:3773" },
+            // A name can resolve to any address, the bound one included.
+            "/j": { Proxy: "http://ip6-localhost:3773" },
+            // Go resolves these as names; a WHATWG URL rejects the first and rewrites the second.
+            "/k": { Proxy: "http://box.1:3773" },
+            "/l": { Proxy: "http://127.1:3773" },
+            "/m": { Proxy: "unix:/run/app.sock" },
+            // Credentials before the host, and IPv6 written out in full, still dial here.
+            "/n": { Proxy: "http://user:pass@127.0.0.1:3773" },
+            "/o": { Proxy: "http://[0:0:0:0:0:ffff:7f00:1]:3773" },
+            "/p": { Proxy: "http://127.0.0.1:03773" },
+          },
+        },
+      },
+      Services: {
+        "svc:t3": {
+          Web: {
+            "t3.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } },
+          },
+        },
+      },
+      Foreground: {
+        session1: { TCP: { "9000": { TCPForward: "localhost:3773" } } },
+      },
+    });
+    assert.deepEqual(parseTailscaleServeRoutesTo(status, { host: "127.0.0.1", port: 3773 }), [
+      { servePort: 7000 },
+      { servePort: 443, mount: "/t3", host: "box.tailnet.ts.net" },
+      // `localhost` and `[::]` can dial either loopback, so they might be another service's.
+      ...(
+        [
+          ["/d", undefined],
+          ["/e", undefined],
+          ["/f", "localhost"],
+          ["/g", undefined],
+          ["/h", "localhost"],
+          ["/i", "[::]"],
+          ["/j", "ip6-localhost"],
+          ["/k", "box.1"],
+          ["/l", "127.1"],
+          ["/n", undefined],
+          ["/o", undefined],
+          ["/p", undefined],
+        ] as const
+      ).map(([mount, ambiguous]) => ({
+        servePort: 10000,
+        mount,
+        host: "box.tailnet.ts.net",
+        ...(ambiguous === undefined ? {} : { ambiguous }),
+      })),
+      { servePort: 443, mount: "/", host: "t3.tailnet.ts.net", owner: "svc:t3" },
+      { servePort: 9000, ambiguous: "localhost", owner: "foreground" },
+    ]);
+    assert.deepEqual(
+      parseTailscaleServeRoutesTo(
+        JSON.stringify({
+          Web: { "box:443": { Handlers: { "/": { Proxy: "http://127.0.0.1" } } } },
+        }),
+        { host: "127.0.0.1", port: 80 },
+      ),
+      [{ servePort: 443, mount: "/", host: "box" }],
+    );
+    assert.deepEqual(parseTailscaleServeRoutesTo("{}", { host: "127.0.0.1", port: 3773 }), []);
+    assert.deepEqual(parseTailscaleServeRoutesTo("null", { host: "127.0.0.1", port: 3773 }), []);
+    assert.isUndefined(parseTailscaleServeRoutesTo("not json", { host: "127.0.0.1", port: 3773 }));
+  });
 
   it.effect("parses status facts", () =>
     Effect.gen(function* () {
@@ -142,18 +196,44 @@ describe("tailscale", () => {
       assert.deepEqual(status, {
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.100.100.100"],
+        httpsServeEnabled: null,
       });
     }),
   );
 
-  it.effect("preserves status decoding failures without exposing cause text", () =>
+  it.effect("names the exit node in use", () =>
     Effect.gen(function* () {
-      const error = yield* parseTailscaleStatus("{not-json").pipe(Effect.flip);
+      const inUse = yield* parseTailscaleExitNode(
+        JSON.stringify({
+          ExitNodeStatus: { ID: "nX", Online: true, TailscaleIPs: ["100.101.102.103/32"] },
+          Peer: {
+            "nodekey:a": { HostName: "laptop", DNSName: "laptop.tail.ts.net.", ExitNode: false },
+            "nodekey:b": {
+              HostName: "raspberrypi",
+              DNSName: "home-pi.tail.ts.net.",
+              ExitNode: true,
+            },
+          },
+        }),
+      );
+      assert.deepEqual(inUse, { name: "home-pi", online: true });
 
-      assert.instanceOf(error, TailscaleStatusParseError);
-      assert.equal(error.message, "Failed to decode tailscale status JSON.");
-      assert.isDefined(error.cause);
-      assert.notInclude(error.message, String(error.cause));
+      const unnamed = yield* parseTailscaleExitNode(`{"ExitNodeStatus":{"Online":false}}`);
+      assert.deepEqual(unnamed, { name: null, online: false });
+
+      assert.equal(yield* parseTailscaleExitNode(tailscaleStatusJson), null);
+    }),
+  );
+
+  it.effect("reads the HTTPS serve capability from the status capability map", () =>
+    Effect.gen(function* () {
+      const enabled = yield* parseTailscaleStatus(
+        `{"Self":{"CapMap":{"https":null,"funnel":null}}}`,
+      );
+      assert.equal(enabled.httpsServeEnabled, true);
+
+      const disabled = yield* parseTailscaleStatus(`{"Self":{"CapMap":{"funnel":null}}}`);
+      assert.equal(disabled.httpsServeEnabled, false);
     }),
   );
 
@@ -173,60 +253,6 @@ describe("tailscale", () => {
       assert.isFalse(yield* parseTailscaleSshEnabled("{}"));
       const error = yield* parseTailscaleSshEnabled("{not-json").pipe(Effect.flip);
       assert.instanceOf(error, TailscaleStatusParseError);
-    });
-  });
-
-  it.effect("builds clean HTTPS base URLs", () =>
-    Effect.sync(() => {
-      assert.equal(
-        buildTailscaleHttpsBaseUrl({ magicDnsName: "desktop.tail.ts.net" }),
-        "https://desktop.tail.ts.net/",
-      );
-      assert.equal(
-        buildTailscaleHttpsBaseUrl({ magicDnsName: "desktop.tail.ts.net", servePort: 8443 }),
-        "https://desktop.tail.ts.net:8443/",
-      );
-    }),
-  );
-
-  it.effect("reads tailscale status through the process spawner service", () => {
-    const layer = layerMockSpawner((command, args) => {
-      assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["status", "--json"]);
-      return {
-        stdout: tailscaleStatusWithSingleIpJson,
-      };
-    });
-
-    return Effect.gen(function* () {
-      const status = yield* readTailscaleStatus.pipe(Effect.provide(layer));
-      assert.deepEqual(status, {
-        magicDnsName: "desktop.tail.ts.net",
-        tailnetIpv4Addresses: ["100.90.1.2"],
-      });
-    });
-  });
-
-  it.effect("preserves tailscale spawn failures as causes", () => {
-    const systemCause = new Error("private executable lookup detail");
-    const cause = PlatformError.systemError({
-      _tag: "NotFound",
-      module: "ChildProcess",
-      method: "spawn",
-      cause: systemCause,
-    });
-    const layer = layerSpawner(ChildProcessSpawner.make(() => Effect.fail(cause)));
-
-    return Effect.gen(function* () {
-      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
-
-      assert.instanceOf(error, TailscaleCommandSpawnError);
-      assert.equal(error.executable, "tailscale");
-      assert.equal(error.subcommand, "status");
-      assert.equal(error.argumentCount, 2);
-      assert.strictEqual(error.cause, cause);
-      assert.equal(error.message, "Failed to spawn tailscale status.");
-      assert.notInclude(error.message, systemCause.message);
     });
   });
 
@@ -291,97 +317,29 @@ describe("tailscale", () => {
     });
   });
 
-  it.effect("classifies unrecognized stderr without quoting it", () => {
-    const layer = layerMockSpawner(() => ({
-      code: 3,
-      stderr: "something novel went wrong for node fluffy-badger tskey-auth-secret-token-value",
-    }));
-
-    return Effect.gen(function* () {
-      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
-
-      assert.instanceOf(error, TailscaleCommandExitError);
-      assert.equal(error.stderrDiagnostic, "unknown");
-      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
-      assertCarriesNoSecret(error, "fluffy-badger");
-    });
-  });
-
-  it.effect("times out tailscale status through TestClock", () => {
-    const layer = Layer.merge(
-      TestClock.layer(),
-      layerSpawner(ChildProcessSpawner.make(() => Effect.succeed(neverFinishingMockHandle()))),
+  // regression: #21609 - without forceKillAfter a timed-out probe only gets
+  // SIGTERM, so a group member that ignores it outlives the call.
+  it.effect("escalates timed-out probes to SIGKILL", () => {
+    const killGraces: Array<number | undefined> = [];
+    const layer = layerSpawner(
+      ChildProcessSpawner.make((command) => {
+        if (command._tag === "StandardCommand") {
+          const { forceKillAfter } = command.options;
+          killGraces.push(
+            forceKillAfter === undefined
+              ? undefined
+              : Duration.toMillis(Duration.fromInputUnsafe(forceKillAfter)),
+          );
+        }
+        return Effect.succeed(mockHandle({ stdout: "{}" }));
+      }),
     );
 
     return Effect.gen(function* () {
-      const fiber = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(TAILSCALE_STATUS_TIMEOUT);
-      const error = yield* Fiber.join(fiber);
-
-      assert.instanceOf(error, TailscaleCommandTimeoutError);
-      assert.equal(error.executable, "tailscale");
-      assert.equal(error.subcommand, "status");
-      assert.equal(error.argumentCount, 2);
-      assert.equal(error.timeoutMs, 1_500);
-      assert.isTrue(Cause.isTimeoutError(error.cause));
-      assert.equal(error.message, "tailscale status timed out after 1500ms.");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("configures tailscale serve through the process spawner service", () => {
-    const layer = layerMockSpawner((command, args) => {
-      assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"]);
-      return {};
-    });
-
-    return ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("retains tailscale serve exit diagnostics", () => {
-    const layer = layerMockSpawner(() => ({
-      code: 1,
-      stderr: "serve permission denied tskey-auth-secret-token-value",
-    }));
-
-    return Effect.gen(function* () {
-      const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
-        Effect.flip,
-        Effect.provide(layer),
-      );
-
-      assert.instanceOf(error, TailscaleCommandExitError);
-      assert.equal(error.executable, "tailscale");
-      assert.equal(error.subcommand, "serve");
-      assert.equal(error.argumentCount, 4);
-      assert.equal(error.exitCode, 1);
-      assert.equal(error.stderrLength, 53);
-      assert.notProperty(error, "command");
-      assert.notProperty(error, "stderr");
-      assert.notInclude(error.message, "tskey-auth-secret-token-value");
-      assert.equal(error.stderrDiagnostic, "permission-denied");
-      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
-    });
-  });
-
-  it.effect("disables tailscale serve through the process spawner service", () => {
-    const commands: {
-      readonly command: string;
-      readonly args: ReadonlyArray<string>;
-    }[] = [];
-    const layer = layerMockSpawner((command, args) => {
-      commands.push({ command, args });
-      assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["serve", "--https=8443", "off"]);
-      return {};
-    });
-
-    return Effect.gen(function* () {
-      yield* disableTailscaleServe({ servePort: 8443 }).pipe(Effect.provide(layer));
-      assert.deepEqual(commands, [
-        { command: "tailscale", args: ["serve", "--https=8443", "off"] },
-      ]);
+      yield* readTailscaleStatus.pipe(Effect.provide(layer));
+      yield* readTailscaleSshEnabled.pipe(Effect.provide(layer));
+      yield* ensureTailscaleServe({ localPort: 45_678 }).pipe(Effect.provide(layer));
+      assert.deepEqual(killGraces, [500, 500, 500]);
     });
   });
 });

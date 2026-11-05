@@ -11,7 +11,7 @@ export function ChatGptUsageSummary({
 }: {
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const selected =
     selectedEnvironmentIds === null
       ? presentations

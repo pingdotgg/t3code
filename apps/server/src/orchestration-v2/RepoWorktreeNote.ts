@@ -11,14 +11,9 @@ const RULES = [
 ].join("\n");
 
 /**
- * Sent ahead of the user's message on every turn, as restart notes and
- * context handoffs are, so every provider gets it the same way. The full rules
- * go every time: the setting can turn on partway through a conversation, and
- * compaction or a resumed session can drop an earlier copy.
- *
- * Empty when the project has the feature off, when the session has no T3 MCP
- * server (the note would point at tools it cannot call), and for slash
- * commands, which must stay first in the prompt.
+ * Sent with every turn: the setting can turn on mid-conversation, and compaction or a resumed
+ * session can drop an earlier copy. Empty when the feature is off, when the session has no T3
+ * MCP server to call, and for slash commands, which must stay first in the prompt.
  */
 export function repoWorktreeNote(input: {
   readonly userText: string;

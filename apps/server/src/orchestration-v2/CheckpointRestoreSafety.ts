@@ -16,7 +16,7 @@ import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
 export const SHARED_WORKSPACE_RESTORE_MESSAGE =
-  "File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead.";
+  "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
 
 export const sharedRepositoryRestoreMessage = (
   repository: Pick<CheckpointRepositoryIdentity, "repository" | "worktreePath">,
@@ -36,7 +36,7 @@ interface RestoreSafetyDependencies {
  * project is gone, so its workspace is unknown.
  */
 const otherThreadPaths = Effect.fn("orchestrationV2.otherThreadPaths")(function* (
-  thread: Pick<OrchestrationV2AppThread, "id">,
+  thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
   dependencies: RestoreSafetyDependencies,
 ) {
   const { fileSystem, projections, projects } = dependencies;
@@ -44,15 +44,24 @@ const otherThreadPaths = Effect.fn("orchestrationV2.otherThreadPaths")(function*
   const shell = yield* projections.getShellSnapshot();
   for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
     if (otherThread.id === thread.id || otherThread.deletedAt !== null) continue;
+    // An idle side chat that only answered questions never touched the shared worktree.
+    if (
+      otherThread.lineage.sideChat === true &&
+      otherThread.activeRunId === null &&
+      otherThread.worktreePath === thread.worktreePath
+    ) {
+      const { turnItems } = yield* projections.getThreadRecords(otherThread.id, ["turnItems"], {
+        turnItemTypes: ["command_execution", "file_change", "dynamic_tool"],
+      });
+      if (turnItems.length === 0) continue;
+    }
     const other = yield* projections.getCheckpointContext(otherThread.id);
     const providerContext = yield* projections.getThreadProviderContext(otherThread.id);
     for (const candidate of [
       otherThread.worktreePath,
       ...other.checkpointScopes.map((scope) => scope.cwd),
-      // A failed turn can leave an errored session with a live event stream.
-      // A session shared across threads keeps the cwd it was opened with,
-      // often another thread's; each turn runs in the thread's own
-      // worktree or project root, which this list already covers.
+      // Errored sessions can still stream. Shared sessions retain another thread's opening cwd;
+      // turn worktrees and project roots are already covered here.
       ...providerContext.providerSessions
         .filter(
           (session) =>
@@ -75,13 +84,12 @@ const otherThreadPaths = Effect.fn("orchestrationV2.otherThreadPaths")(function*
   }
   const resolved: Array<string> = [];
   for (const candidate of candidates) {
-    const real = yield* fileSystem
-      .realPath(candidate)
-      .pipe(
-        Effect.catch((error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-        ),
-      );
+    const real = yield* fileSystem.realPath(candidate).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        (_error) => Effect.succeed(null),
+      ),
+    );
     if (real !== null) resolved.push(real);
   }
   return resolved;
@@ -105,15 +113,12 @@ const restoreIsolation = Effect.fn("orchestrationV2.restoreIsolation")(function*
   };
   // Storage cleanup may have removed a worktree; rollback recreates it.
   const resolve = (target: string) =>
-    fileSystem
-      .realPath(target)
-      .pipe(
-        Effect.catch((error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(path.resolve(target))
-            : Effect.fail(error),
-        ),
-      );
+    fileSystem.realPath(target).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        (_error) => Effect.succeed(path.resolve(target)),
+      ),
+    );
   // A checkpoint snapshots the whole checkout, so only the thread's own worktree is restorable.
   let workspaceCwd: string | null = null;
   let workspaceIsolated = targets.workspace === null ? null : thread.worktreePath != null;
@@ -140,8 +145,7 @@ const restoreIsolation = Effect.fn("orchestrationV2.restoreIsolation")(function*
   };
 });
 
-// A checkpoint snapshots the whole checkout. Check at command admission and
-// again before provider rollback so a newly shared worktree is rejected too.
+// Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
 export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
@@ -165,7 +169,9 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
 export function participatingRepositories(input: {
   readonly thread: Pick<OrchestrationV2AppThread, "repoWorktrees">;
   readonly scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">;
-  readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+  readonly checkpoints: ReadonlyArray<
+    Pick<OrchestrationV2Checkpoint, "scopeId" | "status" | "ordinalWithinScope" | "repositories">
+  >;
   readonly targetOrdinal: number;
 }): ReadonlyArray<CheckpointRepositoryIdentity> {
   const byWorktree = new Map<string, CheckpointRepositoryIdentity>();
@@ -219,7 +225,12 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
     readonly thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath" | "repoWorktrees">;
     readonly scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">;
     readonly checkpoint: OrchestrationV2Checkpoint;
-    readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+    readonly checkpoints: ReadonlyArray<
+      Pick<
+        OrchestrationV2Checkpoint,
+        "scopeId" | "status" | "ordinalWithinScope" | "repositories" | "files"
+      >
+    >;
   },
   dependencies: RestoreSafetyDependencies,
 ) {

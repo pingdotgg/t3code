@@ -152,9 +152,35 @@ export const MuseTurnCompleted = Schema.Struct({
   turnId: NonEmptyString,
   terminal: NonEmptyString,
   reason: Schema.optional(Schema.String),
-  error: Schema.optional(Schema.Struct({ message: Schema.String })),
+  error: Schema.optional(
+    Schema.Struct({
+      message: Schema.String,
+      quota: Schema.optional(Schema.Struct({ resetsAtMs: Schema.Finite })),
+    }),
+  ),
   usage: Schema.optional(MuseUsage),
 });
+/** The latest instant a JavaScript Date holds; formatting a later one throws. */
+export const LATEST_DATE_MS = 8.64e15;
+const DateMillis = Schema.Finite.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(LATEST_DATE_MS),
+);
+/** Latest response subscription windows; verbatim Meta percentages may exceed 100. */
+export const MuseSubscriptionUsage = Schema.Struct({
+  observedAtMs: DateMillis,
+  tier: Schema.String,
+  window: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    windowDurationMins: Schema.Finite.check(Schema.isGreaterThan(0)),
+    resetsAtMs: DateMillis,
+  }),
+  weekly: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    resetsAtMs: DateMillis,
+  }),
+});
+export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
 export const MuseTurnRetryScheduled = Schema.Struct({
   turnId: NonEmptyString,
   nextAttempt: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -198,10 +224,7 @@ export function museApprovalDecision(
   }
 }
 
-/**
- * Muse shell approvals offer no `denied` choice, only `abort` ("Reject"), so
- * `decline` falls back to it.
- */
+/** Shell approvals offer abort instead of denied; decline falls back to abort. */
 export function museApprovalChoices(approval: Pick<MuseApproval, "availableChoices">) {
   const choices = new Map<ProviderApprovalDecision, MuseApproval["availableChoices"][number]>();
   const rank = (choice: MuseApproval["availableChoices"][number]) =>

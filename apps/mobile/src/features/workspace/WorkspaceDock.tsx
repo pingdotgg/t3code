@@ -4,6 +4,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WORKSPACE_DOCK } from "./workspace-tabs-state";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
   const workspace = useWorkspaceTabs()!;
@@ -40,7 +41,7 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
                 }
               >
                 <SymbolView
-                  name={tab === "threads" ? "text.bubble" : "arrow.triangle.pull"}
+                  name={tab === "threads" ? "text.bubble" : PullRequestGlyph.pullRequest}
                   size={23}
                   tintColorClassName={selected ? "accent-focus" : "accent-icon"}
                 />

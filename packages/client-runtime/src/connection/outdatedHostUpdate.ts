@@ -26,7 +26,13 @@ import { isLegacyUpdateHandoffLoss, resolveServerUpdateProgressResult } from "..
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
-import { connectionRoutes, hasRelayRoute, routeEntry, routeHttpBaseUrl } from "./routes.ts";
+import {
+  connectionRoutes,
+  hasRelayRoute,
+  routeEntry,
+  routeHttpBaseUrl,
+  usableRoutes,
+} from "./routes.ts";
 
 // A v1 host restarting into v2 runs migrations before its descriptor answers again.
 const OUTDATED_HOST_RESTART_TIMEOUT = Duration.minutes(4);
@@ -42,6 +48,25 @@ export class OutdatedHostUpdateError extends Schema.TaggedError<OutdatedHostUpda
 
 export type OutdatedHostUpdateStage = "downloading" | "installing" | "resuming";
 
+const reachOutdatedHost = Effect.fn("clientRuntime.connection.reachOutdatedHost")(function* (
+  environmentId: EnvironmentId,
+) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const resolver = yield* ConnectionResolver.ConnectionResolver;
+  const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+  if (entry === undefined) {
+    return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({ environmentId });
+  }
+  const { prepared, descriptor } = yield* Effect.firstSuccessOf(
+    usableRoutes(entry).map((route) => resolver.prepareForUpdate(routeEntry(entry, route))),
+  );
+  return { entry, prepared, descriptor };
+});
+
+// The normal session cannot read config from a host behind the protocol gate.
+export const describeOutdatedHost = (environmentId: EnvironmentId) =>
+  reachOutdatedHost(environmentId).pipe(Effect.map(({ descriptor }) => descriptor));
+
 /**
  * The normal session refuses to open against such a host, so this opens a bare
  * socket and calls only the self-update RPCs, whose wire shape has not changed
@@ -54,16 +79,27 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     onStage: (stage: OutdatedHostUpdateStage) => Effect.Effect<void>,
   ) {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-    const resolver = yield* ConnectionResolver.ConnectionResolver;
     const webSocketConstructor = yield* Socket.WebSocketConstructor;
     const httpClient = yield* HttpClient.HttpClient;
-    const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
-    if (entry === undefined) {
-      return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({ environmentId });
+    const { entry, prepared, descriptor } = yield* reachOutdatedHost(environmentId);
+    // Discovery still holds the old relay descriptor and would re-block the
+    // environment from it, so replace that before clearing the block.
+    const switchBackOn = Effect.gen(function* () {
+      if (hasRelayRoute(entry)) {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* discovery.refresh;
+      }
+      yield* registry.setCompatibility(environmentId, null);
+      yield* registry.setEnabled(environmentId, true);
+    });
+
+    // A host updated by hand is already compatible, and a bare socket would be
+    // rejected with 426, so there is nothing to update.
+    if (isCompatibleDescriptor(descriptor)) {
+      yield* switchBackOn;
+      return { targetVersion: descriptor.serverVersion };
     }
-    const { prepared, descriptor } = yield* Effect.firstSuccessOf(
-      connectionRoutes(entry).map((route) => resolver.prepareForUpdate(routeEntry(entry, route))),
-    );
+
     const capabilities = descriptor.capabilities;
     if (
       capabilities.serverSelfUpdate === undefined ||
@@ -105,20 +141,31 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
           capabilities.serverSelfUpdateProgress === true
             ? yield* Effect.gen(function* () {
                 const terminal = yield* Ref.make(Option.none<ServerSelfUpdateResult>());
+                let receivedProgress = false;
                 const streamExit = yield* client[WS_METHODS.serverUpdateServerWithProgress](
                   input,
                 ).pipe(
                   Stream.runForEach((event) =>
                     event.type === "complete"
                       ? Ref.set(terminal, Option.some(event.result))
-                      : onStage(event.stage),
+                      : Effect.sync(() => {
+                          receivedProgress = true;
+                        }).pipe(Effect.andThen(onStage(event.stage))),
                   ),
                   Effect.exit,
                 );
+                const selfUpdateMethod = capabilities.serverSelfUpdate;
+                // Desktop preparation needs its terminal commit token.
+                const accepted =
+                  receivedProgress &&
+                  (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
+                    ? { targetVersion: input.targetVersion, method: selfUpdateMethod }
+                    : undefined;
                 return yield* resolveServerUpdateProgressResult(
                   input.targetVersion,
                   yield* Ref.get(terminal),
                   streamExit,
+                  accepted,
                 );
               })
             : yield* client[WS_METHODS.serverUpdateServer](input).pipe(
@@ -186,14 +233,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
       });
     }
 
-    // Discovery still holds the old relay descriptor and would re-block the
-    // environment from it, so replace that before clearing the block.
-    if (hasRelayRoute(entry)) {
-      const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
-      yield* discovery.refresh;
-    }
-    yield* registry.setCompatibility(environmentId, null);
-    yield* registry.setEnabled(environmentId, true);
+    yield* switchBackOn;
     return { ...result, targetVersion: resumed.value.serverVersion };
   },
 );

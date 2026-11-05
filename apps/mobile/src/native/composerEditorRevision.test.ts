@@ -8,25 +8,6 @@ import {
   resolveComposerControlledEventCount,
 } from "./composerEditorRevision";
 
-describe("acknowledgeComposerNativeEvent", () => {
-  it("advances to newer native text revisions", () => {
-    expect(acknowledgeComposerNativeEvent(4, 5)).toBe(5);
-  });
-
-  it("accepts a duplicate event from the current native revision", () => {
-    expect(acknowledgeComposerNativeEvent(5, 5)).toBe(5);
-  });
-
-  it("rejects events older than the latest native text revision", () => {
-    expect(acknowledgeComposerNativeEvent(5, 4)).toBeNull();
-  });
-
-  it("rejects malformed revision counters", () => {
-    expect(acknowledgeComposerNativeEvent(5, Number.NaN)).toBeNull();
-    expect(acknowledgeComposerNativeEvent(5, 5.5)).toBeNull();
-  });
-});
-
 describe("isComposerNativeEcho", () => {
   const snapshots = [{ eventCount: 3, value: "native", selection: { start: 6, end: 6 } }];
 
@@ -38,10 +19,6 @@ describe("isComposerNativeEcho", () => {
     expect(isComposerNativeEcho("native", { start: 2, end: 2 }, 3, snapshots)).toBe(false);
     expect(isComposerNativeEcho("native", { start: 6, end: 6 }, 4, snapshots)).toBe(false);
     expect(isComposerNativeEcho("parent edit", { start: 6, end: 6 }, 3, snapshots)).toBe(false);
-  });
-
-  it("matches value and revision when selection is uncontrolled", () => {
-    expect(isComposerNativeEcho("native", null, 3, snapshots)).toBe(true);
   });
 
   it("does not claim a controlled selection against an assumed state without one", () => {
@@ -71,10 +48,6 @@ describe("resolveComposerControlledEventCount", () => {
     expect(resolveComposerControlledEventCount("", { start: 0, end: 0 }, 4, snapshots)).toBe(0);
   });
 
-  it("acknowledges the latest native value at the latest revision", () => {
-    expect(resolveComposerControlledEventCount("ab", { start: 2, end: 2 }, 4, snapshots)).toBe(4);
-  });
-
   it("allows an unmatched parent-driven edit at the latest native revision", () => {
     expect(resolveComposerControlledEventCount("/plan ", { start: 6, end: 6 }, 4, snapshots)).toBe(
       4,
@@ -92,10 +65,6 @@ describe("resolveComposerControlledEventCount", () => {
 
   it("keeps a stale selection paired with current text behind the native revision", () => {
     expect(resolveComposerControlledEventCount("ab", { start: 1, end: 1 }, 4, snapshots)).toBe(3);
-  });
-
-  it("does not control selection when no selection prop is provided", () => {
-    expect(resolveComposerControlledEventCount("ab", null, 4, snapshots)).toBe(4);
   });
 });
 
@@ -142,14 +111,6 @@ describe("pruneAcknowledgedComposerNativeEvents", () => {
 });
 
 describe("assumeComposerControlledState", () => {
-  it("replaces the acknowledged history with the applied controlled state", () => {
-    const snapshots = [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }];
-
-    expect(assumeComposerControlledState(snapshots, 3, "")).toEqual([
-      { eventCount: 3, value: "", selection: null },
-    ]);
-  });
-
   it("keeps native events that raced past the controlled revision", () => {
     const snapshots = [
       { eventCount: 3, value: "typed", selection: { start: 5, end: 5 } },

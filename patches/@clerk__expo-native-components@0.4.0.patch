@@ -1,0 +1,132 @@
+diff --git a/ios/ClerkAuthNativeView.swift b/ios/ClerkAuthNativeView.swift
+index 5f8d2ba..b170304 100644
+--- a/ios/ClerkAuthNativeView.swift
++++ b/ios/ClerkAuthNativeView.swift
+@@ -111,7 +111,12 @@ public class ClerkAuthNativeView: ClerkNativeViewHost {
+
+   override func makeHostedController() -> UIViewController? {
+     let hostBackAction: (() -> Void)? = currentHostBackButton
+-      ? { [weak self] in self?.onHostBack([:]) }
++      ? { [weak self] in
++          guard let self else { return }
++          if !self.popEnclosingNavigationRoute() {
++            self.onHostBack([:])
++          }
++      }
+       : nil
+
+     return ClerkNativeBridge.shared.makeAuthViewController(
+diff --git a/ios/ClerkUserProfileNativeView.swift b/ios/ClerkUserProfileNativeView.swift
+index f2ca604..46f406d 100644
+--- a/ios/ClerkUserProfileNativeView.swift
++++ b/ios/ClerkUserProfileNativeView.swift
+@@ -47,7 +47,12 @@ public class ClerkUserProfileNativeView: ClerkUserProfileCustomPageHost {
+
+   override func makeHostedController() -> UIViewController? {
+     let hostBackAction: (() -> Void)? = currentHostBackButton
+-      ? { [weak self] in self?.onHostBack([:]) }
++      ? { [weak self] in
++          guard let self else { return }
++          if !self.popEnclosingNavigationRoute() {
++            self.onHostBack([:])
++          }
++      }
+       : nil
+
+     return ClerkNativeBridge.shared.makeUserProfileViewController(
+diff --git a/ios/ClerkNativeViewHost.swift b/ios/ClerkNativeViewHost.swift
+--- a/ios/ClerkNativeViewHost.swift
++++ b/ios/ClerkNativeViewHost.swift
+@@ -5,6 +5,7 @@
+   private lazy var hostingCoordinator = ClerkNativeHostingCoordinator(containerView: self)
+   private var hasInitialized: Bool = false
+   private var configuredObserver: NSObjectProtocol?
++  private var isPoppingHostRoute = false
+ 
+   public required init(appContext: AppContext? = nil) {
+     super.init(appContext: appContext)
+@@ -23,6 +24,7 @@
+     super.didMoveToWindow()
+ 
+     guard window != nil else {
++      isPoppingHostRoute = false
+       if hasInitialized {
+         hostedViewDidDetachFromWindow()
+       }
+@@ -58,6 +60,39 @@
+ 
+   func hostedViewDidDetachFromWindow() {}
+ 
++  func popEnclosingNavigationRoute() -> Bool {
++    guard !isPoppingHostRoute else { return true }
++
++    // Follow controller containment, not the responder chain: past a presented controller the
++    // responder chain continues to its presenter, so a host inside a modal would pop the screen
++    // behind the modal instead of letting `onHostBack` dismiss it.
++    var route = enclosingViewController(of: self)
++
++    while let candidate = route {
++      if let navigationController = candidate.parent as? UINavigationController,
++         navigationController.viewControllers.count > 1 {
++        guard navigationController.topViewController === candidate else { return false }
++
++        isPoppingHostRoute = true
++        guard navigationController.popViewController(animated: true) != nil else {
++          isPoppingHostRoute = false
++          return false
++        }
++        if let coordinator = navigationController.transitionCoordinator {
++          coordinator.animate(alongsideTransition: nil) { [weak self] _ in
++            self?.isPoppingHostRoute = false
++          }
++        } else {
++          isPoppingHostRoute = false
++        }
++        return true
++      }
++      route = candidate.parent
++    }
++
++    return false
++  }
++
+   private func addConfiguredObserver() {
+     guard configuredObserver == nil else { return }
+ 
+@@ -162,7 +197,7 @@
+     controller.view.frame = containerView.bounds
+     controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+ 
+-    if let parentVC = findViewController(from: containerView) {
++    if let parentVC = enclosingViewController(of: containerView) {
+       parentVC.addChild(controller)
+       containerView.addSubview(controller.view)
+       controller.didMove(toParent: parentVC)
+@@ -190,15 +225,15 @@
+     guard let containerView else { return }
+     hostingController?.view.frame = containerView.bounds
+   }
+-
+-  private func findViewController(from view: UIView) -> UIViewController? {
+-    var responder: UIResponder? = view
+-    while let nextResponder = responder?.next {
+-      if let vc = nextResponder as? UIViewController {
+-        return vc
+-      }
+-      responder = nextResponder
+-    }
+-    return nil
+-  }
+-}
++}
++
++private func enclosingViewController(of view: UIView) -> UIViewController? {
++  var responder: UIResponder? = view
++  while let nextResponder = responder?.next {
++    if let viewController = nextResponder as? UIViewController {
++      return viewController
++    }
++    responder = nextResponder
++  }
++  return nil
++}

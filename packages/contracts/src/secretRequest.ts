@@ -2,10 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
-/**
- * A saved value is kept by the server under a one-use SecretRef; the thread
- * learns only the status.
- */
+/** Server stores the value under a one-use SecretRef; the thread learns only status. */
 export const SecretRequestAnswerInput = Schema.Struct({
   threadId: ThreadId,
   turnItemId: TurnItemId,
@@ -15,6 +12,16 @@ export const SecretRequestAnswerInput = Schema.Struct({
   ]),
 });
 export type SecretRequestAnswerInput = typeof SecretRequestAnswerInput.Type;
+
+/** What the agent reads when its card ends without a secret. */
+export const SECRET_REQUEST_UNSAVED_NOTE = {
+  declined:
+    "The user declined. Don't ask for it in chat or another way; say what's blocked and go on without it.",
+  cancelled:
+    "The card closed with the run. Ask again with a new clientRequestId only if the secret is still needed.",
+  timed_out:
+    "No answer in time. Don't ask in chat; ask again with a new clientRequestId only if it is still needed.",
+} as const;
 
 const SECRET_REQUEST_FAILURE_MESSAGES = {
   load_failed: "Could not load the secret request.",
@@ -29,6 +36,8 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
     "That secretRef was already used or does not exist. Ask the user again with request_secret.",
   ref_expired: "That secretRef expired. Ask the user again with request_secret.",
   consume_failed: "Could not use that secretRef. Try again.",
+  not_a_file_request:
+    'The user did not save this secret for shell use. Ask again with request_secret and delivery: "file".',
 } as const;
 
 export const SecretRequestFailureReason = Schema.Literals(

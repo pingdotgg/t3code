@@ -51,14 +51,16 @@ export function makeStoredShellSnapshotEncoder(
       hasWorked = true;
       return Effect.void;
     });
-    const encodeMisses = (misses: ReadonlyArray<OrchestrationV2ThreadShellJson>) =>
-      Effect.gen(function* () {
+    const encodeMisses =
+      /* Cache encoding runs for shell update batches; avoid tracing each batch. */
+      Effect.fnUntraced(function* (misses: ReadonlyArray<OrchestrationV2ThreadShellJson>) {
         yield* yieldBetweenChunks;
         const chunk = yield* encodeThreadChunk(misses);
         chunk.forEach((row, index) => encodedRows.set(misses[index]!, row));
       });
-    const encodeRows = (rows: ReadonlyArray<OrchestrationV2ThreadShellJson>) =>
-      Effect.gen(function* () {
+    const encodeRows =
+      /* Cache encoding runs for shell update batches; avoid tracing each batch. */
+      Effect.fnUntraced(function* (rows: ReadonlyArray<OrchestrationV2ThreadShellJson>) {
         let misses: Array<OrchestrationV2ThreadShellJson> = [];
         for (const row of rows) {
           if (encodedRows.has(row)) continue;
