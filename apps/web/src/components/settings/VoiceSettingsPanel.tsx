@@ -916,6 +916,7 @@ export function VoiceSettingsPanel() {
                 control={
                   <div className="flex w-full max-w-80 items-center gap-1.5">
                     <Input
+                      size="settings"
                       value={modelFolderDraft}
                       placeholder="Add a folder path"
                       aria-label="Add a model folder"
@@ -929,7 +930,7 @@ export function VoiceSettingsPanel() {
                     />
                     <Button
                       type="button"
-                      size="sm"
+                      size="standard"
                       disabled={
                         operation !== null ||
                         !MODEL_FOLDER_PATH_PATTERN.test(modelFolderDraft.trim()) ||
