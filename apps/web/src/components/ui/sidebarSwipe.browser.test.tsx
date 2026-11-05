@@ -13,8 +13,15 @@ function Harness({ initiallyOpen = false }: { initiallyOpen?: boolean }) {
   return <div ref={sheetRef} data-open={open} onTouchMove={(event) => event.stopPropagation()} />;
 }
 
-function touch(target: HTMLElement, type: string, x: number, y: number, ended = false) {
-  const point = new Touch({ identifier: 0, target, clientX: x, clientY: y });
+function touch(
+  target: HTMLElement,
+  type: string,
+  x: number,
+  y: number,
+  ended = false,
+  identifier = 0,
+) {
+  const point = new Touch({ identifier, target, clientX: x, clientY: y });
   const event = new TouchEvent(type, {
     bubbles: true,
     cancelable: true,
@@ -25,11 +32,17 @@ function touch(target: HTMLElement, type: string, x: number, y: number, ended = 
   return event;
 }
 
-function pointer(target: HTMLElement, type: string, x: number, pointerType = "touch") {
+function pointer(
+  target: HTMLElement,
+  type: string,
+  x: number,
+  pointerType = "touch",
+  pointerId = 7,
+) {
   target.dispatchEvent(
     new PointerEvent(type, {
       bubbles: true,
-      pointerId: 7,
+      pointerId,
       pointerType,
       isPrimary: true,
       clientX: x,
@@ -64,6 +77,93 @@ describe("sidebar touch events", () => {
       touch(target, "touchend", 280, 201, true);
     });
     expect(target.dataset.open).toBe("true");
+  });
+
+  it.each(["touch", "pen"])("recovers when a %s ends on a detached element", async (modality) => {
+    await using screen = await render(<Harness />, { router: false });
+    const target = screen.container.firstElementChild as HTMLElement;
+    const detached = document.createElement("span");
+    target.append(detached);
+    await act(() => {
+      if (modality === "touch") touch(detached, "touchstart", 100, 200);
+      else pointer(detached, "pointerdown", 100, "pen");
+      detached.remove();
+      // The release no longer bubbles to the window listener.
+      if (modality === "touch") touch(detached, "touchend", 100, 200, true);
+      else pointer(detached, "pointerup", 100, "pen");
+      if (modality === "touch") {
+        touch(target, "touchstart", 200, 200, false, 1);
+        touch(target, "touchmove", 280, 201, false, 1);
+        touch(target, "touchend", 280, 201, true, 1);
+      } else {
+        pointer(target, "pointerdown", 200, "pen", 8);
+        pointer(target, "pointermove", 280, "pen", 8);
+        pointer(target, "pointerup", 280, "pen", 8);
+      }
+    });
+    expect(target.dataset.open).toBe("true");
+  });
+
+  it("keeps a touch swipe independent from pen events with the same ID", async () => {
+    await using screen = await render(<Harness />, { router: false });
+    const target = screen.container.firstElementChild as HTMLElement;
+    await act(() => {
+      touch(target, "touchstart", 100, 200);
+      pointer(target, "pointerdown", 100, "pen", 0);
+      pointer(target, "pointermove", 180, "pen", 0);
+      pointer(target, "pointerup", 180, "pen", 0);
+      pointer(target, "pointercancel", 180, "pen", 0);
+    });
+    expect(target.dataset.open).toBe("false");
+    await act(() => {
+      expect(touch(target, "touchmove", 180, 201).defaultPrevented).toBe(true);
+      touch(target, "touchend", 180, 201, true);
+    });
+    expect(target.dataset.open).toBe("true");
+  });
+
+  it("keeps a pen swipe independent from single- and multi-touch events with the same ID", async () => {
+    await using screen = await render(<Harness />, { router: false });
+    const target = screen.container.firstElementChild as HTMLElement;
+    await act(() => {
+      pointer(target, "pointerdown", 100, "pen", 0);
+      touch(target, "touchstart", 100, 200);
+      expect(touch(target, "touchmove", 180, 201).defaultPrevented).toBe(false);
+      touch(target, "touchend", 180, 201, true);
+      const touches = [0, 1].map(
+        (identifier) => new Touch({ identifier, target, clientX: 100, clientY: 200 }),
+      );
+      target.dispatchEvent(
+        new TouchEvent("touchstart", { bubbles: true, touches, changedTouches: [touches[1]!] }),
+      );
+      touch(target, "touchcancel", 180, 201, true);
+    });
+    expect(target.dataset.open).toBe("false");
+    await act(() => {
+      pointer(target, "pointermove", 180, "pen", 0);
+      pointer(target, "pointerup", 180, "pen", 0);
+    });
+    expect(target.dataset.open).toBe("true");
+  });
+
+  it("cancels only the matching touch and preserves single-touch recovery", async () => {
+    await using screen = await render(<Harness />, { router: false });
+    const target = screen.container.firstElementChild as HTMLElement;
+    await act(() => {
+      touch(target, "touchstart", 100, 200);
+      touch(target, "touchcancel", 100, 200, true, 1);
+      touch(target, "touchmove", 180, 201);
+      touch(target, "touchend", 180, 201, true);
+    });
+    expect(target.dataset.open).toBe("true");
+    await act(() => {
+      touch(target, "touchstart", 250, 200);
+      touch(target, "touchcancel", 200, 200, true);
+      touch(target, "touchend", 150, 201, true);
+    });
+    expect(target.dataset.open).toBe("true");
+    await act(() => swipe(target, 250, 150));
+    expect(target.dataset.open).toBe("false");
   });
 
   it("preserves horizontal scrolling inside code blocks", async () => {

@@ -14,6 +14,7 @@ import {
 
 function openGesture(overrides?: Partial<SidebarSwipeGesture>): SidebarSwipeGesture {
   return {
+    pointerType: "touch",
     phase: "pending",
     intent: "open",
     pointerId: 1,
