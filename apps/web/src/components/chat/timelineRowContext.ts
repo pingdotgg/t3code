@@ -96,6 +96,8 @@ export interface TimelineRowSharedState {
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
+  /** Scrolls the timeline to its end, for rows that grow on demand. Unset outside a live thread. */
+  onScrollToEnd: (() => void) | null;
   workGroupViewState: WorkGroupViewState;
 }
 

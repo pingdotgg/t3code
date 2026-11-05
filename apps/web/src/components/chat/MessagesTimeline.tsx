@@ -232,6 +232,7 @@ interface MessagesTimelineProps {
   onRetryWorkspacePreparation?: (runId: RunId) => void;
   onWorktreeSetupWorkLocally?: () => void;
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
+  onScrollToEnd?: () => void;
   isPreparingWorktree?: boolean;
   isCompacting?: boolean;
   awaitingUser?: "approval" | "input" | null;
@@ -346,6 +347,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onRetryWorkspacePreparation,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
+  onScrollToEnd,
   isPreparingWorktree = false,
   isCompacting = false,
   awaitingUser = null,
@@ -1048,6 +1050,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
+    onScrollToEnd: onScrollToEnd ?? null,
     workGroupViewState,
   };
   const compactionAwaitingRow =

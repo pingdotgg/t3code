@@ -2116,6 +2116,7 @@ export default function ChatView(props: ChatViewProps) {
     timelineAnchorMessageId,
     setTimelineAnchor,
   });
+  const scrollTimelineToEndAnimated = useStableCallback(() => scrollToEnd(true));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
@@ -3428,6 +3429,7 @@ export default function ChatView(props: ChatViewProps) {
                     ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
                     : {})}
                   {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
+                  onScrollToEnd={scrollTimelineToEndAnimated}
                   isPreparingWorktree={isPreparingWorktree}
                   footer={timelineFooter}
                   listRef={legendListRef}

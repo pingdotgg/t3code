@@ -1,11 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useLayoutEffect, useRef } from "react";
+import { use, useLayoutEffect, useRef } from "react";
 
 import { useClientSettings } from "../../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../../keybindings";
 import { cn } from "../../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../../state/server";
 import { Button } from "../../ui/button";
+import { TimelineRowCtx } from "../timelineRowContext";
 import {
   attachDoom,
   detachDoom,
@@ -31,6 +32,7 @@ function EnabledDoomSlot() {
   const savedKills = useDoomStore((state) => state.savedKills);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hostRef = useRef<HTMLDivElement>(null);
+  const scrollToEnd = use(TimelineRowCtx).onScrollToEnd;
   const shortcut = shortcutLabelForCommand(keybindings, "doom.toggle");
   const resumable = live || savedKills !== null;
 
@@ -44,8 +46,10 @@ function EnabledDoomSlot() {
     const host = hostRef.current;
     if (!open || host === null) return;
     attachDoom(host);
+    // The working row sits at the end of the timeline, often below the fold.
+    scrollToEnd?.();
     return () => detachDoom(host);
-  }, [open]);
+  }, [open, scrollToEnd]);
 
   return (
     <div className="max-w-[640px]">
