@@ -108,6 +108,7 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
     mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
+    reviewDecision: pullRequest.reviewDecision,
     // Azure keeps labels on work items rather than on the pull request.
     labels: [],
   };
@@ -304,6 +305,7 @@ export const make = Effect.gen(function* () {
           closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
           updatedAt: pullRequest.updatedAt,
+          reviewDecision: pullRequest.reviewDecision,
         })),
       ),
 
@@ -363,6 +365,7 @@ export const make = Effect.gen(function* () {
                   cwd: input.cwd,
                   location: pullRequest.location,
                   number: input.number,
+                  reviewersById: pullRequest.reviewersById,
                 })
                 .pipe(
                   Effect.map((comments) => ({ comments, truncated: false })),
