@@ -9,6 +9,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
   type VcsProcessExitFailureKind,
@@ -19,9 +20,10 @@ import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
 } from "./gitLabMergeRequests.ts";
-import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -116,7 +118,7 @@ export class GitLabMergeRequestNotFoundError extends Schema.TaggedError<GitLabMe
 
 export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandError>()(
   "GitLabCliCommandError",
-  gitLabCliExecutionErrorContext,
+  { ...gitLabCliExecutionErrorContext, userFacingDetail: Schema.optional(Schema.String) },
 ) {
   get detail(): string {
     return "GitLab CLI command failed.";
@@ -548,6 +550,19 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         args: ["api", `projects/${encodeURIComponent(input.repository)}`],
       }).pipe(
+        Effect.mapError((error) => {
+          if (
+            error._tag !== "GitLabCliCommandError" ||
+            !isVcsProcessExitError(error.cause) ||
+            error.cause.failureKind !== "not-found"
+          )
+            return error;
+          return new GitLabCliCommandError({
+            ...error,
+            cause: error.cause,
+            userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(input.repository),
+          });
+        }),
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           decodeGitLabRepositoryCloneUrls(raw).pipe(

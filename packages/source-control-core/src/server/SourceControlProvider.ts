@@ -51,6 +51,10 @@ export function userFacingSourceControlDetail(cause: unknown): string | undefine
     : undefined;
 }
 
+export function repositoryNotFoundDetail(repository: string): string {
+  return `Repository ${transportSafeSourceControlErrorValue(repository)} was not found. Check the owner and name and try again.`;
+}
+
 export function transportSafeSourceControlErrorValue(value: string): string {
   let printable = "";
   for (const character of value) {

@@ -1889,6 +1889,10 @@ it.effect("exposes fixed not-found details only for repository lookup", () =>
       userFacingSourceControlDetail(error.cause),
       "Repository me/vouch was not found. Check the owner and name and try again.",
     );
+    const forbiddenError = yield* Effect.flip(
+      provider.getRepositoryCloneUrls({ cwd: "/repo", repository: "me/private" }),
+    );
+    assert.strictEqual(userFacingSourceControlDetail(forbiddenError.cause), undefined);
     const pullError = yield* Effect.flip(
       provider.getChangeRequest({ cwd: "/repo", reference: "42" }),
     );
@@ -1899,18 +1903,18 @@ it.effect("exposes fixed not-found details only for repository lookup", () =>
         Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
         TestSourceControlHost.layer({ process: {} }),
         Layer.mock(ForgejoCli.ForgejoCli)({
-          resolveRepository: () =>
+          resolveRepository: (input) =>
             Effect.succeed({
               login: "work",
-              repository: "me/vouch",
+              repository: input.repository === "me/private" ? "me/private" : "me/vouch",
               baseUrl: "https://forgejo.test",
             }),
-          api: () =>
+          api: (input) =>
             Effect.fail(
               new ForgejoCli.ForgejoCliError({
                 command: "fj",
                 cwd: "/repo",
-                reason: "not-found",
+                reason: input.path.includes("private") ? "forbidden" : "not-found",
                 detail: "raw upstream response must not be shown",
               }),
             ),

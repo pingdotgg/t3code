@@ -636,12 +636,19 @@ describe("GitHubSourceControlProvider writes", () => {
         rest: (input) =>
           input.path === "user"
             ? Effect.succeed(restResponse({ login: "me" }))
-            : Effect.fail(
-                new GitHubRequestPolicy.GitHubApiNotFoundError({
-                  host: input.host,
-                  operation: input.operation,
-                }),
-              ),
+            : input.path === "repos/me/private"
+              ? Effect.fail(
+                  new GitHubRequestPolicy.GitHubApiAuthenticationError({
+                    host: input.host,
+                    operation: input.operation,
+                  }),
+                )
+              : Effect.fail(
+                  new GitHubRequestPolicy.GitHubApiNotFoundError({
+                    host: input.host,
+                    operation: input.operation,
+                  }),
+                ),
       });
       for (const repository of ["vouch", "other/vouch"]) {
         const error = yield* Effect.flip(gh.getRepositoryCloneUrls({ cwd: "/repo", repository }));
@@ -650,6 +657,10 @@ describe("GitHubSourceControlProvider writes", () => {
           `Repository ${repository === "vouch" ? "me/vouch" : repository} was not found. Check the owner and name and try again.`,
         );
       }
+      const authError = yield* Effect.flip(
+        gh.getRepositoryCloneUrls({ cwd: "/repo", repository: "me/private" }),
+      );
+      assert.strictEqual(userFacingSourceControlDetail(authError.cause), undefined);
     }),
   );
 });

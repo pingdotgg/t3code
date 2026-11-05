@@ -1031,10 +1031,9 @@ export const make = Effect.gen(function* () {
           yield* readRepository(locator).pipe(
             Effect.mapError((error) => {
               if (!isGitHubApiNotFoundError(error.cause)) return error;
-              const repository = SourceControlProvider.transportSafeSourceControlErrorValue(
+              const detail = SourceControlProvider.repositoryNotFoundDetail(
                 `${locator.owner}/${locator.name}`,
               );
-              const detail = `Repository ${repository} was not found. Check the owner and name and try again.`;
               return failure(
                 detail,
                 new GitHubRepositoryLookupError({ userFacingDetail: detail, cause: error.cause }),

@@ -394,11 +394,10 @@ export const make = Effect.gen(function* () {
           ).pipe(
             Effect.mapError((error) => {
               if (error.reason !== "not-found") return error;
-              const repository = SourceControlProvider.transportSafeSourceControlErrorValue(
-                repo.repository,
-              );
-              const detail = `Repository ${repository} was not found. Check the owner and name and try again.`;
-              return new ForgejoCli.ForgejoCliError({ ...error, detail, userFacingDetail: detail });
+              return new ForgejoCli.ForgejoCliError({
+                ...error,
+                userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(repo.repository),
+              });
             }),
           ),
         );

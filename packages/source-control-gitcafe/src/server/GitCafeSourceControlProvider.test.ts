@@ -15,6 +15,7 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafeSourceControlProvider from "./GitCafeSourceControlProvider.ts";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -60,6 +61,51 @@ const layerFor = (
   );
 
 describe("GitCafeSourceControlProvider", () => {
+  it.effect.each([404, 401, 403, 500])(
+    "exposes repository lookup details only for HTTP 404 (%s)",
+    (status) => {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(encodeJson({ detail: "raw upstream response must not be shown" }), {
+              status,
+            }),
+          ),
+        ),
+      );
+      return Effect.gen(function* () {
+        const provider = yield* GitCafeSourceControlProvider.make;
+        for (const repository of ["team/project", "https://git.cafe/team/project.git"]) {
+          const error = yield* provider
+            .getRepositoryCloneUrls({ cwd: "/repo", repository })
+            .pipe(Effect.flip);
+          assert.strictEqual(
+            userFacingSourceControlDetail(error.cause),
+            status === 404
+              ? "Repository team/project was not found. Check the owner and name and try again."
+              : undefined,
+          );
+        }
+        const error = yield* provider
+          .getDefaultBranch({
+            cwd: "/repo",
+            context: {
+              provider: {
+                kind: SourceControlProviderKind.make("gitcafe"),
+                name: "GitCafe",
+                baseUrl: "https://git.cafe",
+              },
+              remoteName: "origin",
+              remoteUrl: "https://git.cafe/team/project.git",
+            },
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(userFacingSourceControlDetail(error.cause), undefined);
+      }).pipe(Effect.provide(layerFor(client)));
+    },
+  );
+
   it("reads a signed-in account and keeps transient failures apart from sign-out", () => {
     const { parseAuth } = GitCafeSourceControlProvider;
     const signedIn = parseAuth(
