@@ -101,8 +101,8 @@ if [ "$scenario" = fresh ]; then
   if [ -n "$previous" ] && [ "$previous" != "$version" ]; then
     log "Installing the previous release, $previous"
     # A leftover bundle from an earlier run on a reused Mac would be updated instead.
-    if [ "$os" = Darwin ]; then rm -rf /Applications/OminaX.app "/Applications/T3 Learn.app"; fi
     if [ "$os" = Darwin ]; then
+      rm -rf /Applications/OminaX.app "/Applications/T3 Learn.app"
       # Ad hoc signed builds each get a Keychain partition of their own cdhash, so the
       # updated app would ask for the login password, which nobody types on a runner.
       # A throwaway keychain whose Safe Storage key admits both builds keeps it quiet.
