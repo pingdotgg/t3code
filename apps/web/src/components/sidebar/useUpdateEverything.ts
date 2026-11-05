@@ -50,7 +50,13 @@ export type ReportLocalUpdateError = (title: string, description: string) => voi
 /** `channelSwitch` makes the run move the fleet to that release's track instead of updating it. */
 export function useUpdateEverything(
   localUpdateVersion: string | null,
-  channelSwitch?: ChannelSwitchRelease,
+  {
+    channelSwitch,
+    includeProviders = true,
+  }: {
+    readonly channelSwitch?: ChannelSwitchRelease;
+    readonly includeProviders?: boolean;
+  } = {},
 ) {
   const targetVersion = localUpdateVersion ?? APP_VERSION;
   const { environments } = useEnvironments();
@@ -74,7 +80,10 @@ export function useUpdateEverything(
   const restarts = collectRestartingMachines(machines, moving, localUpdateVersion !== null);
   const providerUpdates = useProviderUpdates();
   // A track switch moves app and servers only; provider updates stay a separate choice.
-  const providers = channelSwitch ? { machines: [], updateAll: async () => [] } : providerUpdates;
+  const providers =
+    channelSwitch || !includeProviders
+      ? { machines: [], updateAll: async () => [] }
+      : providerUpdates;
   const updateServer = useServerUpdate();
 
   const view = describeUpdateEverything({

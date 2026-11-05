@@ -14,6 +14,9 @@ background service stays on its current release channel. A remote desktop app
 installs the latest release from its own channel. Hover the button to see what
 it will update.
 
+**Install** in **Settings → About** updates the desktop app and the servers
+behind it the same way. It leaves providers to the sidebar button.
+
 While it runs, the button widens to show progress. It names a machine that is
 taking longer than usual, and offers **Retry** for a server that failed. Click
 it to see every machine. The desktop app restarts once each server has started

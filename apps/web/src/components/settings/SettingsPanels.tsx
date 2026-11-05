@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -36,6 +37,7 @@ import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDisabledReason,
+  getDesktopUpdateDownloadedVersion,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -106,9 +108,11 @@ import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentSessionStatesAtom } from "~/state/session";
 import { canUpdateServer } from "../ServerUpdateAction";
+import { installLocalUpdate } from "../sidebar/SidebarUpdatePill";
+import { UpdateEverythingDialog } from "../sidebar/UpdateEverythingDialog";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
-import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
+import { isHostedByThisApp, useUpdateEverything } from "../sidebar/useUpdateEverything";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -145,7 +149,7 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
 };
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
-function AboutVersionSection() {
+export function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [switchChannel, setSwitchChannel] = useState<DesktopUpdateChannel | null>(null);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
@@ -157,6 +161,13 @@ function AboutVersionSection() {
   );
   // A second run would replace the first run's progress and local download.
   const updateRun = useUpdateEverythingRun();
+  const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
+  // Installing also moves connected servers to the app's version; providers keep their own update.
+  const everything = useUpdateEverything(
+    updateState && action !== "none" ? getDesktopUpdateDownloadedVersion(updateState) : null,
+    { includeProviders: false },
+  );
+  const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -191,8 +202,6 @@ function AboutVersionSection() {
     const bridge = window.desktopBridge;
     if (!bridge) return;
 
-    const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-
     if (action === "download") {
       void bridge.downloadUpdate().catch((error: unknown) => {
         toastManager.add(
@@ -208,6 +217,10 @@ function AboutVersionSection() {
 
     if (action === "install") {
       if (isUpdateActionPending) return;
+      if (everything.hasUpdates) {
+        setIsConfirmingEverything(true);
+        return;
+      }
       setIsUpdateActionPending(true);
       let confirmed = false;
       try {
@@ -274,7 +287,27 @@ function AboutVersionSection() {
       });
   };
 
-  const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
+  const runEverything = async () => {
+    const bridge = window.desktopBridge;
+    setIsConfirmingEverything(false);
+    if (!bridge) return;
+    setIsUpdateActionPending(true);
+    const result = await settlePromise(() =>
+      everything.run({ installLocal: (reportError) => installLocalUpdate(bridge, reportError) }),
+    );
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not install update",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        }),
+      );
+    }
+    setIsUpdateActionPending(false);
+  };
+
   const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
   const buttonDisabled =
     action === "none"
@@ -310,7 +343,11 @@ function AboutVersionSection() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={buttonDisabled || isUpdateActionPending}
+                  disabled={
+                    buttonDisabled ||
+                    isUpdateActionPending ||
+                    (action === "install" && updateRun !== null)
+                  }
                   onClick={handleButtonClick}
                 >
                   {buttonLabel}
@@ -414,6 +451,15 @@ function AboutVersionSection() {
         />
       ) : null}
       {hasDesktopBridge ? <CliCommandSettingsRow /> : null}
+      <UpdateEverythingDialog
+        open={isConfirmingEverything}
+        onOpenChange={setIsConfirmingEverything}
+        version={everything.version}
+        providerCount={everything.providerCount}
+        rows={everything.rows}
+        restarts={everything.restarts}
+        onConfirm={() => void runEverything()}
+      />
       {switchChannel === null ? null : (
         <UpdateTrackSwitchDialog channel={switchChannel} onClose={() => setSwitchChannel(null)} />
       )}
