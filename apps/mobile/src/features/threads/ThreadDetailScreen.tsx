@@ -881,8 +881,13 @@ function ThreadDetailBody(
         },
       };
     }
-    if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
-      // The pill only shows while idle, so Resume never interrupts running work.
+    if (
+      props.selectedThread.goal !== null &&
+      !props.activeThreadBusy &&
+      contentPresentationKind === "ready"
+    ) {
+      // The pill only shows while idle (a queued run is busy but has no work start time), so
+      // Resume never interrupts running work.
       const goal = presentProviderGoal(props.selectedThread.goal, false);
       // Claude goals can only be cleared; the server rejects `/goal resume` there.
       const goalProvider = props.serverConfig?.providers.find(
