@@ -248,3 +248,15 @@ it("resolves titles and refs for spaced thread autolinks outside code", () => {
   ]);
   expect(relabelThreadLinks(markdown, local, title)).toBe(`[Review](${href}) and \`< ${href} >\``);
 });
+
+it.each([0, 1, 2, 3, 4])("honors %i backslashes before thread autolinks", (count) => {
+  const href = "t3-thread://v2/there/t1";
+  const slashes = "\\".repeat(count);
+  for (const brackets of [`<${href}>`, `< ${href} >`]) {
+    const markdown = `${slashes}${brackets}`;
+    expect(threadLinkRefs(markdown, local)).toEqual(count % 2 ? [] : [ref("there", "t1")]);
+    expect(relabelThreadLinks(markdown, local, () => "Review")).toBe(
+      count % 2 ? markdown : `${slashes}[Review](${href})`,
+    );
+  }
+});

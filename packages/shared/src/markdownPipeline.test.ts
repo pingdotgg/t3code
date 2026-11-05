@@ -326,3 +326,29 @@ it.each([
     });
   },
 );
+
+it.each([0, 1, 2, 3, 4])("honors %i backslashes before spaced thread autolinks", (count) => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const href = "t3-thread://v2/remote/thread%3A1";
+  const slashes = "\\".repeat(count);
+  const markdown = `${slashes}< ${href} > and < ${href} >`;
+  const tree = processor.runSync(processor.parse(markdown));
+  expect(tree.children[0]).toMatchObject({
+    children:
+      count % 2
+        ? [
+            { type: "text", value: "\\".repeat(Math.floor(count / 2)) + `< ${href} > and ` },
+            { tagName: "a", properties: { href } },
+          ]
+        : [
+            ...(count ? [{ type: "text", value: "\\".repeat(count / 2) }] : []),
+            { tagName: "a", properties: { href } },
+            { type: "text", value: " and " },
+            { tagName: "a", properties: { href } },
+          ],
+  });
+});
