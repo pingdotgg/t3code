@@ -2,6 +2,7 @@ import {
   ACP_REGISTRY_MAX_AGENTS,
   AcpRegistryOperationError,
   AcpRegistryOperationErrorReason,
+  managedProviderInstallDenial,
   TrimmedNonEmptyString,
   type AcpRegistryManagedBinaryUninstallInput,
   type AcpRegistryManagedBinaryUninstallResult,
@@ -531,11 +532,13 @@ const layer = (options: AcpRegistryCatalogOptions) =>
 export const layerFromHost = Layer.merge(
   Layer.unwrap(
     Effect.gen(function* () {
-      const { paths } = yield* ProviderHost.ProviderHost;
+      const { paths, managedPolicy } = yield* ProviderHost.ProviderHost;
       const path = yield* Path.Path;
+      const installDenial = managedProviderInstallDenial(managedPolicy);
       return layer({
         cacheDir: paths.providerStatusCacheDir,
         toolsDir: path.join(paths.baseDir, "tools"),
+        ...(installDenial === undefined ? {} : { installDenial }),
       });
     }),
   ),
@@ -546,6 +549,8 @@ export interface AcpRegistryCatalogOptions {
   readonly cacheDir: string;
   readonly toolsDir: string;
   readonly registryUrl?: string;
+  /** Set when policy forbids new installs: agents already on disk keep running. */
+  readonly installDenial?: string;
 }
 
 const INSTALL_LOCK_RETRY_COUNT = 300;
@@ -1221,6 +1226,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
+  const refuseInstallUnderPolicy =
+    input.installDenial === undefined
+      ? Effect.void
+      : Effect.fail(
+          new AcpRegistryError({ reason: "install_failed", detail: input.installDenial }),
+        );
+
   const ensureGlobalPackage = Effect.fn("AcpRegistryCatalog.ensureGlobalPackage")(function* (
     agent: AcpRegistryAgent,
     distribution: "npx" | "uvx",
@@ -1276,6 +1288,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       yield* writePackageReceipt(existing.value);
       return existing.value;
     }
+    yield* refuseInstallUnderPolicy;
 
     const managerDirectory = yield* managerBinDirectory(managerPath);
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
@@ -1424,6 +1437,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         ),
       );
     }
+    yield* refuseInstallUnderPolicy;
 
     yield* fileSystem.makeDirectory(path.dirname(installRoot), { recursive: true }).pipe(
       Effect.mapError(

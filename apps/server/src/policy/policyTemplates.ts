@@ -126,6 +126,12 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "Telemetry",
   },
   {
+    id: "ProviderInstalls",
+    title: "Allow installing and updating providers",
+    help: "Disabled stops T3 Code from installing or updating provider software. Providers you install yourself keep running.",
+    toggle: "ProviderInstalls",
+  },
+  {
     id: "AllowedDrivers",
     title: "Allowed providers",
     help: "Only the checked providers may run. Threads on other providers stay, marked unavailable.\n\nDisabled or Not Configured: no restriction.",

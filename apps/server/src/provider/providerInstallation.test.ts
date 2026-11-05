@@ -57,6 +57,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   input: {
     instance?: ProviderInstance;
     settings?: Parameters<typeof ServerSettings.layerTest>[0];
+    managedPolicy?: Parameters<typeof ServerSettings.layerTest>[1];
   } = {},
 ) {
   const calls: string[] = [];
@@ -65,7 +66,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const router = yield* makeProviderInstallation().pipe(
     Effect.provide(
       Layer.mergeAll(
-        ServerSettings.layerTest(input.settings),
+        ServerSettings.layerTest(input.settings, input.managedPolicy),
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
           getInstance: (id) =>
             Effect.succeed(id === configured.instanceId ? configured : undefined),
@@ -142,6 +143,27 @@ describe("provider installation routing", () => {
       const observed = yield* Stream.runCollect(harness.router.subscribe({ instanceId }));
       assert.deepEqual(Array.from(observed), [state]);
       assert.deepEqual(harness.calls, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses to install under policy but still lets users remove", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        managedPolicy: {
+          organization: "Example Corp",
+          lockedSettings: [],
+          limits: { providers: { installs: false } },
+        },
+      });
+      const start = yield* Effect.flip(harness.router.start({ instanceId }));
+      assert.strictEqual(
+        start.detail,
+        "Example Corp's policy does not allow installing or updating providers.",
+      );
+      assert.deepEqual(harness.calls, []);
+
+      yield* harness.router.remove({ instanceId });
+      assert.include(harness.calls, "remove");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -6,6 +6,7 @@ import {
   type ProviderInstanceId,
   ProviderSetupError,
   type ProviderSetupInput,
+  managedProviderInstallDenial,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -106,6 +107,14 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
       new ProviderSetupError({ instanceId, operation: error.operation, detail: error.detail });
 
   const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
+    const denial = managedProviderInstallDenial(settings.managedPolicy);
+    if (denial !== undefined) {
+      return yield* new ProviderSetupError({
+        instanceId: input.instanceId,
+        operation: "install",
+        detail: denial,
+      });
+    }
     const { installation } = yield* requireInstance(input.instanceId, "install", true);
     return yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
   });

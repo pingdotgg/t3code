@@ -37,6 +37,8 @@ export const ManagedProviderLimits = Schema.Struct({
   /** Only these drivers run; instances of any other driver show as unavailable. */
   allowedDrivers: Schema.optionalKey(Schema.NonEmptyArray(ProviderDriverKind)),
   instances: Schema.optionalKey(Schema.Record(ProviderDriverKind, ManagedProviderInstance)),
+  /** `false` stops T3 Code installing or updating provider software. */
+  installs: Schema.optionalKey(Schema.Boolean),
 });
 export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
 
@@ -99,6 +101,7 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
     Schema.Struct({
       /** Absent means every driver is allowed. */
       allowedDrivers: Schema.optionalKey(Schema.NonEmptyArray(ProviderDriverKind)),
+      installs: Schema.optionalKey(Schema.Boolean),
       /**
        * Per driver, the instance fields users cannot change, as dot paths into the instance
        * envelope: `config.binaryPath`, `config.launchArgs`, `environment.<NAME>`. A bare
@@ -234,6 +237,13 @@ export function isManagedDriverAllowed(
 ): boolean {
   const allowed = summary?.limits?.providers?.allowedDrivers;
   return allowed === undefined || allowed.includes(driver);
+}
+
+/** Why T3 Code may not install or update providers on an environment, or undefined when it may. */
+export function managedProviderInstallDenial(summary: ManagedPolicySummary | undefined) {
+  return summary?.limits?.providers?.installs === false
+    ? managedPolicyDeniedMessage(summary.organization, "installing or updating providers")
+    : undefined;
 }
 
 /** Why updates are unavailable on an environment with `summary`, or undefined when allowed. */
