@@ -1628,7 +1628,7 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
-    it.effect("keeps an idle parent waiting until a finished task's wake is dispatched", () =>
+    it.effect("keeps an idle parent waiting until each finished task's wake is dispatched", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
@@ -1638,8 +1638,6 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const projectId = ProjectId.make("project:wake-handoff");
         const runId = RunId.make("run:wake-handoff-parent");
         const rootNodeId = NodeId.make("node:wake-handoff-parent-root");
-        const taskId = NodeId.make("node:wake-handoff-task");
-        const childThreadId = ThreadId.make("thread:wake-handoff-child");
         yield* seedParentWithTerminalTask({
           threadId,
           projectId,
@@ -1650,162 +1648,207 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           parentRunStatus: "completed",
           now,
         });
-        const childRun = runEvent({
-          threadId: childThreadId,
-          runId: RunId.make("run:wake-handoff-child"),
-          ordinal: 1,
-          status: "running",
-          now,
-        });
-        yield* sink.write({
-          events: [
-            {
-              id: EventId.make("event:wake-handoff-child-thread"),
-              type: "thread.created",
-              threadId: childThreadId,
-              occurredAt: now,
-              payload: {
-                createdBy: "agent",
-                creationSource: "server",
-                id: childThreadId,
-                projectId,
-                title: "Review the diff",
-                providerInstanceId: modelSelection.instanceId,
-                modelSelection,
-                runtimeMode: "full-access",
-                interactionMode: "default",
-                branch: null,
-                worktreePath: null,
-                activeProviderThreadId: null,
-                lineage: {
-                  parentThreadId: threadId,
-                  relationshipToParent: "subagent",
-                  rootThreadId: threadId,
+        const startChild = Effect.fn(function* (name: string) {
+          const taskId = NodeId.make(`node:wake-handoff-${name}`);
+          const childThreadId = ThreadId.make(`thread:wake-handoff-${name}`);
+          const childRun = runEvent({
+            threadId: childThreadId,
+            runId: RunId.make(`run:wake-handoff-${name}`),
+            ordinal: 1,
+            status: "running",
+            now,
+          });
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`event:wake-handoff-${name}-thread`),
+                type: "thread.created",
+                threadId: childThreadId,
+                occurredAt: now,
+                payload: {
+                  createdBy: "agent",
+                  creationSource: "server",
+                  id: childThreadId,
+                  projectId,
+                  title: "Review the diff",
+                  providerInstanceId: modelSelection.instanceId,
+                  modelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: null,
+                  worktreePath: null,
+                  activeProviderThreadId: null,
+                  lineage: {
+                    parentThreadId: threadId,
+                    relationshipToParent: "subagent",
+                    rootThreadId: threadId,
+                  },
+                  forkedFrom: { type: "node", nodeId: taskId },
+                  createdAt: now,
+                  updatedAt: now,
+                  archivedAt: null,
+                  settledOverride: null,
+                  settledAt: null,
+                  lastVisitedAt: null,
+                  deletedAt: null,
                 },
-                forkedFrom: { type: "node", nodeId: taskId },
-                createdAt: now,
-                updatedAt: now,
-                archivedAt: null,
-                settledOverride: null,
-                settledAt: null,
-                lastVisitedAt: null,
-                deletedAt: null,
               },
-            },
-            {
-              id: EventId.make("event:wake-handoff-task"),
-              type: "subagent.updated",
-              threadId,
-              runId,
-              nodeId: taskId,
-              driver,
-              providerInstanceId: modelSelection.instanceId,
-              occurredAt: now,
-              payload: {
-                id: taskId,
-                threadId,
-                runId,
-                parentNodeId: rootNodeId,
-                origin: "app_owned",
-                createdBy: "agent",
-                driver,
-                providerInstanceId: modelSelection.instanceId,
-                providerThreadId: null,
-                childThreadId,
-                nativeTaskRef: null,
-                prompt: "Review the diff.",
-                title: null,
-                model: null,
-                completionWake: "always",
-                status: "running",
-                result: null,
-                startedAt: now,
-                completedAt: null,
-                updatedAt: now,
-              },
-            },
-            {
-              id: EventId.make("event:wake-handoff-turn-item"),
-              type: "turn-item.updated",
-              threadId,
-              runId,
-              nodeId: taskId,
-              driver,
-              occurredAt: now,
-              payload: {
-                id: TurnItemId.make("turn-item:wake-handoff-task"),
+              {
+                id: EventId.make(`event:wake-handoff-${name}-task`),
+                type: "subagent.updated",
                 threadId,
                 runId,
                 nodeId: taskId,
-                providerThreadId: parentProviderThreadId(threadId),
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "running",
-                title: "Review the diff",
-                startedAt: now,
-                completedAt: null,
-                updatedAt: now,
-                type: "subagent",
-                subagentId: taskId,
-                origin: "app_owned",
                 driver,
                 providerInstanceId: modelSelection.instanceId,
-                childThreadId,
-                prompt: "Review the diff.",
-                result: null,
+                occurredAt: now,
+                payload: {
+                  id: taskId,
+                  threadId,
+                  runId,
+                  parentNodeId: rootNodeId,
+                  origin: "app_owned",
+                  createdBy: "agent",
+                  driver,
+                  providerInstanceId: modelSelection.instanceId,
+                  providerThreadId: null,
+                  childThreadId,
+                  nativeTaskRef: null,
+                  prompt: "Review the diff.",
+                  title: null,
+                  model: null,
+                  completionWake: "always",
+                  status: "running",
+                  result: null,
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                },
               },
-            },
-            childRun,
-          ],
+              {
+                id: EventId.make(`event:wake-handoff-${name}-turn-item`),
+                type: "turn-item.updated",
+                threadId,
+                runId,
+                nodeId: taskId,
+                driver,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`turn-item:wake-handoff-${name}`),
+                  threadId,
+                  runId,
+                  nodeId: taskId,
+                  providerThreadId: parentProviderThreadId(threadId),
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 1,
+                  status: "running",
+                  title: "Review the diff",
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                  type: "subagent",
+                  subagentId: taskId,
+                  origin: "app_owned",
+                  driver,
+                  providerInstanceId: modelSelection.instanceId,
+                  childThreadId,
+                  prompt: "Review the diff.",
+                  result: null,
+                },
+              },
+              childRun,
+            ],
+          });
+          return { taskId, childThreadId, childRun };
         });
-        const roster = Effect.map(
-          orchestrator.getThreadShell(threadId),
-          (shell) =>
+        const roster = Effect.map(orchestrator.getThreadShell(threadId), (shell) =>
+          (
             shell?.pendingBackgroundTasks?.map((task) =>
               task.kind === "subagent" ? task.childThreadId : task.kind,
-            ) ?? [],
+            ) ?? []
+          ).toSorted(),
         );
-        assert.deepEqual(yield* roster, [childThreadId]);
-
-        yield* sink.write({
-          events: [
-            {
-              ...childRun,
-              id: EventId.make("event:wake-handoff-child-completed"),
-              payload: { ...childRun.payload, status: "completed", completedAt: now },
-            },
-          ],
+        const finishChild = Effect.fn(function* (
+          child: Effect.Success<ReturnType<typeof startChild>>,
+        ) {
+          yield* sink.write({
+            events: [
+              {
+                ...child.childRun,
+                id: EventId.make(`event:${child.childThreadId}-completed`),
+                payload: { ...child.childRun.payload, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          let wake = yield* requests.take;
+          while (wake.threadId !== threadId) wake = yield* requests.take;
+          return wake.delegatedCompletion!;
         });
-        let wake = yield* requests.take;
-        while (wake.threadId !== threadId) wake = yield* requests.take;
-        const delivery = wake.delegatedCompletion!;
+        const dispatchWake = (
+          delivery: Effect.Success<ReturnType<typeof finishChild>>,
+          taskId: NodeId,
+        ) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`command:${delivery.messageId}`),
+            threadId,
+            messageId: delivery.messageId,
+            text: "Delegated task finished.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+            delegatedCompletion: {
+              parentRunId: delivery.parentRunId,
+              generation: delivery.generation,
+              taskIds: [taskId],
+            },
+          });
+
+        const first = yield* startChild("first");
+        const second = yield* startChild("second");
+        assert.deepEqual(yield* roster, [first.childThreadId, second.childThreadId]);
+
+        const firstDelivery = yield* finishChild(first);
         // The result is committed and the wake is queued for the continuation worker, but
         // no wake run exists yet. Clients read a completed run with an empty roster as done.
         const handoff = yield* orchestrator.getThreadShell(threadId);
         assert.equal(handoff?.status, "completed");
-        assert.deepEqual(yield* roster, [childThreadId]);
+        assert.deepEqual(yield* roster, [first.childThreadId, second.childThreadId]);
 
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("command:wake-handoff-dispatch"),
-          threadId,
-          messageId: delivery.messageId,
-          text: "Delegated task finished.",
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-          delegatedCompletion: {
-            parentRunId: delivery.parentRunId,
-            generation: delivery.generation,
-            taskIds: [taskId],
-          },
-        });
+        yield* dispatchWake(firstDelivery, first.taskId);
         const woken = yield* orchestrator.getThreadShell(threadId);
         assert.notEqual(woken?.latestRunId, runId);
         assert.deepEqual(woken?.pendingBackgroundTasks, []);
+
+        const wakeRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === firstDelivery.messageId,
+        )!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:wake-handoff-first-wake-completed"),
+              type: "run.updated",
+              threadId,
+              runId: wakeRun.id,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: { ...wakeRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        assert.deepEqual(yield* roster, [second.childThreadId]);
+
+        // The spawning run already has a newer run, so the hold must key on the open delivery.
+        const secondDelivery = yield* finishChild(second);
+        assert.deepEqual(yield* roster, [second.childThreadId]);
+        yield* dispatchWake(secondDelivery, second.taskId);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadShell(threadId))?.pendingBackgroundTasks,
+          [],
+        );
       }),
     );
     it.effect("recovers a reserved delivery without loading conversation history", () =>
