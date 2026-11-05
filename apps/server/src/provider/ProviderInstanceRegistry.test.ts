@@ -878,7 +878,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       return built;
     });
-    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
+    return { vault, reads, invalidated, created, configs, configMap, make, makeGated, gate };
   }
 
   it.effect("starts an instance with the secret its environment points at", () => {
@@ -899,13 +899,19 @@ describe("ProviderInstanceRegistry secret environment", () => {
   it.effect("marks an instance unavailable and names the variable it could not read", () => {
     const fixture = setup({});
     return Effect.gen(function* () {
-      const { registry } = yield* fixture.make;
+      const { registry, mutator } = yield* fixture.make;
+      const readsAtStartup = fixture.reads.length;
 
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       expect(fixture.created).toEqual([]);
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+
+      // A settings save that leaves it alone does not read the vault again.
+      yield* mutator.reconcile({ ...fixture.configMap });
+      expect(fixture.reads).toHaveLength(readsAtStartup);
+      expect(yield* registry.listUnavailable).toHaveLength(1);
     }).pipe(Effect.scoped);
   });
 
