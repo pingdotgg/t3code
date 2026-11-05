@@ -12,6 +12,7 @@ import {
   type FileManagerRevealKind,
   type LaunchEditorInput,
 } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -650,7 +651,9 @@ const tryRevealLinuxItem = Effect.fn("externalLauncher.tryRevealLinuxItem")(
 const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   input: LaunchEditorInput,
 ) {
-  const launch = yield* resolveEditorLaunch(input);
+  // Clients send `~/` host paths as written, and launches run without a shell to expand them.
+  const cwd = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
+  const launch = yield* resolveEditorLaunch({ ...input, cwd });
   if (
     input.editor === "file-manager" &&
     input.reveal === true &&
