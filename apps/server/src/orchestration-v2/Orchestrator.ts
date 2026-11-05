@@ -378,6 +378,8 @@ export interface OrchestratorV2Shape {
     taskId?: NodeId,
   ) => Effect.Effect<boolean, OrchestratorProjectionError>;
   readonly restartContinuationPending: (run: OrchestrationV2Run) => Effect.Effect<boolean>;
+  /** A run that ended owing a compaction recovery step the server has not dispatched yet. */
+  readonly compactionRecoveryPending: (run: OrchestrationV2Run) => Effect.Effect<boolean>;
   /** Declined continuations emit no thread event; this still wakes waiters. */
   readonly awaitRestartContinuation: (run: OrchestrationV2Run) => Effect.Effect<void>;
   readonly dispatch: (
@@ -2361,22 +2363,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // Clients send their own "onReturn" compactions; the server sends one only to recover a full session.
   const isRecoveryCompaction = (message: OrchestrationV2ConversationMessage) =>
-    message.creationSource === "server" && idleCompactionOf(message) === "onReturn";
+    message.createdBy === "agent" &&
+    message.creationSource === "server" &&
+    idleCompactionOf(message) === "onReturn";
 
-  // A full native session is compacted in place, then continued. Both steps jump the queue (and
-  // start by id if a hold left them queued) so queued work waits behind them instead of failing.
-  const compactionRecoveryRun = Effect.fn("Orchestrator.compactionRecoveryRun")(function* (
+  // The recovery step a run that just ended still owes: compact its full session, then continue.
+  const compactionRecoveryStep = Effect.fn("Orchestrator.compactionRecoveryStep")(function* (
     threadId: ThreadId,
     run: OrchestrationV2Run,
   ) {
     const failed = run.status === "failed";
-    if (!failed && run.status !== "completed") return undefined;
-    if (!failed) {
-      const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
-        messageIds: [run.userMessageId],
-      });
-      if (!messages.some(isRecoveryCompaction)) return undefined;
-    }
+    if (!failed && (run.status !== "completed" || run.compactionRecoveryOfRunId === undefined))
+      return undefined;
     const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "turnItems"], {
       turnItemTypes: ["error", "run_interrupt_request"],
       turnItemRunIds: [run.id],
@@ -2386,12 +2384,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.turnItems.some((item) => item.type === "run_interrupt_request")
     )
       return undefined;
-    if (
-      failed &&
-      latestRootProviderFailure(run, projection.turnItems)?.code !==
+    if (failed)
+      return latestRootProviderFailure(run, projection.turnItems)?.code ===
         CONTEXT_COMPACTION_REQUIRED_CODE
+        ? ({ text: IDLE_COMPACTION_TEXT, idleCompaction: "onReturn" } as const)
+        : undefined;
+    const source = projection.runs.find(
+      (candidate) => candidate.id === run.compactionRecoveryOfRunId,
+    );
+    const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+      messageIds: [run.userMessageId, ...(source === undefined ? [] : [source.userMessageId])],
+    });
+    if (
+      !messages.some((message) => message.id === run.userMessageId && isRecoveryCompaction(message))
     )
       return undefined;
+    const sourceMessage = messages.find((message) => message.id === source?.userMessageId);
+    // Notification turns stay out of turn-start history, so the provider would never see this one.
+    return sourceMessage === undefined ||
+      (sourceMessage.notification === undefined && sourceMessage.delegatedCompletion === undefined)
+      ? { text: "Continue where you left off." }
+      : { text: `Continue where you left off.\n\n${sourceMessage.text}` };
+  });
+
+  // A full native session is compacted in place, then continued. Both steps jump the queue (and
+  // start by id if a hold left them queued) so queued work waits behind them instead of failing.
+  const compactionRecoveryRun = Effect.fn("Orchestrator.compactionRecoveryRun")(function* (
+    threadId: ThreadId,
+    run: OrchestrationV2Run,
+  ) {
+    const step = yield* compactionRecoveryStep(threadId, run);
+    if (step === undefined) return undefined;
+    const failed = run.status === "failed";
     const messageId = MessageId.make(
       failed ? `context-compact:${run.id}` : `context-compact-continue:${run.id}`,
     );
@@ -2401,9 +2425,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       messageId,
       threadId,
       attachments: [],
-      ...(failed
-        ? { text: IDLE_COMPACTION_TEXT, idleCompaction: "onReturn" }
-        : { text: "Continue where you left off." }),
+      ...step,
       createdBy: "agent",
       creationSource: "server",
       compactionRecoveryOfRunId: run.id,
@@ -6111,6 +6133,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.compactionRecoveryOfRunId === undefined
+          ? {}
+          : { compactionRecoveryOfRunId: command.compactionRecoveryOfRunId }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       };
       const attempt: OrchestrationV2RunAttempt = {
@@ -6499,6 +6524,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.compactionRecoveryOfRunId === undefined
+          ? {}
+          : { compactionRecoveryOfRunId: command.compactionRecoveryOfRunId }),
         ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
           ? { workspacePreparation: dispatchMode.workspaceStrategy }
           : {}),
@@ -7254,6 +7282,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.restartContinuationOfRunId === undefined
         ? {}
         : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+      ...(command.compactionRecoveryOfRunId === undefined
+        ? {}
+        : { compactionRecoveryOfRunId: command.compactionRecoveryOfRunId }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection.runs, command),
     };
@@ -14098,6 +14129,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     restartContinuationPending: Effect.fn("OrchestratorV2.restartContinuationPending")(
       function (run) {
         return awaitsRestartContinuation(run).pipe(Effect.orElseSucceed(() => false));
+      },
+    ),
+    compactionRecoveryPending: Effect.fn("OrchestratorV2.compactionRecoveryPending")(
+      function (run) {
+        return compactionRecoveryStep(run.threadId, run).pipe(
+          Effect.map((step) => step !== undefined),
+          Effect.orElseSucceed(() => false),
+        );
       },
     ),
     awaitRestartContinuation: Effect.fn("OrchestratorV2.awaitRestartContinuation")(function (run) {

@@ -84,7 +84,10 @@ export function withCreationProvenance(
       const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
       return { ...rest, ...provenance };
     }
-    case "message.dispatch":
+    case "message.dispatch": {
+      const { compactionRecoveryOfRunId: _compactionRecoveryOfRunId, ...rest } = command;
+      return { ...rest, ...provenance };
+    }
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":
@@ -526,13 +529,17 @@ export function latestRun(
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
-function latestRestartContinuation(
+function latestContinuation(
   runs: ReadonlyArray<OrchestrationV2Run>,
   run: OrchestrationV2Run,
 ): OrchestrationV2Run {
   let current = run;
   for (let hops = 0; hops < runs.length; hops++) {
-    const next = runs.find((candidate) => candidate.restartContinuationOfRunId === current.id);
+    const next = runs.find(
+      (candidate) =>
+        candidate.restartContinuationOfRunId === current.id ||
+        candidate.compactionRecoveryOfRunId === current.id,
+    );
     if (next === undefined) break;
     current = next;
   }
@@ -920,8 +927,8 @@ const make = Effect.gen(function* () {
     if (selectedRun === undefined) {
       return { threadId: input.threadId, run: null, timedOut: false };
     }
-    // A restart cuts a run and continues it as a new run. Follow that chain,
-    // so a cut run is not the answer while its continuation is pending.
+    // A restart cuts a run and continues it as a new run, and compaction recovery continues a run
+    // that found its session full. Follow that chain while a continuation is pending.
     // Runs per matching event and is already covered by the waitForThread span.
     const outcome = Effect.fnUntraced(function* (runs: ReadonlyArray<OrchestrationV2Run>) {
       const current = runs.find((candidate) => candidate.id === selectedRun.id);
@@ -931,9 +938,11 @@ const make = Effect.gen(function* () {
           runId: selectedRun.id,
         });
       }
-      const run = latestRestartContinuation(runs, current);
+      const run = latestContinuation(runs, current);
       const pending =
-        isTerminalRunStatus(run.status) && (yield* orchestrator.restartContinuationPending(run));
+        isTerminalRunStatus(run.status) &&
+        ((yield* orchestrator.restartContinuationPending(run)) ||
+          (yield* orchestrator.compactionRecoveryPending(run)));
       return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
@@ -1005,7 +1014,8 @@ const make = Effect.gen(function* () {
             untilDelegatedWorkSettled ||
             stored.event.type !== "run.updated" ||
             stored.event.payload.id === selectedRun.id ||
-            stored.event.payload.restartContinuationOfRunId !== undefined,
+            stored.event.payload.restartContinuationOfRunId !== undefined ||
+            stored.event.payload.compactionRecoveryOfRunId !== undefined,
         ),
       ),
       initial.pending

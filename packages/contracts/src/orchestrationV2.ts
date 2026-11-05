@@ -692,6 +692,8 @@ export const OrchestrationV2Run = Schema.Struct({
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   restartContinuationOfRunId: Schema.optional(RunId),
+  /** The run whose full native session this compaction recovery step continues. */
+  compactionRecoveryOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
