@@ -382,13 +382,14 @@ describe("VcsStatusBroadcaster", () => {
   );
 
   it.effect("refreshes a loaded cwd without reusing a previous branch's PR", () => {
-    const state = {
+    const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
+      currentRemoteStatus: { ...baseRemoteStatus, aheadCount: 3, behindCount: 5 },
       localStatusCalls: 0,
       remoteStatusCalls: 0,
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [],
     };
 
     return Effect.gen(function* () {
@@ -400,9 +401,14 @@ describe("VcsStatusBroadcaster", () => {
       yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.equal(state.remoteStatusCalls, 1);
 
-      state.currentRemoteStatus = remoteStatusWithPr;
+      state.backgroundWorkEnabled = false;
+      state.currentRemoteStatus = { ...remoteStatusWithPr, aheadCount: 7 };
       const refreshed = yield* broadcaster.refreshPullRequestStatus("/repo");
-      assert.deepStrictEqual(refreshed, remoteStatusWithPr);
+      assert.deepStrictEqual(refreshed, state.currentRemoteStatus);
+      const merged = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(merged.aheadCount, 7);
+      assert.equal(merged.behindCount, 0);
+      assert.equal(state.remoteStatusRefreshUpstreamValues?.at(-1), false);
       assert.equal(state.remoteStatusCalls, 2);
       assert.equal(state.remoteInvalidationCalls, 2);
 
@@ -944,7 +950,7 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
-  it.effect("recovers a discarded branch lookup on the next permitted turn-end refresh", () => {
+  it.effect("recovers a discarded branch lookup on the next turn-end refresh", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: { ...remoteStatusWithPr, aheadCount: 3, behindCount: 5 },
@@ -983,9 +989,6 @@ describe("VcsStatusBroadcaster", () => {
         pr: { ...remoteStatusWithPr.pr!, number: 2979, headRef: "feature/next-status" },
       };
       state.backgroundWorkEnabled = false;
-      yield* broadcaster.refreshPullRequestStatus("/repo");
-      assert.equal(state.remoteStatusCalls, 1);
-      state.backgroundWorkEnabled = true;
       const recovered = yield* broadcaster.refreshPullRequestStatus("/repo");
       assert.deepStrictEqual(recovered, state.currentRemoteStatus);
       const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
