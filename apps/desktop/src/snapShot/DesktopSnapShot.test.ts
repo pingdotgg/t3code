@@ -1007,12 +1007,31 @@ it.effect("a policy without SnapShots keeps capture off whatever the user saved"
         (yield* service.state).policyDenial,
         "Example Corp's policy does not allow SnapShots.",
       );
+      assert.deepEqual(yield* service.listPending, []);
     }),
   ).pipe(
     Effect.provide(
       layerTest(
         "darwin",
-        { makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test") },
+        {
+          makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test"),
+          readDirectory: () => Effect.succeed(["capture.json"]),
+          readFileString: () =>
+            Effect.succeed(
+              JSON.stringify({
+                id: "00000000-0000-4000-8000-000000000000",
+                name: "capture.png",
+                mimeType: "image/png",
+                sizeBytes: 3,
+                source: {
+                  kind: "snap-shot",
+                  capturedAt: "2026-11-05T10:00:00.000Z",
+                  appName: "Editor",
+                  windowTitle: "Editor",
+                },
+              }),
+            ),
+        },
         Option.none(),
         undefined,
         { schemaVersion: 1, organization: "Example Corp", limits: { snapShot: false } },

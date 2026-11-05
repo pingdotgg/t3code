@@ -1736,7 +1736,11 @@ export const make = Effect.gen(function* () {
     checkShortcut,
     setShortcutSuppressed,
     capture,
-    listPending: fileSystem.readDirectory(captureDirectory).pipe(
+    // Captures from before the limit stay on disk for when it is removed.
+    listPending: (policyDenial === undefined
+      ? fileSystem.readDirectory(captureDirectory)
+      : Effect.succeed([])
+    ).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           cause.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(cause),

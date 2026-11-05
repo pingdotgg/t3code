@@ -105,11 +105,6 @@ export function SnapShotSettings() {
     wasEnabled: boolean;
   } | null>();
   const wizard = chosenWizard !== undefined ? chosenWizard : resumedCaptureSetup(state, resume);
-  // The startup redirect follows the saved resume, and only the wizard would clear it.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- localStorage is outside React.
-  useEffect(() => {
-    if (policyDenial !== undefined) clearSnapShotSetupResume();
-  }, [policyDenial]);
   // The wizard shows errors inline; outside it there is nowhere to, so they become a toast.
   const reportSetupError = (title: string, error: unknown) => {
     const report = snapShotSetupError(title, error);
@@ -196,6 +191,16 @@ export function SnapShotSettings() {
       reportSetupError("Couldn't save capture settings", error);
     }
   };
+
+  // The startup redirect follows the saved resume, and the wizard that would clear it stays closed.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- localStorage is outside React.
+  useEffect(() => {
+    if (policyDenial === undefined || !resume) return;
+    const restored = captureSetupShouldDisableOnClose(resume.wasEnabled, false)
+      ? updateClientSettings({ snapShotEnabled: false })
+      : Promise.resolve();
+    void restored.then(clearSnapShotSetupResume, () => undefined);
+  }, [policyDenial, resume]);
 
   const saveIncludeAccessibility = async (includeAccessibility: boolean) => {
     try {
