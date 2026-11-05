@@ -848,54 +848,93 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a viewer whose screencast never stops delays a snapshot boundedly, not forever", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
-      const viewerScope = yield* Scope.fork(yield* Effect.scope);
-      yield* browser.attachViewer(viewerInput(tabId, false)).pipe(Scope.provide(viewerScope));
-      const session = contexts[0]!.sessions.at(-1)!;
-      // The viewer's next screencast stop answers only when the test ends, after
-      // the viewer detaches.
-      const stalled = Promise.withResolvers<Record<string, unknown>>();
-      yield* Effect.addFinalizer(() => Effect.sync(() => stalled.resolve({})));
-      const stops = yield* Queue.unbounded<void>();
-      const send = session.send.getMockImplementation()!;
-      let stalling = true;
-      session.send.mockImplementation((method, input) => {
-        if (method !== "Page.stopScreencast" || !stalling) return send(method, input);
-        stalling = false;
-        Queue.offerUnsafe(stops, undefined);
-        return stalled.promise;
-      });
-      const captures = () =>
-        contexts[0]!.sessions.flatMap((item) =>
-          item.send.mock.calls.filter(
-            ([method, input]) =>
-              method === "Page.captureScreenshot" && (input as { format: string }).format === "png",
-          ),
-        ).length;
-      const snapshot = broker.invoke<PreviewAutomationSnapshot>({
-        scope,
-        tabId,
-        operation: "snapshot",
-        input: {},
-      });
-      const first = yield* snapshot.pipe(Effect.forkScoped);
-      yield* Queue.take(stops);
-      expect(captures()).toBe(0);
-      // The pause gives up on the stalled viewer and the snapshot captures without it.
-      yield* TestClock.adjust("2 seconds");
-      expect(captures()).toBe(1);
-      // Its resume waits behind the stalled stop and gives up too, releasing the tab.
-      yield* TestClock.adjust("2 seconds");
-      expect((yield* Fiber.join(first)).accessibilityTree).toEqual(expect.any(String));
-      // Once the stalled viewer detaches, the next snapshot no longer waits for it.
-      yield* Scope.close(viewerScope, Exit.void);
-      expect((yield* snapshot).accessibilityTree).toEqual(expect.any(String));
-      expect(captures()).toBe(2);
-    }),
-  ).pipe(Effect.provide(layer)),
+it.effect.each([
+  { kind: "viewer", lateAnswer: false },
+  { kind: "viewer", lateAnswer: true },
+  { kind: "recording", lateAnswer: true },
+] as const)(
+  "a $kind does not block snapshots after a stalled stop, with late answer: $lateAnswer",
+  ({ kind, lateAnswer }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        const viewerScope = yield* Scope.fork(yield* Effect.scope);
+        if (kind === "viewer") {
+          yield* browser.attachViewer(viewerInput(tabId, false)).pipe(Scope.provide(viewerScope));
+        } else {
+          yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+        }
+        const session = contexts[0]!.sessions.at(-1)!;
+        // Keep the stop unanswered through both handoff deadlines. It either
+        // answers while still attached or stays stalled until after detach.
+        const stalled = Promise.withResolvers<Record<string, unknown>>();
+        yield* Effect.addFinalizer(() => Effect.sync(() => stalled.resolve({})));
+        const stops = yield* Queue.unbounded<void>();
+        const resumes = yield* Queue.unbounded<void>();
+        const send = session.send.getMockImplementation()!;
+        let stalling = true;
+        let stopPending = false;
+        let startsBeforeStop = 0;
+        session.send.mockImplementation((method, input) => {
+          if (method === "Page.stopScreencast" && stalling) {
+            stalling = false;
+            stopPending = true;
+            Queue.offerUnsafe(stops, undefined);
+            return stalled.promise.finally(() => {
+              stopPending = false;
+            });
+          }
+          if (method === "Page.startScreencast") {
+            if (stopPending) startsBeforeStop++;
+            Queue.offerUnsafe(resumes, undefined);
+          }
+          return send(method, input);
+        });
+        const captures = () =>
+          contexts[0]!.sessions.flatMap((item) =>
+            item.send.mock.calls.filter(
+              ([method, input]) =>
+                method === "Page.captureScreenshot" &&
+                (input as { format: string }).format === "png",
+            ),
+          ).length;
+        const snapshot = broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+        });
+        const first = yield* snapshot.pipe(Effect.forkScoped);
+        yield* Queue.take(stops);
+        expect(captures()).toBe(0);
+        // The pause gives up on the stalled session and the snapshot captures without it.
+        yield* TestClock.adjust("2 seconds");
+        expect(captures()).toBe(1);
+        // Its resume waits behind the stalled stop and gives up too, releasing the tab.
+        yield* TestClock.adjust("2 seconds");
+        expect((yield* Fiber.join(first)).accessibilityTree).toEqual(expect.any(String));
+        expect(startsBeforeStop).toBe(0);
+        expect(yield* Queue.size(resumes)).toBe(0);
+        if (lateAnswer) {
+          stalled.resolve({});
+          yield* Queue.take(resumes);
+          // Recovery needs no additional clock advance, and the next snapshot
+          // leaves the same session streaming again.
+          expect((yield* snapshot).accessibilityTree).toEqual(expect.any(String));
+          expect(
+            session.send.mock.calls
+              .filter(
+                ([method]) => method === "Page.stopScreencast" || method === "Page.startScreencast",
+              )
+              .at(-1)?.[0],
+          ).toBe("Page.startScreencast");
+          expect(startsBeforeStop).toBe(0);
+        }
+        yield* Scope.close(viewerScope, Exit.void);
+        expect((yield* snapshot).accessibilityTree).toEqual(expect.any(String));
+        expect(captures()).toBe(lateAnswer ? 3 : 2);
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live(

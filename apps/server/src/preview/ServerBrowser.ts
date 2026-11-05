@@ -292,6 +292,7 @@ interface Recording {
   readonly session: CDPSession;
   readonly startedAt: string;
   readonly framesInFlight: Set<Promise<void>>;
+  screencastParams: Promise<void>;
 }
 
 interface ServerTab {
@@ -1770,6 +1771,7 @@ const make = Effect.gen(function* () {
           session: opened,
           startedAt: new Date().toISOString(),
           framesInFlight,
+          screencastParams: Promise.resolve(),
         };
         tab.recording = recording;
         return recording;
@@ -1783,6 +1785,21 @@ const make = Effect.gen(function* () {
     });
     tab.recordingStart = started;
     return started;
+  };
+
+  // Like viewers, recordings queue a restart behind any unanswered stop even
+  // after the snapshot stops waiting for that session.
+  const setRecordingScreencast = (tab: ServerTab, recording: Recording, paused: boolean) => {
+    recording.screencastParams = recording.screencastParams.then(async () => {
+      if (tab.recording !== recording || (!paused && tab.capturing > 0)) return;
+      await recording.session
+        .send(
+          paused ? "Page.stopScreencast" : "Page.startScreencast",
+          paused ? undefined : RECORDING_SCREENCAST,
+        )
+        .catch(constVoid);
+    });
+    return recording.screencastParams;
   };
 
   // A stalled viewer or recording keeps its own late answer; the capture goes on without it.
@@ -1800,7 +1817,7 @@ const make = Effect.gen(function* () {
       try {
         await settleScreencasts([
           ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
+          recording ? setRecordingScreencast(tab, recording, true) : undefined,
         ]);
         return await capture();
       } finally {
@@ -1809,7 +1826,7 @@ const make = Effect.gen(function* () {
         await settleScreencasts([
           ...[...tab.viewers].map((viewer) => viewer.resume()),
           recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
+            ? setRecordingScreencast(tab, recording, false)
             : undefined,
         ]);
       }
@@ -1827,7 +1844,7 @@ const make = Effect.gen(function* () {
       let mimeType: string | null;
       const chunks: Array<Buffer> = [];
       try {
-        await recording.session.send("Page.stopScreencast").catch(constVoid);
+        await setRecordingScreencast(tab, recording, true);
         await Promise.all(recording.framesInFlight);
         await recording.session.detach().catch(constVoid);
         const stopped = await recording.encoder.evaluate(() =>
