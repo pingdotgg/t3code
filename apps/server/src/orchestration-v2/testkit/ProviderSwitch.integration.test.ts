@@ -6,6 +6,7 @@ import {
   type ChatAttachment,
   EventId,
   MessageId,
+  NodeId,
   type ModelSelection,
   type OrchestrationV2Command,
   type OrchestrationV2ProviderCapabilities,
@@ -18,6 +19,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ThreadId,
   TurnItemId,
   ProviderDriverKind,
@@ -1480,152 +1482,260 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
-  it.live("compacts a full native session in place while it has background work", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const name = "full-native-session-compacts";
-        const cwd = yield* checkpointWorkspace(name);
-        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
-        const nativeThreadGeneration = yield* Ref.make(0);
-        // A request that never reached the provider is resent as backlog on the next turn.
-        const failStartOnce = yield* Ref.make(false);
-        // Background work makes replacing the native session impossible.
-        const pendingBackgroundWork = yield* Ref.make(true);
-        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
-          makeTestAdapter({
-            instanceId: CODEX_MODEL_SELECTION.instanceId,
-            driver: CODEX_DRIVER,
-            capabilities: CodexProviderCapabilitiesV2,
-            modelSelection: CODEX_MODEL_SELECTION,
-            responseByRunOrdinal: {},
-            capturedTurns,
-            injectedHistory,
-            nativeThreadGeneration,
-            pendingBackgroundWork,
-            failStartOnce,
-            getModelContextWindow: () => 258_400,
-            tokenUsageByRunOrdinal: {
-              1: { usedTokens: 250_164, maxTokens: 258_400 },
-              4: { usedTokens: 20_000, maxTokens: 258_400 },
-            },
-          }),
-        ]);
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const send = Effect.fn("send")(function* (ordinal: number, text: string) {
-            yield* orchestrator.dispatch({
-              type: "message.dispatch",
-              commandId: CommandId.make(`full-native:${ordinal}`),
-              threadId,
-              messageId: MessageId.make(`full-native:${ordinal}`),
-              createdBy: "user",
-              creationSource: "web",
-              text,
-              attachments: [],
+  it.live.each(["background work", "a delegated follow-up", "no room after compacting"] as const)(
+    "compacts a full native session in place with %s",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const name = "full-native-session-compacts";
+          const cwd = yield* checkpointWorkspace(name);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const nativeThreadGeneration = yield* Ref.make(0);
+          // A request that never reached the provider is resent as backlog on the next turn.
+          const failStartOnce = yield* Ref.make(false);
+          // Background work makes replacing the native session impossible.
+          const pendingBackgroundWork = yield* Ref.make(scenario !== "no room after compacting");
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
               modelSelection: CODEX_MODEL_SELECTION,
-              dispatchMode: { type: "start_immediately" },
-            });
-            yield* orchestrator.streamStoredEvents.pipe(
-              Stream.filter(
-                ({ event }) =>
-                  event.type === "run.updated" &&
-                  event.payload.ordinal === ordinal &&
-                  (event.payload.status === "completed" || event.payload.status === "failed"),
-              ),
-              Stream.runHead,
-            );
-            yield* worker.drain();
-          });
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make("full-native:create"),
-            threadId,
-            projectId,
-            createdBy: "user",
-            creationSource: "web",
-            title: "Full native session",
-            modelSelection: CODEX_MODEL_SELECTION,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-          });
-          // Each turn resumes a detached session, as after a server restart.
-          const detach = Effect.fn("detach")(function* (ordinal: number) {
-            yield* orchestrator.dispatch({
-              type: "provider-session.detach",
-              commandId: CommandId.make(`full-native:detach:${ordinal}`),
-              threadId,
-              providerSessionId: (yield* orchestrator.getThreadProjection(threadId))
-                .providerThreads[0]!.providerSessionId!,
-            });
-            yield* worker.drain();
-          });
-          yield* send(1, "Original brief");
-          yield* detach(2);
-          yield* Ref.set(failStartOnce, true);
-          yield* send(2, `Request 2 ${"r".repeat(6_000)}`);
-          yield* detach(3);
-          yield* send(3, "Request 3");
-          const failed = yield* orchestrator.getThreadProjection(threadId);
-          assert.deepEqual(
-            failed.turnItems.flatMap((item) =>
-              item.type === "error" && item.runId === failed.runs[2]!.id ? [item.failure.code] : [],
-            ),
-            [CONTEXT_COMPACTION_REQUIRED_CODE],
-          );
-          yield* orchestrator.streamStoredEvents.pipe(
-            Stream.filter(
-              ({ event }) =>
-                event.type === "run.updated" &&
-                event.payload.userMessageId.startsWith("context-compact-continue:") &&
-                event.payload.status === "completed",
-            ),
-            Stream.runHead,
-          );
-          yield* worker.drain();
-
-          const projection = yield* waitForIdle(threadId);
-          assert.deepEqual(
-            projection.runs.map((run) => [run.userMessageId.split(":")[0], run.status]),
-            [
-              ["full-native", "completed"],
-              ["full-native", "failed"],
-              ["full-native", "failed"],
-              ["context-compact", "completed"],
-              ["context-compact-continue", "completed"],
-            ],
-          );
-          const turns = yield* Ref.get(capturedTurns);
-          assert.deepEqual(
-            turns.map((turn) => turn.text.slice(0, 9)),
-            ["Original ", "/compact", "Continue "],
-          );
-          // One native thread throughout: compaction made room, nothing was replaced.
-          assert.equal(yield* Ref.get(nativeThreadGeneration), 1);
-          assert.include(
-            `${yield* encodeJson(yield* Ref.get(injectedHistory))}${turns.at(-1)!.text}`,
-            "Request 3",
-          );
-        }).pipe(
-          Effect.provide(
-            ProviderReplayHarness.layerWithRegistry(
-              {
-                name,
-                runtimePolicyOverride: {
-                  cwd,
-                  approvalPolicy: "never",
-                  sandboxPolicy: { type: "readOnly" },
+              responseByRunOrdinal: { 5: "Request 3 done" },
+              capturedTurns,
+              injectedHistory,
+              nativeThreadGeneration,
+              pendingBackgroundWork,
+              failStartOnce,
+              getModelContextWindow: () => 258_400,
+              tokenUsageByRunOrdinal: {
+                1: { usedTokens: 250_164, maxTokens: 258_400 },
+                4: {
+                  usedTokens: scenario === "no room after compacting" ? 250_164 : 20_000,
+                  maxTokens: 258_400,
                 },
               },
-              layerRegistry,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const runEnded = Effect.fn("runEnded")(function* (
+              matches: (userMessageId: string, ordinal: number) => boolean,
+            ) {
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    matches(event.payload.userMessageId, event.payload.ordinal) &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+            const send = Effect.fn("send")(function* (ordinal: number, text: string) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`full-native:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`full-native:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: CODEX_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* runEnded((_, runOrdinal) => runOrdinal === ordinal);
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("full-native:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Full native session",
+              modelSelection: CODEX_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            // Each turn resumes a detached session, as after a server restart.
+            const detach = Effect.fn("detach")(function* (ordinal: number) {
+              yield* orchestrator.dispatch({
+                type: "provider-session.detach",
+                commandId: CommandId.make(`full-native:detach:${ordinal}`),
+                threadId,
+                providerSessionId: (yield* orchestrator.getThreadProjection(threadId))
+                  .providerThreads[0]!.providerSessionId!,
+              });
+              yield* worker.drain();
+            });
+            yield* send(1, "Original brief");
+            const parentThreadId = ThreadId.make("thread:full-native-parent");
+            if (scenario === "a delegated follow-up") {
+              // The thread becomes an app-owned child whose task finished, so later
+              // messages are follow-ups the parent waits on.
+              const first = yield* orchestrator.getThreadProjection(threadId);
+              const parentRun = {
+                ...first.runs[0]!,
+                id: RunId.make("run:full-native-parent"),
+                threadId: parentThreadId,
+                rootNodeId: NodeId.make("node:full-native-parent"),
+              };
+              const taskId = NodeId.make("node:full-native-task");
+              const now = yield* DateTime.now;
+              yield* (yield* EventSink.EventSinkV2).write({
+                commandId: CommandId.make("command:runtime-reconcile:full-native-parent"),
+                events: [
+                  {
+                    id: EventId.make("full-native-parent:thread"),
+                    type: "thread.created",
+                    threadId: parentThreadId,
+                    occurredAt: now,
+                    payload: {
+                      ...first.thread,
+                      id: parentThreadId,
+                      title: "Parent",
+                      activeProviderThreadId: null,
+                      lineage: {
+                        parentThreadId: null,
+                        relationshipToParent: null,
+                        rootThreadId: parentThreadId,
+                      },
+                    },
+                  },
+                  {
+                    id: EventId.make("full-native-parent:run"),
+                    type: "run.updated",
+                    threadId: parentThreadId,
+                    runId: parentRun.id,
+                    occurredAt: now,
+                    payload: parentRun,
+                  },
+                  {
+                    id: EventId.make("full-native-parent:task"),
+                    type: "subagent.updated",
+                    threadId: parentThreadId,
+                    runId: parentRun.id,
+                    nodeId: taskId,
+                    occurredAt: now,
+                    payload: {
+                      id: taskId,
+                      threadId: parentThreadId,
+                      runId: parentRun.id,
+                      parentNodeId: parentRun.rootNodeId,
+                      origin: "app_owned",
+                      createdBy: "agent",
+                      driver: CODEX_DRIVER,
+                      providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                      providerThreadId: first.providerThreads[0]!.id,
+                      childThreadId: threadId,
+                      nativeTaskRef: null,
+                      prompt: "Original task",
+                      title: null,
+                      model: null,
+                      completionWake: "settled_only",
+                      completionDelivery: { state: "acknowledged", observedByRunId: parentRun.id },
+                      status: "completed",
+                      result: "Original done",
+                      startedAt: now,
+                      completedAt: now,
+                      updatedAt: now,
+                    },
+                  },
+                  {
+                    id: EventId.make("full-native-parent:child"),
+                    type: "thread.metadata-updated",
+                    threadId,
+                    occurredAt: now,
+                    payload: {
+                      ...first.thread,
+                      lineage: {
+                        parentThreadId,
+                        relationshipToParent: "subagent",
+                        rootThreadId: parentThreadId,
+                      },
+                      forkedFrom: { type: "node", nodeId: taskId },
+                    },
+                  },
+                ],
+              });
+            }
+            yield* detach(2);
+            yield* Ref.set(failStartOnce, true);
+            yield* send(2, `Request 2 ${"r".repeat(6_000)}`);
+            yield* detach(3);
+            yield* send(3, "Request 3");
+            const failed = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              failed.turnItems.flatMap((item) =>
+                item.type === "error" && item.runId === failed.runs[2]!.id
+                  ? [item.failure.code]
+                  : [],
+              ),
+              [CONTEXT_COMPACTION_REQUIRED_CODE],
+            );
+            yield* runEnded((userMessageId) =>
+              userMessageId.startsWith("context-compact-continue:"),
+            );
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              projection.runs.map((run) => [run.userMessageId.split(":")[0], run.status]),
+              [
+                ["full-native", "completed"],
+                ["full-native", "failed"],
+                ["full-native", "failed"],
+                ["context-compact", "completed"],
+                ["context-compact-continue", "completed"],
+              ],
+            );
+            yield* waitForIdle(threadId);
+            const turns = yield* Ref.get(capturedTurns);
+            assert.deepEqual(
+              turns.map((turn) => turn.text.slice(0, 9)),
+              ["Original ", "/compact", "Continue "],
+            );
+            // Compaction made room, so nothing was replaced. When it could not, the
+            // continuation replaces the session instead of compacting again.
+            assert.equal(
+              yield* Ref.get(nativeThreadGeneration),
+              scenario === "no room after compacting" ? 2 : 1,
+            );
+            assert.include(
+              `${yield* encodeJson(yield* Ref.get(injectedHistory))}${turns.at(-1)!.text}`,
+              "Request 3",
+            );
+            if (scenario === "a delegated follow-up") {
+              const followup = projection.runs.find(
+                (run) => run.userMessageId === "full-native:3",
+              )!;
+              const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+              const task = parent.subagents.find((row) => row.id === followup.delegatedTaskId)!;
+              assert.deepEqual([task.status, task.result], ["completed", "Request 3 done"]);
+            }
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
             ),
-          ),
-        );
-      }),
-    ),
+          );
+        }),
+      ),
   );
 
   it.live.each([

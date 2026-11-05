@@ -2396,12 +2396,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
         messageIds: queued.map((candidate) => candidate.userMessageId),
       });
-      // Work that slipped in ahead of the compaction fails the same way; one compaction covers both.
-      const pending = queued.find((candidate) =>
-        messages.some(
-          (message) => message.id === candidate.userMessageId && isRecoveryCompaction(message),
-        ),
+      const recoveryMessageIds = new Set(
+        messages.filter(isRecoveryCompaction).map((message) => message.id),
       );
+      // Work that slipped in ahead of the compaction fails the same way; one compaction covers both.
+      const pending = queued.find((candidate) => recoveryMessageIds.has(candidate.userMessageId));
       if (pending !== undefined) return pending.id;
     }
     const messageId = MessageId.make(
@@ -2418,6 +2417,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { text: "Continue where you left off." }),
       createdBy: "agent",
       creationSource: "server",
+      compactionRecoveryOfRunId: run.id,
       dispatchMode: { type: "queue_after_active" },
     });
     const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
@@ -5585,8 +5585,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
 
+    // A delegated task settles on its newest run, so its continuations carry it.
     const continuedTaskId = projection.runs.find(
-      (run) => run.id === command.restartContinuationOfRunId,
+      (run) => run.id === (command.restartContinuationOfRunId ?? command.compactionRecoveryOfRunId),
     )?.delegatedTaskId;
 
     if (projection.thread.settledOverride !== null) {
@@ -13847,7 +13848,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .withLock(
             threadId,
             Effect.gen(function* () {
-              const recoveryRunId = yield* compactionRecoveryRun(threadId, run);
+              const recoveryRunId = yield* compactionRecoveryRun(threadId, run).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to start compaction recovery", {
+                    threadId,
+                    runId: run.id,
+                    cause,
+                  }).pipe(Effect.as(undefined)),
+                ),
+              );
               if (recoveryRunId !== undefined)
                 return yield* startNextQueuedRun(threadId, { queuedRunId: recoveryRunId });
               if (run.status === "completed") yield* releaseUnattendedHolds(threadId, run.id);
