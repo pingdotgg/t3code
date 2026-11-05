@@ -73,10 +73,11 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const check = Effect.gen(function* () {
     const base = yield* pending;
     if (!enabled) return base;
+    const checkedBase = { ...base, status: "warning" as const };
     const executable = yield* runtime.installation.resolve().pipe(Effect.option);
     if (Option.isNone(executable))
       return {
-        ...base,
+        ...checkedBase,
         installed: false,
         models: [],
         message: "Set up Codex to get started.",
@@ -85,7 +86,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     const saved = yield* runtime.auth.read.pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isSome(saved) && !saved.value.scopes.includes("chatgpt.tokens.use.direct"))
       return {
-        ...base,
+        ...checkedBase,
         installed: true,
         version: executable.value.version,
         models: [],
@@ -99,7 +100,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       };
     if (Option.isNone(saved))
       return {
-        ...base,
+        ...checkedBase,
         installed: true,
         version: executable.value.version,
         models: [],
@@ -183,7 +184,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         runtime.auth.read.pipe(
           Effect.orElseSucceed(() => Option.none()),
           Effect.map((current) => ({
-            ...base,
+            ...checkedBase,
             installed: true,
             version: executable.value.version,
             models: [],

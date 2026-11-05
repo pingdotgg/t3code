@@ -34,7 +34,7 @@ export function getProviderStatusBannerKey(status: ServerProvider | null): strin
       incompatible.message ?? "",
     ].join("\u0000");
   }
-  if (status.status === "ready") return null;
+  if (status.status === "ready" || status.status === "checking") return null;
   // Antigravity validates credentials at session start; unknown restart auth is not failure.
   if (
     status.driver === "antigravity" &&
