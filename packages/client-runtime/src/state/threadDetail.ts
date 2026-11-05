@@ -43,6 +43,38 @@ const EMPTY_THREAD_STRUCTURE_TURN_ITEMS: ReadonlyArray<ThreadStructureVisibleTur
   Object.freeze([]);
 const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
 
+/**
+ * Changes when the agent may have changed the workspace, so file views and host images refresh.
+ * File tools are explicit; commands, MCP or dynamic tools and subagents are included because
+ * they can mutate the workspace without reporting the paths they touched.
+ */
+export function deriveWorkspaceMutationId(
+  visibleTurnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>,
+  latestCheckpointCompletedAt: string | null,
+) {
+  let itemId: string | null = null;
+  for (let index = visibleTurnItems.length - 1; index >= 0; index -= 1) {
+    const item = visibleTurnItems[index]?.item;
+    if (!item) continue;
+    if (
+      item.type !== "command_execution" &&
+      item.type !== "file_change" &&
+      item.type !== "dynamic_tool" &&
+      item.type !== "subagent"
+    ) {
+      continue;
+    }
+    if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
+      continue;
+    }
+    itemId = item.id;
+    break;
+  }
+  return itemId === null && latestCheckpointCompletedAt === null
+    ? null
+    : JSON.stringify([itemId, latestCheckpointCompletedAt]);
+}
+
 type TurnItem = OrchestrationV2ThreadProjection["turnItems"][number];
 type VisibleTurnItem = OrchestrationV2ThreadProjection["visibleTurnItems"][number];
 type AppThread = OrchestrationV2ThreadProjection["thread"];
@@ -501,8 +533,19 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ),
   );
 
+  const workspaceMutationIdAtomFamily = Atom.family((key: string) =>
+    Atom.make((get) =>
+      deriveWorkspaceMutationId(
+        get(quietVisibleTurnItemsAtomFamily(key)),
+        get(checkpointSummariesAtomFamily(key)).at(-1)?.completedAt ?? null,
+      ),
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-workspace-mutation-id:${key}`)),
+  );
+
   return {
     worktreePathAtom: (ref: ScopedThreadRef) => worktreePathAtomFamily(threadKey(ref)),
+    workspaceMutationIdAtom: (ref: ScopedThreadRef) =>
+      workspaceMutationIdAtomFamily(threadKey(ref)),
     updatedAtAtom: (ref: ScopedThreadRef) => updatedAtAtomFamily(threadKey(ref)),
     lastVisitedAtAtom: (ref: ScopedThreadRef) => lastVisitedAtAtomFamily(threadKey(ref)),
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
