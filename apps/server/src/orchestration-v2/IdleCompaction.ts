@@ -1,4 +1,8 @@
-import { isListedThreadLineage, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  type IdleCompactionMode,
+  isListedThreadLineage,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -23,11 +27,16 @@ export type IdleCompactionRecords = Pick<
   | "contextTransfers"
 >;
 
+/** Modes the server schedules as its own `/compact` turn. */
+export function isScheduledIdleCompaction(
+  mode: IdleCompactionMode,
+): mode is "beforeCacheExpires" | "inBackground" {
+  return mode === "beforeCacheExpires" || mode === "inBackground";
+}
+
 /**
- * When an idle Claude thread should compact, or null when it should not. The
- * window ends when the prompt cache of Claude's last request expires (1h on
- * subscriptions, 5m on API keys); compacting after that pays a full uncached
- * read.
+ * When an idle Claude thread should compact, or null when it should not.
+ * `beforeCacheExpires` needs a warm prompt-cache TTL; `inBackground` does not.
  */
 export function idleCompactionWindow(
   {
@@ -41,6 +50,7 @@ export function idleCompactionWindow(
     contextTransfers,
   }: IdleCompactionRecords,
   nowMs: number,
+  mode: "beforeCacheExpires" | "inBackground" = "beforeCacheExpires",
 ): {
   readonly runId: (typeof runs)[number]["id"];
   readonly startMs: number;
@@ -97,6 +107,9 @@ export function idleCompactionWindow(
     .map((turn) => turn.tokenUsage!)
     .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   if ((usages[0]?.usedTokens ?? 0) < MIN_CONTEXT_TOKENS) return null;
+  if (mode === "inBackground") {
+    return { runId: latestRun.id, startMs: nowMs, endMs: nowMs };
+  }
   // A request served fully from cache creates no cache entry and reports no
   // TTL, but it still refreshes the cache. Treat it as unknown and skip.
   const expiresAt = usages[0]?.promptCacheExpiresAt;

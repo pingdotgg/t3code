@@ -190,6 +190,24 @@ describe("idleCompactionWindow", () => {
     };
     expect(idleCompactionWindow(sideChat, NOW_MS)).toBeNull();
   });
+
+  it("compacts in the background without a cache expiry", () => {
+    expect(
+      idleCompactionWindow(records({ usedTokens: 199_999 }), NOW_MS, "inBackground"),
+    ).toBeNull();
+    expect(idleCompactionWindow(records(), NOW_MS, "inBackground")).toEqual({
+      runId,
+      startMs: NOW_MS,
+      endMs: NOW_MS,
+    });
+    expect(
+      idleCompactionWindow(records({ cacheExpiresInMs: 60 * MINUTE_MS }), NOW_MS, "inBackground"),
+    ).toEqual({
+      runId,
+      startMs: NOW_MS,
+      endMs: NOW_MS,
+    });
+  });
 });
 
 describe("IdleCompactionService", () => {
@@ -197,8 +215,10 @@ describe("IdleCompactionService", () => {
     { mode: "onReturn", reads: 0 },
     { mode: "off", reads: 0 },
     { mode: "beforeCacheExpires", reads: 1 },
+    { mode: "inBackground", reads: 1, cacheExpiresInMs: undefined },
     { mode: "beforeCacheExpires", override: "off", reads: 0 },
     { mode: "onReturn", override: "beforeCacheExpires", reads: 1 },
+    { mode: "onReturn", override: "inBackground", reads: 1, cacheExpiresInMs: undefined },
     { mode: "beforeCacheExpires", projectDisabled: true, reads: 0 },
     { mode: "beforeCacheExpires", enabled: false, reads: 0 },
     { mode: "beforeCacheExpires", driver: "codex", instance: "codex", reads: 0 },
@@ -221,7 +241,12 @@ describe("IdleCompactionService", () => {
             "instance" in test ? test.instance : "claudeAgent",
           );
           const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
-          const base = records({ cacheExpiresInMs: 2 * MINUTE_MS });
+          const base = records({
+            cacheExpiresInMs:
+              "cacheExpiresInMs" in test && test.cacheExpiresInMs === undefined
+                ? undefined
+                : 2 * MINUTE_MS,
+          });
           const data: OrchestrationV2ThreadProjection = {
             ...base,
             thread: {

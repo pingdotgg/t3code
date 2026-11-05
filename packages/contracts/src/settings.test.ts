@@ -278,7 +278,7 @@ describe("resolveIdleCompaction", () => {
 
   it("keeps the legacy switch a boolean, as shipped clients decode it", () => {
     const encode = Schema.encodeSync(Schema.toCodecJson(ServerSettings));
-    for (const mode of ["onReturn", "beforeCacheExpires", "off"] as const) {
+    for (const mode of ["onReturn", "beforeCacheExpires", "inBackground", "off"] as const) {
       const encoded = encode(withIdleCompaction(DEFAULT_SERVER_SETTINGS, mode)) as {
         readonly compactIdleThreads: unknown;
         readonly idleCompaction: unknown;

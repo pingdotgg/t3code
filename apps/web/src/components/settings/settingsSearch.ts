@@ -598,7 +598,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Compact idle threads",
     to: "/settings/providers",
     scope: "environment-defaults",
-    searchTerms: ["claude context compaction idle cache tokens usage summary resume"],
+    searchTerms: ["claude context compaction idle cache background tokens usage summary resume"],
   },
   {
     id: "auto-settle-merged-threads",

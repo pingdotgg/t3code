@@ -75,6 +75,10 @@ over 200,000 tokens. Each Claude provider's settings can override it:
   If the window is missed, such as when you enable this mode after the cache has
   expired or the server restarts before compaction runs, it falls back to
   **When you return**. Switch the chip to **Keep** to keep the full history for that message.
+- **In the background** compacts an idle thread as soon as it is over 200,000 tokens,
+  without waiting for the cache window. The compaction appears in the thread as a
+  `/compact` turn sent by T3 Code. If the server restarts before it runs, or the
+  thread was not eligible yet, it falls back to **When you return**.
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 
