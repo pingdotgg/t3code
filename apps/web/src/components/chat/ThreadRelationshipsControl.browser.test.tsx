@@ -408,6 +408,7 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
 const childId = ThreadId.make("thread-child");
 const codexId = ProviderInstanceId.make("codex");
 const claudeId = ProviderInstanceId.make("claudeAgent");
+const missingProviderId = ProviderInstanceId.make("unlisted");
 const launchSelection = {
   instanceId: codexId,
   model: "gpt-6-astra",
@@ -506,8 +507,13 @@ it.each([
     options: [{ id: "reasoningEffort", value: "xhigh" }],
   },
   { instanceId: claudeId, model: "claude-opus-5-5", options: [{ id: "effort", value: "max" }] },
+  {
+    instanceId: missingProviderId,
+    model: "gpt-6.1-sol",
+    options: [{ id: "reasoningEffort", value: "xhigh" }],
+  },
 ] satisfies ReadonlyArray<ModelSelection>)(
-  "Lineage follows a delegated child's model selection ($model)",
+  "Lineage follows a delegated child's model selection ($model / $instanceId)",
   async (selection) => {
     const { threadId, child } = setupModelSelection("app_owned", "gpt-6-astra");
     await using screen = await render(
@@ -518,6 +524,14 @@ it.each([
         showSideChats={false}
       />,
     );
+    if (selection.instanceId === missingProviderId) {
+      expect(
+        screen
+          .getByRole("button", { name: /Audit sync/ })
+          .element()
+          .querySelector("svg.lucide-bot"),
+      ).toBeNull();
+    }
     await userEvent.hover(screen.getByText("Audit sync", { exact: true }));
     await expect.element(page.getByText("gpt-6-astra · codex", { exact: true })).toBeVisible();
 
@@ -537,15 +551,30 @@ it.each([
       />,
     );
 
-    await expect
-      .element(page.getByText(`${selection.model} · ${selection.instanceId}`, { exact: true }))
-      .toBeVisible();
+    if (selection.instanceId === missingProviderId) {
+      await userEvent.hover(screen.getByRole("button", { name: /Audit sync/ }));
+    }
+    const modelLabel =
+      selection.instanceId === missingProviderId
+        ? "GPT-6.1-Sol"
+        : `${selection.model} · ${selection.instanceId}`;
+    await expect.element(page.getByText(modelLabel, { exact: true })).toBeVisible();
     await expect
       .element(page.getByText("gpt-6-astra · codex", { exact: true }))
       .not.toBeInTheDocument();
     await expect
-      .element(page.getByText(selection.options![0]!.value, { exact: false }))
+      .element(page.getByText(`· ${selection.options![0]!.value}`, { exact: true }))
       .toBeVisible();
+    if (selection.instanceId === missingProviderId) {
+      await vi.waitFor(() =>
+        expect(
+          screen
+            .getByRole("button", { name: /Audit sync/ })
+            .element()
+            .querySelector("svg.lucide-bot"),
+        ).not.toBeNull(),
+      );
+    }
   },
 );
 
