@@ -280,7 +280,9 @@ describe("call", () => {
     const { layer } = harness(() =>
       json({
         data: { repository: null },
-        errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository" }],
+        errors: [
+          { type: "NOT_FOUND", path: ["repository"], message: "Could not resolve to a Repository" },
+        ],
       }),
     );
     return Effect.gen(function* () {
@@ -289,9 +291,38 @@ describe("call", () => {
         _tag: "GitHubApiNotFoundError",
         host: "github.com",
         operation: "stats",
+        githubErrors: ["Could not resolve to a Repository (at repository)"],
       });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "fails a NOT_FOUND below the pull request as GitHub's reason, not a missing one",
+    () => {
+      const { layer } = harness(() =>
+        json({
+          data: { repository: { pullRequest: stats } },
+          errors: [
+            {
+              type: "NOT_FOUND",
+              path: ["repository", "pullRequest", "baseRef", "compare"],
+              message: "Could not resolve head ref 'refs/pull/7/head'.",
+            },
+          ],
+        }),
+      );
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(callStats());
+        expect(error).toMatchObject({
+          _tag: "GitHubApiResponseError",
+          status: 200,
+          githubErrors: [
+            "Could not resolve head ref 'refs/pull/7/head'. (at repository.pullRequest.baseRef.compare)",
+          ],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect(
     "fails NOT_FOUND alongside another error as a failure carrying GitHub's reasons",

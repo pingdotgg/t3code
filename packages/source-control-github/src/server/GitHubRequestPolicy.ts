@@ -69,12 +69,17 @@ export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFound
   {
     host: Schema.String,
     operation: Schema.String,
+    githubErrors: Schema.optionalKey(Schema.Array(Schema.String)),
     /** The source of the credential the refused request carried, when known. */
     credential: Schema.optionalKey(GitHubCredentials.GitHubCredentialSource),
   },
 ) {
   override get message(): string {
-    return "GitHub could not find the requested resource, or the credential cannot see it.";
+    const missing =
+      "GitHub could not find the requested resource, or the credential cannot see it.";
+    return this.githubErrors !== undefined && this.githubErrors.length > 0
+      ? `${missing} GitHub said: ${this.githubErrors.join("; ")}`
+      : missing;
   }
 }
 
