@@ -156,6 +156,7 @@ query PullRequestCore(
                 }
                 pageInfo {
                   hasNextPage
+                  endCursor
                 }
               }
             }

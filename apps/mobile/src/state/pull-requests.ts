@@ -1,6 +1,7 @@
 import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
+  patchPullRequestListEntries,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -21,10 +22,17 @@ export const pullRequestListPagesKey = (target: {
   readonly input: PullRequestListInput;
 }) => JSON.stringify([target.environmentId, target.input]);
 
+// Which listing each pages atom holds, so an action's reply can reach the pages past its head.
+const pullRequestListPagesTargets = new WeakMap<
+  object,
+  readonly [EnvironmentId, PullRequestListInput]
+>();
 /** The pages loaded past each listing's head, keyed by {@link pullRequestListPagesKey}. */
-export const pullRequestListPagesFamily = Atom.family((_key: string) =>
-  Atom.make<PullRequestListPages | null>(null).pipe(Atom.setIdleTTL(5 * 60_000)),
-);
+export const pullRequestListPagesFamily = Atom.family((key: string) => {
+  const atom = Atom.make<PullRequestListPages | null>(null).pipe(Atom.setIdleTTL(5 * 60_000));
+  pullRequestListPagesTargets.set(atom, JSON.parse(key));
+  return atom;
+});
 
 /** Diff stats each environment has answered so far, so rows keep them when they scroll away. */
 export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =>
@@ -34,6 +42,25 @@ export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =
 );
 
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+  // Rows on pages past each listing's head; the head itself is patched where it is cached.
+  actionReply: (target, reply, registry) =>
+    Effect.sync(() => {
+      for (const atom of registry.getNodes().keys()) {
+        const listing =
+          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+        if (listing === undefined || listing[0] !== target.environmentId) continue;
+        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
+          if (pages === null) return pages;
+          const entries = patchPullRequestListEntries(
+            listing[1],
+            pages.entries,
+            target.input,
+            reply,
+          );
+          return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
+        });
+      }
+    }),
   // A new head can change which files GitHub still counts as viewed, so the viewed-files read is
   // refreshed where the new head lands. The detail atom still holds the previous answer here.
   detail: (target, value, registry) =>
