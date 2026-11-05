@@ -1,3 +1,4 @@
+import { tooltipSafeFinalFocus } from "./focus-return";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
@@ -86,6 +87,7 @@ function MenuPopup({
           )}
           data-slot="menu-popup"
           {...props}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus)}
         >
           {/* Items stay concentric with the popup: its radius minus the 1px rim and padding. */}
           <div className="max-h-(--available-height) flex w-full flex-col overflow-y-auto p-1 [--popup-item-radius:calc(var(--radius-card)-5px)]">
