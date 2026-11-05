@@ -646,7 +646,13 @@ const make = Effect.gen(function* () {
     }
     const worktrees = yield* listWorktrees(cwd);
     const [main, ...linked] = worktrees;
-    if (main?.branchRef === branchRef) {
+    const existing = linked.find((entry) => entry.branchRef === branchRef && !entry.prunable);
+    // The repository in the folder may itself be a linked worktree of a checkout elsewhere.
+    if (
+      main?.branchRef === branchRef ||
+      (existing !== undefined &&
+        (yield* pathIdentity(existing.path)) === (yield* pathIdentity(cwd)))
+    ) {
       return yield* new RepoWorktreeRequestError({
         reason: "branch_in_source_checkout",
         branch: input.branch,
@@ -655,7 +661,6 @@ const make = Effect.gen(function* () {
     }
     const attachedAt = DateTime.formatIso(yield* DateTime.now);
 
-    const existing = linked.find((entry) => entry.branchRef === branchRef && !entry.prunable);
     if (existing !== undefined) {
       const worktreePath = path.resolve(existing.path);
       const uncommittedFiles = yield* countUncommittedFiles(worktreePath);

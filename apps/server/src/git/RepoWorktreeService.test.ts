@@ -420,11 +420,22 @@ describe("RepoWorktreeService", () => {
       Effect.gen(function* () {
         const service = yield* RepoWorktreeService.RepoWorktreeService;
         const threadId = yield* createThread;
+        const path = yield* Path.Path;
         yield* git(fixture.alpha, ["branch", "topic"]);
+        // A repository in the folder can itself be a linked worktree of a checkout elsewhere.
+        yield* git(fixture.alpha, [
+          "worktree",
+          "add",
+          "--quiet",
+          "-b",
+          "linked-topic",
+          path.join(fixture.folder, "linked"),
+        ]);
 
         const attempts = [
           { branch: "topic", baseRef: "main" },
           { branch: "main", baseRef: "main" },
+          { repository: "linked", branch: "linked-topic", useExistingBranch: true },
           { branch: "brand-new" },
           { branch: "missing", useExistingBranch: true },
           { branch: "bad..name", baseRef: "main" },
@@ -436,6 +447,7 @@ describe("RepoWorktreeService", () => {
         );
         assert.deepEqual(refusals, [
           "branch_exists",
+          "branch_in_source_checkout",
           "branch_in_source_checkout",
           "base_ref_required",
           "branch_missing",
