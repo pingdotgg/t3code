@@ -10,8 +10,7 @@ import {
 } from "../../Sidebar.logic";
 
 export type VariantRowStyle = "folder-detailed" | "folder-slim";
-export type RowAttention = "need" | "failed" | "done";
-export type WorkerBucket = "need" | "failed" | "working" | "done" | "idle";
+export type RowAttention = "warning" | "input" | "guest" | "error" | "success";
 
 /** The row a variant draws, or null for T3's own row in that place. */
 export function variantRowStyle(
@@ -24,31 +23,72 @@ export function variantRowStyle(
   return null;
 }
 
+/** The state colour of a row that wants the user, or undefined for a quiet row. */
 export function rowAttention(
   status: SidebarThreadStatus,
   isUnread: boolean,
 ): RowAttention | undefined {
   switch (status) {
     case "approval":
-    case "input":
-    case "request":
     case "limited":
-      return "need";
+      return "warning";
+    case "input":
+      return "input";
+    case "request":
+      return "guest";
     case "failed":
-      return "failed";
+      return "error";
     case "ready":
-      return isUnread ? "done" : undefined;
+      return isUnread ? "success" : undefined;
     default:
       return undefined;
   }
 }
 
-export function workerBucket(thread: EnvironmentThreadShell): WorkerBucket {
+function workerNeedsYou(thread: EnvironmentThreadShell): boolean {
   const status = resolveSidebarThreadStatus(thread);
-  if (status === "approval" || status === "input" || status === "request") return "need";
-  if (status === "failed" || status === "limited") return "failed";
-  if (status === "working" || status === "preparing" || status === "waiting") return "working";
-  return thread.latestRun?.completedAt || hasUnseenCompletion(thread) ? "done" : "idle";
+  return status === "approval" || status === "input" || status === "request";
+}
+
+/** A worker's rank and the count's two word forms; a higher rank names the count. */
+function workerState(thread: EnvironmentThreadShell): readonly [number, string, string] | null {
+  switch (resolveSidebarThreadStatus(thread)) {
+    case "failed":
+      return [8, "error", "errors"];
+    case "limited":
+      return [8, "limited", "limited"];
+    case "approval":
+      return [7, "approval", "approvals"];
+    case "input":
+      return [6, "question", "questions"];
+    case "request":
+      return [6, "request", "requests"];
+    case "working":
+    case "preparing":
+    case "waiting":
+      return [5, "working", "working"];
+    default:
+      return thread.latestRun?.completedAt || hasUnseenCompletion(thread)
+        ? [2, "done", "done"]
+        : null;
+  }
+}
+
+export function workerTotal(count: number): string {
+  return `${count} ${count === 1 ? "worker" : "workers"}`;
+}
+
+/** The total, then how many share the most urgent state: "2 workers · 1 working". */
+export function workerSummary(workers: readonly EnvironmentThreadShell[]): string {
+  const total = workerTotal(workers.length);
+  const states = workers.map(workerState).filter((state) => state !== null);
+  const top = states.reduce<(typeof states)[number] | null>(
+    (best, state) => (best === null || state[0] > best[0] ? state : best),
+    null,
+  );
+  if (top === null) return total;
+  const count = states.filter((state) => state[1] === top[1]).length;
+  return `${total} · ${count} ${count === 1 ? top[1] : top[2]}`;
 }
 
 export type WorkerMap = ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
@@ -89,18 +129,24 @@ function parkedLabel(snoozed: number, settled: number): string {
     .join(" · ");
 }
 
+/** A folder shows while it holds a thread, or when the sidebar keeps it empty. */
+export function detailedFolderShows(
+  lists: Readonly<Record<string, readonly unknown[]>>,
+  keepEmpty: boolean,
+): boolean {
+  return keepEmpty || Object.values(lists).some((list) => list.length > 0);
+}
+
 export type DetailedFolderItem =
   | {
       readonly kind: "thread";
       readonly thread: EnvironmentThreadShell;
       readonly section: SidebarSection;
       readonly nested: boolean;
-    }
-  | {
-      readonly kind: "workers";
-      readonly parentKey: string;
-      readonly workers: readonly EnvironmentThreadShell[];
-      readonly open: boolean;
+      /** The last worker shown under its parent, where the guide turns in. */
+      readonly lastNested: boolean;
+      /** Whether its worker rows show; null when the row cannot fold them. */
+      readonly workersOpen: boolean | null;
     }
   | { readonly kind: "parked"; readonly label: string; readonly open: boolean };
 
@@ -127,25 +173,32 @@ export function arrangeDetailedFolder(input: {
   const items: DetailedFolderItem[] = [];
   for (const thread of main) {
     if (collapsed && !isRouteRow(thread)) continue;
+    const workers = workersOf(input.workers, thread);
+    const parentKey = threadKeyOf(thread);
+    const open =
+      !collapsed &&
+      (input.workerFold.get(parentKey) ?? workers.some((worker) => workerNeedsYou(worker)));
     items.push({
       kind: "thread",
       thread,
       section: thread.pinnedAt != null ? "pinned" : "active",
       nested: false,
+      lastNested: false,
+      workersOpen: workers.length > 0 && !collapsed ? open : null,
     });
-    const workers = workersOf(input.workers, thread);
-    if (workers.length === 0) continue;
-    const parentKey = threadKeyOf(thread);
-    const open =
-      !collapsed &&
-      (input.workerFold.get(parentKey) ??
-        workers.some((worker) => workerBucket(worker) === "need"));
-    if (!collapsed) items.push({ kind: "workers", parentKey, workers, open });
-    for (const worker of arrangeStableRows(workers)) {
-      if (open || threadKeyOf(worker) === input.routeThreadKey) {
-        items.push({ kind: "thread", thread: worker, section: "active", nested: true });
-      }
-    }
+    const shown = arrangeStableRows(workers).filter(
+      (worker) => open || threadKeyOf(worker) === input.routeThreadKey,
+    );
+    shown.forEach((worker, index) => {
+      items.push({
+        kind: "thread",
+        thread: worker,
+        section: "active",
+        nested: true,
+        lastNested: index === shown.length - 1,
+        workersOpen: null,
+      });
+    });
   }
   const parkedCount = input.snoozed.length + input.settled.length;
   const parkedOpen = !collapsed && input.parkedOpen;
@@ -162,7 +215,14 @@ export function arrangeDetailedFolder(input: {
   ] as const) {
     for (const thread of list) {
       if (parkedOpen || isRouteRow(thread)) {
-        items.push({ kind: "thread", thread, section, nested: false });
+        items.push({
+          kind: "thread",
+          thread,
+          section,
+          nested: false,
+          lastNested: false,
+          workersOpen: null,
+        });
       }
     }
   }

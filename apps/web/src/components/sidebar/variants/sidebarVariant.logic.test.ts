@@ -6,9 +6,11 @@ import { resolveSidebarLayout } from "./sidebarLayout";
 import {
   arrangeDetailedFolder,
   arrangeStableRows,
+  detailedFolderShows,
   rowAttention,
   threadsWaitingOnYou,
   variantRowStyle,
+  workerSummary,
   workersByParent,
 } from "./sidebarVariant.logic";
 
@@ -120,12 +122,22 @@ describe("variantRowStyle", () => {
   });
 });
 
+describe("detailedFolderShows", () => {
+  it("keeps an empty folder only when the sidebar's predicate does", () => {
+    expect(detailedFolderShows({ active: [], settled: [] }, true)).toBe(true);
+    expect(detailedFolderShows({ active: [], settled: [] }, false)).toBe(false);
+    expect(detailedFolderShows({ active: [], settled: ["thread"] }, false)).toBe(true);
+  });
+});
+
 describe("rowAttention", () => {
   it("marks asks, failures and unseen finishes only", () => {
-    expect(rowAttention("approval", false)).toBe("need");
-    expect(rowAttention("limited", false)).toBe("need");
-    expect(rowAttention("failed", true)).toBe("failed");
-    expect(rowAttention("ready", true)).toBe("done");
+    expect(rowAttention("approval", false)).toBe("warning");
+    expect(rowAttention("limited", false)).toBe("warning");
+    expect(rowAttention("input", false)).toBe("input");
+    expect(rowAttention("request", false)).toBe("guest");
+    expect(rowAttention("failed", true)).toBe("error");
+    expect(rowAttention("ready", true)).toBe("success");
     expect(rowAttention("ready", false)).toBeUndefined();
     expect(rowAttention("working", true)).toBeUndefined();
   });
@@ -186,14 +198,15 @@ describe("workers", () => {
 
   it("folds workers until one needs the user, and honors a manual choice", () => {
     const folded = workersByParent([parent, quiet]);
-    expect(ids(arrange({ active: [parent], workers: folded }))).toEqual(["p", "workers"]);
+    const closed = arrange({ active: [parent], workers: folded });
+    expect(ids(closed)).toEqual(["p"]);
+    expect(closed.items[0]).toMatchObject({ workersOpen: false });
     const needs = workersByParent([parent, quiet, asking]);
-    expect(ids(arrange({ active: [parent], workers: needs }))).toEqual([
-      "p",
-      "workers",
-      "w1",
-      "w2",
-    ]);
+    const open = arrange({ active: [parent], workers: needs });
+    expect(ids(open)).toEqual(["p", "w1", "w2"]);
+    expect(open.items[0]).toMatchObject({ workersOpen: true });
+    expect(open.items[1]).toMatchObject({ nested: true, lastNested: false });
+    expect(open.items[2]).toMatchObject({ nested: true, lastNested: true });
     expect(
       ids(
         arrange({
@@ -202,14 +215,21 @@ describe("workers", () => {
           workerFold: new Map([["environment-a:p", false]]),
         }),
       ),
-    ).toEqual(["p", "workers"]);
+    ).toEqual(["p"]);
   });
 
-  it("shows an open worker under its parent while the strip is folded", () => {
+  it("shows an open worker under its parent while the row is folded", () => {
     const workers = workersByParent([parent, quiet]);
     expect(ids(arrange({ active: [parent], workers, routeThreadKey: "environment-a:w1" }))).toEqual(
-      ["p", "workers", "w1"],
+      ["p", "w1"],
     );
+  });
+
+  it("counts workers and how many share the most urgent state", () => {
+    const running = worker("w3", "p", { runtime: { status: "running" } });
+    expect(workerSummary([quiet])).toBe("1 worker");
+    expect(workerSummary([quiet, running])).toBe("2 workers · 1 working");
+    expect(workerSummary([running, asking, quiet])).toBe("3 workers · 1 approval");
   });
 
   it("counts a thread as waiting only when it asks itself", () => {

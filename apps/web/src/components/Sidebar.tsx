@@ -266,7 +266,7 @@ import { DetailedSidebarGroups } from "./sidebar/variants/DetailedSidebarGroups"
 import {
   threadsWaitingOnYou,
   variantRowStyle,
-  workerBucket,
+  workerSummary,
   workersByParent,
   workersOf,
 } from "./sidebar/variants/sidebarVariant.logic";
@@ -565,6 +565,7 @@ function useSidebarThreads(input: {
           projectExpandedById,
           routeRowKey: routeRowThreadKey,
           routeThreadKey,
+          keepEmpty,
         }
       : null,
   );
@@ -3334,7 +3335,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     )}
                   >
                     {(() => {
-                      const workerMap = sidebarVariant === "slim" ? workersByParent(threads) : null;
+                      const workerMap =
+                        sidebarVariant !== "default" ? workersByParent(threads) : null;
                       const activeRowKey =
                         detailedFolders !== null &&
                         routeThreadKey !== null &&
@@ -3346,7 +3348,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         section: SidebarSection,
                         // The tree row of the project folder this row sits in.
                         folderRow?: string,
-                        nested = false,
+                        detailedItem?: {
+                          nested: boolean;
+                          lastNested: boolean;
+                          workersOpen: boolean | null;
+                        },
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3363,6 +3369,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               ? "card"
                               : "slim");
                         const workers = workerMap ? workersOf(workerMap, thread) : [];
+                        const nested = detailedItem?.nested ?? false;
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3377,10 +3384,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             thread={thread}
                             variant={rowVariant}
                             nested={nested}
-                            workerCount={workers.length}
-                            workerNeedsYou={workers.some(
-                              (worker) => workerBucket(worker) === "need",
-                            )}
+                            lastNested={detailedItem?.lastNested ?? false}
+                            workerCount={workers.length > 0 ? workers.length : null}
+                            workerSummary={workers.length > 0 ? workerSummary(workers) : null}
+                            workersOpen={detailedItem?.workersOpen ?? null}
+                            onToggleWorkers={detailedFolders?.toggleWorkers}
                             navigationParent={
                               folderRow ??
                               (section === "working" ||
@@ -3493,7 +3501,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               ) ?? null
                             }
                             onNavigate={navigateToThread}
-                            onToggleWorkers={detailedFolders.toggleWorkers}
                             onToggleParked={detailedFolders.toggleParked}
                             renderHeader={(folder) => (
                               <SidebarProjectFolderHeader

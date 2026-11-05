@@ -7,7 +7,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import { ChevronDownIcon } from "lucide-react";
 import { useState, type MouseEvent, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -23,6 +22,7 @@ const stopRowActivation = (event: MouseEvent) => event.stopPropagation();
 
 function AnswerBody(props: {
   detail: string;
+  inline: boolean;
   mono?: boolean;
   note?: string | null;
   error: string | null;
@@ -30,18 +30,43 @@ function AnswerBody(props: {
 }) {
   return (
     <>
-      <p
-        className={cn(
-          "max-h-24 overflow-y-auto wrap-break-word whitespace-pre-wrap text-xs text-foreground",
-          props.mono && "font-mono",
-        )}
-      >
-        {props.detail}
-      </p>
-      {props.note ? <p className="text-xs text-muted-foreground">{props.note}</p> : null}
+      {props.inline ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <p
+                className={cn(
+                  "min-w-0 flex-1 truncate text-2xs text-muted-foreground",
+                  props.mono && "font-mono",
+                )}
+              />
+            }
+          >
+            {props.detail}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{props.detail}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        <p
+          className={cn(
+            "max-h-24 overflow-y-auto wrap-break-word whitespace-pre-wrap text-xs text-foreground",
+            props.mono && "font-mono",
+          )}
+        >
+          {props.detail}
+        </p>
+      )}
+      {props.note ? (
+        <p className={cn("text-xs text-muted-foreground", props.inline && "order-last basis-full")}>
+          {props.note}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-1">{props.children}</div>
       {props.error !== null ? (
-        <p role="alert" className="text-xs text-error-foreground">
+        <p
+          role="alert"
+          className={cn("text-xs text-error-foreground", props.inline && "order-last basis-full")}
+        >
           {props.error}
         </p>
       ) : null}
@@ -55,6 +80,7 @@ function RowAnswerContent(props: {
   onOpenThread: (() => void) | null;
 }) {
   const { thread, onOpenThread } = props;
+  const inline = onOpenThread === null;
   const pending = useAtomValue(
     environmentThreadDetails.pendingRequestsAtom(scopeThreadRef(thread.environmentId, thread.id)),
   );
@@ -82,6 +108,7 @@ function RowAnswerContent(props: {
     return (
       <AnswerBody
         detail={approval.detail || approval.requestKind}
+        inline={inline}
         mono
         note={
           approval.responseCapability !== "live"
@@ -123,7 +150,7 @@ function RowAnswerContent(props: {
     input.responseCapability !== "live"
   ) {
     return pending !== null && onOpenThread !== null ? (
-      <AnswerBody detail="This needs the full thread to answer." error={null}>
+      <AnswerBody detail="This needs the full thread to answer." inline={inline} error={null}>
         <Button size="xs" variant="outline" onClick={onOpenThread}>
           Open thread
         </Button>
@@ -131,7 +158,7 @@ function RowAnswerContent(props: {
     ) : null;
   }
   return (
-    <AnswerBody detail={question.question} error={error}>
+    <AnswerBody detail={question.question} inline={inline} error={error}>
       {question.options.map((option) => {
         const button = (
           <Button
@@ -170,8 +197,8 @@ function RowAnswerContent(props: {
   );
 }
 
-/** Detailed: the answers sit under the row while it asks. */
-export function InlineRowAnswers(props: { thread: EnvironmentThreadShell }) {
+/** Detailed: on line 2 of a row, or under a worker's title. */
+export function InlineRowAnswers(props: { thread: EnvironmentThreadShell; className?: string }) {
   return (
     <div
       role="group"
@@ -179,14 +206,17 @@ export function InlineRowAnswers(props: { thread: EnvironmentThreadShell }) {
       data-row-answers
       onClick={stopRowActivation}
       onDoubleClick={stopRowActivation}
-      className="mt-1 flex min-w-0 cursor-default flex-col gap-1 empty:hidden"
+      className={cn(
+        "-my-[0.046875rem] flex min-w-0 cursor-default flex-wrap items-center justify-end gap-1 empty:hidden",
+        props.className,
+      )}
     >
       <RowAnswerContent thread={props.thread} onOpenThread={null} />
     </div>
   );
 }
 
-/** Slim: the status word opens the answers, so the rows below never move. */
+/** Slim: the pill opens the answers, so the rows below never move. */
 export function RowAnswersPopover(props: {
   thread: EnvironmentThreadShell;
   label: string;
@@ -205,14 +235,13 @@ export function RowAnswersPopover(props: {
             onClick={stopRowActivation}
             onDoubleClick={stopRowActivation}
             className={cn(
-              "inline-flex h-6 cursor-pointer items-center gap-0.5 rounded-sm text-xs font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "relative cursor-pointer outline-none after:absolute after:-inset-y-1 after:inset-x-0 hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               props.className,
             )}
           />
         }
       >
-        {props.label}
-        <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+        <span className="sidebar-row-pill-word">{props.label}</span>
       </PopoverTrigger>
       {/* A row click navigates, and portals still bubble React events to the row. */}
       <PopoverPopup

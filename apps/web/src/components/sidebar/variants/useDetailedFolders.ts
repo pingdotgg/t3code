@@ -6,7 +6,11 @@ import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { resolveProjectExpanded } from "../../../uiStateStore";
 import type { SidebarProjectSnapshot } from "../../../sidebarProjectGrouping";
 import { groupSidebarThreadsByProject, sidebarFolderExpansionKeys } from "../../Sidebar.logic";
-import { arrangeDetailedFolder, workersByParent } from "./sidebarVariant.logic";
+import {
+  arrangeDetailedFolder,
+  detailedFolderShows,
+  workersByParent,
+} from "./sidebarVariant.logic";
 
 const PARKED_OPEN_KEY = "t3code:sidebar:detailed-parked-open";
 const ParkedOpenKeys = Schema.Array(Schema.String);
@@ -24,6 +28,7 @@ export function useDetailedFolders(
     readonly projectExpandedById: Readonly<Record<string, boolean>>;
     readonly routeRowKey: string | null;
     readonly routeThreadKey: string | null;
+    readonly keepEmpty: (group: SidebarProjectSnapshot) => boolean;
   } | null,
 ) {
   const [workerFold, setWorkerFold] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -55,7 +60,7 @@ export function useDetailedFolders(
       snoozed: snoozed.get(key) ?? [],
       settled: settled.get(key) ?? [],
     };
-    if (Object.values(lists).every((list) => list.length === 0) && !group.pinned) return [];
+    if (!detailedFolderShows(lists, input.keepEmpty(group))) return [];
     const collapsed = !resolveProjectExpanded(
       input.projectExpandedById,
       sidebarFolderExpansionKeys(group),
