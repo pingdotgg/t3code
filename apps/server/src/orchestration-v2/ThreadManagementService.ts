@@ -146,6 +146,8 @@ export interface ThreadManagementSendInput {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
+  /** Start a new provider session; the orchestrator queues it instead of steering. */
+  readonly freshContext?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -421,6 +423,7 @@ export interface ThreadManagementServiceShape {
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
   readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
+  readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
   /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
@@ -819,15 +822,20 @@ const make = Effect.gen(function* () {
       });
     }
     const steerableRun = latestSteerableRun(target);
+    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    const mode =
+      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+        ? "queue"
+        : input.mode;
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (input.mode === "steer" || input.mode === "restart") {
+    if (mode === "steer" || mode === "restart") {
       if (steerableRun === undefined && !(yield* hasReceipt(input.commandId))) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,
-          mode: input.mode,
+          mode,
         });
       }
       // A retry of an accepted send replays its receipt, even after the steered turn has ended.
@@ -835,14 +843,14 @@ const make = Effect.gen(function* () {
         steerableRun === undefined
           ? { type: "queue_after_active" }
           : {
-              type: input.mode === "steer" ? "steer_active" : "restart_active",
+              type: mode === "steer" ? "steer_active" : "restart_active",
               targetRunId: steerableRun.id,
             };
-    } else if (input.mode === "auto" && steerableRun !== undefined) {
+    } else if (mode === "auto" && steerableRun !== undefined) {
       dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
-        type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
+        type: mode === "queue" ? "queue_after_active" : "start_immediately",
       };
     }
 
@@ -856,6 +864,7 @@ const make = Effect.gen(function* () {
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.freshContext ? { freshContext: true } : {}),
       dispatchMode,
       createdBy: input.createdBy,
       creationSource: input.creationSource,
@@ -891,7 +900,7 @@ const make = Effect.gen(function* () {
         ? "queued"
         : turnItem.inputIntent === "turn_start"
           ? "started"
-          : input.mode === "restart"
+          : mode === "restart"
             ? "restarted"
             : "steered";
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
@@ -1540,6 +1549,7 @@ const make = Effect.gen(function* () {
         );
       },
     ),
+    getThreadTitles: orchestrator.getThreadTitles,
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,

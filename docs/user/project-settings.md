@@ -86,11 +86,18 @@ environment's time zone, which may differ from your phone's. Choose **Once**
 to run a task a single time at a date and time in your own time zone. If the
 environment is offline then, the task runs when it is back.
 
+Under **Destination**, choose where runs go. **New thread each run** keeps every
+run separate. The two one-thread choices start a thread on the first run and post
+later runs there: one continues the same conversation, the other starts each run
+in a fresh session that doesn't see earlier runs, so the thread stays readable
+without the agent's context growing. Moving such a task to another project starts
+a new thread there on its next run.
+
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
 
-A task that posts into a thread has a **Delivery** setting for runs that arrive
-while the agent is still working there. **Queue**, the default, waits for the
+A task whose runs continue one conversation has a **Delivery** setting for runs
+that arrive while the agent is still working there. **Queue**, the default, waits for the
 current turn to finish. **Steer or start** adds the prompt to the current turn
 when it can take new input, such as while the agent is not waiting on an
 approval, and otherwise works like Queue. **Steer only** adds it to the current

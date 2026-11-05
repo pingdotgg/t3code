@@ -22,8 +22,10 @@ import {
   type ScheduledTaskRunNowInput,
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
+  type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertInput,
   managedPolicyDeniedMessage,
+  scheduledTaskThreadMode,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -31,7 +33,6 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -122,9 +123,10 @@ export class ScheduledTaskWebhookOrigin extends Context.Reference<Effect.Effect<
   },
 ) {}
 
-class WebhookDeliverySkipped extends Data.TaggedError("WebhookDeliverySkipped")<{
-  readonly reason: string;
-}> {}
+class WebhookDeliverySkipped extends Schema.TaggedError<WebhookDeliverySkipped>()(
+  "WebhookDeliverySkipped",
+  { reason: Schema.String },
+) {}
 
 interface RateWindow {
   readonly accepted: ReadonlyArray<{ readonly at: number }>;
@@ -191,6 +193,19 @@ const decodeMissingFieldsJson = Schema.decodeUnknownOption(MissingFieldsJson);
 const encodeHeadersJson = Schema.encodeSync(HeadersJson);
 const encodeMissingFieldsJson = Schema.encodeSync(MissingFieldsJson);
 
+/**
+ * Clients that predate thread modes send none, and may send a thread loaded before the first run
+ * bound one. An edit keeps the stored mode; binding a thread to a new-thread task continues it.
+ */
+function resolveThreadMode(
+  input: Pick<ScheduledTaskUpsertInput, "threadId" | "threadMode">,
+  existing: Pick<ScheduledTask, "threadId" | "threadMode"> | null,
+): ScheduledTaskThreadMode {
+  if (input.threadMode !== undefined) return input.threadMode;
+  const stored = existing === null ? "new_thread" : scheduledTaskThreadMode(existing);
+  return stored === "new_thread" && input.threadId != null ? "continue" : stored;
+}
+
 interface ScheduledTaskRow {
   readonly task_id: string;
   readonly title: string;
@@ -199,6 +214,7 @@ interface ScheduledTaskRow {
   readonly schedule_json: string;
   readonly project_id: string;
   readonly thread_id: string | null;
+  readonly thread_mode: string;
   readonly send_mode: string;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
@@ -373,6 +389,7 @@ const decodeRow = Effect.fnUntraced(
       schedule,
       projectId: row.project_id,
       threadId: row.thread_id,
+      threadMode: row.thread_mode,
       sendMode: row.send_mode,
       workspaceStrategy,
       modelSelection,
@@ -496,6 +513,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+        thread_mode,
         send_mode,
         workspace_strategy_json,
         model_selection_json,
@@ -538,6 +556,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+        thread_mode,
         send_mode,
         workspace_strategy_json,
         model_selection_json,
@@ -616,6 +635,7 @@ export const layer = Layer.effect(
           schedule_json,
           project_id,
           thread_id,
+          thread_mode,
           send_mode,
           workspace_strategy_json,
           model_selection_json,
@@ -641,6 +661,7 @@ export const layer = Layer.effect(
           ${JSON.stringify(task.schedule)},
           ${task.projectId},
           ${task.threadId},
+          ${scheduledTaskThreadMode(task)},
           ${task.sendMode},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
@@ -666,7 +687,14 @@ export const layer = Layer.effect(
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
-          thread_id = excluded.thread_id,
+          -- A first run may bind the thread while this save is in flight; only a
+          -- switch to new threads unbinds.
+          thread_id = CASE
+            WHEN excluded.thread_mode = 'new_thread' THEN NULL
+            WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
+            ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
+          END,
+          thread_mode = excluded.thread_mode,
           send_mode = excluded.send_mode,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
@@ -805,6 +833,25 @@ export const layer = Layer.effect(
         ),
     );
 
+    // The run already started the thread, so a failed write only costs the binding.
+    // A thread deleted before the binding landed already ran its task cleanup, so apply that
+    // cleanup here; a later deletion finds the binding. An unconfirmed lookup keeps the binding.
+    const bindThread = Effect.fn("ScheduledTaskService.bindThread")(
+      function* (task: ScheduledTask, threadId: ThreadId) {
+        yield* sql`
+          UPDATE scheduled_tasks SET thread_id = ${threadId}
+          WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
+            AND project_id = ${task.projectId}
+            AND thread_id IS NULL AND thread_mode != 'new_thread'
+        `;
+        const shell = yield* threadManagement.getThreadShell(threadId);
+        if (shell === null || shell.deletedAt != null) yield* deleteForThread(threadId);
+      },
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not bind a scheduled task to its first thread.", cause),
+      ),
+    );
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook",
@@ -892,6 +939,7 @@ export const layer = Layer.effect(
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         const prompt = webhook?.prompt ?? active.prompt;
+        const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
         // this fires. Follow it; one move needs at most two retries. Same ids replay safely.
@@ -910,6 +958,7 @@ export const layer = Layer.effect(
               text: prompt,
               attachments: [],
               mode: active.sendMode,
+              ...(threadMode === "fresh_session" ? { freshContext: true } : {}),
               createdBy: active.createdBy,
               creationSource: active.creationSource,
             })
@@ -951,7 +1000,12 @@ export const layer = Layer.effect(
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
                   })
-                  .pipe(Effect.map((launched) => launched.threadId)),
+                  .pipe(
+                    Effect.map((launched) => launched.threadId),
+                    Effect.tap((threadId) =>
+                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                    ),
+                  ),
               )
             : yield* Effect.exit(
                 // The stored selection only seeds fresh threads. A bound run
@@ -1216,16 +1270,6 @@ export const layer = Layer.effect(
           input.id === undefined ? {} : { taskId: input.id },
         );
       }
-      // Refused on save rather than at run time; a disabled task can still be saved, so one
-      // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
-      // thread runs in that thread's mode, which the orchestrator checks instead.
-      const modeDenial =
-        input.enabled && input.threadId == null
-          ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
-          : undefined;
-      if (modeDenial !== undefined) {
-        return yield* taskError(modeDenial, input.id === undefined ? {} : { taskId: input.id });
-      }
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1246,6 +1290,23 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
+      const threadMode = resolveThreadMode(input, existingTask);
+      const keptThreadId = input.threadId ?? existingTask?.threadId ?? null;
+      // A bound thread belongs to its project, so moving the task leaves it for a new one.
+      const movedOffThread =
+        existingTask !== null &&
+        existingTask.projectId !== input.projectId &&
+        keptThreadId === existingTask.threadId;
+      const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
+      // Refused on save rather than at run time; a disabled task can still be saved, so one
+      // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
+      // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
+      // the save consumes a webhook secret.
+      const modeDenial =
+        input.enabled && threadId === null
+          ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
+          : undefined;
+      if (modeDenial !== undefined) return yield* taskError(modeDenial, { taskId: id });
       // Keep the existing next_run_at when the schedule itself is untouched:
       // editing a title or prompt must not postpone (or resurrect) a due
       // run — only schedule/enabled changes restart the clock.
@@ -1334,7 +1395,8 @@ export const layer = Layer.effect(
         enabled: input.enabled,
         schedule,
         projectId: input.projectId,
-        threadId: input.threadId ?? null,
+        threadId,
+        threadMode,
         // Omitted keeps the stored mode, so clients and tools that predate it keep it on re-save.
         sendMode: input.sendMode ?? existingTask?.sendMode ?? "queue",
         workspaceStrategy,
