@@ -13,6 +13,7 @@ import {
   managedUpdatesMessage,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type SentMessageDisplay,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
@@ -535,6 +536,12 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
+    ...(settings.agentMessageDisplay !== DEFAULT_UNIFIED_SETTINGS.agentMessageDisplay
+      ? ["Messages from other agents"]
+      : []),
+    ...(settings.automationMessageDisplay !== DEFAULT_UNIFIED_SETTINGS.automationMessageDisplay
+      ? ["Messages from automations"]
+      : []),
     ...(settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility
       ? ["Tool calls in chat"]
       : []),
@@ -662,6 +669,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
+      agentMessageDisplay: DEFAULT_UNIFIED_SETTINGS.agentMessageDisplay,
+      automationMessageDisplay: DEFAULT_UNIFIED_SETTINGS.automationMessageDisplay,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
       screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
       screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
@@ -1303,6 +1312,21 @@ export function ChatSettingsPanel() {
         <ScreenReaderAnnouncementsRow />
         <ScreenReaderWindowTitleRow />
       </SettingsSection>
+
+      <SettingsSection id="sent-messages" title="Sent messages">
+        <SentMessageDisplayRow
+          settingKey="agentMessageDisplay"
+          searchId="agent-message-display"
+          label="messages from other agents"
+          description="Messages another agent sends into a thread can be minimized to one line or hidden."
+        />
+        <SentMessageDisplayRow
+          settingKey="automationMessageDisplay"
+          searchId="automation-message-display"
+          label="messages from automations"
+          description="Prompts an automation sends into a thread can be minimized to one line or hidden."
+        />
+      </SettingsSection>
     </SettingsPageContainer>
   );
 }
@@ -1440,6 +1464,56 @@ function ScreenReaderWindowTitleRow() {
           onCheckedChange={(checked) => updateSettings({ screenReaderWindowTitle: checked })}
           aria-label="Screen reader window title"
         />
+      }
+    />
+  );
+}
+
+const SENT_MESSAGE_DISPLAY_LABELS = {
+  minimize: "Minimize",
+  hide: "Hide",
+} satisfies Record<SentMessageDisplay, string>;
+
+function SentMessageDisplayRow(props: {
+  settingKey: "agentMessageDisplay" | "automationMessageDisplay";
+  searchId: "agent-message-display" | "automation-message-display";
+  label: string;
+  description: string;
+}) {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const value = settings[props.settingKey];
+  return (
+    <SettingsRow
+      {...searchableSetting(props.searchId)}
+      description={props.description}
+      resetAction={
+        value !== DEFAULT_UNIFIED_SETTINGS[props.settingKey] ? (
+          <SettingResetButton
+            label={props.label}
+            onClick={() =>
+              updateSettings({ [props.settingKey]: DEFAULT_UNIFIED_SETTINGS[props.settingKey] })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={value}
+          onValueChange={(next) => {
+            if (next === "minimize" || next === "hide") {
+              updateSettings({ [props.settingKey]: next });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-auto min-w-0" aria-label={props.label}>
+            <SelectValue>{SENT_MESSAGE_DISPLAY_LABELS[value]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem value="minimize">{SENT_MESSAGE_DISPLAY_LABELS.minimize}</SelectItem>
+            <SelectItem value="hide">{SENT_MESSAGE_DISPLAY_LABELS.hide}</SelectItem>
+          </SelectPopup>
+        </Select>
       }
     />
   );

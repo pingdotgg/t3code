@@ -37,9 +37,13 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
+  isSentMessageHidden,
   resolveUserMessageFileCards,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -3324,10 +3328,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   if (jumpReady && revealedMessageId !== jumpToMessageId) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
-  const presentedFeed = appendGuestPendingMessages(
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null;
+  const sentMessageDisplay = {
+    agentMessageDisplay: preferences?.agentMessageDisplay ?? "minimize",
+    automationMessageDisplay: preferences?.automationMessageDisplay ?? "minimize",
+  } as const;
+  const unfilteredFeed = appendGuestPendingMessages(
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
     guestShare,
   );
+  const presentedFeed =
+    sentMessageDisplay.agentMessageDisplay === "hide" ||
+    sentMessageDisplay.automationMessageDisplay === "hide"
+      ? unfilteredFeed.filter(
+          (entry) =>
+            entry.type !== "message" ||
+            entry.message.id === workflowOpening?.messageId ||
+            !isSentMessageHidden(entry.message, sentMessageDisplay),
+        )
+      : unfilteredFeed;
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)

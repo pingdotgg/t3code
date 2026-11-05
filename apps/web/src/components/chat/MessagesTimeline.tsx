@@ -1,4 +1,5 @@
 import { threadEnvironment } from "../../state/threads";
+import { isSentMessageHidden } from "@t3tools/client-runtime/user-message";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
@@ -752,7 +753,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
     toolCallVisibility,
     revealedMessageId,
   });
-  const rows = useStableRows(rawRows, listIdentityKey);
+  const agentMessageDisplay = useClientSettings((settings) => settings.agentMessageDisplay);
+  const automationMessageDisplay = useClientSettings(
+    (settings) => settings.automationMessageDisplay,
+  );
+  const stableRows = useStableRows(rawRows, listIdentityKey);
+  const rows =
+    agentMessageDisplay === "hide" || automationMessageDisplay === "hide"
+      ? stableRows.filter(
+          (row) =>
+            row.kind !== "message" ||
+            row.message.id === workflowOpening?.messageId ||
+            !isSentMessageHidden(row.message, { agentMessageDisplay, automationMessageDisplay }),
+        )
+      : stableRows;
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =

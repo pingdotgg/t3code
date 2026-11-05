@@ -350,6 +350,10 @@ export type ToolCallVisibility = typeof ToolCallVisibility.Type;
 export const ScreenReaderAnnouncements = Schema.Literals(["status", "messages", "everything"]);
 export type ScreenReaderAnnouncements = typeof ScreenReaderAnnouncements.Type;
 
+/** How the timeline shows a message another agent or an automation sent into a thread. */
+export const SentMessageDisplay = Schema.Literals(["minimize", "hide"]);
+export type SentMessageDisplay = typeof SentMessageDisplay.Type;
+
 export const ModelFavorite = Schema.Struct({
   provider: ProviderInstanceId,
   model: TrimmedNonEmptyString,
@@ -517,6 +521,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   followUpBehavior: Schema.Literals(["queue", "steer"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("steer")),
+  ),
+  agentMessageDisplay: SentMessageDisplay.pipe(
+    Schema.withDecodingDefault(Effect.succeed("minimize" as const)),
+  ),
+  automationMessageDisplay: SentMessageDisplay.pipe(
+    Schema.withDecodingDefault(Effect.succeed("minimize" as const)),
   ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -2052,6 +2062,8 @@ export const ClientSettingsPatch = Schema.Struct({
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
+  agentMessageDisplay: Schema.optionalKey(SentMessageDisplay),
+  automationMessageDisplay: Schema.optionalKey(SentMessageDisplay),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
