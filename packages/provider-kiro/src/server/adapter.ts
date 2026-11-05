@@ -15,7 +15,6 @@ import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -54,8 +53,8 @@ import {
 import {
   type KiroSkills,
   kiroSkillCommandText,
-  kiroSkillsFromCommands,
   makeKiroSkills,
+  recordKiroSkills,
 } from "./skills.ts";
 
 export const KIRO_PROVIDER = ProviderDriverKind.make("kiro");
@@ -561,8 +560,7 @@ function makeKiroAcpAdapterFlavor(
     normalizeSessionUpdate: (notification) =>
       stripSteeringNote(normalizeKiroSessionUpdate(notification)),
     extractSubagentUpdate: extractKiroSubagentUpdate,
-    onAvailableCommandsUpdate: (commands) =>
-      SubscriptionRef.set(skills, kiroSkillsFromCommands(commands)),
+    onAvailableCommandsUpdate: (commands) => recordKiroSkills(skills, commands),
     rewriteUserText: (text) => kiroSkillCommandText(skills, text),
     // See applyKiroModelSelection: `model` arrives after session/new.
     modelOptionArrivesLate: true,

@@ -100,7 +100,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     });
     const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-    // Kiro lists skills only to a running session, so a status check keeps the latest list.
+    // Kiro lists skills only to a running session, so status checks keep what sessions advertised.
     const skills = yield* makeKiroSkills();
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),

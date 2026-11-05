@@ -888,6 +888,47 @@ describe("KiroAdapterV2 skills", () => {
         }),
     }).pipe(Effect.provide(testLayer), Effect.scoped);
   });
+
+  // Kiro also sends updates without skills, such as a session's first, agents-only one.
+  it.effect("keeps advertised skills through an update without skills", () => {
+    const sent: Array<string> = [];
+    return runKiroScript({
+      scenario: "skill-mention-after-agents-update",
+      text: "$probe-skill rest",
+      frames: [
+        ...openSessionFrames({
+          initialize: KIRO_V3_INITIALIZE,
+          configOptions: [modeOption, autopilotOption("on")],
+        }),
+        skillCommands,
+        update({
+          sessionUpdate: "available_commands_update",
+          availableCommands: [
+            {
+              name: "reviewer",
+              description: "Reviews changes",
+              _meta: { kiro: { type: "custom-agent" } },
+            },
+          ],
+        }),
+        turnPrompt,
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      wrapPrompt: (send) => (payload, options) => {
+        for (const block of payload.prompt) {
+          if (block.type === "text") sent.push(block.text);
+        }
+        return send(payload, options);
+      },
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
+          assert.deepEqual(sent, ["/probe-skill rest"]);
+        }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped);
+  });
 });
 
 describe("KiroAdapterV2 agents", () => {

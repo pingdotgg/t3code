@@ -12,8 +12,9 @@ const MAX_DESCRIPTION_LENGTH = 1_024;
 const LEADING_MENTION = /^\s*\$(\S+)/;
 
 /**
- * The skills the instance's latest Kiro session advertised. Kiro reports them
- * only as `available_commands_update` entries with `_meta.kiro.type: "skill"`.
+ * Every skill the instance's Kiro sessions have advertised since the server
+ * started. Kiro reports them only as `available_commands_update` entries with
+ * `_meta.kiro.type: "skill"`, and some updates carry none.
  */
 export type KiroSkills = SubscriptionRef.SubscriptionRef<ReadonlyArray<ServerProviderSkill>>;
 
@@ -24,7 +25,7 @@ const decodeKiroSkillMeta = Schema.decodeUnknownOption(
   Schema.Struct({ kiro: Schema.Struct({ type: Schema.Literal("skill") }) }),
 );
 
-export function kiroSkillsFromCommands(
+function kiroSkillsFromCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): ReadonlyArray<ServerProviderSkill> {
   const seen = new Set<string>();
@@ -48,6 +49,34 @@ export function kiroSkillsFromCommands(
   }
   return skills;
 }
+
+function mergeKiroSkills(
+  current: ReadonlyArray<ServerProviderSkill>,
+  incoming: ReadonlyArray<ServerProviderSkill>,
+): Option.Option<ReadonlyArray<ServerProviderSkill>> {
+  let merged: Array<ServerProviderSkill> | undefined;
+  for (const skill of incoming) {
+    const list = merged ?? current;
+    const key = skill.name.toLowerCase();
+    const index = list.findIndex((existing) => existing.name.toLowerCase() === key);
+    const existing = list[index];
+    if (existing === undefined && list.length === MAX_SKILLS) continue;
+    if (existing?.name === skill.name && existing.description === skill.description) continue;
+    merged ??= [...current];
+    if (existing === undefined) merged.push(skill);
+    else merged[index] = skill;
+  }
+  return Option.fromUndefinedOr(merged);
+}
+
+/** Adds an update's skills, replacing same-named ones in place; publishes only on a change. */
+export const recordKiroSkills = (
+  skills: KiroSkills,
+  commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+): Effect.Effect<void> =>
+  SubscriptionRef.updateSome(skills, (current) =>
+    mergeKiroSkills(current, kiroSkillsFromCommands(commands)),
+  );
 
 /**
  * Kiro runs a command only from a leading `/name`, while T3's `$` picker
