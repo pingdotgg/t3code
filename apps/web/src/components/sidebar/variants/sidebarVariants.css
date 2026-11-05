@@ -1,0 +1,254 @@
+@keyframes sidebar-row-sweep {
+  0% {
+    transform: translateX(-100%);
+    animation-timing-function: steps(9);
+  }
+  20% {
+    transform: translateX(-84.4%);
+    animation-timing-function: steps(9);
+  }
+  40% {
+    transform: translateX(-47.2%);
+    animation-timing-function: steps(9);
+  }
+  60% {
+    transform: translateX(-2.8%);
+    animation-timing-function: steps(9);
+  }
+  80% {
+    transform: translateX(34.4%);
+    animation-timing-function: steps(9);
+  }
+  100% {
+    transform: translateX(50%);
+  }
+}
+
+@keyframes sidebar-status-pulse {
+  0%,
+  40%,
+  100% {
+    opacity: 1;
+    animation-timing-function: steps(6);
+  }
+  50%,
+  90% {
+    opacity: 0.8;
+    animation-timing-function: steps(6);
+  }
+}
+
+/* Some built-in themes put these tokens under 4.5:1 at 12px; mixing in foreground lifts them. */
+@utility sidebar-variant-tokens {
+  --contrast-secondary-label: color-mix(in srgb, var(--foreground) 72%, transparent);
+  --variant-warning: color-mix(in srgb, var(--warning-foreground) 65%, var(--foreground));
+  --variant-success: color-mix(in srgb, var(--success-foreground) 65%, var(--foreground));
+  --variant-info: color-mix(in srgb, var(--info-foreground) 65%, var(--foreground));
+  --variant-error: color-mix(in srgb, var(--error-foreground) 65%, var(--foreground));
+
+  &[aria-current="page"] {
+    --variant-warning: color-mix(in srgb, var(--warning-foreground) 50%, var(--foreground));
+    --variant-success: color-mix(in srgb, var(--success-foreground) 50%, var(--foreground));
+    --variant-info: color-mix(in srgb, var(--info-foreground) 50%, var(--foreground));
+    --variant-error: color-mix(in srgb, var(--error-foreground) 50%, var(--foreground));
+  }
+
+  & .text-warning-foreground {
+    color: var(--variant-warning);
+  }
+  & .text-success-foreground {
+    color: var(--variant-success);
+  }
+  & .text-info-foreground {
+    color: var(--variant-info);
+  }
+  & .text-error-foreground {
+    color: var(--variant-error);
+  }
+  & .text-muted-foreground {
+    color: var(--contrast-secondary-label);
+  }
+  & .text-guest-foreground {
+    color: color-mix(in srgb, var(--guest-foreground) 65%, var(--foreground));
+  }
+  & .text-indigo-600,
+  & .sidebar-input-mark {
+    color: color-mix(in srgb, var(--color-indigo-600) 65%, var(--foreground));
+  }
+  .dark & .text-indigo-600,
+  .dark & .sidebar-input-mark {
+    color: color-mix(in srgb, var(--color-indigo-300) 65%, var(--foreground));
+  }
+  & .bg-warning-foreground {
+    background-color: var(--variant-warning);
+  }
+  & .bg-success-foreground {
+    background-color: var(--variant-success);
+  }
+  & .bg-info-foreground {
+    background-color: var(--variant-info);
+  }
+  & .bg-error-foreground {
+    background-color: var(--variant-error);
+  }
+}
+
+/* The sheet paints the root sidebar token, while the docked sidebar rescopes it locally. */
+@utility sidebar-waiting-surface {
+  background-color: var(--sidebar);
+
+  [data-mobile="true"] & {
+    background-color: var(--color-sidebar);
+  }
+}
+
+@utility sidebar-input-mark {
+  color: var(--color-indigo-600);
+}
+
+@utility sidebar-row-sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+  contain: strict;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 200%;
+    background: linear-gradient(
+      to right,
+      transparent 0%,
+      color-mix(in srgb, var(--foreground) 2.5%, transparent) 40%,
+      color-mix(in srgb, var(--foreground) 6%, transparent) 50%,
+      color-mix(in srgb, var(--foreground) 2.5%, transparent) 60%,
+      transparent 100%
+    );
+    animation: sidebar-row-sweep 3s infinite;
+    animation-play-state: var(--visible-animation-state, paused);
+    will-change: var(--visible-animation-will-change, auto);
+  }
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    display: none;
+  }
+}
+
+@utility sidebar-status-dot {
+  animation: sidebar-status-pulse 2s infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+@utility sidebar-status-spin {
+  animation: spin 2.2s steps(30) infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+@utility sidebar-row-detailed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.125rem 0.5rem;
+  isolation: isolate;
+
+  & [data-title-line] {
+    grid-area: 1 / 1 / 2 / 2;
+  }
+
+  & > [data-meta-line] {
+    grid-area: 2 / 1 / 3 / 3;
+    margin-top: 0;
+  }
+
+  & [data-status-slot],
+  & [role="status"] {
+    height: 1.25rem;
+    margin-block: -0.125rem;
+  }
+
+  /* The status joins the branch line, so the title gets the row's full width. */
+  &:has(> [data-meta-line]) [data-title-line] {
+    grid-column-end: -1;
+  }
+
+  &:has(> [data-meta-line]) [data-status-slot],
+  &:has(> [data-meta-line]) [role="status"] {
+    grid-area: 2 / 3 / 3 / 4;
+  }
+
+  & > [data-row-answers] {
+    grid-column: 1 / -1;
+  }
+
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease;
+
+    @media (prefers-reduced-motion: reduce) {
+      transition: none;
+    }
+  }
+
+  &::before {
+    inset: 0;
+    z-index: -1;
+    background: var(--attention-tint, transparent);
+  }
+
+  &::after {
+    left: 2px;
+    inset-block: 0.625rem;
+    width: 3px;
+    border-radius: 1.5px;
+    background: var(--attention-bar, transparent);
+  }
+
+  &[data-attention]::before,
+  &[data-attention]::after {
+    opacity: 1;
+  }
+
+  &[data-attention="need"] {
+    --attention-tint: color-mix(in srgb, var(--warning) 8%, transparent);
+    --attention-bar: var(--variant-warning);
+  }
+
+  &[data-attention="failed"] {
+    --attention-tint: color-mix(in srgb, var(--error) 10%, transparent);
+    --attention-bar: var(--variant-error);
+  }
+
+  &[data-attention="done"] {
+    --attention-tint: color-mix(in srgb, var(--success) 10%, transparent);
+    --attention-bar: var(--variant-success);
+  }
+
+  &[aria-current="page"]::before {
+    opacity: 0;
+  }
+}
+
+/* Keeps a focused or revealed row clear of the sticky Waiting on you list. */
+ul:has(> [data-testid="sidebar-waiting-on-you"]) > li > [data-sidebar-row] {
+  scroll-margin-bottom: 14rem;
+}

@@ -1,0 +1,131 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { expect, it, vi } from "vite-plus/test";
+
+import { render } from "../../../../test/render";
+
+const state = vi.hoisted(() => ({
+  respondApproval: vi.fn(),
+  respondInput: vi.fn(),
+  pendingAtom: null as unknown,
+}));
+
+vi.mock("../../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../../state/use-atom-command", () => ({
+  useAtomCommand: (command: unknown) =>
+    command === "approval" ? state.respondApproval : state.respondInput,
+}));
+vi.mock("../../../state/threads", () => ({
+  environmentThreadDetails: { pendingRequestsAtom: () => state.pendingAtom },
+  threadEnvironment: { respondToApproval: "approval", respondToUserInput: "input" },
+}));
+
+import { InlineRowAnswers, RowAnswersPopover } from "./RowAnswers";
+
+const environmentId = EnvironmentId.make("environment-a");
+const threadId = ThreadId.make("thread-a");
+const requestId = RuntimeRequestId.make("request-a");
+const thread = { environmentId, id: threadId } as unknown as EnvironmentThreadShell;
+
+function setup(pending: Partial<PendingThreadRequests>) {
+  state.respondApproval.mockReset();
+  state.respondInput.mockReset();
+  state.respondApproval.mockResolvedValue(AsyncResult.success(undefined));
+  state.respondInput.mockResolvedValue(AsyncResult.success(undefined));
+  state.pendingAtom = Atom.make<PendingThreadRequests | null>({
+    approvals: [],
+    userInputs: [],
+    ...pending,
+  } as PendingThreadRequests);
+}
+
+const approval = {
+  requestId,
+  requestKind: "command",
+  detail: "psql -f rotate_keys.sql",
+  createdAt: "2026-11-01T00:00:00.000Z",
+  responseCapability: "live",
+} as PendingThreadRequests["approvals"][number];
+
+const question = (extra: Record<string, unknown> = {}) =>
+  ({
+    requestId,
+    createdAt: "2026-11-01T00:00:00.000Z",
+    responseCapability: "live",
+    questions: [
+      {
+        id: "rounding",
+        header: "Rounding",
+        question: "Round per line or per total?",
+        options: [{ label: "Per line", description: "Totals can drift" }, { label: "Per total" }],
+        multiSelect: false,
+        ...extra,
+      },
+    ],
+  }) as unknown as PendingThreadRequests["userInputs"][number];
+
+it("sends an approval from the row without activating the row", async () => {
+  setup({ approvals: [approval] });
+  const onRowClick = vi.fn();
+  await using screen = await render(
+    <div onClick={onRowClick}>
+      <InlineRowAnswers thread={thread} />
+    </div>,
+  );
+  await expect.element(screen.getByText("psql -f rotate_keys.sql")).toBeVisible();
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
+  expect(state.respondApproval).toHaveBeenCalledWith({
+    environmentId,
+    input: { threadId, requestId, decision: "accept" },
+  });
+  expect(onRowClick).not.toHaveBeenCalled();
+});
+
+it("shows a failed answer on the row and clears it on retry", async () => {
+  setup({ approvals: [approval] });
+  state.respondApproval.mockReset();
+  state.respondApproval
+    .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Environment offline"))))
+    .mockResolvedValueOnce(AsyncResult.success(undefined));
+  await using screen = await render(<InlineRowAnswers thread={thread} />);
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect.element(screen.getByRole("alert")).toHaveTextContent("Environment offline");
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
+});
+
+it("answers a one-question request with the option's value", async () => {
+  setup({ userInputs: [question()] });
+  await using screen = await render(<InlineRowAnswers thread={thread} />);
+  await screen.getByRole("button", { name: "Per total", exact: true }).click();
+  expect(state.respondInput).toHaveBeenCalledWith({
+    environmentId,
+    input: { threadId, requestId, answers: { rounding: "Per total" } },
+  });
+});
+
+it("draws nothing on the row for a question that needs the full thread", async () => {
+  setup({ userInputs: [question({ multiSelect: true })] });
+  await using screen = await render(<InlineRowAnswers thread={thread} />);
+  expect(screen.container.querySelector("[data-row-answers]")?.childElementCount).toBe(0);
+});
+
+it("offers the thread from the popover when the row cannot answer", async () => {
+  setup({ userInputs: [question({ multiSelect: true })] });
+  const onOpenThread = vi.fn();
+  await using screen = await render(
+    <RowAnswersPopover
+      thread={thread}
+      label="Input"
+      className=""
+      open
+      onOpenChange={() => {}}
+      onOpenThread={onOpenThread}
+    />,
+  );
+  await screen.getByRole("button", { name: "Open thread" }).click();
+  expect(onOpenThread).toHaveBeenCalledOnce();
+});

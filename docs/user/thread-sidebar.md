@@ -159,6 +159,23 @@ needs you. Use the pen button on a folder, or right-click it, to start a thread 
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
 cannot drag threads, and the Working section is off. Each device keeps its own choice.
 
+### Choose a sidebar layout (beta)
+
+**Settings → General → Sidebar layout** on web and desktop picks how the sidebar lists threads. It
+applies at once, and each device keeps its own choice.
+
+- **Default** is the sidebar described above, shaped by the Working section and Boring sidebar
+  settings.
+- **Detailed** keeps each thread in its project whatever its state. Pinned threads stay at the top
+  of their folder, and Snoozed and Settled sit behind a row at the end of it. Workers nest under
+  the thread that started them. **Waiting on you** lists every thread that needs an answer, and you
+  can answer on the row without opening the thread.
+- **Slim** shows one line per thread in project folders, with workers folded to a count. Click the
+  status of a thread that asks for something to answer it without opening the thread.
+
+Detailed and Slim always group by project and have no Working section, so those settings are locked
+while either is on. Your values for them return when you go back to Default.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

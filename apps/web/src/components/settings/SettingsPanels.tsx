@@ -55,6 +55,8 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { resolveSidebarLayout } from "../sidebar/variants/sidebarLayout";
+import { SidebarVariantRow } from "./SidebarVariantSetting";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
@@ -480,6 +482,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
       ? ["Project order"]
       : []),
+    ...(settings.sidebarVariant !== DEFAULT_UNIFIED_SETTINGS.sidebarVariant
+      ? ["Sidebar layout"]
+      : []),
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
@@ -651,6 +656,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarVariant: DEFAULT_UNIFIED_SETTINGS.sidebarVariant,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -785,6 +791,7 @@ export function LegacyFeaturesSection() {
 export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const sidebarLayout = resolveSidebarLayout(settings);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -807,6 +814,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="sidebar" title="Sidebar">
+        <SidebarVariantRow />
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
@@ -884,7 +892,11 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section."
+          description={
+            sidebarLayout.locked
+              ? "The Detailed and Slim sidebars have no Working section."
+              : "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section."
+          }
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
@@ -900,7 +912,8 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.sidebarWorkingShelfEnabled}
+              checked={settings.sidebarWorkingShelfEnabled && !sidebarLayout.locked}
+              disabled={sidebarLayout.locked}
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }

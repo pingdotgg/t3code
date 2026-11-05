@@ -132,6 +132,7 @@ import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import type { SidebarVariant } from "@t3tools/contracts/settings";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -261,6 +262,15 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import { DetailedSidebarGroups } from "./sidebar/variants/DetailedSidebarGroups";
+import {
+  threadsWaitingOnYou,
+  variantRowStyle,
+  workerBucket,
+  workersByParent,
+  workersOf,
+} from "./sidebar/variants/sidebarVariant.logic";
+import { useDetailedFolders } from "./sidebar/variants/useDetailedFolders";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -422,6 +432,8 @@ function useSidebarThreads(input: {
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
   readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
+  readonly sidebarVariant: SidebarVariant;
+  readonly routeThreadKey: string | null;
 }) {
   const {
     projectScopeKey,
@@ -434,6 +446,8 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
+    sidebarVariant,
+    routeThreadKey,
   } = input;
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
@@ -490,7 +504,7 @@ function useSidebarThreads(input: {
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
-    expanded: settledShelfExpanded,
+    expanded: settledShelfExpanded || sidebarVariant === "detailed",
     visibleCount: settledVisibleCount,
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
@@ -539,7 +553,22 @@ function useSidebarThreads(input: {
               : EMPTY_THREADS,
           };
         });
-  const orderedThreads = [
+  const detailedFolders = useDetailedFolders(
+    sidebarVariant === "detailed" && folderGroups !== null
+      ? {
+          groups: folderGroups,
+          threads,
+          pinned: pinnedThreads,
+          active: activeThreads,
+          snoozed: snoozedThreads,
+          settled: visibleSettledThreads,
+          projectExpandedById,
+          routeRowKey: routeRowThreadKey,
+          routeThreadKey,
+        }
+      : null,
+  );
+  const orderedThreads = detailedFolders?.orderedThreads ?? [
     ...pinnedThreads,
     ...(projectFolders === null
       ? activeThreads
@@ -585,6 +614,7 @@ function useSidebarThreads(input: {
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     projectFolders,
+    detailedFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
@@ -988,6 +1018,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const boringSidebarEnabled = useBoringSidebarEnabled();
   const legacySidebarEnabled = useClientSettings((settings) => settings.legacySidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  const sidebarVariant = useClientSettings((settings) => settings.sidebarVariant);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -1309,6 +1340,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     workingShelfExpanded,
     toggleWorkingShelf,
     projectFolders,
+    detailedFolders,
     toggleProjectFolder,
     renderedSettledThreads,
     visibleSnoozedThreads,
@@ -1339,6 +1371,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
+    sidebarVariant,
+    routeThreadKey,
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -3300,24 +3334,35 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     )}
                   >
                     {(() => {
+                      const workerMap = sidebarVariant === "slim" ? workersByParent(threads) : null;
+                      const activeRowKey =
+                        detailedFolders !== null &&
+                        routeThreadKey !== null &&
+                        threadByKey.has(routeThreadKey)
+                          ? routeThreadKey
+                          : routeRowThreadKey;
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
                         // The tree row of the project folder this row sits in.
                         folderRow?: string,
+                        nested = false,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
-                        const rowVariant = folderRow
-                          ? folderRowsMultiline
-                            ? "folder-multiline"
-                            : "folder"
-                          : isCard
-                            ? "card"
-                            : "slim";
+                        const rowVariant =
+                          variantRowStyle(sidebarVariant, section, folderRow !== undefined) ??
+                          (folderRow
+                            ? folderRowsMultiline
+                              ? "folder-multiline"
+                              : "folder"
+                            : isCard
+                              ? "card"
+                              : "slim");
+                        const workers = workerMap ? workersOf(workerMap, thread) : [];
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3331,6 +3376,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             thread={thread}
                             variant={rowVariant}
+                            nested={nested}
+                            workerCount={workers.length}
+                            workerNeedsYou={workers.some(
+                              (worker) => workerBucket(worker) === "need",
+                            )}
                             navigationParent={
                               folderRow ??
                               (section === "working" ||
@@ -3346,8 +3396,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   ? "unsettle"
                                   : "settle"
                             }
-                            settlementSupported={serverConfigs.has(thread.environmentId)}
-                            snoozeSupported={serverConfigs.has(thread.environmentId)}
+                            settlementSupported={!nested && serverConfigs.has(thread.environmentId)}
+                            snoozeSupported={!nested && serverConfigs.has(thread.environmentId)}
                             pinningSupported={serverConfigs.has(thread.environmentId)}
                             isPinned={thread.pinnedAt != null}
                             dropVerb={
@@ -3369,10 +3419,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                            isActive={routeRowThreadKey === threadKey}
-                            revealRef={
-                              routeRowThreadKey === threadKey ? revealActiveRow : undefined
-                            }
+                            isActive={activeRowKey === threadKey}
+                            revealRef={activeRowKey === threadKey ? revealActiveRow : undefined}
                             isRouteThread={routeThreadKey === threadKey}
                             openPullRequestsInRightPanel={routeThreadRef !== null}
                             jumpLabel={
@@ -3432,6 +3480,37 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      if (detailedFolders !== null) {
+                        items.push(
+                          <DetailedSidebarGroups
+                            key="detailed-groups"
+                            folders={detailedFolders.folders}
+                            waiting={threadsWaitingOnYou(threads, scopedProjectKeys)}
+                            routeThreadKey={routeThreadKey}
+                            projectNameOf={(thread) =>
+                              projectDisplayNameByKey.get(
+                                `${thread.environmentId}:${thread.projectId}`,
+                              ) ?? null
+                            }
+                            onNavigate={navigateToThread}
+                            onToggleWorkers={detailedFolders.toggleWorkers}
+                            onToggleParked={detailedFolders.toggleParked}
+                            renderHeader={(folder) => (
+                              <SidebarProjectFolderHeader
+                                key={`project-folder:${folder.group.projectKey}`}
+                                group={folder.group}
+                                collapsed={folder.collapsed}
+                                hiddenThreads={folder.hiddenThreads}
+                                onToggle={toggleProjectFolder}
+                                onNewThread={startThreadInProjectFolder}
+                                onContextMenu={handleProjectFolderContextMenu}
+                              />
+                            )}
+                            renderRow={renderThreadRow}
+                          />,
+                        );
+                        return items;
+                      }
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
@@ -3576,7 +3655,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       }
                       return items;
                     })()}
-                    {settledShelfExpanded && hiddenSettledCount > 0 ? (
+                    {(settledShelfExpanded || detailedFolders !== null) &&
+                    hiddenSettledCount > 0 ? (
                       <li className="list-none">
                         <button
                           type="button"
@@ -3595,7 +3675,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             ? "Loading"
                             : olderSettledShelf.failed
                               ? "Could not load older threads. Retry"
-                              : `Show ${Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more`}
+                              : `Show ${Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more${detailedFolders !== null ? " settled" : ""}`}
                         </button>
                       </li>
                     ) : null}

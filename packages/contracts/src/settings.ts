@@ -63,6 +63,8 @@ const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
+export const SidebarVariant = Schema.Literals(["default", "detailed", "slim"]);
+export type SidebarVariant = typeof SidebarVariant.Type;
 
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
@@ -480,6 +482,7 @@ export const ClientSettingsSchema = Schema.Struct({
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  sidebarVariant: SidebarVariant.pipe(Schema.withDecodingDefault(Effect.succeed("default"))),
   // Retired Labs toggle. Still read as the default for the Usage item in threadDetailsItems.
   threadDetailsUsageEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Sparse show/hide overrides for thread details card items. Missing ids use the client's
@@ -1820,6 +1823,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
+  sidebarVariant: Schema.optionalKey(SidebarVariant),
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),

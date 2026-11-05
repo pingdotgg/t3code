@@ -114,6 +114,8 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } f
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import type { VariantRowStyle } from "./variants/sidebarVariant.logic";
+import { resolveVariantRow } from "./variants/variantRow";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -182,11 +184,13 @@ function terminalProcessLabel(count: number): string {
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  hideLone?: boolean;
 }) {
   const stack = resolveThreadProviderStack(props.thread);
   const currentInstanceId = stack[stack.length - 1]!;
   const currentEntry = props.providerEntryByInstanceId.get(currentInstanceId) ?? null;
   if (currentEntry === null) return null;
+  if (props.hideLone && stack.length === 1 && props.providerEntryByInstanceId.size < 2) return null;
   const showInstanceBadge = shouldShowInstanceBadge(
     currentEntry,
     props.providerEntryByInstanceId.values(),
@@ -536,7 +540,10 @@ type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it.
-  variant: "card" | "slim" | "folder" | "folder-multiline";
+  variant: "card" | "slim" | "folder" | "folder-multiline" | VariantRowStyle;
+  nested?: boolean;
+  workerCount?: number;
+  workerNeedsYou?: boolean;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -714,13 +721,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
     thread.settledOverride !== "settled";
-  const shouldRecede = shouldRecedeSidebarThread({
-    status,
-    isUnread,
-    isWoke,
-    isActive: props.isActive,
-    isSelected,
-  });
+  const variantStyled = variant === "folder-detailed" || variant === "folder-slim";
+  const [answersOpen, setAnswersOpen] = useState(false);
+  const shouldRecede =
+    !(variantStyled && status === "approval") &&
+    shouldRecedeSidebarThread({
+      status,
+      isUnread,
+      isWoke,
+      isActive: props.isActive,
+      isSelected,
+    });
   const topStatus =
     status === "preparing" || status === "working"
       ? {
@@ -963,6 +974,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
     shouldRecede &&
+      !variantStyled &&
       (status === "preparing" || status === "working") &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
@@ -1144,7 +1156,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     diff === null &&
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
-    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+    <div
+      data-meta-line
+      className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs"
+    >
       {thread.branch ? (
         <>
           <ThreadWorktreeIndicator thread={thread} />
@@ -1180,6 +1195,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <SidebarProviderStack
           thread={thread}
           providerEntryByInstanceId={props.providerEntryByInstanceId}
+          hideLone={variantStyled}
         />
       </span>
     </div>
@@ -1190,13 +1206,53 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <SidebarProviderStack
         thread={thread}
         providerEntryByInstanceId={props.providerEntryByInstanceId}
+        hideLone={variantStyled}
       />
     </span>
   ) : null;
 
   if (variant !== "card") {
-    const multiline = variant === "folder-multiline";
-    const inFolder = variant === "folder" || multiline;
+    const detailed = variant === "folder-detailed";
+    const multiline = variant === "folder-multiline" || detailed;
+    const inFolder = variant !== "slim";
+    const variantRow =
+      variant === "folder-detailed" || variant === "folder-slim"
+        ? resolveVariantRow({
+            style: variant,
+            thread,
+            status,
+            statusWord: topStatus && !isWokeStatus ? topStatus : null,
+            statusIcon:
+              topStatus && !isWokeStatus ? (
+                <TopStatusIcon
+                  icon={topStatus.icon}
+                  className={cn("size-3.5", topStatus.className)}
+                />
+              ) : null,
+            duration: <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />,
+            time: (
+              <RelativeTimeLabel
+                timestamp={
+                  variantAction === "unsettle"
+                    ? resolveSettledThreadTimestamp(thread)
+                    : threadTimeTimestamp(thread)
+                }
+              />
+            ),
+            isUnread,
+            isActive: props.isActive,
+            nested: props.nested ?? false,
+            project: props.project,
+            showProjectMark: props.navigationParent === undefined,
+            title,
+            titleDirection: textDirection(thread.title),
+            workerCount: props.workerCount ?? 0,
+            workerNeedsYou: props.workerNeedsYou ?? false,
+            answersOpen,
+            onAnswersOpenChange: setAnswersOpen,
+            onOpenThread: () => onThreadActivate(threadRef),
+          })
+        : null;
     return (
       <li
         data-thread-item={threadKey}
@@ -1206,9 +1262,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
           metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
           sortable?.isDragging && "relative z-20",
+          variantRow?.rootClassName,
         )}
       >
-        <Tooltip disabled={sortable?.isDragging}>
+        <Tooltip disabled={sortable?.isDragging || answersOpen}>
           <TooltipTrigger
             render={
               <div
@@ -1217,17 +1274,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 tabIndex={0}
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
-                aria-label={accessibility.label}
+                aria-label={accessibility.label + (variantRow?.labelSuffix ?? "")}
                 aria-current={accessibility.current}
+                data-attention={variantRow?.attention}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(
                   rowSurfaceClassName,
-                  multiline
-                    ? "flex flex-col justify-center px-2.5 py-1.5"
-                    : "flex h-9 items-center gap-2.5 px-2.5",
+                  variantRow?.rowClassName ??
+                    (multiline
+                      ? "flex flex-col justify-center px-2.5 py-1.5"
+                      : "flex h-9 items-center gap-2.5 px-2.5"),
                   // Lines titles up with the folder name, past its chevron and icon.
-                  inFolder && "ps-9",
+                  inFolder && !variantRow && "ps-9",
                 )}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
@@ -1237,8 +1296,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             }
           >
             {/* `contents` keeps one-line rows a single flex row. */}
-            <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
+            <div
+              className={
+                multiline && !detailed ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"
+              }
+            >
               {accessibleTitle}
+              {variantRow?.decor}
               {inFolder ? null : (
                 <span
                   className={cn(
@@ -1252,11 +1316,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   ) : null}
                 </span>
               )}
-              {draftIndicator}
-              {title}
+              {detailed ? null : draftIndicator}
+              {detailed ? (
+                <span data-title-line className="flex h-6 min-w-0 items-center gap-1.5">
+                  {draftIndicator}
+                  {title}
+                  {pinIndicator}
+                </span>
+              ) : (
+                (variantRow?.title ?? title)
+              )}
               {multiline ? titleLineIcons : null}
-              {pinIndicator}
+              {detailed ? null : pinIndicator}
               {multiline ? null : terminalStatusIcon}
+              {variantRow?.beforeSlot}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1266,6 +1339,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 dragDestination
               ) : (
                 <span
+                  data-status-slot
                   className={cn(
                     "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
                     props.sweepAction !== null && "hidden",
@@ -1275,7 +1349,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   <span
                     className={cn(
                       "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
-                      !isWoke && "group-any-hover/sidebar-row:opacity-0",
+                      !isWoke && !variantRow?.keepsSlot && "group-any-hover/sidebar-row:opacity-0",
                     )}
                   >
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
@@ -1301,6 +1375,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         />
                         <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                       </Tooltip>
+                    ) : variantRow ? (
+                      variantRow.slot
                     ) : inFolder && topStatus ? (
                       // Folder rows have no status line, so the status takes the time slot.
                       <span
@@ -1339,7 +1415,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <AlarmClockOffIcon className="mb-px size-3" />
                       </button>
                     )
-                  ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
+                  ) : !props.settlementSupported || variantRow?.keepsSlot ? null : variantAction ===
+                    "unsettle" ? (
                     <Tooltip>
                       <TooltipTrigger
                         render={
@@ -1386,6 +1463,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             {multiline ? metaLine : null}
+            {variantRow?.answers}
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
