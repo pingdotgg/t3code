@@ -516,8 +516,9 @@ function makeMockRuntime(input: {
     });
 }
 
-it.live("does not detach an owned Windows ACP process and retains PID tree cleanup", () =>
-  Effect.gen(function* () {
+it.live("does not detach an owned Windows ACP process and retains PID tree cleanup", () => {
+  let finalizerPid = 0;
+  return Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
     const terminated: number[] = [];
@@ -544,6 +545,15 @@ it.live("does not detach an owned Windows ACP process and retains PID tree clean
         ChildProcessSpawner.make((command) => {
           if (!ChildProcess.isStandardCommand(command))
             return Effect.die("Expected standard command");
+          if (command.command === "taskkill") {
+            finalizerPid = Number(command.args[1]);
+            assert.equal(finalizerPid, spawnedPid);
+            // Exercise the Windows finalizer while terminating the mock child on any host.
+            return spawner.spawn(
+              ChildProcess.make(process.execPath, ["-e", `process.kill(${finalizerPid})`]),
+            );
+          }
+          assert.equal(command.command, process.execPath);
           assert.isFalse(command.options.detached);
           return spawner.spawn(command).pipe(
             Effect.tap((child) =>
@@ -560,8 +570,12 @@ it.live("does not detach an owned Windows ACP process and retains PID tree clean
     yield* runtime.terminateProcessGroup;
     assert.deepEqual(terminated, [spawnedPid]);
     assert.isAbove(spawnedPid, 0);
-  }).pipe(Effect.provide(layerTest), Effect.scoped),
-);
+  }).pipe(
+    Effect.provide(layerTest),
+    Effect.scoped,
+    Effect.tap(() => Effect.sync(() => assert.isAbove(finalizerPid, 0))),
+  );
+});
 
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
