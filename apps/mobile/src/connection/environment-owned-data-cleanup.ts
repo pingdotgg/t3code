@@ -3,10 +3,16 @@ import { Persistence } from "@t3tools/client-runtime/platform";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { clearThreadComposerErrorsForEnvironment } from "../state/thread-composer-error";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
+
+class EnvironmentOwnedDataClearError extends Schema.TaggedError<EnvironmentOwnedDataClearError>()(
+  "EnvironmentOwnedDataClearError",
+  { cause: Schema.Defect() },
+) {}
 
 export const layer = Layer.succeed(
   Persistence.EnvironmentOwnedDataCleanup,
@@ -17,7 +23,10 @@ export const layer = Layer.succeed(
         operation: "outbox" | "drafts",
         clear: (environmentId: EnvironmentId) => Promise<void>,
       ) =>
-        Effect.tryPromise(() => clear(environmentId)).pipe(
+        Effect.tryPromise({
+          try: () => clear(environmentId),
+          catch: (cause) => new EnvironmentOwnedDataClearError({ cause }),
+        }).pipe(
           Effect.catch((error) =>
             Effect.logWarning("Could not clear mobile environment-owned data.", {
               environmentId,
