@@ -6,14 +6,17 @@ import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { openAttachmentInViewer } from "../lib/attachmentDownload";
-import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
-import { MediaImagePreview } from "./MediaImagePreview";
+import type {
+  ResolvedFilePreviewDocument,
+  ResolvedFilePreviewSource,
+} from "./FilePreviewModal.types";
+import { imageViewingProps, MediaImagePreview } from "./MediaImagePreview";
 import { PdfPreview } from "./PdfPreview";
 import { ControlPill } from "./ui/ControlPill";
 import { AppText as Text } from "./ui/AppText";
 
 function PdfDocumentPreview(props: {
-  readonly source: ResolvedFilePreviewSource;
+  readonly source: ResolvedFilePreviewDocument;
   readonly onRequestClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -41,7 +44,7 @@ function PdfDocumentPreview(props: {
 }
 
 function DocumentPreview(props: {
-  readonly source: ResolvedFilePreviewSource;
+  readonly source: ResolvedFilePreviewDocument;
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
@@ -100,18 +103,14 @@ export function FilePreview(props: {
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
-  if (props.source.kind === "pdf") return <PdfDocumentPreview {...props} />;
-  if (props.source.kind !== "image") return <DocumentPreview {...props} />;
-  if (props.source.actionsSource) return <MediaImagePreview {...props} />;
+  const { source } = props;
+  if (source.kind === "pdf") return <PdfDocumentPreview {...props} source={source} />;
+  if (source.kind !== "image") return <DocumentPreview {...props} source={source} />;
+  if (source.images[source.selectedIndex]?.actionsSource)
+    return <MediaImagePreview source={source} onRequestClose={props.onRequestClose} />;
   return (
     <ImageViewing
-      images={
-        props.source.gallery?.map((item) => ({ uri: item.uri })) ?? [{ uri: props.source.uri }]
-      }
-      imageIndex={Math.max(
-        0,
-        props.source.gallery?.findIndex((item) => item.uri === props.source.uri) ?? 0,
-      )}
+      {...imageViewingProps(source)}
       visible
       onRequestClose={props.onRequestClose}
       swipeToCloseEnabled={false}
