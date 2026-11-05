@@ -2,7 +2,12 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
-import { ActivityShimmerOverlay, WORKING_BAR_CLASS_NAME, WorkingBarChip } from "./TimelineRowParts";
+import {
+  ActivityShimmerOverlay,
+  WORKING_BAR_CLASS_NAME,
+  WorkFoldToggle,
+  WorkingBarChip,
+} from "./TimelineRowParts";
 import {
   AssistantMetaTimelineRow,
   AssistantTimelineRow,
@@ -126,6 +131,7 @@ import {
   turnFoldStartsOpen,
   withRunGroupsOpen,
   withTurnFoldOpen,
+  liveRunlessTurnFoldRunId,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
@@ -450,6 +456,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => listState.rememberedPosition?.disclosures?.runs ?? new Set(),
   );
+  const [openHistoryRunId, setOpenHistoryRunId] = useState<RunId | null>(null);
+  const [foldRevealBaseIds, setFoldRevealBaseIds] = useState<ReadonlySet<string> | null>(null);
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
     () => listState.rememberedPosition?.disclosures?.workGroups ?? new Set(),
   );
@@ -488,6 +496,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // A viewer pinned in another thread must not keep live follow off here,
     // nor when that thread comes back.
     setFullscreenAppRowId(null);
+    setOpenHistoryRunId(null);
+    setFoldRevealBaseIds(null);
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
@@ -512,8 +522,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     list.anchorVisibleContent({ key: anchorKey });
   };
 
+  const revealFoldRows = (opening: boolean) =>
+    setFoldRevealBaseIds(
+      opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
+    );
   const onToggleTurnFold = (runId: RunId) => {
     preserveDisclosurePosition(`turn-fold:${runId}`);
+    revealFoldRows(
+      rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
+    );
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -526,6 +543,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
     preserveDisclosurePosition(anchorKey);
+    const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
+    if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -663,6 +682,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const workingHistoryOpen = rows.some(
     (row) => row.kind === "working" && row.window?.historyOpen === true,
   );
+  if (rows.some((row) => row.kind === "working")) {
+    const historyRunId = workingHistoryOpen
+      ? ((runlessWorkActive ? liveRunlessTurnFoldRunId(timelineEntries) : null) ??
+        latestRun?.runId ??
+        null)
+      : null;
+    if (historyRunId !== openHistoryRunId) setOpenHistoryRunId(historyRunId);
+  } else if (openHistoryRunId !== null) {
+    const fold = rows.find((row) => row.kind === "turn-fold" && row.runId === openHistoryRunId);
+    if (fold?.kind === "turn-fold") {
+      setOpenHistoryRunId(null);
+      setExpandedRunIds((existing) => withTurnFoldOpen(existing, fold));
+    }
+  }
   // Opens whatever hides a cited response. False when nothing does, so the citation stops waiting.
   const revealCitedEntry = (entryId: string, runId: RunId | null) => {
     const fold = timelineTurnFoldRunIdsByEntryId({
@@ -1303,6 +1336,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     <TimelineRowCtx value={sharedState}>
       <div
         className="messages-timeline-row-frame"
+        data-fold-reveal={foldRevealBaseIds?.has(item.id) === false ? "" : undefined}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) setFoldRevealBaseIds(null);
+        }}
         onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
@@ -1748,47 +1785,28 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
     row.failureMessage !== null && !(isLatestRun && row.failureMessage === threadErrorMessage)
       ? row.failureMessage
       : row.noticeMessage;
-  const labelClassName = cn(
-    "flex shrink-0 items-center gap-2 self-stretch text-label whitespace-nowrap tabular-nums",
-    row.ending === "failed"
-      ? "text-error-foreground"
-      : row.ending === "limited"
-        ? "text-warning-foreground"
-        : "text-muted-foreground",
-  );
-  const labelContent = (
-    <>
-      {row.ending === "failed" ? <CircleAlertIcon aria-hidden className="size-3 shrink-0" /> : null}
-      <span>
-        {row.label}
-        {error ? <span className="block text-error-foreground">{error}</span> : null}
-      </span>
-    </>
-  );
   const limit = row.ending === "limited" && usageLimit?.runId === row.runId ? usageLimit : null;
 
   return (
     <div>
       <div className={WORKING_BAR_CLASS_NAME}>
-        {row.foldable ? (
-          <button
-            type="button"
-            aria-expanded={row.expanded}
-            data-scroll-anchor-ignore
-            onClick={toggle}
-            aria-busy={loading}
-            className={cn(
-              "cursor-pointer select-none rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-              labelClassName,
-              row.ending === "worked" || row.ending === "stopped" ? "hover:text-foreground" : null,
-            )}
-          >
-            {labelContent}
-            <span aria-hidden className="size-3 shrink-0" />
-          </button>
-        ) : (
-          <span className={labelClassName}>{labelContent}</span>
-        )}
+        <WorkFoldToggle
+          togglable={row.foldable}
+          expanded={row.expanded}
+          tone={
+            row.ending === "failed" ? "error" : row.ending === "limited" ? "warning" : "neutral"
+          }
+          aria-busy={loading}
+          onClick={toggle}
+        >
+          {row.ending === "failed" ? (
+            <CircleAlertIcon aria-hidden className="size-3 shrink-0" />
+          ) : null}
+          <span>
+            {row.label}
+            {error ? <span className="block text-error-foreground">{error}</span> : null}
+          </span>
+        </WorkFoldToggle>
         <span className="min-w-0 flex-1" />
         {limit?.resetAt ? (
           <TurnFoldUsageLimit limit={limit} timestampFormat={ctx.timestampFormat} />

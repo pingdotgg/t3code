@@ -314,6 +314,19 @@ describe("MessagesTimeline work rows", () => {
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
+    const fadedRowIds: string[] = [];
+    const listening = new AbortController();
+    onTestFinished(() => listening.abort());
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        if (event.animationName !== "timeline-fold-reveal" || !(event.target instanceof Element))
+          return;
+        const row = event.target.querySelector("[data-timeline-row-id]");
+        fadedRowIds.push(row?.getAttribute("data-timeline-row-id") ?? "");
+      },
+      { signal: listening.signal },
+    );
     await heading.click();
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
@@ -321,6 +334,10 @@ describe("MessagesTimeline work rows", () => {
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
         500,
       );
+    });
+    await vi.waitFor(() => {
+      expect(fadedRowIds).toEqual(["entry-progress"]);
+      expect(viewport.querySelector("[data-fold-reveal]")).toBeNull();
     });
   });
 
@@ -2009,6 +2026,64 @@ describe("MessagesTimeline work rows", () => {
     expect(screen.text()).toContain("Working for");
     expect(screen.text()).not.toContain("Paused at");
   });
+
+  it.each(["run-backed", "runless"] as const)(
+    "folds the %s working history once it outgrows the collapsed window and keeps it open as the turn fold",
+    async (kind) => {
+      const runId = kind === "runless" ? null : RunId.make("growing-run");
+      const entries = (count: number) => [
+        message("Build it", { runId }),
+        ...Array.from({ length: count }, (_, index) =>
+          message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
+        ),
+      ];
+      const props = {
+        ...baseProps(),
+        isWorking: true,
+        runlessWorkActive: runId === null,
+        activeTurnStartedAt: CREATED_AT,
+        latestRun:
+          runId === null
+            ? null
+            : { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+      };
+      await using screen = await renderElement(
+        <MessagesTimeline {...props} timelineEntries={entries(2)} />,
+      );
+      await expect.element(screen.getByText("Step 1", { exact: true })).toBeVisible();
+      expect(screen.buttons(/work history/)).toEqual([]);
+      const label = screen
+        .getByText(/^Working for/)
+        .element()
+        .closest("button")!;
+      expect(label.disabled).toBe(true);
+      expect(label.hasAttribute("aria-expanded")).toBe(false);
+
+      await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(30)} />);
+      await expect
+        .element(screen.getByRole("button", { name: "Open work history" }))
+        .toHaveAttribute("aria-expanded", "false");
+
+      await screen.getByRole("button", { name: "Open work history" }).click();
+      await expect
+        .element(screen.getByRole("button", { name: "Close work history" }))
+        .toHaveAttribute("aria-expanded", "true");
+      await screen.rerender(
+        <MessagesTimeline
+          {...props}
+          timelineEntries={entries(30)}
+          isWorking={false}
+          runlessWorkActive={false}
+          latestRun={
+            props.latestRun && { ...props.latestRun, status: "completed", completedAt: CREATED_AT }
+          }
+        />,
+      );
+      await expect
+        .element(screen.getByRole("button", { name: /^Worked for/ }))
+        .toHaveAttribute("aria-expanded", "true");
+    },
+  );
 
   it("stops showing Thinking in the working window when the provider turn ends", async () => {
     const runId = RunId.make("ended-provider-run");
