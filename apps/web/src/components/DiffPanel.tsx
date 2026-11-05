@@ -1031,14 +1031,6 @@ export default function DiffPanel({
             </DropdownMenuSub>
           </DropdownMenuContent>
         </DropdownMenu>
-        {selectedRunId === null && !toolCallSelection ? (
-          <RepoWorktreeTargetMenu
-            repoWorktrees={repoTarget.repoWorktrees}
-            selected={selectedRepoWorktree}
-            workspaceLabel={activeThread?.worktreePath ? "Thread worktree" : "Project folder"}
-            onSelect={repoTarget.select}
-          />
-        ) : null}
         {canSelectBranchBase && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
@@ -1083,7 +1075,7 @@ export default function DiffPanel({
             >
               <ComboboxTrigger
                 render={<Button variant="ghost-muted" size="xs" />}
-                className="min-w-9 max-w-48 shrink-0"
+                className="min-w-9 max-w-48 shrink-0 @max-[20rem]/diff-refs:shrink"
                 aria-label={`Change comparison target. Currently ${comparisonBaseRef}`}
               >
                 <span className="min-w-0 truncate">{comparisonBaseRef}</span>
@@ -1335,6 +1327,19 @@ export default function DiffPanel({
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
+      {/* Its own row: beside the scope and comparison, a normal-width panel has no room left. */}
+      {selectedRunId === null && !toolCallSelection && repoTarget.repoWorktrees.length > 0 ? (
+        <div
+          className={cn("flex shrink-0 items-center pb-2", mode === "embedded" ? "px-2" : "px-4")}
+        >
+          <RepoWorktreeTargetMenu
+            repoWorktrees={repoTarget.repoWorktrees}
+            selected={selectedRepoWorktree}
+            workspaceLabel={activeThread?.worktreePath ? "Thread worktree" : "Project folder"}
+            onSelect={repoTarget.select}
+          />
+        </div>
+      ) : null}
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.

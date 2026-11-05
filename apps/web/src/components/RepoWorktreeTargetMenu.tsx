@@ -45,8 +45,10 @@ export function RepoWorktreeTargetMenu(props: {
           </DropdownMenuRadioItem>
           {props.repoWorktrees.map((entry) => (
             <DropdownMenuRadioItem key={entry.worktreePath} value={entry.worktreePath} closeOnClick>
-              <span className="min-w-0 truncate">{entry.repository}</span>
-              <span className="min-w-0 truncate text-muted-foreground">{entry.branch}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 truncate">{entry.repository}</span>
+                <span className="min-w-0 truncate text-muted-foreground">{entry.branch}</span>
+              </span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
