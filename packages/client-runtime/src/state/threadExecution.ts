@@ -378,6 +378,26 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
+// The Claude adapter forces a stuck query closed after 10 seconds.
+export const BACKGROUND_WORK_STOP_RETRY_AFTER_MS = 10_000;
+
+export interface BackgroundWorkStopRequest {
+  readonly threadKey: string;
+  readonly taskIds: ReadonlyArray<string>;
+  readonly retryAt: number | null;
+}
+
+/** Acceptance does not end the tasks, so an accepted Stop stays pending while they are listed. */
+export function isBackgroundWorkStopPending(
+  request: BackgroundWorkStopRequest | null,
+  threadKey: string,
+  tasks: ReadonlyArray<Pick<OrchestrationV2PendingBackgroundTask, "taskId">>,
+  retryExpired: boolean,
+): boolean {
+  if (request === null || request.threadKey !== threadKey || retryExpired) return false;
+  return request.retryAt === null || tasks.some((task) => request.taskIds.includes(task.taskId));
+}
+
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
@@ -413,12 +433,10 @@ export function presentPendingBackgroundWork(
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     const named = only.label !== noun;
-    const title = waiting
-      ? named
-        ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
-        : `Waiting on a ${noun}`
-      : named
-        ? `Running: ${only.label}`
+    const title = named
+      ? `${waiting ? "Waiting" : "Running"} · ${only.label}`
+      : waiting
+        ? `Waiting on a ${noun}`
         : `Running a ${noun}`;
     return { title, items, waiting };
   }

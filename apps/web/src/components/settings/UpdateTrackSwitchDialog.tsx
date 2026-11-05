@@ -18,7 +18,7 @@ import {
   type ChannelSwitchRelease,
 } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp, useUpdateEverything } from "../sidebar/useUpdateEverything";
-import { prepareLocalTrackSwitch } from "./updateTrackSwitch.logic";
+import { localUpdaterStaysPut, prepareLocalTrackSwitch } from "./updateTrackSwitch.logic";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -76,8 +76,7 @@ function SwitchPlan({
   const updateState = useDesktopUpdateState();
   const { environments } = useEnvironments();
   const crossesLocal = desktopUpdateChannelOf(APP_VERSION) !== release.channel;
-  // With its updater off (a .deb install, or no feed) this app stays put and only remotes move.
-  const updatesOff = updateState?.enabled === false;
+  const updatesOff = localUpdaterStaysPut(updateState, release.channel);
   // After a partial switch this app may already be on the track; then only remotes move.
   const switchesLocal = crossesLocal && !updatesOff;
   const [checking, setChecking] = useState(false);
