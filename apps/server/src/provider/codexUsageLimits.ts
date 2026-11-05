@@ -186,7 +186,13 @@ export function mergeCodexRateLimits(
   };
 }
 
-export type CodexRateLimitWindowId = "primary" | "secondary";
+type CodexRateLimitWindowId = "primary" | "secondary";
+
+/** The pending read reconciles against resets notified since its request, so both change together. */
+export interface CodexRateLimitState {
+  readonly snapshot: CodexRateLimitSnapshot | undefined;
+  readonly notifiedResets: ReadonlySet<CodexRateLimitWindowId>;
+}
 
 /** Windows a notification gave a reset; a later one that omits it cleared that reset. */
 export function notifiedCodexResets(

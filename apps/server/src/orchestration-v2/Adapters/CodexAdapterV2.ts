@@ -30,7 +30,7 @@ import {
   notifiedCodexResets,
   reconcileCodexRateLimitsRead,
   type CodexRateLimitSnapshot,
-  type CodexRateLimitWindowId,
+  type CodexRateLimitState,
 } from "../../provider/codexUsageLimits.ts";
 import {
   CodexSettings,
@@ -1871,7 +1871,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           Effect.forkScoped,
         );
-        const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
+        const rateLimits = yield* Ref.make<CodexRateLimitState>({
+          snapshot: undefined,
+          notifiedResets: new Set(),
+        });
+        const rateLimitSnapshot = Ref.get(rateLimits).pipe(Effect.map((state) => state.snapshot));
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
@@ -4497,7 +4501,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         // Repeated quota notifications call this helper; terminal publication owns its own span.
         const enrichLimitedTurnItems = Effect.fnUntraced(function* () {
-          const snapshot = yield* Ref.get(rateLimitSnapshot);
+          const snapshot = yield* rateLimitSnapshot;
           for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
             const resetAt = failureResetAt(item.failure, snapshot);
             if (resetAt === null || item.failure.resetAt != null) continue;
@@ -4519,14 +4523,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         // Quota notifications repeat on token ticks; keep this path out of traces.
         const applyRateLimits = Effect.fnUntraced(function* (
-          reconcile: (
-            previous: CodexRateLimitSnapshot | undefined,
-          ) => CodexRateLimitSnapshot | undefined,
+          transition: (state: CodexRateLimitState) => CodexRateLimitState,
           replaceWindows = false,
         ) {
-          const [previous, next] = yield* Ref.modify(rateLimitSnapshot, (previous) => {
-            const next = reconcile(previous);
-            return [[previous, next] as const, next];
+          const [previous, next] = yield* Ref.modify(rateLimits, (state) => {
+            const next = transition(state);
+            return [[state.snapshot, next.snapshot] as const, next];
           });
           yield* enrichLimitedTurnItems();
           if (!next || next === previous || !adapterOptions.onUsageLimits) return;
@@ -4541,31 +4543,36 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (update) yield* adapterOptions.onUsageLimits({ ...update, checkedAt });
         });
 
-        // Resets notified since the pending read's request, recorded before the merge so a read
-        // reconciling in between still sees them.
-        const notifiedResets = yield* Ref.make<ReadonlySet<CodexRateLimitWindowId>>(new Set());
         yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
-          Ref.update(notifiedResets, (notified) =>
-            notifiedCodexResets(notified, payload.rateLimits),
-          ).pipe(
-            Effect.andThen(
-              applyRateLimits((previous) => mergeCodexRateLimits(previous, payload.rateLimits)),
-            ),
-            Effect.orDie,
-          ),
+          applyRateLimits((state) => ({
+            snapshot: mergeCodexRateLimits(state.snapshot, payload.rateLimits),
+            notifiedResets: notifiedCodexResets(state.notifiedResets, payload.rateLimits),
+          })).pipe(Effect.orDie),
         );
 
         // A run's first request can 429 before Codex pushes a codex snapshot.
         const readAccountUsageLimits = Effect.gen(function* () {
-          yield* Ref.set(notifiedResets, new Set());
-          const sent = yield* Ref.get(rateLimitSnapshot);
+          const sent = yield* Ref.modify(
+            rateLimits,
+            (state): [CodexRateLimitSnapshot | undefined, CodexRateLimitState] => [
+              state.snapshot,
+              { snapshot: state.snapshot, notifiedResets: new Set() },
+            ],
+          );
           const response = yield* client
             .request("account/rateLimits/read", null)
             .pipe(Effect.timeout("10 seconds"));
           const read = response.rateLimitsByLimitId?.codex ?? response.rateLimits;
-          const notified = yield* Ref.get(notifiedResets);
           yield* applyRateLimits(
-            (current) => reconcileCodexRateLimitsRead(sent, current, read, notified),
+            (state) => ({
+              ...state,
+              snapshot: reconcileCodexRateLimitsRead(
+                sent,
+                state.snapshot,
+                read,
+                state.notifiedResets,
+              ),
+            }),
             true,
           );
         }).pipe(
@@ -5915,7 +5922,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: failureResetAt(failure, yield* Ref.get(rateLimitSnapshot)),
+                        resetAt: failureResetAt(failure, yield* rateLimitSnapshot),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -5955,7 +5962,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...event.failure,
                     resetAt:
                       event.failure.resetAt ??
-                      failureResetAt(event.failure, yield* Ref.get(rateLimitSnapshot)),
+                      failureResetAt(event.failure, yield* rateLimitSnapshot),
                   },
                 }
               : event;
@@ -5994,7 +6001,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             event.failure.resetAt == null &&
             // The account read only reports the ordinary allowance, never a sharing cap's reset.
             !classifyCodexManagedError(event.failure.code)?.usageLimit &&
-            codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)) === null;
+            codexUsageLimitResetAt(yield* rateLimitSnapshot) === null;
           if (!awaitsReset) yield* publishRootTerminal(context, event);
           const continued = continuedRuns.get(context.providerTurnId) ?? [context];
           if (event.status !== "completed") {
