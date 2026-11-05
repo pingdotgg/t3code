@@ -387,6 +387,7 @@ it.layer(
           if (skipUsage) assert.strictEqual(status.usageLimits, undefined);
           else assert.strictEqual(status.usageLimits?.unavailable?.reason, "probeFailed");
           assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.supportsUsageLimits, true);
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.version, "1.0.0");
           assert.strictEqual(status.auth.status, "authenticated");

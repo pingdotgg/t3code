@@ -174,6 +174,53 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
+  it.effect("clears retained limits and cooldown when authentication type changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const auth = yield* Ref.make<ServerProvider["auth"]>({
+          status: "authenticated",
+          type: "chatgpt",
+          email: "account@example.com",
+          workspaceId: "ws-a",
+        });
+        const reads = yield* Ref.make(0);
+        const limits = {
+          checkedAt: refreshedSnapshot.checkedAt,
+          windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 20 }],
+        } as const;
+        const provider = yield* makeManagedServerProvider({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.gen(function* () {
+            const currentAuth = yield* Ref.get(auth);
+            const polling = yield* UsagePolling;
+            if (polling) yield* Ref.update(reads, (count) => count + 1);
+            return {
+              ...refreshedSnapshot,
+              auth: currentAuth,
+              ...(polling ? { usageLimits: limits } : {}),
+            };
+          }),
+        });
+        yield* provider.refresh;
+        yield* provider.refreshUsage!;
+        assert.strictEqual(yield* Ref.get(reads), 1);
+        const unchanged = yield* provider.refresh;
+        assert.deepStrictEqual(unchanged.usageLimits, limits);
+        assert.strictEqual(unchanged.auth.workspaceId, "ws-a");
+        yield* Ref.set(auth, { status: "authenticated", type: "apiKey" });
+        const switched = yield* provider.refresh;
+        assert.strictEqual(switched.usageLimits, undefined);
+        assert.strictEqual(switched.auth.workspaceId, undefined);
+        yield* provider.refreshUsage!;
+        assert.strictEqual(yield* Ref.get(reads), 2);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect(
     "can enable unsupported usage while failed probes still keep their cache lifetime",
     () =>

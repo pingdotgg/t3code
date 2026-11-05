@@ -859,7 +859,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             checkedAt,
           });
 
-  return buildServerProvider({
+  const provider = buildServerProvider({
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
@@ -895,6 +895,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       ...(managedAuth || skipUsage ? {} : { usageLimits }),
     },
   });
+  return {
+    ...provider,
+    supportsUsageLimits:
+      accountStatus.auth.status === "authenticated" && accountStatus.auth.type === "chatgpt",
+  };
 });
 
 export { makePendingCodexProvider };

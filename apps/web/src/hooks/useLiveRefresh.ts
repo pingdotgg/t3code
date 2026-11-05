@@ -79,9 +79,8 @@ export function useLiveRefresh(
     /** `null` turns off the periodic refresh, for a read too costly to repeat unasked. */
     readonly intervalMs?: number | null;
     /**
-     * Refresh every time the view is enabled unless it read within the floor, skipping the
-     * first-read rule: for a view that stays mounted while hidden, so its mount-time read can be
-     * long stale when shown.
+     * Refresh on showing a view with stale data. Views that refresh while idle reuse their
+     * polling interval; other views use the minimum refresh floor.
      */
     readonly refreshOnShow?: boolean;
     readonly refreshWhileIdle?: boolean;
@@ -108,6 +107,10 @@ export function useLiveRefresh(
     let timer: ReturnType<typeof setInterval> | undefined;
     let disposed = false;
     let pending = false;
+    const refreshFloorMs =
+      refreshWhileIdle && intervalMs !== null
+        ? Math.max(LIVE_REFRESH_MIN_INTERVAL_MS, intervalMs)
+        : LIVE_REFRESH_MIN_INTERVAL_MS;
     const read = (now: number) => {
       if (refreshWhileIdle && pending) return;
       if (!refreshWhileIdle) {
@@ -145,6 +148,7 @@ export function useLiveRefresh(
         else if (visible()) read(now);
         return;
       }
+      if (refreshWhileIdle && now - lastRefreshedAt < refreshFloorMs) return;
       if (shouldRefreshOnArrival({ visible: visible(), now, lastRefreshedAt })) read(now);
     };
     const onInterval = () => {
@@ -167,7 +171,13 @@ export function useLiveRefresh(
       timer =
         visible() && intervalMs !== null && !pending
           ? refreshWhileIdle
-            ? setTimeout(onInterval, intervalMs)
+            ? setTimeout(
+                onInterval,
+                Math.max(
+                  0,
+                  refreshFloorMs - (Date.now() - (lastRefreshedAtByView.get(viewId) ?? Date.now())),
+                ),
+              )
             : setInterval(onInterval, intervalMs)
           : undefined;
     };
@@ -186,7 +196,7 @@ export function useLiveRefresh(
       if (
         (refreshWhileIdle && pendingRefreshesByView.has(viewId)) ||
         lastRefreshedAt === undefined ||
-        now - lastRefreshedAt >= LIVE_REFRESH_MIN_INTERVAL_MS
+        now - lastRefreshedAt >= refreshFloorMs
       ) {
         read(now);
       }

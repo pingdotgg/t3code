@@ -709,6 +709,14 @@ export function hasProviderUsageLimits(
 ): boolean {
   return (
     providersWithLimits(providers).some((provider) => provider.driver === driver) ||
+    providers.some(
+      (provider) =>
+        provider.driver === driver &&
+        provider.supportsUsageLimits === true &&
+        provider.enabled &&
+        provider.installed &&
+        isProviderAvailable(provider),
+    ) ||
     sources.some(
       (source) =>
         source.accounts.some((account) => account.driver === driver) ||

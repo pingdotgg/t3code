@@ -60,7 +60,6 @@ export function useUsageLimitsPanel(input: {
           setPanel(null),
         )
       : null;
-  // Intercept /usage-limits only when Limits has selected-provider data.
   const offered =
     providerDriver !== null && hasProviderUsageLimits(providerDriver, providers, sources);
 

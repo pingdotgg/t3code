@@ -1385,7 +1385,7 @@ describe("/usage-limits", () => {
     expect(sourceOnly?.notices).toEqual(["Accounts: token expired"]);
   });
 
-  it("advertises global and workspace commands only for providers present in Limits", () => {
+  it("advertises global and workspace commands for known usage support or Limits data", () => {
     const withWorkspace = provider({
       workspaceSnapshots: [
         { cwd: "/tmp/project", checkedAt: limits.checkedAt, slashCommands: [], skills: [] },
@@ -1397,6 +1397,13 @@ describe("/usage-limits", () => {
       supported?.workspaceSnapshots?.[0]?.slashCommands.map((command) => command.name),
     ).toEqual(["usage-limits"]);
     expect(withUsageLimitsCommands([withWorkspace], [])[0]?.slashCommands).toEqual([]);
+    const unread = { ...withWorkspace, supportsUsageLimits: true };
+    const [cold] = withUsageLimitsCommands([unread], []);
+    expect(cold?.slashCommands.map((command) => command.name)).toEqual(["usage-limits"]);
+    expect(cold?.workspaceSnapshots?.[0]?.slashCommands.map((command) => command.name)).toEqual([
+      "usage-limits",
+    ]);
+    expect(collectProviderUsageLimits(unread.instanceId, [unread], [], now)).not.toBeNull();
     const ownCommand = provider({
       slashCommands: [{ name: "usage-limits", description: "Provider's own" }],
     });

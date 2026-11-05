@@ -58,6 +58,34 @@ describe("useLiveRefresh", () => {
     },
   );
 
+  it.each(["reenabled", "remounted"])(
+    "keeps the completed usage deadline when %s",
+    async (lifecycle) => {
+      const refresh = vi.fn();
+      using _timers = fakeTimers({ now: 4_000_000 });
+      const probe = (enabled: boolean) => (
+        <Probe
+          refresh={refresh}
+          viewKey={`completed-usage:${lifecycle}`}
+          enabled={enabled}
+          refreshOnShow
+          refreshWhileIdle
+        />
+      );
+      // A bare hook probe; nothing here navigates.
+      await using screen = await render(probe(true), { router: false });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await screen.rerender(lifecycle === "remounted" ? <></> : probe(false));
+      await act(() => vi.advanceTimersByTime(4 * 60_000));
+      await screen.rerender(probe(true));
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTime(60_000));
+      expect(refresh).toHaveBeenCalledTimes(2);
+      await act(() => vi.advanceTimersByTime(5 * 60_000));
+      expect(refresh).toHaveBeenCalledTimes(3);
+    },
+  );
+
   it.each([true, false])(
     "refreshes a hidden mount on arrival with refreshOnShow=%s",
     async (refreshOnShow) => {
