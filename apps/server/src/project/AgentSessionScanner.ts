@@ -1026,9 +1026,9 @@ export const make = Effect.gen(function* () {
             const reserve = (bytes: number) => {
               recordBytes += bytes;
               if (historyBytes + recordBytes > MAX_IMPORT_HISTORY_BYTES) {
-                throw new TranscriptJsonLimitError(
-                  "Transcript selected history exceeds the 32 MiB memory budget",
-                );
+                throw new TranscriptJsonLimitError({
+                  message: "Transcript selected history exceeds the 32 MiB memory budget",
+                });
               }
             };
             let reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
