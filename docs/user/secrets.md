@@ -48,6 +48,10 @@ An agent that needs a token or password shows a secret request card in the threa
 you to paste it into the chat. Type or paste the value and select **Save securely**, or select
 **Decline**. You can answer from web, desktop, or mobile.
 
+If the environment has a secret provider, the card also lets you pick it and enter a reference
+instead of the value. T3 Code reads the secret once, when you answer. If 1Password is locked, the
+card says so and the request stays open: unlock it and try again, or enter the value.
+
 The value never appears in the conversation. Most requests keep it from the agent too: T3 Code
 passes it to the tool that needs it. When an agent has to run a command with the value, the card
 says so instead: the value goes into a private file that the agent's commands can read for 24
