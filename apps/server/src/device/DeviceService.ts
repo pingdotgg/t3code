@@ -81,13 +81,16 @@ import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
+const isSshCommandError = Schema.is(SshCommandError);
+
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
-  const cause = error.cause;
+  const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
+  const cause = windows ? windows.cause : error.cause;
   if (
-    !(cause instanceof SshCommandError) ||
+    !isSshCommandError(cause) ||
     cause.exitCode === null ||
     cause.exitCode < 1 ||
-    cause.exitCode > 254
+    (cause.exitCode > 254 && cause.exitCode !== 9009)
   )
     return "Could not connect to this host over SSH.";
 
@@ -99,6 +102,7 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
       .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH")
   )
     return "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.";
+  if (windows) return windows.message;
 
   return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;
 };
@@ -1354,13 +1358,19 @@ export const make = Effect.gen(function* () {
         }
         return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
       }).pipe(
-        Effect.mapError(
-          (error) =>
-            new DeviceOperationError({
-              operation: "probe host",
-              reason: "request_failed",
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          error._tag === "DeviceHostError" && SshDeviceHost.isSshWindowsHostError(error.cause)
+            ? new DeviceHostUnavailableError({
+                hostId: host.id,
+                hostLabel: host.label,
+                reason: sshProbeFailureMessage(error),
+                cause: error,
+              })
+            : new DeviceOperationError({
+                operation: "probe host",
+                reason: "request_failed",
+                cause: error,
+              }),
         ),
       ),
     configureAgent,

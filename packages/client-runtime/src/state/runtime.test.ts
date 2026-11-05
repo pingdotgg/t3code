@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  ThreadId,
   type ReviewDiffPreviewInput,
   type PreviewEvent,
   type TerminalAttachInput,
@@ -21,6 +23,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import type { HttpClient } from "effect/http";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -35,9 +38,11 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
+import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
@@ -1014,6 +1019,64 @@ describe("environment query lifecycle", () => {
         expect(executions).toBe(2);
 
         expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<Deferred.Deferred<Record<string, string>>>();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: () =>
+                Effect.gen(function* () {
+                  const answer = yield* Deferred.make<Record<string, string>>();
+                  yield* Queue.offer(requests, answer);
+                  return yield* Deferred.await(answer);
+                }),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+          removedAt: new Map(),
+        }).pipe(Atom.keepAlive);
+        const removed = (entries: ReadonlyArray<readonly [string, number]>) => ({
+          removedAt: new Map(entries.map(([id, sequence]) => [ThreadId.make(id), sequence])),
+        });
+        // Thread titles never use the HTTP client.
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        }).threadTitles({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [ThreadId.make("fork")] },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        const settled: Array<Record<string, string>> = [];
+        const unsubscribe = registry.subscribe(atom, (result) => {
+          if (AsyncResult.isSuccess(result) && !result.waiting) settled.push(result.value);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        yield* Deferred.succeed(yield* Queue.take(requests), { fork: "Fork" });
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({ fork: "Fork" });
+
+        registry.set(shellState, removed([["other", 5]]));
+        expect(registry.get(atom).waiting).toBe(false);
+
+        // Archiving and then deleting the fork both remove it from the shell.
+        registry.set(shellState, removed([["fork", 6]]));
+        const beforeDelete = yield* Queue.take(requests);
+        registry.set(shellState, removed([["fork", 7]]));
+        const afterDelete = yield* Queue.take(requests);
+        yield* Deferred.succeed(beforeDelete, { fork: "Fork" });
+        yield* Deferred.succeed(afterDelete, {});
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({});
+        expect(settled).toEqual([{ fork: "Fork" }, {}]);
       }),
     ),
   );
