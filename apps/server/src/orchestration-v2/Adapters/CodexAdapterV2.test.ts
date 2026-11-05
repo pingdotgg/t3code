@@ -119,6 +119,171 @@ describe("CodexAdapterV2 context usage", () => {
       updatedAt: "2026-08-29T00:00:00.000Z",
     });
   });
+
+  it.effect("reports the auto-compaction limit Codex resolves for the thread's cwd", () =>
+    Effect.gen(function* () {
+      const scenario = "auto-compact-threshold";
+      const nativeThreadId = `native-${scenario}`;
+      const nativeTurnId = `turn-${scenario}`;
+      const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+      const emit = (frame: unknown) =>
+        Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+      const turnCompleted = yield* Deferred.make<void>();
+      const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+      // Codex only reports the limit through `config/read`, resolved per cwd (project layers, `-c`).
+      const respond = (frame: {
+        readonly id?: number;
+        readonly method?: string;
+        readonly params?: unknown;
+      }) => {
+        if (frame.id === undefined) return Effect.void;
+        if (frame.method === "config/read") {
+          const cwd = Predicate.hasProperty(frame.params, "cwd") ? frame.params.cwd : undefined;
+          return emit({
+            id: frame.id,
+            result: {
+              config:
+                cwd === CODEX_TEST_RUNTIME_POLICY.cwd
+                  ? { model_auto_compact_token_limit: 256_000 }
+                  : {},
+              origins: {},
+            },
+          });
+        }
+        const response = preamble.find(
+          (entry) =>
+            entry.type === "emit_inbound" &&
+            entry.label === frame.method &&
+            Predicate.isObject(entry.frame) &&
+            "id" in entry.frame,
+        );
+        const reply = response === undefined ? undefined : withReplayRequestId(response, frame.id);
+        return reply?.type === "emit_inbound"
+          ? emit(reply.frame)
+          : emit({ id: frame.id, error: { code: -32601, message: `${frame.method} unsupported` } });
+      };
+      const outbound = new TextDecoder();
+      const client = yield* CodexClient.make(
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(input),
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.forEach(
+                (typeof chunk === "string" ? chunk : outbound.decode(chunk, { stream: true }))
+                  .split("\n")
+                  .filter((line) => line.trim().length > 0),
+                (line) => respond(JSON.parse(line)),
+                { discard: true },
+              ),
+            ),
+          stderr: () => Sink.drain,
+        }),
+        {},
+        Effect.succeed(new CodexError.CodexAppServerProcessExitedError({ code: 0 })),
+      );
+      const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: { open: () => Effect.succeed(client) },
+        digest: yield* Digest.Digest,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+          Effect.orDie,
+        ),
+      });
+      const threadId = ThreadId.make(`thread-${scenario}`);
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`session-${scenario}`),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => events.push(event)).pipe(
+            Effect.andThen(
+              event.type === "turn.terminal"
+                ? Deferred.succeed(turnCompleted, undefined)
+                : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+          text: "work",
+        }),
+      );
+      const usage = {
+        totalTokens: 25_025,
+        inputTokens: 25_000,
+        cachedInputTokens: 0,
+        outputTokens: 25,
+        reasoningOutputTokens: 0,
+      };
+      yield* emit({
+        method: "turn/started",
+        params: {
+          threadId: nativeThreadId,
+          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+        },
+      });
+      yield* emit({
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: nativeThreadId,
+          turnId: nativeTurnId,
+          tokenUsage: { total: usage, last: usage, modelContextWindow: 258_400 },
+        },
+      });
+      yield* emit({
+        method: "turn/completed",
+        params: {
+          threadId: nativeThreadId,
+          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+        },
+      });
+      yield* Deferred.await(turnCompleted);
+
+      const tokenUsage = events
+        .flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined
+            ? [event.providerTurn.tokenUsage]
+            : [],
+        )
+        .at(-1);
+      assert.equal(tokenUsage?.maxTokens, 258_400);
+      assert.equal(
+        tokenUsage?.autoCompactThreshold,
+        256_000,
+        "the context meter should show where Codex auto-compacts this thread",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 });
 
 describe("CodexAdapterV2 assistant message streaming", () => {
