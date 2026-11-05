@@ -387,16 +387,21 @@ function selectUpdateFile(
     const preferArm64 = runtimeInfo.hostArch === "arm64" && files.some(isArm64File);
     candidates = files.filter((file) => isArm64File(file) === preferArm64);
   }
-  const extension =
+  const [extension, excluded] =
     platform === "darwin"
-      ? ".zip"
+      ? ["zip", ["pkg", "dmg"]]
       : platform === "win32"
-        ? ".exe"
+        ? ["exe", undefined]
         : isDebPackage
-          ? ".deb"
-          : ".appimage";
-  const packageFiles = candidates.filter((file) => file.pathname.toLowerCase().endsWith(extension));
-  return packageFiles.find((file) => mentions(file, runtimeInfo.appArch)) ?? packageFiles[0];
+          ? ["deb", ["appimage", "rpm", "pacman"]]
+          : ["appimage", ["rpm", "deb", "pacman"]];
+  const hasExtension = (file: (typeof files)[number], ext: string) =>
+    file.pathname.toLowerCase().endsWith(`.${ext}`);
+  const packageFiles = candidates.filter((file) => hasExtension(file, extension));
+  const selected =
+    packageFiles.find((file) => mentions(file, runtimeInfo.appArch)) ?? packageFiles[0];
+  if (selected !== undefined || excluded === undefined) return selected ?? candidates[0];
+  return candidates.find((file) => !excluded.some((ext) => hasExtension(file, ext)));
 }
 
 /** @public */

@@ -191,11 +191,21 @@ describe("DesktopUpdates", () => {
       processArch: "arm64",
       cache: { packageBytes: arm64Package, fileName: "T3-Code-1.2.4-arm64-mac.zip" },
     },
+    {
+      // findFile falls back to the first file that is not a .pkg or .dmg.
+      name: "from a mirror whose package URLs have no extension",
+      processArch: "x64",
+      cache: { packageBytes: x64Package, fileName: "x64" },
+      offeredUpdateFiles: offeredUpdateFiles("https://mirror.example/t3/download/", [
+        ["T3-Code-1.2.4.dmg", "T3 Code 1.2.4 dmg"],
+        ["x64", x64Package],
+      ]),
+    },
   ])(
     "restores a verified cached download after quitting without installing $name",
-    ({ processArch, cache }) =>
+    ({ name: _name, ...options }) =>
       Effect.gen(function* () {
-        const { state, downloadCount } = yield* checkWithPendingDownload({ cache, processArch });
+        const { state, downloadCount } = yield* checkWithPendingDownload(options);
 
         assert.equal(
           state.status,
