@@ -10,7 +10,8 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-export const MARKER = "Written by OminaX: runs the desktop app's bundled t3 CLI.";
+// Installed launchers carry this text and are matched on it, so it keeps the pre-OminaX name.
+export const MARKER = "Written by T3 Learn: runs the desktop app's bundled t3 CLI.";
 
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 

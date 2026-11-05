@@ -103,6 +103,10 @@ describe("renderCliShim", () => {
       executable,
       entry: "/opt/T3's/app.asar/bin.mjs",
     });
+    // Launchers written by released installs are recognised by this exact text.
+    expect(NodeFS.readFileSync(shim, "utf8")).toContain(
+      "Written by T3 Learn: runs the desktop app's bundled t3 CLI.",
+    );
     expect(run(shim, ["browser", "setup"]).stdout.split("\n").slice(1)).toEqual([
       "/opt/T3's/app.asar/bin.mjs",
       "browser",
