@@ -286,6 +286,37 @@ describe("mobile SQLite environment cache store", () => {
     }),
   );
 
+  it.effect("discards thread records written before file changes carried diffOmitted", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(
+        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+      );
+      const id = cacheId(ENVIRONMENT_ID, "thread", THREAD_ID);
+      yield* store.saveThread(ENVIRONMENT_ID, threadSnapshotWithItems());
+      const current = JSON.parse(memory.values.get(id)!);
+      const legacy = JSON.parse(
+        yield* encodeLegacyThreadSnapshot({
+          schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+          environmentId: ENVIRONMENT_ID,
+          threadId: THREAD_ID,
+          snapshot: threadSnapshotWithItems(),
+        }),
+      );
+      // Compact records were 6 and full ones 5 when an older client could strip the field. A
+      // resumed thread replays only newer events, so these rows would never be replaced.
+      for (const stale of [
+        { ...current, schemaVersion: 6 },
+        { ...legacy, schemaVersion: 5 },
+      ]) {
+        memory.values.set(id, JSON.stringify(stale));
+        memory.removed.length = 0;
+        expect(Option.isNone(yield* store.loadThread(ENVIRONMENT_ID, THREAD_ID))).toBe(true);
+        expect(memory.removed).toEqual([id]);
+      }
+    }).pipe(Effect.provide(Logger.layer([]))),
+  );
+
   it.effect("discards corrupt or partial thread records so they can be refetched", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();
@@ -431,8 +462,8 @@ describe("mobile SQLite environment cache store", () => {
       yield* store.saveThread(ENVIRONMENT_ID, snapshot);
       const id = cacheId(ENVIRONMENT_ID, "thread", THREAD_ID);
       const encoded = JSON.parse(memory.values.get(id)!);
-      expect(encoded.schemaVersion).toBe(6);
-      expect(memory.schemaVersions.get(id)).toBe(6);
+      expect(encoded.schemaVersion).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
+      expect(memory.schemaVersions.get(id)).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
       expect(encoded.snapshot.turnItemsOmitLocalVisible).toBe(true);
       expect(encoded.snapshot.turnItemCount).toBe(3);
       expect(encoded.snapshot.visibleTurnItemCount).toBe(4);
@@ -480,7 +511,7 @@ describe("mobile SQLite environment cache store", () => {
         yield* store.saveThread(ENVIRONMENT_ID, snapshot);
         const raw = memory.values.get(cacheId(ENVIRONMENT_ID, "thread", THREAD_ID))!;
         const encoded = JSON.parse(raw);
-        expect(encoded.schemaVersion).toBe(6);
+        expect(encoded.schemaVersion).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
         expect(encoded.snapshot.turnItemsOmitLocalVisible).toBe(false);
         expect(encoded.snapshot.turnItemCount).toBe(2);
         expect(encoded.snapshot.projection.turnItems).toHaveLength(2);

@@ -204,6 +204,17 @@ interface SentReply {
   sources?: ReadonlyArray<string>;
 }
 
+/**
+ * Guests never see diffs, so their file changes carry neither a diff nor the `diffOmitted`
+ * marker that would make the guest's row fetch one. Live events arrive already projected for
+ * the wire, so both forms are stripped. A failed edit keeps its error text.
+ */
+function withoutFileDiff(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  if (item.type !== "file_change" || item.status === "failed") return item;
+  const { diffStr: _diff, oldStr: _old, newStr: _new, diffOmitted: _omitted, ...withheld } = item;
+  return withheld;
+}
+
 /** The thread record an event carries, for the share and the view. */
 const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread | null => {
   switch (event.type) {
@@ -553,7 +564,11 @@ const make = Effect.gen(function* () {
         Stream.map((stored) => ({
           kind: "event" as const,
           sequence: stored.sequence,
-          event: projectDomainEventForWire(stored.event),
+          event: projectDomainEventForWire(
+            stored.event.type === "turn-item.updated"
+              ? { ...stored.event, payload: withoutFileDiff(stored.event.payload) }
+              : stored.event,
+          ),
         })),
         // Ending the source here flushes what the coalescer holds, so `ended` is not held back.
         Stream.takeUntil((item) => endsShare(item.event)),
@@ -581,7 +596,14 @@ const make = Effect.gen(function* () {
     );
     const openingSnapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: snapshot.snapshotSequence,
-      projection: snapshot.projection,
+      projection: {
+        ...snapshot.projection,
+        turnItems: snapshot.projection.turnItems.map(withoutFileDiff),
+        visibleTurnItems: snapshot.projection.visibleTurnItems.map((row) => ({
+          ...row,
+          item: withoutFileDiff(row.item),
+        })),
+      },
     });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
@@ -658,7 +680,9 @@ const make = Effect.gen(function* () {
     const { item } = yield* threadItem(session, itemId);
     return {
       item:
-        item.type === "file_change" ? projectTurnItemForWire(item) : projectTurnItemForDetail(item),
+        item.type === "file_change"
+          ? projectTurnItemForWire(withoutFileDiff(item))
+          : projectTurnItemForDetail(item),
     };
   });
 
@@ -674,7 +698,10 @@ const make = Effect.gen(function* () {
       share.id,
       page.items.map((row) => row.item),
     );
-    return page;
+    return {
+      ...page,
+      items: page.items.map((row) => ({ ...row, item: withoutFileDiff(row.item) })),
+    };
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (
