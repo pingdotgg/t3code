@@ -25,6 +25,7 @@ const NO_LEAD_TAB: LayoutTab = {
   id: "none",
   content: { kind: "launcher", id: "none", context: null },
 };
+const WORKSPACE_BARS = 5;
 
 const ARROWS: Record<string, string> = { Left: "←", Right: "→", Up: "↑", Down: "↓" };
 
@@ -275,6 +276,7 @@ function WorkspaceHintPill({
       ? shortcutLabelForCommand(keybindings, hint.command)
       : null;
   const small = hint.kind === "workspace-name";
+  const firstBar = Math.max(0, Math.min(hint.index - 2, hint.count - WORKSPACE_BARS));
   const [placementRef, placement] = useHintPlacement();
   return (
     <div
@@ -289,24 +291,22 @@ function WorkspaceHintPill({
         leaving && "opacity-0",
       )}
     >
-      <span
-        aria-hidden
-        className={cn(
-          "flex shrink-0 flex-col",
-          small ? "max-h-4.75" : "max-h-5.5",
-          hint.count > 3 ? "gap-px" : "gap-0.5",
-        )}
-      >
-        {Array.from({ length: Math.min(hint.count, 5) }, (_, index) => (
-          <span
-            key={index}
-            className={cn(
-              "min-h-0 rounded-xs",
-              small ? "h-1.25 w-2" : "h-1.5 w-2.5",
-              index === Math.min(hint.index, 4) ? "bg-foreground" : "bg-foreground/20",
-            )}
-          />
-        ))}
+      <span aria-hidden className="flex shrink-0 flex-col items-center gap-px">
+        {Array.from({ length: Math.min(hint.count, WORKSPACE_BARS) }, (_, bar) => {
+          const index = firstBar + bar;
+          const more =
+            (bar === 0 && index > 0) || (bar === WORKSPACE_BARS - 1 && index < hint.count - 1);
+          return (
+            <span
+              key={bar}
+              className={cn(
+                "h-1 rounded-xs",
+                small ? (more ? "w-1" : "w-2") : more ? "w-1.5" : "w-2.5",
+                index === hint.index ? "bg-foreground" : "bg-foreground/20",
+              )}
+            />
+          );
+        })}
       </span>
       <span className="min-w-0 truncate text-meta text-foreground">{name}</span>
 
