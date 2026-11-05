@@ -41,6 +41,7 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useProjectIconSource } from "../../hooks/useSidebarProjectGroups";
 import { GuestShareIndicator } from "./GuestShareControls";
 
 interface ChatHeaderProps {
@@ -86,6 +87,7 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+  const activeProjectIcon = useProjectIconSource(activeProject);
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
@@ -306,7 +308,10 @@ export const ChatHeader = memo(function ChatHeader({
                     />
                   }
                 >
-                  <ProjectFavicon project={activeProject} className="size-3.5" />
+                  <ProjectFavicon
+                    project={activeProjectIcon ?? activeProject}
+                    className="size-3.5"
+                  />
                   <WorkspaceBreadcrumbText className="max-w-40">
                     {activeProjectName}
                   </WorkspaceBreadcrumbText>
