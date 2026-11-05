@@ -414,22 +414,26 @@ export const make = Effect.gen(function* () {
     Effect.flatMap((state) => electronWindow.sendAll(IpcChannels.UPDATE_STATE_CHANNEL, state)),
   );
 
-  const setState = (state: DesktopUpdateState): Effect.Effect<void> =>
-    stateMutex
-      .withPermits(1)(
-        Ref.set(updateStateRef, state).pipe(Effect.andThen(PubSub.publish(stateChanges, state))),
-      )
-      .pipe(Effect.andThen(emitState));
-
-  const updateState = (
-    f: (state: DesktopUpdateState) => DesktopUpdateState,
-  ): Effect.Effect<DesktopUpdateState> =>
-    Ref.get(updateStateRef).pipe(
-      Effect.flatMap((state) => {
-        const nextState = f(state);
-        return setState(nextState).pipe(Effect.as(nextState));
+  const updateStateEffect = Effect.fn("desktop.updates.updateState")(function* (
+    f: (state: DesktopUpdateState) => Effect.Effect<DesktopUpdateState>,
+  ) {
+    const state = yield* stateMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(updateStateRef);
+        const next = yield* f(current);
+        yield* Ref.set(updateStateRef, next);
+        yield* PubSub.publish(stateChanges, next);
+        return next;
       }),
     );
+    yield* emitState;
+    return state;
+  });
+
+  const updateState = (f: (state: DesktopUpdateState) => DesktopUpdateState) =>
+    updateStateEffect((state) => Effect.sync(() => f(state)));
+
+  const setState = (state: DesktopUpdateState) => updateState(() => state).pipe(Effect.asVoid);
 
   const readAppUpdateYml = fileSystem.readFileString(environment.appUpdateYmlPath, "utf-8").pipe(
     Effect.option,
@@ -925,40 +929,39 @@ export const make = Effect.gen(function* () {
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateAvailable")(function* (info) {
-          const state = yield* Ref.get(updateStateRef);
-          if (!(yield* offerable(info.version, state))) {
-            yield* logUpdaterInfo("ignoring update outside the selected channel or its floor", {
-              version: info.version,
-              channel: state.channel,
-            });
-            const checkedAt = yield* currentIsoTimestamp;
-            yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
-            yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
-            return;
-          }
-
           const checkedAt = yield* currentIsoTimestamp;
-          const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
-            info.releaseNotes,
-            info.version,
-            state.channel,
-            info.releaseDate,
-          );
-          yield* setState(
-            reduceDesktopUpdateStateOnUpdateAvailable(
-              state,
-              info.version,
-              checkedAt,
-              releaseNotes,
-              omittedReleaseCount,
-            ),
+          const state = yield* updateStateEffect((current) =>
+            Effect.gen(function* () {
+              if (!(yield* offerable(info.version, current))) {
+                yield* logUpdaterInfo("ignoring update outside the selected channel or its floor", {
+                  version: info.version,
+                  channel: current.channel,
+                });
+                return reduceDesktopUpdateStateOnNoUpdate(current, checkedAt);
+              }
+              const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
+                info.releaseNotes,
+                info.version,
+                current.channel,
+                info.releaseDate,
+              );
+              return reduceDesktopUpdateStateOnUpdateAvailable(
+                current,
+                info.version,
+                checkedAt,
+                releaseNotes,
+                omittedReleaseCount,
+              );
+            }),
           );
           yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
-          yield* logUpdaterInfo("update available", {
-            version: info.version,
-            releaseNoteGroups: releaseNotes.length,
-            omittedReleaseCount,
-          });
+          if (state.availableVersion === info.version) {
+            yield* logUpdaterInfo("update available", {
+              version: info.version,
+              releaseNoteGroups: state.releaseNotes.length,
+              omittedReleaseCount: state.omittedReleaseCount,
+            });
+          }
         }),
       ),
       Effect.catchCause((cause) => {
@@ -977,8 +980,7 @@ export const make = Effect.gen(function* () {
 
   const handleUpdateNotAvailable = Effect.gen(function* () {
     const checkedAt = yield* currentIsoTimestamp;
-    const state = yield* Ref.get(updateStateRef);
-    yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+    yield* updateState((state) => reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
     yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
     yield* logUpdaterInfo("no updates available");
   }).pipe(Effect.withSpan("desktop.updates.handleUpdateNotAvailable"));
@@ -1033,7 +1035,9 @@ export const make = Effect.gen(function* () {
           const state = yield* Ref.get(updateStateRef);
           const percent = Math.floor(progress.percent);
           if (shouldBroadcastDownloadProgress(state, progress.percent) || state.message !== null) {
-            yield* setState(reduceDesktopUpdateStateOnDownloadProgress(state, progress.percent));
+            yield* updateState((current) =>
+              reduceDesktopUpdateStateOnDownloadProgress(current, progress.percent),
+            );
           }
           const milestone = percent - (percent % 10);
           const lastLoggedMilestone = yield* Ref.get(lastLoggedDownloadMilestoneRef);
@@ -1063,23 +1067,29 @@ export const make = Effect.gen(function* () {
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
-          const state = yield* Ref.get(updateStateRef);
-          // A download can finish after its track switch moved on; never offer that build.
-          if (!(yield* offerable(info.version, state))) {
-            yield* logUpdaterInfo("ignoring download outside the selected channel or its floor", {
-              version: info.version,
-              channel: state.channel,
-            });
-            // Its progress events left the updater "downloading", which would block every check.
-            if (state.status === "downloading") {
-              yield* setState(
-                reduceDesktopUpdateStateOnNoUpdate(state, yield* currentIsoTimestamp),
-              );
-            }
-            return;
+          const checkedAt = yield* currentIsoTimestamp;
+          const state = yield* updateStateEffect((current) =>
+            Effect.gen(function* () {
+              // A download can finish after its track switch moved on; never offer that build.
+              if (!(yield* offerable(info.version, current))) {
+                yield* logUpdaterInfo(
+                  "ignoring download outside the selected channel or its floor",
+                  {
+                    version: info.version,
+                    channel: current.channel,
+                  },
+                );
+                // Its progress events must not leave the updater stuck downloading.
+                return current.status === "downloading"
+                  ? reduceDesktopUpdateStateOnNoUpdate(current, checkedAt)
+                  : current;
+              }
+              return reduceDesktopUpdateStateOnDownloadComplete(current, info.version);
+            }),
+          );
+          if (state.downloadedVersion === info.version) {
+            yield* logUpdaterInfo("update downloaded", { version: info.version });
           }
-          yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
-          yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),
       ),
       Effect.catchCause((cause) => {

@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,49 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
+  it.effect("retains a completed download when an overlapping availability callback resumes", () =>
+    Effect.gen(function* () {
+      const timestampRequested = yield* Deferred.make<void>();
+      const releaseTimestamp = yield* Deferred.make<void>();
+      const clock = yield* Clock.Clock;
+      let pauseNextTimestamp = false;
+      const callbackClock: Clock.Clock = {
+        ...clock,
+        currentTimeMillis: Effect.suspend(() => {
+          if (!pauseNextTimestamp) return clock.currentTimeMillis;
+          pauseNextTimestamp = false;
+          return Deferred.succeed(timestampRequested, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseTimestamp)),
+            Effect.andThen(clock.currentTimeMillis),
+          );
+        }),
+      };
+      const harness = makeHarness();
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure.pipe(Effect.provideService(Clock.Clock, callbackClock));
+          const { changes } = yield* updates.subscribe;
+
+          pauseNextTimestamp = true;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* Deferred.await(timestampRequested);
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          const downloaded = Option.getOrThrow(yield* Stream.runHead(changes));
+          assert.equal(downloaded.status, "downloaded");
+
+          const { changes: resumedChanges } = yield* updates.subscribe;
+          yield* Deferred.succeed(releaseTimestamp, undefined);
+          const resumed = Option.getOrThrow(yield* Stream.runHead(resumedChanges));
+          assert.equal(resumed.status, "downloaded");
+          assert.equal(resumed.downloadedVersion, "1.2.4");
+          assert.equal(resumed.downloadPercent, 100);
+        }),
+      ).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>
