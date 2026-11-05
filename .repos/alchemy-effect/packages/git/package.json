@@ -1,0 +1,82 @@
+{
+  "name": "@alchemy.run/git",
+  "version": "2.0.0-beta.85",
+  "description": "Git hosting building blocks for Alchemy: protocol, stores, hasher and server.",
+  "keywords": [
+    "alchemy",
+    "effect",
+    "git",
+    "infrastructure-as-code"
+  ],
+  "homepage": "https://alchemy.run",
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "packages/git"
+  },
+  "files": [
+    "lib",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./Hasher": "./src/Hasher/index.ts",
+    "./*": "./src/*.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./lib/index.d.ts",
+        "bun": "./src/index.ts",
+        "worker": "./src/index.ts",
+        "default": "./lib/index.js"
+      },
+      "./Hasher": {
+        "types": "./lib/Hasher/index.d.ts",
+        "bun": "./src/Hasher/index.ts",
+        "worker": "./src/Hasher/index.ts",
+        "default": "./lib/Hasher/index.js"
+      },
+      "./*": {
+        "types": "./lib/*.d.ts",
+        "bun": "./src/*.ts",
+        "worker": "./src/*.ts",
+        "default": "./lib/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts"
+  },
+  "devDependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/bun": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@alchemy.run/aws": {
+      "optional": true
+    }
+  }
+}
