@@ -38,6 +38,13 @@ describe("compileClaudeModelSelection", () => {
     ).toMatchObject({ effort: "high", promptEffort: "ultrathink" });
   });
 
+  it("ignores thinking for catalog models without a thinking option", () => {
+    expect(
+      compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "thinking", value: false }]))
+        .settings,
+    ).not.toHaveProperty("alwaysThinkingEnabled");
+  });
+
   it.each(["gateway-route", "gateway-route[1m]"])(
     "keeps explicit effort and thinking for %s outside the local catalog",
     (model) => {
