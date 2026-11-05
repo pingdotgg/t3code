@@ -25,6 +25,11 @@ const GatewayModels = Schema.Struct({
 });
 type GatewayModel = (typeof GatewayModels.Type)["data"][number];
 
+class ClaudeGatewayHeaderError extends Schema.TaggedError<ClaudeGatewayHeaderError>()(
+  "ClaudeGatewayHeaderError",
+  { header: Schema.String, cause: Schema.Defect() },
+) {}
+
 const CLOUD_PROVIDER_FLAGS = [
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_VERTEX",
@@ -68,9 +73,14 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
     endpoint.searchParams.set("limit", "1000");
 
     const headers = new Headers({ "anthropic-version": "2023-06-01" });
+    const setHeader = (name: string, value: string) =>
+      Effect.try({
+        try: () => headers.set(name, value),
+        catch: (cause) => new ClaudeGatewayHeaderError({ header: name, cause }),
+      });
     const token = env.ANTHROPIC_AUTH_TOKEN?.trim();
     if (token) {
-      yield* Effect.try(() => headers.set("authorization", `Bearer ${token}`));
+      yield* setHeader("authorization", `Bearer ${token}`);
     } else {
       let key = env.ANTHROPIC_API_KEY?.trim();
       if (!key && apiKeyHelper?.trim()) {
@@ -86,14 +96,11 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
         if (result.code !== 0) return undefined;
         key = result.stdout.trim();
       }
-      if (key) yield* Effect.try(() => headers.set("x-api-key", key));
+      if (key) yield* setHeader("x-api-key", key);
     }
     for (const line of env.ANTHROPIC_CUSTOM_HEADERS?.split("\n") ?? []) {
       const colon = line.indexOf(":");
-      if (colon >= 0)
-        yield* Effect.try(() =>
-          headers.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim()),
-        );
+      if (colon >= 0) yield* setHeader(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
     }
 
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
