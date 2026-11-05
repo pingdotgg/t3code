@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
@@ -977,6 +978,22 @@ function checkListItem(check: PullRequestCheck): string {
   return check.url ? `- ${name} (${boundedField(check.url)})` : `- ${name}`;
 }
 
+const OMITTED_CHECKS_NOTE_MAX_LENGTH = 2_000;
+
+function omittedChecksNote(omitted: ReadonlyArray<PullRequestCheck>): string {
+  const names: string[] = [];
+  let namesLength = 0;
+  for (const check of omitted) {
+    const name = `\`${boundedField(check.name)}\``;
+    namesLength += name.length + 2;
+    if (namesLength > OMITTED_CHECKS_NOTE_MAX_LENGTH - 100) break;
+    names.push(name);
+  }
+  const unnamed = omitted.length - names.length;
+  const more = unnamed > 0 ? `, and ${unnamed} more` : "";
+  return `Failing checks that did not fit here: ${names.join(", ")}${more}.`;
+}
+
 function checksContextComment(
   pullRequest: { readonly number: number; readonly url: string },
   input: {
@@ -1080,7 +1097,23 @@ export function buildFixChecksHandoff(input: {
 }): FixFindingsHandoff {
   const term = terminologyForUrl(input.url).singular;
   const failing = input.checks.filter(isFailingCheck);
-  const omitted = Math.max(0, failing.length - FINDING_LIMIT);
+  const instructions = [
+    `Fix every failing check on this ${term}. Fetch the current check results first, since more may have failed after this was attached. Reproduce each failure locally, and note that a run may fail for a reason the code cannot show.`,
+    ...handoffPreamble(input),
+  ];
+  // Sending clamps the end of the text, so budget here to keep the instructions whole.
+  const listBudget =
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS -
+    instructions.join("\n").length -
+    OMITTED_CHECKS_NOTE_MAX_LENGTH;
+  const listed: string[] = [];
+  let listLength = 0;
+  for (const item of failing.slice(0, FINDING_LIMIT).map(checkListItem)) {
+    listLength += item.length + 1;
+    if (listLength > listBudget) break;
+    listed.push(item);
+  }
+  const omitted = failing.slice(listed.length);
   return {
     prompt: "",
     reviewComments: [
@@ -1089,11 +1122,10 @@ export function buildFixChecksHandoff(input: {
         label: `Failing checks on #${input.number}`,
         status: `${failing.length} failing`,
         text: [
-          ...failing.slice(0, FINDING_LIMIT).map(checkListItem),
+          ...listed,
           "",
-          ...(omitted > 0 ? [`${omitted} further failing checks were omitted.`] : []),
-          `Fix every failing check on this ${term}. Fetch the current check results first, since more may have failed after this was attached. Reproduce each failure locally, and note that a run may fail for a reason the code cannot show.`,
-          ...handoffPreamble(input),
+          ...(omitted.length > 0 ? [omittedChecksNote(omitted)] : []),
+          ...instructions,
         ],
       }),
     ],
