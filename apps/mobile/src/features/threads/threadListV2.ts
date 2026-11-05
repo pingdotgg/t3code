@@ -94,7 +94,7 @@ export function resolveThreadListV2SnoozePresets(input: {
   const pullRequest =
     input.pullRequestThread === null
       ? null
-      : resolvePullRequestSnoozePreset(input.pullRequestThread, now);
+      : resolvePullRequestSnoozePreset(input.pullRequestThread);
   return pullRequest === null ? presets : [pullRequest, ...presets];
 }
 

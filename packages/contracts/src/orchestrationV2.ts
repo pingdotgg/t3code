@@ -3017,7 +3017,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
-    /** Also wake when an open linked pull request needs attention; `snoozedUntil` is the backstop. */
+    /** Also wake when an open linked pull request needs attention. */
     wakeOnPullRequest: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({

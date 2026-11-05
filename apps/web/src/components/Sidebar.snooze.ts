@@ -34,7 +34,7 @@ export function resolveThreadSnoozePresets(
 ): ReadonlyArray<SnoozePreset> {
   const presets = resolveSnoozePresets(now, timestampFormat, thread.environmentId);
   const pullRequest = readEnvironmentSupportsPullRequestSnooze(thread.environmentId)
-    ? resolvePullRequestSnoozePreset(thread, now)
+    ? resolvePullRequestSnoozePreset(thread)
     : null;
   return pullRequest === null ? presets : [pullRequest, ...presets];
 }

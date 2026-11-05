@@ -75,6 +75,7 @@ import {
   ThreadId,
   TurnItemId,
   TrimmedNonEmptyString,
+  UNTIMED_SNOOZE_WAKE_AT,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -740,6 +741,22 @@ function withoutSnoozeWatch(link: ThreadPullRequestLink): ThreadPullRequestLink 
 
 const canWakeSnooze = (link: ThreadPullRequestLink) =>
   link.source !== "stack-dismissed" && link.snapshot?.state === "open";
+
+const UNTIMED_SNOOZE_WAKE_MS = Date.parse(UNTIMED_SNOOZE_WAKE_AT);
+
+// An untimed snooze has no timer behind it, so losing its last watch would hide the thread for good.
+function wakeUnwatchedSnooze(
+  thread: OrchestrationV2AppThread,
+  now: DateTime.Utc,
+): OrchestrationV2AppThread {
+  return thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) === UNTIMED_SNOOZE_WAKE_MS &&
+    !visibleThreadPullRequests(threadPullRequestsOf(thread)).some(
+      (link) => link.snoozeWatch !== undefined,
+    )
+    ? { ...thread, snoozedUntil: now }
+    : thread;
+}
 
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,
@@ -3817,7 +3834,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
-    const updatedThread: OrchestrationV2AppThread = (() => {
+    const mutatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
           return {
@@ -4314,6 +4331,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    const updatedThread = wakeUnwatchedSnooze(mutatedThread, now);
     if (
       command.type === "thread.pull-request-link.sync" ||
       command.type === "thread.pull-request-watch.sync"

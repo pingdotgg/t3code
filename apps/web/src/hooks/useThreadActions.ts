@@ -962,7 +962,11 @@ export function useThreadActions() {
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
+              input: {
+                threadId: target.threadId,
+                snoozedUntil: step.snoozedUntil,
+                ...(step.wakeOnPullRequest ? { wakeOnPullRequest: true } : {}),
+              },
             });
         }
       },

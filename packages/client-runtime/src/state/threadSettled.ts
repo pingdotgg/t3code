@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
+import { UNTIMED_SNOOZE_WAKE_AT } from "@t3tools/contracts";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
@@ -197,7 +198,6 @@ export function threadWokeAt(
 }
 
 const HOUR_MS = 60 * 60 * 1_000;
-const PULL_REQUEST_SNOOZE_DAYS = 7;
 
 const WEEKDAY_INDEX = {
   sunday: 0,
@@ -332,11 +332,8 @@ export function resolveSnoozePresets(
 
 type ThreadPullRequestShell = Pick<EnvironmentThreadShell, "pullRequests">;
 
-/** The menu choice that wakes on pull request news, with a timer so a quiet one is not lost. */
-export function resolvePullRequestSnoozePreset(
-  shell: ThreadPullRequestShell,
-  now: Date,
-): SnoozePreset | null {
+/** The menu choice that only pull request news wakes. */
+export function resolvePullRequestSnoozePreset(shell: ThreadPullRequestShell): SnoozePreset | null {
   const open = shell.pullRequests.some(
     (link) => link.source !== "stack-dismissed" && link.snapshot?.state === "open",
   );
@@ -344,8 +341,8 @@ export function resolvePullRequestSnoozePreset(
   return {
     id: "pull-request",
     label: "Until PR needs attention",
-    whenLabel: `or in ${pluralize(PULL_REQUEST_SNOOZE_DAYS, "day")}`,
-    snoozedUntil: addSnoozeDays(now, PULL_REQUEST_SNOOZE_DAYS).toISOString(),
+    whenLabel: "no time limit",
+    snoozedUntil: UNTIMED_SNOOZE_WAKE_AT,
     wakeOnPullRequest: true,
   };
 }
