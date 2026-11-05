@@ -86,10 +86,10 @@ function reveal(range: Range, container: HTMLElement) {
       folded = true;
     }
   }
-  if (folded) return;
+  if (folded) return true;
 
   const viewport = container.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-  if (!viewport) return;
+  if (!viewport) return false;
   for (
     let node = range.startContainer.parentElement;
     node && viewport.contains(node);
@@ -117,6 +117,7 @@ function reveal(range: Range, container: HTMLElement) {
     if (left || top) node.scrollBy({ left, top, behavior: "instant" });
     if (node === viewport) break;
   }
+  return false;
 }
 
 export function createMarkdownFind(
@@ -129,6 +130,7 @@ export function createMarkdownFind(
   let query = "";
   let frame: number | null = null;
   let matchesDirty = true;
+  let needsReveal = false;
   searchCount++;
   const inactive = highlight(MATCH_HIGHLIGHT);
   const active = highlight(ACTIVE_HIGHLIGHT);
@@ -145,7 +147,9 @@ export function createMarkdownFind(
     if (selected) {
       inactive.delete(selected);
       active.add(selected);
-      reveal(selected, container);
+      if (needsReveal) needsReveal = reveal(selected, container);
+    } else {
+      needsReveal = false;
     }
     onChange({ matchCount: ranges.length, activeIndex });
   };
@@ -189,6 +193,7 @@ export function createMarkdownFind(
   });
   return {
     search(value: string) {
+      needsReveal = true;
       query = value.trim();
       activeIndex = 0;
       matchesDirty = true;
@@ -204,6 +209,7 @@ export function createMarkdownFind(
       active.delete(previous);
       inactive.add(previous);
       activeIndex = (activeIndex + delta + ranges.length) % ranges.length;
+      needsReveal = true;
       select();
     },
     dispose() {

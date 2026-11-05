@@ -106,17 +106,18 @@ it("reuses its DOM index while typing and its ranges while navigating", async ()
 });
 
 it("reveals code matches inside horizontal and vertical scroll containers without moving the page", async () => {
-  await using screen = await render(
+  const content = (extra: string) => (
     <div style={{ display: "flex", width: 360, height: 240 }}>
       <SearchableMarkdownPreview>
         <p>Start</p>
         <div style={{ height: 600 }} />
         <pre style={{ overflow: "auto", whiteSpace: "pre", fontFamily: "monospace" }}>
-          needle {"x".repeat(400)}needle
+          needle {"x".repeat(400)}needle{extra}
         </pre>
       </SearchableMarkdownPreview>
-    </div>,
+    </div>
   );
+  await using screen = await render(content(""));
   const paragraph = screen.container.querySelector("p")!;
   await act(() => {
     requestMarkdownFindOpen(paragraph);
@@ -141,6 +142,20 @@ it("reveals code matches inside horizontal and vertical scroll containers withou
   expect(window.scrollY).toBe(pageTop);
   await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
   expect(pre.scrollLeft).toBe(0);
+  viewport.scrollTop = 0;
+  await screen.rerender(content(" needle"));
+  await vi.waitFor(() => expect(highlighted("t3-markdown-find")).toHaveLength(2));
+  expect(viewport.scrollTop).toBe(0);
+  expect(pre.scrollLeft).toBe(0);
+  await userEvent.keyboard("{Enter}");
+  expect(viewport.scrollTop).toBeGreaterThan(0);
+  expect(pre.scrollLeft).toBeGreaterThan(0);
+  await userEvent.fill(screen.getByRole("searchbox"), "absent");
+  await vi.waitFor(() => expect(highlighted()).toEqual([]));
+  viewport.scrollTop = 0;
+  await screen.rerender(content(" absent"));
+  await vi.waitFor(() => expect(highlighted()).toEqual(["absent"]));
+  expect(viewport.scrollTop).toBe(0);
 });
 
 it("routes file toolbar focus to the visible preview, leaving hidden tabs and chat alone", async () => {
