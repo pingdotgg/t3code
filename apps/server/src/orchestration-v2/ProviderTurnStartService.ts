@@ -51,6 +51,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
+  ContextCompactionRequiredError,
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
   makeProviderFailure,
@@ -1291,6 +1292,29 @@ export const layer: Layer.Layer<
             Effect.catchTags({ ContextHandoffBudgetError: () => Effect.succeed(false) }),
           );
           if (fits) return resumed.success;
+          // Same-provider history only grows the native session, so compact it in place.
+          // Right after a compaction it has nothing left to shed, so fall back to replacing it.
+          const previousRun = projection.runs.findLast(
+            (source) => source.ordinal < run.ordinal && source.startedAt !== null,
+          );
+          if (
+            session.compactThread !== undefined &&
+            effectiveHandoffs.length === 0 &&
+            !isCompactionCommandMessage(message) &&
+            !goalCommand &&
+            !projection.messages.some(
+              (candidate) =>
+                candidate.id === previousRun?.userMessageId &&
+                isCompactionCommandMessage(candidate),
+            )
+          ) {
+            yield* settleStartFailure({
+              signal: "provider-context-compaction-required",
+              title: "Conversation compaction needed",
+              error: new ContextCompactionRequiredError(),
+            });
+            return undefined;
+          }
           const freshThread = { ...resumed.success, nativeThreadRef: null };
           const freshContext = handoffContextForThread(freshThread);
           const { handoff } = yield* recoveryHandoff;

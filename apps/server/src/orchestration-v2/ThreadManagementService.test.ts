@@ -220,6 +220,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           restartContinuationPending: (run) => Effect.succeed(pending && run.id === runId),
+          compactionRecoveryPending: () => Effect.succeed(false),
           awaitRestartContinuation: () => Effect.never,
           streamStoredEventsFrom: (input) =>
             input?.eventType === "run.updated"
@@ -269,6 +270,77 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
   }),
 );
 
+it.effect("waitForThread follows compaction recovery to the continuation's result", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-compaction");
+    const threadId = ThreadId.make("thread:thread-management:wait-compaction");
+    const runId = RunId.make("run:thread-management:wait-compaction");
+    const compactId = RunId.make("run:thread-management:wait-compaction:compact");
+    const continueId = RunId.make("run:thread-management:wait-compaction:continue");
+    const subscribed = yield* Deferred.make<void>();
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    // Both the full run and its /compact run owe the server a next step.
+    const owesRecovery = new Set([runId, compactId]);
+    let runs: Array<{
+      id: RunId;
+      status: OrchestrationV2Run["status"];
+      compactionRecoveryOfRunId?: RunId;
+    }> = [{ id: runId, status: "failed" }];
+    const stored = (sequence: number, event: object) =>
+      ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(false),
+          compactionRecoveryPending: (run) => Effect.succeed(owesRecovery.has(run.id)),
+          awaitRestartContinuation: () => Effect.never,
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "run.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          getThreadRecords: () =>
+            Effect.sync(
+              () =>
+                ({
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs,
+                }) as unknown as OrchestrationV2ThreadProjection,
+            ),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 })
+      .pipe(Effect.forkChild);
+    // A wait that settles on the failed run never subscribes.
+    yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
+    let sequence = 0;
+    const update = (run: (typeof runs)[number]) => {
+      runs = [...runs.filter((candidate) => candidate.id !== run.id), run];
+      return Queue.offer(events, stored(++sequence, { type: "run.updated", payload: run }));
+    };
+    yield* update({ id: compactId, status: "completed", compactionRecoveryOfRunId: runId });
+    yield* update({ id: continueId, status: "running", compactionRecoveryOfRunId: compactId });
+    yield* update({ id: continueId, status: "completed", compactionRecoveryOfRunId: compactId });
+    const result = yield* Fiber.join(fiber);
+
+    expect(result).toMatchObject({
+      timedOut: false,
+      run: { id: continueId, status: "completed" },
+    });
+  }),
+);
+
 it.effect("waitForThread can wait past an ended run for the thread's delegated work", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-delegated");
@@ -297,6 +369,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           restartContinuationPending: () => Effect.succeed(false),
+          compactionRecoveryPending: () => Effect.succeed(false),
           delegatedTaskResultPending: () => Effect.succeed(false),
           streamStoredEventsFrom: (input) =>
             input?.eventType === "subagent.updated"
@@ -375,6 +448,7 @@ it.effect("waitForThread settles delegated work on a thread rolled back past its
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           restartContinuationPending: () => Effect.succeed(false),
+          compactionRecoveryPending: () => Effect.succeed(false),
           delegatedTaskResultPending: () => Effect.succeed(false),
           streamStoredEventsFrom: () => Stream.never,
           getThreadRecords: () =>
@@ -428,6 +502,7 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           restartContinuationPending: () => Effect.succeed(pending),
+          compactionRecoveryPending: () => Effect.succeed(false),
           awaitRestartContinuation: () => Deferred.await(declined),
           streamStoredEventsFrom: (input) =>
             input?.eventType === "run.updated"
@@ -574,6 +649,7 @@ it.effect.each([
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           restartContinuationPending: () => Effect.succeed(false),
+          compactionRecoveryPending: () => Effect.succeed(false),
           getThreadRecords: () =>
             Effect.succeed({
               thread: { id: threadId, projectId, deletedAt: null },
