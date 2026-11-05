@@ -16,6 +16,6 @@ export const T3_LEARN_SECTIONS: ReadonlyArray<string> = [
 In a lesson or side chat (not coding work):
 - An explanation's text never waits on a visual. Write the explanation as text before any call for the visual, then make the visual in the same turn.
 - Flows, trees, steps and relations: a mermaid block in your reply, unless the learner asked for a rendered picture.
-- Pictures (geometry, plots, layouts) and interactive demos: HTML through \`html_preview\`, then \`html_render\`. Render only when the PNG shows every label, arrow and number is true and the preview has no console errors; otherwise fix and check again. Claude: hand the whole picture to an \`Agent\` subagent with \`model: "haiku"\` and a brief that stands alone (what to show, the true values, the html_preview and html_render rules above); it renders the card itself and returns one line.
+- Pictures (geometry, plots, layouts) and interactive demos: HTML through \`html_preview\`, then \`html_render\`. Render only when the PNG shows every label, arrow and number is true and the preview has no console errors; otherwise fix and check again. Draw it yourself: a subagent's card does not reach this thread.
 - Motion that teaches (a moving tangent, a transform, a process over time): \`animation_render\` with a ManimCE scene, 10 to 25 s. Not for static relations or things to play with. If it fails, fix the scene from the error at most twice, then drop the clip without mentioning it.`,
 ];
