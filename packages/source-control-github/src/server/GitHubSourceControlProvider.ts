@@ -984,6 +984,7 @@ export const make = Effect.gen(function* () {
             title: input.title,
             body,
             maintainer_can_modify: true,
+            ...(input.draft !== undefined ? { draft: input.draft } : {}),
           },
         });
       },

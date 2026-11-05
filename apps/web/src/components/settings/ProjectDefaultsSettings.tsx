@@ -106,6 +106,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedDraftPullRequests = useScopedSettingsMixed(["createDraftPullRequests"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
@@ -441,6 +442,30 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 mixed={mixedAutoPull}
                 checked={mixedAutoPull ? false : settings.defaultAutoPull}
                 onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["createDraftPullRequests"]}
+            mixed={mixedDraftPullRequests}
+            {...searchableSetting("create-draft-pull-requests")}
+            description="Create GitHub pull requests as drafts when using Commit, push & PR or Create PR."
+            resetAction={
+              settings.createDraftPullRequests ? (
+                <SettingResetButton
+                  label="draft pull requests"
+                  tooltip="Reset to ready for review"
+                  onClick={() => updateSettings({ createDraftPullRequests: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Create draft PRs"
+                mixed={mixedDraftPullRequests}
+                checked={mixedDraftPullRequests ? false : settings.createDraftPullRequests}
+                onCheckedChange={(enabled) => updateSettings({ createDraftPullRequests: enabled })}
               />
             }
           />

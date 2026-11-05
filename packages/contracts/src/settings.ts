@@ -1042,6 +1042,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "reviewGuideModelSelection",
   "reviewGuideInstructions",
   "sourceControlWritingStyle",
+  "createDraftPullRequests",
   "removeAgentCreditsOnMerge",
   "branchNamingMode",
   "branchNamePrefix",
@@ -1079,6 +1080,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSetting),
+  createDraftPullRequests: Schema.optionalKey(Schema.Boolean),
   removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
@@ -1337,6 +1339,7 @@ export const ServerSettings = Schema.Struct({
   ),
   branchNamePrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("t3"))),
   branchNameInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  createDraftPullRequests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   removeAgentCreditsOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sourceControlWritingStyle: SourceControlWritingStyleSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1683,6 +1686,7 @@ export const ServerSettingsPatch = Schema.Struct({
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
   branchNameInstructions: Schema.optionalKey(TrimmedString),
+  createDraftPullRequests: Schema.optionalKey(Schema.Boolean),
   removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

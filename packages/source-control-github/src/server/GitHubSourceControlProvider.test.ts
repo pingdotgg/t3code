@@ -512,45 +512,50 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
 });
 
 describe("GitHubSourceControlProvider writes", () => {
-  it.effect("creates a cross-repository pull request with an owner:branch head", () => {
-    const requests: Array<GitHubRest.GitHubRestInput> = [];
-    const { layer } = harness({
-      remotes: remotesOutput(
-        ["origin", "git@github.com:me/web.git"],
-        ["upstream", "git@github.com:acme/web.git"],
-      ),
-      api: {
-        rest: (input) =>
-          Effect.sync(() => {
-            requests.push(input);
-            return restResponse({ number: 1 }, 201);
-          }),
-      },
-    });
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const bodyFile = yield* fs.makeTempFileScoped({ suffix: ".md" });
-      yield* fs.writeFileString(bodyFile, "Body");
-      const gh = yield* GitHubSourceControlProvider.make;
-      yield* gh.createChangeRequest({
-        cwd: "/repo",
-        baseRefName: "main",
-        headSelector: "me:feature",
-        title: "Title",
-        bodyFile,
+  it.effect.each([undefined, false, true])(
+    "creates a cross-repository pull request (draft: %s)",
+    (draft) => {
+      const requests: Array<GitHubRest.GitHubRestInput> = [];
+      const { layer } = harness({
+        remotes: remotesOutput(
+          ["origin", "git@github.com:me/web.git"],
+          ["upstream", "git@github.com:acme/web.git"],
+        ),
+        api: {
+          rest: (input) =>
+            Effect.sync(() => {
+              requests.push(input);
+              return restResponse({ number: 1 }, 201);
+            }),
+        },
       });
-      assert.strictEqual(requests[0]!.method, "POST");
-      assert.strictEqual(requests[0]!.path, "repos/acme/web/pulls");
-      assert.strictEqual(requests[0]!.allowReserve, true);
-      assert.deepStrictEqual(requests[0]!.body, {
-        base: "main",
-        head: "me:feature",
-        title: "Title",
-        body: "Body",
-        maintainer_can_modify: true,
-      });
-    }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
-  });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const bodyFile = yield* fs.makeTempFileScoped({ suffix: ".md" });
+        yield* fs.writeFileString(bodyFile, "Body");
+        const gh = yield* GitHubSourceControlProvider.make;
+        yield* gh.createChangeRequest({
+          cwd: "/repo",
+          baseRefName: "main",
+          headSelector: "me:feature",
+          title: "Title",
+          bodyFile,
+          ...(draft !== undefined ? { draft } : {}),
+        });
+        assert.strictEqual(requests[0]!.method, "POST");
+        assert.strictEqual(requests[0]!.path, "repos/acme/web/pulls");
+        assert.strictEqual(requests[0]!.allowReserve, true);
+        assert.deepStrictEqual(requests[0]!.body, {
+          base: "main",
+          head: "me:feature",
+          title: "Title",
+          body: "Body",
+          maintainer_can_modify: true,
+          ...(draft !== undefined ? { draft } : {}),
+        });
+      }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
+    },
+  );
 
   it.effect("creates a repository under an organization the viewer is not", () => {
     const requests: Array<string> = [];

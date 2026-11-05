@@ -109,6 +109,7 @@ type FakeProviderCall =
     }
   | {
       readonly operation: "createChangeRequest";
+      readonly draft: boolean | undefined;
       readonly baseRefName: string;
       readonly headSelector: string;
       readonly title: string;
@@ -471,6 +472,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
       createChangeRequest: (input) =>
         record(input.cwd, {
           operation: "createChangeRequest",
+          draft: input.draft,
           baseRefName: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
@@ -3263,9 +3265,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect(
-    "pushes and creates PR from a no-upstream branch when local commits are ahead of base",
-    () =>
+  it.effect.each([undefined, false, true])(
+    "pushes and creates PR from a no-upstream branch (draft: %s)",
+    (draft) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
@@ -3275,6 +3277,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
 
         const { manager, providerCalls } = yield* makeManager({
+          ...(draft !== undefined ? { serverSettings: { createDraftPullRequests: draft } } : {}),
           providerScenario: {
             prListSequence: [
               [],
@@ -3301,6 +3304,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(result.push.status).toBe("pushed");
         expect(result.push.setUpstream).toBe(true);
         expect(result.pr.status).toBe("created");
+        expect(providerCalls.find((call) => call.operation === "createChangeRequest")?.draft).toBe(
+          draft ?? false,
+        );
         expect(
           yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"]).pipe(
             Effect.map((result) => result.stdout.trim()),
