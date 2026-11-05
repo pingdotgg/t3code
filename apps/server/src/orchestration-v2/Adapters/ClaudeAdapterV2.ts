@@ -1837,7 +1837,7 @@ export function makeClaudeQueryOptions(input: {
       ? []
       : (input.allowedTools ?? []).filter((tool) => tool.startsWith("mcp__t3-code__"));
   const allowedTools = input.allowedTools?.filter((tool) => !t3McpAllowRules.includes(tool));
-  const settings: ClaudeSdkSettings | undefined =
+  const settings: typeof effectiveQuerySettings =
     t3McpAllowRules.length === 0 || typeof effectiveQuerySettings === "string"
       ? effectiveQuerySettings
       : ({
