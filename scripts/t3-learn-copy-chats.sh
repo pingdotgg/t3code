@@ -4,9 +4,9 @@
 # ones continued or deleted there, are never replaced; nor are side chats, settings or paired devices.
 #
 # The copy is built and booted in a staging folder with no provider reachable, so runs that were in
-# flight in T3 Code are stopped there instead of continuing. New chats are added only from a copy with
-# nothing in flight, and only while T3 Learn is idle; the unit is stopped for the few seconds the
-# merge takes. A failure leaves T3 Learn as it was.
+# flight in T3 Code are stopped there instead of continuing, and PR watches are ended. New chats are
+# added only from a copy with nothing in flight, and only while T3 Learn is idle; the unit is stopped
+# for the few seconds the merge takes. A failure leaves T3 Learn as it was.
 #
 # Run it from a checkout of this repository at the tag of the installed T3 Learn server
 # (git checkout v<version>), after `vp i`, or point T3_LEARN_CHECKOUT at such a checkout.
@@ -77,6 +77,14 @@ EOF
   >"$STAGE-import.log" 2>&1 || { echo "import failed; see $STAGE-import.log" >&2; exit 1; }
 grep -E "ready|threads$" "$STAGE-import.log"
 rm -f "$importer"
+db=$STAGE/userdata/statev2.sqlite
+
+# A copied PR watch would wake the copy and resume T3 Code's own session; end it the way T3 does.
+sqlite3 -bail "$db" "UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '\$.pullRequests',
+  (SELECT json_group_array(CASE WHEN json_type(p.value, '\$.watch') = 'object'
+     THEN json_set(json_remove(p.value, '\$.watch'), '\$.endedWatch', json(json_extract(p.value, '\$.watch')))
+     ELSE json(p.value) END ORDER BY p.key) FROM json_each(payload_json, '\$.pullRequests') p))
+  WHERE EXISTS (SELECT 1 FROM json_each(payload_json, '\$.pullRequests') p WHERE json_type(p.value, '\$.watch') = 'object')"
 
 # T3 Learn keeps its own settings once it has them; the first copy starts from T3 Code's.
 settings=$LEARN/userdata/settings.json
@@ -110,7 +118,6 @@ if ss -H -ltn "sport = :$SANDBOX_PORT" | grep -q .; then
   exit 1
 fi
 
-db=$STAGE/userdata/statev2.sqlite
 in_flight=$(count "$db" "SELECT
   (SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status IN ('preparing','starting','running','waiting'))
 + (SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status='queued' AND json_extract(payload_json,'\$.queueHeld') IS NOT 1)
@@ -118,9 +125,21 @@ in_flight=$(count "$db" "SELECT
 + (SELECT COUNT(*) FROM orchestration_v2_projection_provider_threads WHERE status='active')
 + (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending')
 + (SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE requested_at >= '$since')
++ (SELECT COUNT(*) FROM orchestration_v2_projection_threads t, json_each(t.payload_json,'\$.pullRequests') p WHERE json_type(p.value,'\$.watch')='object')
 + (SELECT COUNT(*) FROM scheduled_tasks)")
 [ "$in_flight" = 0 ] || { echo "copy still has $in_flight in-flight items; not swapping" >&2; exit 1; }
 
+# Families T3 Learn lacks. One that ran in the last hour may still be going in T3 Code, and one with a
+# usage-limit stop could auto-resume in T3 Learn; both wait for a later sync.
+new_where="WHERE COALESCE(json_extract(payload_json, '\$.lineage.rootThreadId'), thread_id)
+    NOT IN (SELECT thread_id FROM main.orchestration_v2_projection_threads)
+  AND COALESCE(json_extract(payload_json, '\$.lineage.rootThreadId'), thread_id) NOT IN (
+    SELECT COALESCE(json_extract(payload_json, '\$.lineage.rootThreadId'), thread_id) FROM src.orchestration_v2_projection_threads
+    WHERE thread_id IN (SELECT thread_id FROM src.orchestration_v2_projection_runs
+                        WHERE requested_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 hour'))
+       OR thread_id IN (SELECT thread_id FROM src.orchestration_v2_projection_turn_items
+                        WHERE type = 'error' AND json_extract(payload_json, '\$.failure.class') = 'usage_limit'
+                          AND julianday(json_extract(payload_json, '\$.failure.resetAt')) > julianday('now', '-1 day')))"
 # Whole thread families (a chat with its forks and subagents) whose root T3 Learn lacks are added.
 # Rows keep their ids; event logs get fresh sequence numbers. Outbox effects are left behind.
 inserts=$(count "$db" "SELECT 'INSERT OR IGNORE INTO main.\"' || m.name || '\" (' || cols || ') SELECT ' || cols
@@ -136,8 +155,7 @@ merge_sql="
 ATTACH DATABASE '$db' AS src;
 BEGIN IMMEDIATE;
 CREATE TEMP TABLE new_threads AS SELECT thread_id FROM src.orchestration_v2_projection_threads
-  WHERE COALESCE(json_extract(payload_json, '\$.lineage.rootThreadId'), thread_id)
-    NOT IN (SELECT thread_id FROM main.orchestration_v2_projection_threads);
+  $new_where;
 CREATE TEMP TABLE new_projects AS SELECT project_id FROM src.projection_projects
   WHERE project_id IN (SELECT project_id FROM src.orchestration_v2_projection_threads
                        WHERE thread_id IN (SELECT thread_id FROM new_threads))
@@ -160,11 +178,9 @@ SELECT (SELECT COUNT(*) FROM new_threads) || ' chats, ' || (SELECT COUNT(*) FROM
 COMMIT;"
 
 new=$(sqlite3 -readonly "$target" "ATTACH DATABASE '$db' AS src;
-  SELECT COUNT(*) FROM src.orchestration_v2_projection_threads
-  WHERE COALESCE(json_extract(payload_json, '\$.lineage.rootThreadId'), thread_id)
-    NOT IN (SELECT thread_id FROM main.orchestration_v2_projection_threads)")
+  SELECT COUNT(*) FROM src.orchestration_v2_projection_threads $new_where")
 if [ "$new" = 0 ]; then
-  say "T3 Learn already has every T3 Code chat; nothing to add."
+  say "T3 Learn has every T3 Code chat that is not active or usage-limited; nothing to add."
   rm -rf "$STAGE"
   exit 0
 fi
