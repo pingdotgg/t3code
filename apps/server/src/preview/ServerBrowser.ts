@@ -1844,9 +1844,15 @@ const make = Effect.gen(function* () {
       let mimeType: string | null;
       const chunks: Array<Buffer> = [];
       try {
-        await setRecordingScreencast(tab, recording, true);
+        if (
+          Option.isNone(await settleScreencasts([setRecordingScreencast(tab, recording, true)]))
+        ) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: "The recording's screencast stop timed out; the recording was discarded.",
+          });
+        }
         await Promise.all(recording.framesInFlight);
-        await recording.session.detach().catch(constVoid);
         const stopped = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
         );
@@ -1866,8 +1872,13 @@ const make = Effect.gen(function* () {
           chunks.push(Buffer.from(chunk, "base64"));
         }
       } finally {
-        await recording.encoder.close().catch(constVoid);
+        // Retire before cleanup so a late queued restart cannot revive this
+        // recording. Cleanup acknowledgements must not keep the capture lock.
         tab.recording = null;
+        await settleScreencasts([
+          recording.session.detach().catch(constVoid),
+          recording.encoder.close().catch(constVoid),
+        ]);
       }
       const data = Buffer.concat(chunks);
       if (!mimeType || data.byteLength === 0) {

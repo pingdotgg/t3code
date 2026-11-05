@@ -39,6 +39,7 @@ import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
+import { SessionControl } from "./SessionControl.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
   presentAsChrome: async () => {},
@@ -62,7 +63,9 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
-      return makeEncoderPage() as unknown as Page;
+      const encoder = makeEncoderPage();
+      encoderPages.push(encoder);
+      return encoder as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
       const context = makeContext(undefined, desktopPageUrl);
@@ -297,6 +300,7 @@ function makeEncoderPage() {
 }
 
 const contexts: ReturnType<typeof makeContext>[] = [];
+const encoderPages: ReturnType<typeof makeEncoderPage>[] = [];
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
@@ -449,6 +453,7 @@ const openDesktopViewer = Effect.gen(function* () {
 beforeEach(() => {
   contexts.length = 0;
   encoderStreams.length = 0;
+  encoderPages.length = 0;
   contextRequests.length = 0;
   contextGate = null;
   contextFailure = null;
@@ -852,6 +857,7 @@ it.effect.each([
   { kind: "viewer", lateAnswer: false },
   { kind: "viewer", lateAnswer: true },
   { kind: "recording", lateAnswer: true },
+  { kind: "recording", lateAnswer: false },
 ] as const)(
   "a $kind does not block snapshots after a stalled stop, with late answer: $lateAnswer",
   ({ kind, lateAnswer }) =>
@@ -929,6 +935,70 @@ it.effect.each([
               .at(-1)?.[0],
           ).toBe("Page.startScreencast");
           expect(startsBeforeStop).toBe(0);
+        } else if (kind === "recording") {
+          // Even cleanup acknowledgements may stall. Retiring the recording
+          // must release the capture lock before any of these promises answer.
+          const encoder = encoderPages.at(-1)!;
+          // Let the pre-fix path finish cleanly if a failed assertion releases the stop.
+          encoder.evaluate.mockResolvedValue({ mimeType: null, count: 0, bytes: 0 });
+          session.detach.mockImplementation(() => stalled.promise.then(() => {}));
+          encoder.close.mockImplementation(() => stalled.promise.then(() => {}));
+          const started = yield* Queue.unbounded<void>();
+          const agent = SessionControl.prototype.agent;
+          using _started = vi.spyOn(SessionControl.prototype, "agent").mockImplementation(function <
+            A,
+          >(this: SessionControl, agentId: string, run: () => Promise<A>, deadlineMs?: number) {
+            const invoke = agent.bind(this);
+            return invoke(
+              agentId,
+              () => {
+                const result = run();
+                Queue.offerUnsafe(started, undefined);
+                return result;
+              },
+              deadlineMs,
+            );
+          });
+          const stopping = yield* broker
+            .invoke<void>({
+              scope,
+              tabId,
+              operation: "recordingStop",
+              input: {},
+            })
+            .pipe(Effect.flip, Effect.forkScoped);
+          yield* Queue.take(started);
+          yield* TestClock.adjust("2 seconds");
+          expect(session.detach).toHaveBeenCalledTimes(1);
+          expect(encoder.close).toHaveBeenCalledTimes(1);
+          const queued = yield* snapshot.pipe(Effect.forkScoped);
+          yield* TestClock.adjust("2 seconds");
+          expect(yield* Fiber.join(stopping)).toMatchObject({
+            _tag: "PreviewAutomationExecutionError",
+            cause: {
+              _tag: "PreviewAutomationExecutionError",
+              message: "The recording's screencast stop timed out; the recording was discarded.",
+            },
+          });
+          expect((yield* Fiber.join(queued)).accessibilityTree).toEqual(expect.any(String));
+          expect(captures()).toBe(2);
+          const retry = yield* broker
+            .invoke<void>({
+              scope,
+              tabId,
+              operation: "recordingStop",
+              input: {},
+            })
+            .pipe(Effect.flip);
+          expect(retry).toMatchObject({
+            _tag: "PreviewAutomationExecutionError",
+            cause: { _tag: "PreviewAutomationRecordingNotActiveError" },
+          });
+          stalled.resolve({});
+          yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+          // Late answers from the retired recording cannot restart its session.
+          expect(yield* Queue.size(resumes)).toBe(0);
+          return;
         }
         yield* Scope.close(viewerScope, Exit.void);
         expect((yield* snapshot).accessibilityTree).toEqual(expect.any(String));
