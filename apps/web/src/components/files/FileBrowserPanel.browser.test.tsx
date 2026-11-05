@@ -1,4 +1,5 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import { FileTree } from "@pierre/trees";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -12,7 +13,7 @@ const entries: readonly ProjectEntry[] = [
   { path: "README.md", kind: "file" },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
-const directory = {
+let directory = {
   entries,
   load: () => Promise.resolve(),
   refresh: () => {},
@@ -114,5 +115,36 @@ describe("FileBrowserPanel", () => {
 
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
+  });
+
+  it("expands every folder without asking the tree about all folders for each one", async () => {
+    const folders: readonly ProjectEntry[] = Array.from({ length: 300 }, (_, index) => ({
+      path: `folder-${index}`,
+      kind: "directory",
+    }));
+    const load = vi.fn(() => Promise.resolve());
+    const original = directory;
+    directory = { ...directory, entries: folders, load };
+    using getItem = vi.spyOn(FileTree.prototype, "getItem");
+    using _restore = { [Symbol.dispose]: () => (directory = original) };
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />,
+    );
+    const expandAll = page.getByRole("button", { name: "Expand all folders" });
+    await expect.element(expandAll).toBeVisible();
+    getItem.mockClear();
+    await userEvent.click(expandAll);
+    await expect.element(page.getByRole("button", { name: "Collapse all folders" })).toBeVisible();
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(folders.length));
+    // Each of the 300 expansions used to look up all 300 folders again, about 137,000 lookups.
+    expect(getItem.mock.calls.length).toBeLessThan(folders.length * 20);
   });
 });
