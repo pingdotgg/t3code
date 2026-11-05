@@ -2767,6 +2767,130 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  // regression: #30430 a provider switch outside a send must not detach a session running background work
+  it.live.each(["provider.switch", "thread.model-selection.set"] as const)(
+    "%s refuses while the previous provider still runs background work",
+    (commandType) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("configure-switch-background-work");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const pendingBackgroundWork = yield* Ref.make(false);
+          const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: "First provider complete" },
+              capturedTurns,
+              pendingBackgroundWork,
+              closedSessions,
+            }),
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+            }),
+          ]);
+          const switchThreadId = ThreadId.make("thread:configure-switch-background-work");
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const switchProvider = (attempt: string) =>
+              orchestrator.dispatch({
+                type: commandType,
+                commandId: CommandId.make(`command:configure-switch-background-work:${attempt}`),
+                threadId: switchThreadId,
+                modelSelection: CODEX_MODEL_SELECTION,
+              });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:configure-switch-background-work:create"),
+              threadId: switchThreadId,
+              projectId: ProjectId.make("project:configure-switch-background-work"),
+              title: "Configure switch background work",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:configure-switch-background-work:send"),
+              threadId: switchThreadId,
+              messageId: MessageId.make("message:configure-switch-background-work:send"),
+              text: "Start a background agent",
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            const afterFirst = yield* waitForIdle(switchThreadId);
+            const firstSession = afterFirst.providerSessions.find(
+              (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+            );
+            assert.equal(firstSession?.status, "ready");
+            yield* Ref.set(pendingBackgroundWork, true);
+
+            const refused = yield* switchProvider("refused").pipe(
+              Effect.tap(() =>
+                Effect.sync(() =>
+                  assert.fail(
+                    `${commandType} was accepted while the previous session still ran background work`,
+                  ),
+                ),
+              ),
+              Effect.flip,
+            );
+            assert.include(String(refused.cause), "still running background agents or commands");
+            yield* worker.drain();
+            const unchanged = yield* orchestrator.getThreadProjection(switchThreadId);
+            assert.equal(unchanged.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+            assert.deepEqual(
+              unchanged.providerSessions.map((session) => [session.id, session.status]),
+              [[firstSession!.id, "ready"]],
+            );
+            assert.deepEqual(yield* Ref.get(closedSessions), []);
+
+            yield* Ref.set(pendingBackgroundWork, false);
+            yield* switchProvider("accepted");
+            yield* worker.drain();
+            const switched = yield* orchestrator.getThreadProjection(switchThreadId);
+            assert.equal(switched.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+            assert.deepEqual(switched.providerSessions, []);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "configure-switch-background-work",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
   // regression: #21314 a queued PR update must follow the provider that took over the thread
   it.live.each([
     ["automatic", "Claude"],

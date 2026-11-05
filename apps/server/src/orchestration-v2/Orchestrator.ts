@@ -45,6 +45,7 @@ import {
   type OrchestrationV2DelegatedCompletionDelivery,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RemoteTaskChild,
@@ -3136,6 +3137,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return decided.success;
   });
 
+  // Detaching kills background work running inside the provider process.
+  // Probe even with an empty roster: Claude's native subagents never reach
+  // pendingBackgroundTasks. Sessions shared across threads probe per thread.
+  const sessionHasBackgroundWork = Effect.fn("orchestrationV2.sessionHasBackgroundWork")(function* (
+    session: OrchestrationV2ProviderSession,
+    providerThreads: ReadonlyArray<OrchestrationV2ProviderThread>,
+  ) {
+    const live = yield* providerSessions
+      .get(session.id)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(live)) {
+      return false;
+    }
+    const runtime = live.value;
+    const probes =
+      !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
+      runtime.hasPendingBackgroundWork !== undefined
+        ? [runtime.hasPendingBackgroundWork]
+        : providerThreads.flatMap((providerThread) =>
+            providerThread.providerSessionId === session.id &&
+            runtime.hasPendingBackgroundWorkForThread !== undefined
+              ? [runtime.hasPendingBackgroundWorkForThread(providerThread)]
+              : [],
+          );
+    for (const probe of probes) {
+      // A failed probe cannot confirm that the work ended.
+      if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) {
+        return true;
+      }
+    }
+    return false;
+  });
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -3475,6 +3509,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .pipe(mapDispatchError(command));
           })
         : null;
+    for (const session of providerContext?.providerSessions ?? []) {
+      if (
+        providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
+        session.status !== "stopped" &&
+        session.status !== "error" &&
+        (yield* sessionHasBackgroundWork(session, providerContext!.providerThreads))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "The previous provider is still running background agents or commands, and switching would end them. Wait for them to finish, or press Stop, then switch again.",
+        });
+      }
+    }
 
     const now = yield* DateTime.now;
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
