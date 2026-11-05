@@ -1,3 +1,4 @@
+import { ThreadWorkspaceControl } from "./ThreadWorkspaceControl";
 import type {
   EditorId,
   EnvironmentId,
@@ -150,6 +151,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       {(density) => {
         // Section flags follow the rows that will render, so no empty section steals the divider rule.
         const show = {
+          workspace: !props.draftId && visible.branch,
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
           scripts: visible.scripts && props.activeProjectScripts !== undefined,
@@ -162,7 +164,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         return (
           <>
             <div className="group/details-items">
-              {show.environment || show.openIn || show.scripts ? (
+              {show.workspace || show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection
                   headingId="thread-details-workspace-heading"
                   title="Workspace"
@@ -170,6 +172,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   showHeading={false}
                 >
                   <div className="flex flex-col">
+                    {show.workspace ? (
+                      <ThreadWorkspaceControl
+                        environmentId={props.environmentId}
+                        threadId={props.threadId}
+                      />
+                    ) : null}
                     {show.environment ? (
                       <BranchToolbar
                         layout="panel"

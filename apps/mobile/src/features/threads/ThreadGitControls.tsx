@@ -1,3 +1,4 @@
+import { useThreadWorkspaceMenu } from "./use-thread-workspace-menu";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -104,6 +105,10 @@ export type ThreadGitControlsProps = ThreadGitMenuProps & {
 };
 
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
+  const workspaceMenu = useThreadWorkspaceMenu(
+    EnvironmentId.make(String(props.environmentId)),
+    ThreadId.make(String(props.threadId)),
+  );
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
   const environmentId = props.environmentId;
@@ -258,6 +263,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 
   return {
+    workspaceMenu,
     currentBranchLabel,
     isRepo,
     openGitInspector,
@@ -330,6 +336,7 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
     icon: "point.topleft.down.curvedto.point.bottomright.up",
     separateBackground: false,
     items: [
+      model.workspaceMenu,
       {
         id: "git-status",
         title: compactMenuBranchLabel(model.currentBranchLabel),
