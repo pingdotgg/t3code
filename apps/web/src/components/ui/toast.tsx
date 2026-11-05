@@ -110,7 +110,7 @@ const toastDismissPositionClass = "absolute z-20 top-2.5 right-2.5";
 const toastDismissButtonClass = cn(
   "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-row text-muted-foreground outline-none",
   "transition-colors hover:surface-ghost-hover hover:text-foreground",
-  "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
+  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
 );
 
 function handleToastDismissClick(
