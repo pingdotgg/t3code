@@ -23,7 +23,7 @@ platform Worker can reference the same resource:
 
 ```typescript
 // src/namespace.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Customers = Cloudflare.WorkersForPlatforms.DispatchNamespace(
   "Customers",
@@ -43,7 +43,7 @@ a user Worker instead of as a routable account-level script:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Customers } from "./src/namespace.ts";
 import PlatformWorker from "./src/platform.ts";
@@ -83,7 +83,7 @@ looks up a user Worker by script name and returns a `Fetcher`:
 
 ```typescript
 // src/platform.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
