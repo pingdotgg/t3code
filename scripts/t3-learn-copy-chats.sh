@@ -79,12 +79,14 @@ grep -E "ready|threads$" "$STAGE-import.log"
 rm -f "$importer"
 db=$STAGE/userdata/statev2.sqlite
 
-# A copied PR watch would wake the copy and resume T3 Code's own session; end it the way T3 does.
+# A copied PR watch or armed usage-limit resume would wake the copy and resume T3 Code's own session.
 sqlite3 -bail "$db" "UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '\$.pullRequests',
   (SELECT json_group_array(CASE WHEN json_type(p.value, '\$.watch') = 'object'
      THEN json_set(json_remove(p.value, '\$.watch'), '\$.endedWatch', json(json_extract(p.value, '\$.watch')))
      ELSE json(p.value) END ORDER BY p.key) FROM json_each(payload_json, '\$.pullRequests') p))
-  WHERE EXISTS (SELECT 1 FROM json_each(payload_json, '\$.pullRequests') p WHERE json_type(p.value, '\$.watch') = 'object')"
+  WHERE EXISTS (SELECT 1 FROM json_each(payload_json, '\$.pullRequests') p WHERE json_type(p.value, '\$.watch') = 'object');
+  UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '\$.limitRecovery.autoResume', json('false'))
+  WHERE json_extract(payload_json, '\$.limitRecovery.autoResume') = 1"
 
 # T3 Learn keeps its own settings once it has them; the first copy starts from T3 Code's.
 settings=$LEARN/userdata/settings.json
