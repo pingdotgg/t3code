@@ -76,7 +76,12 @@ import {
 } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentThreadShells, environmentThreadDetails } from "../state/threads";
+import {
+  environmentThreadDetails,
+  environmentThreadShells,
+  onLeftThreadReleased,
+} from "../state/threads";
+import { readTimelinePosition } from "./chat/timelineScrollAnchoring";
 import { waitForAtomValue } from "../state/waitForAtomValue";
 import {
   filterTerminalContextsWithText,
@@ -382,6 +387,31 @@ export function peekRememberedThreadTimeline<T extends readonly unknown[]>(
   }
   return (rememberedThreadTimelines.get(threadKey)?.entries as T | undefined) ?? null;
 }
+
+// Fills the pane at the end of a timeline until the thread is back from the cache.
+const RELEASED_THREAD_TIMELINE_ENTRIES = 60;
+
+/**
+ * These rows point at the thread's items, so a released thread keeps only its last few. A reader's
+ * place further up can only be restored on the whole timeline, so that thread keeps none.
+ */
+export function releaseRememberedThreadTimeline(threadKey: string): void {
+  const held = rememberedThreadTimelines.get(threadKey);
+  if (held === undefined) return;
+  if (readTimelinePosition(threadKey)?.atEnd === false) {
+    rememberedThreadTimelines.delete(threadKey);
+    rememberedThreadTimelineOrder = rememberedThreadTimelineOrder.filter(
+      (key) => key !== threadKey,
+    );
+    return;
+  }
+  rememberedThreadTimelines.set(threadKey, {
+    threadKey,
+    entries: held.entries.slice(-RELEASED_THREAD_TIMELINE_ENTRIES),
+  });
+}
+
+onLeftThreadReleased(releaseRememberedThreadTimeline);
 
 export function resetHeldThreadTimeline(): void {
   rememberedThreadTimelines = new Map();

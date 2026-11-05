@@ -32,6 +32,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom } from "effect/reactivity";
+import { rememberTimelinePosition } from "./chat/timelineScrollAnchoring";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
@@ -42,6 +43,7 @@ import {
   resolveComposerProviderSelection,
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
+  releaseRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
@@ -421,6 +423,48 @@ describe("resolveThreadSwitchTimeline", () => {
         nextEntries: [],
       }),
     ).toEqual(["a1", "a2"]);
+  });
+
+  describe("a released thread", () => {
+    const entries = Array.from({ length: 200 }, (_, index) => `entry-${index}`);
+    const threadKey = "env-1:released";
+
+    it("keeps only the end of its remembered timeline", () => {
+      rememberReadyThreadTimeline({ threadKey, entries });
+      releaseRememberedThreadTimeline(threadKey);
+      const kept = peekRememberedThreadTimeline<string[]>(threadKey)!;
+      expect(kept.length).toBeLessThan(100);
+      expect(kept).toEqual(entries.slice(-kept.length));
+      expect(
+        resolveThreadSwitchTimeline({ loading: true, activeThreadKey: threadKey, nextEntries: [] }),
+      ).toEqual(kept);
+    });
+
+    it("leaves other threads' remembered timelines whole", () => {
+      rememberReadyThreadTimeline({ threadKey: "env-1:other", entries });
+      rememberReadyThreadTimeline({ threadKey, entries });
+      releaseRememberedThreadTimeline(threadKey);
+      expect(peekRememberedThreadTimeline<string[]>("env-1:other")).toEqual(entries);
+    });
+
+    it("keeps none when the reader's place is further up the timeline", () => {
+      rememberReadyThreadTimeline({ threadKey, entries });
+      rememberTimelinePosition(
+        threadKey,
+        { rowId: "entry-3", offsetWithinRow: 0, scrollOffset: 0, atEnd: false },
+        false,
+      );
+      releaseRememberedThreadTimeline(threadKey);
+      expect(peekRememberedThreadTimeline(threadKey)).toBeNull();
+    });
+
+    it("still remembers sixteen threads", () => {
+      const keys = Array.from({ length: 18 }, (_, index) => `env-1:thread-${index}`);
+      for (const key of keys) rememberReadyThreadTimeline({ threadKey: key, entries: [key] });
+      expect(keys.map((key) => peekRememberedThreadTimeline(key) !== null)).toEqual(
+        keys.map((_, index) => index >= 2),
+      );
+    });
   });
 
   it("does not paint the last-viewed thread for a destination with nothing remembered", () => {

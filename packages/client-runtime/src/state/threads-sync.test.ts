@@ -535,6 +535,26 @@ describe("EnvironmentThreads", () => {
         }),
     );
 
+    it.effect.each([
+      ["has its card", true],
+      ["has no card", false],
+    ] as const)("counts as a saved copy to come back from only when it %s", ([, usable]) =>
+      Effect.gen(function* () {
+        const stored = yield* roundTrip({
+          ...PROJECTION_WITH_QUESTION,
+          turnItems: usable ? [QUESTION_CARD, newer] : [newer],
+          visibleTurnItems: usable ? [rowOf(QUESTION_CARD, 0), rowOf(newer, 1)] : [rowOf(newer, 0)],
+        });
+        const resumeCache = { owner: undefined, snapshot: undefined, saved: true };
+        yield* makeHarness({
+          loadCached: Effect.succeedSome(stored.snapshot),
+          resumeCache,
+          completionMarker: true,
+        });
+        expect(resumeCache.saved).toBe(usable);
+      }),
+    );
+
     it.effect("is fetched again when the record has no card for it", () =>
       Effect.gen(function* () {
         const stored = yield* roundTrip({
