@@ -150,6 +150,7 @@ function detailRoute(
   tab: "threads" | "pullRequests",
   selections: WorkspaceSelections,
   check: WorkspaceSelectionCheck,
+  seedPullRequest?: (identity: Omit<PullRequestSelection, "key">) => object,
 ): RouteLike | undefined {
   if (tab === "threads") {
     const draft = selections.threadsDraft;
@@ -184,7 +185,11 @@ function detailRoute(
       (route) =>
         route.name === "PullRequest" &&
         samePullRequest(pullRequestSelection(route.params), pullRequest),
-    ) ?? { key: pullRequest.key, name: "PullRequest", params: identityOf(pullRequest) }
+    ) ?? {
+      key: pullRequest.key,
+      name: "PullRequest",
+      params: seedPullRequest?.(identityOf(pullRequest)) ?? identityOf(pullRequest),
+    }
   );
 }
 
@@ -204,6 +209,7 @@ export function workspaceTabNavigationState<
     readonly columns: boolean;
     readonly check: WorkspaceSelectionCheck;
     readonly overlays?: readonly RouteLike[];
+    readonly seedPullRequest?: (identity: Omit<PullRequestSelection, "key">) => object;
   },
 ) {
   const overlays = options.overlays ?? [];
@@ -221,7 +227,7 @@ export function workspaceTabNavigationState<
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
   const detail =
     options.columns && tab !== "usage"
-      ? detailRoute(state, tab, selections, options.check)
+      ? detailRoute(state, tab, selections, options.check, options.seedPullRequest)
       : undefined;
   const routes = [...[home, ...(detail ? [detail] : [])].map(keyed), ...overlays];
   return { ...state, index: routes.length - 1, routes };
