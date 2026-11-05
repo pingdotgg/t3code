@@ -3,6 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { NativeModule, requireOptionalNativeModule } from "expo";
@@ -37,10 +38,22 @@ const sameEnvironments = (left: ReadonlyArray<FocusEnvironment>, right: typeof l
       environment.id === right[index]?.id && environment.label === right[index]?.label,
   );
 
+class FocusFilterReadError extends Schema.TaggedError<FocusFilterReadError>()(
+  "FocusFilterReadError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to read the iOS Focus filter.";
+  }
+}
+
 const readAllowlist =
   native === null
     ? Effect.succeed<FocusAllowlist>(null)
-    : Effect.tryPromise(() => native.getAllowedEnvironmentIds()).pipe(Effect.map(focusAllowlist));
+    : Effect.tryPromise({
+        try: () => native.getAllowedEnvironmentIds(),
+        catch: (cause) => new FocusFilterReadError({ cause }),
+      }).pipe(Effect.map(focusAllowlist));
 
 /** The filter active at launch. Startup waits on it, so it gives up quickly. */
 export const initialAllowlist: Effect.Effect<FocusAllowlist> = readAllowlist.pipe(
