@@ -62,7 +62,7 @@ while kill -0 "$pid" 2>/dev/null; do
   waits=$((waits - 1))
   sleep 0.2
 done
-mv "$target" "$backup" || exit 1
+mv "$target" "$backup" || { open -n "$target"; exit 1; }
 until [ -e "$target" ] || mv "$staged" "$target" || mv "$backup" "$target"; do
   if [ "$retries" -le 0 ]; then exit 1; fi
   retries=$((retries - 1))

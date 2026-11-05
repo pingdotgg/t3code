@@ -137,12 +137,12 @@ describe("MacAppVolume.SWAP_SCRIPT", () => {
         assert.isFalse(restored.stageLeft);
         assert.equal(restored.opened, `-n ${restored.target}\n`);
 
-        // The app cannot be moved aside, so the helper fails and keeps the staged update.
+        // The app cannot be moved aside, so the helper reopens it and keeps the stage.
         const unmoved = yield* runSwap({ stageNewApp: true, failedMoves: [1, 1] });
         assert.notEqual(unmoved.exitCode, 0);
         assert.equal(unmoved.version, "1.2.3");
         assert.isTrue(unmoved.stageLeft);
-        assert.equal(unmoved.opened, "");
+        assert.equal(unmoved.opened, `-n ${unmoved.target}\n`);
 
         const refused = yield* runSwap({ stageNewApp: true, failedOpens: 1 });
         assert.equal(refused.exitCode, 0);
