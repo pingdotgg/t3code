@@ -12,6 +12,33 @@ import {
   splitFilePathPosition,
 } from "./fileLinks.ts";
 
+export function parseObsidianNavigationHref(href: string): string | null {
+  if (!/^obsidian:\/\//i.test(href)) return null;
+  try {
+    const url = new URL(href);
+    if (url.username || url.password || url.port || url.pathname || url.hash) return null;
+    const allowedParameters =
+      url.hostname === "open"
+        ? ["vault", "file", "path", "paneType"]
+        : url.hostname === "adv-uri"
+          ? ["vault", "filepath", "filename", "heading", "block", "line", "column", "offset"]
+          : [];
+    const keys = [...url.searchParams.keys()];
+    // Advanced URI also exposes writes and commands; allow navigation parameters only.
+    if (
+      keys.some((key) => !allowedParameters.includes(key)) ||
+      new Set(keys).size !== keys.length
+    ) {
+      return null;
+    }
+    const targetKeys =
+      url.hostname === "open" ? ["vault", "file", "path"] : ["filepath", "filename"];
+    return targetKeys.some((key) => url.searchParams.get(key)?.trim()) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
 // Names may use any script (`線性代數/考試.pdf`) and routing punctuation (`posts.$id.tsx`,

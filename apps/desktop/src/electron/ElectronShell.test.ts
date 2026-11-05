@@ -93,6 +93,32 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens Obsidian note links without enabling command or write actions", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+      const electronShell = yield* ElectronShell.ElectronShell;
+      for (const url of [
+        "obsidian://open?vault=Example%20Vault&file=notes%2FExample.md",
+        "obsidian://adv-uri?vault=Example%20Vault&filepath=notes%2FExample.md&heading=Overview",
+      ]) {
+        assert.equal(yield* electronShell.openExternal(url), true);
+      }
+      assert.equal(openExternalMock.mock.calls.length, 2);
+      for (const url of [
+        "obsidian://new?vault=Example&file=Example&content=overwrite",
+        "obsidian://adv-uri?vault=Example&filepath=Example&data=overwrite&mode=overwrite",
+        "obsidian://adv-uri?vault=Example&commandid=app%3Adelete-file",
+        "obsidian://user:password@open?vault=Example",
+        "obsidian://open:123?vault=Example",
+        "unknown://open?vault=Example",
+        "javascript:alert(1)",
+      ]) {
+        assert.equal(yield* electronShell.openExternal(url), false);
+      }
+      assert.equal(openExternalMock.mock.calls.length, 2);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("does not open unsafe external URLs", () =>
     Effect.gen(function* () {
       const electronShell = yield* ElectronShell.ElectronShell;

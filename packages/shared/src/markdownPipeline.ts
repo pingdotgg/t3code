@@ -14,7 +14,11 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import {
+  isWindowsDrivePathHref,
+  normalizeMarkdownLinkDestination,
+  parseObsidianNavigationHref,
+} from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -195,6 +199,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,
+      "obsidian",
     ],
     src: IMAGE_SRC_PROTOCOLS,
     dataDarkSrc: IMAGE_SRC_PROTOCOLS,
@@ -297,10 +302,24 @@ function rehypeRawWhenPresent(this: Processor) {
     needsHtmlParser(tree, TOP_SCOPE) ? transform(tree, file) : undefined;
 }
 
+function rehypeObsidianNavigationLinks() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode) => {
+      const href = node.properties?.href;
+      if (node.tagName === "a" && typeof href === "string" && /^obsidian:/i.test(href)) {
+        node.properties!.href = parseObsidianNavigationHref(href) ?? undefined;
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
 export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
   rehypeRawWhenPresent,
   rehypePreserveImageSourceMeta,
+  rehypeObsidianNavigationLinks,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
 
