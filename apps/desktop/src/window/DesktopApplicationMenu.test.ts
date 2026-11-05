@@ -157,7 +157,7 @@ const downloadFinished: DesktopUpdateActionResult = {
 const downloadFailed: DesktopUpdateActionResult = {
   accepted: true,
   completed: false,
-  state: updateState("error", { message: "disk full" }),
+  state: updateState("error"),
 };
 
 describe("checkForUpdatesFromMenu", () => {

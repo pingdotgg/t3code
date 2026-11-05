@@ -65,7 +65,7 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
-const INSTALL_FROM_SIDEBAR = "Install it from the update button at the bottom of the sidebar.";
+const UPDATE_BUTTON = "the update button at the bottom of the sidebar";
 
 function describeUpdate(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
@@ -100,7 +100,7 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
       type: "info",
       title: "Update available",
       message: `${describeUpdate(updateState)} is available.`,
-      detail: `You're on ${updateState.currentVersion}. ${INSTALL_FROM_SIDEBAR}`,
+      detail: `You're on ${updateState.currentVersion}. After it downloads, install it from ${UPDATE_BUTTON}.`,
       buttons: ["Download", "Later"],
       defaultId: 0,
       cancelId: 1,
@@ -112,7 +112,7 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
       type: "warning",
       title: "Could not download update",
       message: "The update did not download.",
-      detail: download.state.message ?? "Please try again from the bottom of the sidebar.",
+      detail: `Please try again from ${UPDATE_BUTTON}.`,
       buttons: ["OK"],
     });
   } else if (updateState.status === "downloading") {
@@ -120,7 +120,7 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
       type: "info",
       title: "Update downloading",
       message: `${describeUpdate(updateState)} is downloading.`,
-      detail: INSTALL_FROM_SIDEBAR,
+      detail: `When it finishes, install it from ${UPDATE_BUTTON}.`,
       buttons: ["OK"],
     });
   } else if (updateState.status === "downloaded") {
@@ -128,7 +128,7 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
       type: "info",
       title: "Update ready to install",
       message: `${describeUpdate(updateState)} is ready to install.`,
-      detail: INSTALL_FROM_SIDEBAR,
+      detail: `Install it from ${UPDATE_BUTTON}.`,
       buttons: ["OK"],
     });
   }
