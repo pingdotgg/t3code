@@ -210,15 +210,13 @@ export function QuickUsagePopover({
       ? undefined
       : providers.find((provider) => provider.kind === selectedProvider)) ??
     providers.find((provider) => provider.kind === defaultProvider);
-  const latestCheckedAt = providers.reduce<string | null>((latest, provider) => {
-    for (const account of provider.accounts) {
-      if (!account.checkedAt) continue;
-      if (latest === null || Date.parse(account.checkedAt) > Date.parse(latest)) {
-        latest = account.checkedAt;
-      }
-    }
-    return latest;
-  }, null);
+  const latestCheckedAt =
+    selected?.accounts.reduce<string | null>((latest, account) => {
+      if (!account.checkedAt) return latest;
+      return latest === null || Date.parse(account.checkedAt) > Date.parse(latest)
+        ? account.checkedAt
+        : latest;
+    }, null) ?? null;
   const updated =
     latestCheckedAt === null || !Number.isFinite(Date.parse(latestCheckedAt))
       ? null
@@ -263,7 +261,13 @@ export function QuickUsagePopover({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) setNow(Date.now());
+        setOpen(nextOpen);
+      }}
+    >
       <PopoverTrigger
         render={<Button ref={triggerRef} variant="ghost" size="sm" aria-label="Usage" />}
       >
