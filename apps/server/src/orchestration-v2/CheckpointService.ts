@@ -1385,24 +1385,32 @@ export const layer: Layer.Layer<
       return null;
     });
 
-    // The restored tree records each submodule's commit; its checkout has to
-    // follow, as pinning a submodule left it. Nothing moves unless all can.
-    const alignSubmodules = Effect.fnUntraced(function* (cwd: string, ref: CheckpointRef) {
+    // The restored tree records each submodule's commit; its checkout follows, as pinning
+    // left it. All are checked before any file changes, and none moves unless all can.
+    const prepareSubmoduleAlignment = Effect.fnUntraced(function* (
+      cwd: string,
+      ref: CheckpointRef,
+    ) {
       const changes = yield* submoduleAlignment(cwd, ref);
       for (const change of changes) {
         const problem = yield* submoduleProblem(change);
-        if (problem !== null) return { problem, path: change.path };
+        if (problem !== null) return { problem, path: change.path } as const;
       }
-      for (const change of changes) {
-        yield* run(change.dir, "alignSubmodule", [
-          "checkout",
-          "--quiet",
-          "--no-overwrite-ignore",
-          "--detach",
-          change.commit,
-        ]);
-      }
-      return null;
+      return {
+        problem: null,
+        move: Effect.forEach(
+          changes,
+          (change) =>
+            run(change.dir, "alignSubmodule", [
+              "checkout",
+              "--quiet",
+              "--no-overwrite-ignore",
+              "--detach",
+              change.commit,
+            ]),
+          { discard: true },
+        ),
+      } as const;
     });
 
     const commonDirOf = (cwd: string) =>
@@ -1497,6 +1505,15 @@ export const layer: Layer.Layer<
         input.repository.worktreePath,
         Effect.gen(function* () {
           const cwd = input.repository.worktreePath;
+          const submodules = yield* prepareSubmoduleAlignment(cwd, input.ref);
+          if (submodules.problem !== null) {
+            return yield* new CheckpointRepositoryUnavailableError({
+              repository: input.repository.repository,
+              worktreePath: cwd,
+              reason: submodules.problem,
+              submodulePath: submodules.path,
+            });
+          }
           const restored = yield* checkpointStore.restoreCheckpoint({
             cwd,
             checkpointRef: input.ref,
@@ -1509,15 +1526,7 @@ export const layer: Layer.Layer<
               reason: "checkpoint-missing",
             });
           }
-          const misaligned = yield* alignSubmodules(cwd, input.ref);
-          if (misaligned !== null) {
-            return yield* new CheckpointRepositoryUnavailableError({
-              repository: input.repository.repository,
-              worktreePath: cwd,
-              reason: misaligned.problem,
-              submodulePath: misaligned.path,
-            });
-          }
+          yield* submodules.move;
         }),
       ).pipe(
         Effect.mapError((cause) =>
@@ -1554,6 +1563,17 @@ export const layer: Layer.Layer<
             });
           }
 
+          const submodules =
+            input.alignSubmodules === true
+              ? yield* prepareSubmoduleAlignment(input.scope.cwd, input.checkpoint.ref)
+              : null;
+          if (submodules !== null && submodules.problem !== null) {
+            return yield* new CheckpointRestoreError({
+              scopeId: input.scope.id,
+              checkpointId: input.checkpoint.id,
+              cause: `Submodule ${submodules.path} was not moved: ${submodules.problem}.`,
+            });
+          }
           const restored = yield* checkpointStore.restoreCheckpoint({
             cwd: input.scope.cwd,
             checkpointRef: input.checkpoint.ref,
@@ -1566,17 +1586,7 @@ export const layer: Layer.Layer<
               cause: "Checkpoint ref is unavailable.",
             });
           }
-          const misaligned =
-            input.alignSubmodules === true
-              ? yield* alignSubmodules(input.scope.cwd, input.checkpoint.ref)
-              : null;
-          if (misaligned !== null) {
-            return yield* new CheckpointRestoreError({
-              scopeId: input.scope.id,
-              checkpointId: input.checkpoint.id,
-              cause: `Submodule ${misaligned.path} was not moved: ${misaligned.problem}.`,
-            });
-          }
+          if (submodules !== null) yield* submodules.move;
         }),
       ).pipe(
         Effect.mapError((cause) =>
