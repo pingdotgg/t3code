@@ -17,6 +17,9 @@ import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
   ...(await importOriginal<typeof import("electron")>()),
+  app: {
+    getPath: vi.fn((name: string) => `/Users/alice/${name === "downloads" ? "Downloads" : name}`),
+  },
   session: {
     fromPartition: vi.fn(() => ({
       getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
@@ -66,8 +69,14 @@ const environmentInput = {
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  const sessionListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    session: {
+      on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
+        sessionListeners.set(eventName, listener);
+      }),
+    },
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -144,6 +153,7 @@ function makeFakeBrowserWindow() {
     toggleDevTools: webContents.toggleDevTools,
     navigationHistory: webContents.navigationHistory,
     send: webContents.send,
+    sessionListeners,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
@@ -1149,6 +1159,38 @@ describe("DesktopWindow", () => {
 
         assert.isTrue(prevented);
         assert.deepEqual(openedExternalUrls, ["https://accounts.microsoft.com/oauth"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("saves main window downloads to Downloads without Electron's Save dialog", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const willDownload = fakeWindow.sessionListeners.get("will-download");
+        assert.isDefined(
+          willDownload,
+          "main window session has no will-download handler, so Electron opens its own Save dialog",
+        );
+        const savePaths: string[] = [];
+        const item = {
+          getFilename: () => "clip.mp4",
+          getSavePath: () => savePaths.at(-1) ?? "",
+          setSavePath: (path: string) => void savePaths.push(path),
+          on: vi.fn(),
+          once: vi.fn(),
+        };
+        // Electron shows its Save dialog unless the path is set before the handler returns.
+        willDownload?.({ preventDefault: vi.fn() }, item, fakeWindow.window.webContents);
+
+        assert.deepEqual(savePaths, ["/Users/alice/Downloads/clip.mp4"]);
       }).pipe(Effect.provide(layer));
     }),
   );
