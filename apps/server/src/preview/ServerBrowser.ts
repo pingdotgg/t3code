@@ -750,7 +750,8 @@ const make = Effect.gen(function* () {
 
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  /** `closePage: false` leaves a person's popup window open after its tab failed to adopt it. */
+  const dropTab = (tab: ServerTab, closeSession: boolean, closePage = true) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
@@ -760,8 +761,10 @@ const make = Effect.gen(function* () {
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
-    if (tab.desktop) void tab.desktop.close().catch(constVoid);
-    else void tab.page.close().catch(constVoid);
+    if (closePage) {
+      if (tab.desktop) void tab.desktop.close().catch(constVoid);
+      else void tab.page.close().catch(constVoid);
+    }
     if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
     void tab.recording?.encoder.close().catch(constVoid);
     void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
@@ -858,13 +861,9 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    const pendingDialog = adopted?.pendingDialog;
-    if (pendingDialog) {
-      cdp.on("Page.javascriptDialogClosed", () => {
-        pendingDialog.current = null;
-      });
-    }
-    await installPdfDocumentNavigation(cdp);
+    // A native popup can already show a modal, which holds page commands until it is answered.
+    const native = adopted?.native === true;
+    if (!native) await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -928,19 +927,47 @@ const make = Effect.gen(function* () {
         if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
       });
     }
-    if (!desktop) {
-      await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
-    }
-    await applyRendering(tab, snapshot);
-    if (desktop) {
-      // The desktop resizes and zooms its webview itself; viewers map input with the new size.
-      const remeasure = () => {
-        if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
-      };
-      cdp.on("Page.frameResized", remeasure);
-      // A read a navigation broke has a fresh page to measure.
-      cdp.on("Page.loadEventFired", remeasure);
-      await cdp.send("Page.enable");
+    const finishSetUp = async () => {
+      if (native) await installPdfDocumentNavigation(cdp);
+      if (!desktop) {
+        await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
+      }
+      await applyRendering(tab, snapshot);
+      if (desktop) {
+        // The desktop resizes and zooms its webview itself; viewers map input with the new size.
+        const remeasure = () => {
+          if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
+        };
+        cdp.on("Page.frameResized", remeasure);
+        // A read a navigation broke has a fresh page to measure.
+        cdp.on("Page.loadEventFired", remeasure);
+        await cdp.send("Page.enable");
+      }
+    };
+    const key = tabKey(tab.threadId, tab.tabId);
+    const register = async () => {
+      if (closedPendingTabs.delete(key)) {
+        await control.close().catch(constVoid);
+        if (native) await page.close().catch(constVoid);
+        throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+      }
+      // Playwright cannot reload a crashed page, so it must leave the tab list.
+      page.on("close", () => dropTab(tab, true));
+      page.on("crash", () => dropTab(tab, true));
+      tabs.set(key, tab);
+      reportLiveTabs();
+    };
+    if (native) {
+      // Listed first so its owner can answer that modal; later actions queue behind the setup.
+      await register();
+      await control.system(finishSetUp).catch((cause: unknown) => {
+        dropTab(tab, true, false);
+        throw cause;
+      });
+      if (tab.closing)
+        throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+    } else {
+      await finishSetUp();
     }
     const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
       request.isNavigationRequest() && request.frame() === page.mainFrame();
@@ -1033,17 +1060,7 @@ const make = Effect.gen(function* () {
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
-    // Playwright cannot reload a crashed page, so it must leave the tab list.
-    const key = tabKey(tab.threadId, tab.tabId);
-    if (closedPendingTabs.delete(key)) {
-      await control.close().catch(constVoid);
-      if (adopted?.native) await page.close().catch(constVoid);
-      throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
-    }
-    page.on("close", () => dropTab(tab, true));
-    page.on("crash", () => dropTab(tab, true));
-    tabs.set(key, tab);
-    reportLiveTabs();
+    if (!native) await register();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
     // Popups opened before the connection fired their `popup` event before the listener above.

@@ -733,6 +733,32 @@ it.effect("an agent's desktop tab's popup windows become its tabs, drawn by the 
       expect(failed.page.isClosed()).toBe(false);
       expect(releasedDesktopTabs).toEqual([]);
 
+      // Setup that fails after the tab could answer dialogs also leaves the person's window open.
+      const failedLate = makeContext(undefined, "https://example.com/failed-enable");
+      const newLateSession = failedLate.newCDPSession;
+      failedLate.newCDPSession = async (target) => {
+        const session = await newLateSession(target);
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation(async (method, input) => {
+          if (method === "Page.enable") throw new Error("Popup debugger detached");
+          return send(method, input);
+        });
+        return session;
+      };
+      openerPage.emit("popup", failedLate.page);
+      const failedLateTab = yield* nextOpened;
+      closed = yield* PubSub.take(events);
+      while (closed.type !== "closed" || closed.tabId !== failedLateTab.tabId)
+        closed = yield* PubSub.take(events);
+      expect(failedLate.page.isClosed()).toBe(false);
+      const afterFailure = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: opener.tabId!,
+        operation: "status",
+        input: {},
+      });
+      expect(afterFailure.tabs?.map((tab) => tab.tabId)).not.toContain(failedLateTab.tabId);
+
       // A person's desktop tab keeps its popup windows to itself.
       desktopRendersNext = true;
       const human = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
@@ -2286,6 +2312,9 @@ it.live.each([
   { budget: "agent", limit: 8, host: "desktop", dialogState: "closedBeforeTab" },
   { budget: "agent", limit: 8, host: "desktop", dialogState: "closedDuringSetup" },
   { budget: "agent", limit: 8, host: "desktop", dialogState: "openedDuringSetup" },
+  // A modal holds page commands until it is answered, as a native sheet does.
+  { budget: "agent", limit: 8, host: "desktop", dialogState: "holdsPdfProbe" },
+  { budget: "server", limit: 32, host: "desktop", dialogState: "holdsPageEnable" },
 ])(
   "reserves the $budget budget for opens and $host popups ($dialogState dialog)",
   ({ budget, limit, host, dialogState }) =>
@@ -2336,11 +2365,24 @@ it.live.each([
         const newCDPSession = popup.newCDPSession;
         let pendingDialog: ReturnType<typeof popup.page.openDialog>;
         let changedDialog = false;
+        const answered = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<void>();
+        const registered = Promise.withResolvers<void>();
+        popup.page.waitForLoadState = vi.fn(async () => registered.resolve());
+        const holds = (method: string, input: unknown) =>
+          dialogState === "holdsPdfProbe"
+            ? method === "Runtime.evaluate" &&
+              (input as { expression?: string }).expression === "navigator.pdfViewerEnabled"
+            : dialogState === "holdsPageEnable" && method === "Page.enable";
         popup.newCDPSession = async (target) => {
           await launchGate.promise;
           const session = await newCDPSession(target);
           const send = session.send.getMockImplementation()!;
           session.send.mockImplementation(async (method, input) => {
+            if (holds(method, input)) {
+              held.resolve();
+              await answered.promise;
+            }
             if (!changedDialog) {
               if (method === "Runtime.evaluate" && dialogState === "closedBeforeTab") {
                 changedDialog = true;
@@ -2360,6 +2402,8 @@ it.live.each([
         openerPage.emit("popup", popup.page);
         // A native window's dialog waits for the person while its tab is still being set up.
         pendingDialog = popup.page.openDialog();
+        pendingDialog.accept.mockImplementation(async () => answered.resolve());
+        pendingDialog.dismiss.mockImplementation(async () => answered.resolve());
         expect(popup.page.dialogAutoDismissed).toHaveBeenCalledTimes(host === "desktop" ? 0 : 1);
         const last = yield* open().pipe(Effect.result, Effect.forkScoped);
         const overflow = yield* open().pipe(Effect.result, Effect.forkScoped);
@@ -2401,17 +2445,9 @@ it.live.each([
           });
         }
         if (host === "server") yield* Effect.promise(() => resized.promise);
-        const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-        for (const session of sessions)
-          yield* browser.attachViewer(viewerInput(session.tabId, false));
-        expect(sessions).toHaveLength(limit);
-        expect(popup.page.isClosed()).toBe(false);
-        expect(rejectedPopup.page.isClosed()).toBe(host === "server");
-        if (host === "desktop") {
-          // No tab answers the window it could not adopt, so its dialogs stay the person's.
-          rejectedPopup.page.openDialog();
-          expect(rejectedPopup.page.dialogAutoDismissed).not.toHaveBeenCalled();
-        }
+        const holding = dialogState.startsWith("holds");
+        // A held setup waits for its dialog's answer; the others finish on their own.
+        if (host === "desktop") yield* Effect.promise(() => (holding ? held : registered).promise);
         const status = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
           tabId,
@@ -2430,17 +2466,34 @@ it.live.each([
           if (dialogState.startsWith("closed")) {
             expect(popupStatus.dialog).toBeNull();
             expect(pendingDialog.accept).not.toHaveBeenCalled();
+            expect(pendingDialog.dismiss).not.toHaveBeenCalled();
           } else {
             expect(popupStatus.dialog).toMatchObject({ type: "alert", message: "hello" });
-            yield* broker.invoke({
+            // The held setup has not finished, yet the tab's owner can answer its dialog.
+            if (holding) expect(popup.page.waitForLoadState).not.toHaveBeenCalled();
+            const accept = dialogState !== "holdsPageEnable";
+            const answer = yield* broker.invoke<PreviewAutomationStatus>({
               scope,
               tabId: adopted.tabId,
               operation: "dialog",
-              input: { accept: true },
+              input: { accept },
             });
-            expect(pendingDialog.accept).toHaveBeenCalledTimes(1);
+            expect(answer.dialog).toBeNull();
+            expect(pendingDialog.accept).toHaveBeenCalledTimes(accept ? 1 : 0);
+            expect(pendingDialog.dismiss).toHaveBeenCalledTimes(accept ? 0 : 1);
+            if (holding) yield* Effect.promise(() => registered.promise);
           }
-          expect(pendingDialog.dismiss).not.toHaveBeenCalled();
+        }
+        const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+        for (const session of sessions)
+          yield* browser.attachViewer(viewerInput(session.tabId, false));
+        expect(sessions).toHaveLength(limit);
+        expect(popup.page.isClosed()).toBe(false);
+        expect(rejectedPopup.page.isClosed()).toBe(host === "server");
+        if (host === "desktop") {
+          // No tab answers the window it could not adopt, so its dialogs stay the person's.
+          rejectedPopup.page.openDialog();
+          expect(rejectedPopup.page.dialogAutoDismissed).not.toHaveBeenCalled();
         }
       }),
     ).pipe(Effect.provide(layer)),
