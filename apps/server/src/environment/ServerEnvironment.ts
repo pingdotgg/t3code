@@ -10,7 +10,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -189,10 +188,7 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
-  const chatSyncAvailable = Option.getOrElse(
-    yield* Effect.serviceOption(ChatSync.ChatSync),
-    () => ({ available: false }),
-  ).available;
+  const chatSyncAvailable = (yield* ChatSync.ChatSync).available;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const identity = yield* ServerEnvironmentIdentity;
   const environmentId = yield* identity.getEnvironmentId;
@@ -307,5 +303,6 @@ export const layerIdentity = Layer.effect(ServerEnvironmentIdentity, makeIdentit
 
 export const layer = Layer.effect(ServerEnvironment, make).pipe(
   Layer.provideMerge(layerIdentity),
+  Layer.provide(ChatSync.layer),
   Layer.provide(ProcessRunner.layer),
 );
