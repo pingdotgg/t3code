@@ -1895,6 +1895,9 @@ function ScheduledTaskEditorForm({
                   <Input
                     type="time"
                     id="scheduled-task-time"
+                    aria-describedby={
+                      runAtZone === undefined ? undefined : "scheduled-task-time-zone"
+                    }
                     nativeInput
                     className="w-32"
                     value={draft.timeOfDay}
@@ -1903,7 +1906,9 @@ function ScheduledTaskEditorForm({
                     }
                   />
                   {runAtZone === undefined ? null : (
-                    <span className="text-xs text-muted-foreground">{runAtZone}</span>
+                    <span id="scheduled-task-time-zone" className="text-xs text-muted-foreground">
+                      {runAtZone}
+                    </span>
                   )}
                   <span className="text-xs text-muted-foreground">on</span>
                 </div>
