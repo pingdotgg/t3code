@@ -244,10 +244,14 @@ function AdaptiveWorkspaceLayoutContent(
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [nativeInspectorWidthFraction, setNativeInspectorWidthFraction] = useState(0.4);
-  const nativeInspectorWidth = nativeInspectorColumnWidth(
-    viewportWidth,
-    nativeInspectorWidthFraction,
-  );
+  const inspectorWidthFor = (fraction: number) =>
+    nativeInspectorColumnWidth({
+      viewportWidth,
+      horizontalSafeArea:
+        (nativeMetrics?.safeArea.left ?? 0) + (nativeMetrics?.safeArea.right ?? 0),
+      fraction,
+    });
+  const nativeInspectorWidth = inspectorWidthFor(nativeInspectorWidthFraction);
   const [fileInspectorPreferredWidth, setFileInspectorPreferredWidth] = useState<number | null>(
     null,
   );
@@ -1000,9 +1004,7 @@ function AdaptiveWorkspaceLayoutContent(
     setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
     nativeInspectorWidth,
     setNativeInspectorWidth: (width: number) =>
-      setNativeInspectorWidthFraction(
-        nativeInspectorColumnWidth(viewportWidth, width / viewportWidth) / viewportWidth,
-      ),
+      setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
     composerKeyboardActive,
     keyboardHoldsSidebar,
     setComposerEditing,
