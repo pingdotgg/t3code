@@ -848,6 +848,56 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a viewer whose screencast never stops delays a snapshot boundedly, not forever", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewerScope = yield* Scope.fork(yield* Effect.scope);
+      yield* browser.attachViewer(viewerInput(tabId, false)).pipe(Scope.provide(viewerScope));
+      const session = contexts[0]!.sessions.at(-1)!;
+      // The viewer's next screencast stop answers only when the test ends, after
+      // the viewer detaches.
+      const stalled = Promise.withResolvers<Record<string, unknown>>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => stalled.resolve({})));
+      const stops = yield* Queue.unbounded<void>();
+      const send = session.send.getMockImplementation()!;
+      let stalling = true;
+      session.send.mockImplementation((method, input) => {
+        if (method !== "Page.stopScreencast" || !stalling) return send(method, input);
+        stalling = false;
+        Queue.offerUnsafe(stops, undefined);
+        return stalled.promise;
+      });
+      const captures = () =>
+        contexts[0]!.sessions.flatMap((item) =>
+          item.send.mock.calls.filter(
+            ([method, input]) =>
+              method === "Page.captureScreenshot" && (input as { format: string }).format === "png",
+          ),
+        ).length;
+      const snapshot = broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      const first = yield* snapshot.pipe(Effect.forkScoped);
+      yield* Queue.take(stops);
+      expect(captures()).toBe(0);
+      // The pause gives up on the stalled viewer and the snapshot captures without it.
+      yield* TestClock.adjust("2 seconds");
+      expect(captures()).toBe(1);
+      // Its resume waits behind the stalled stop and gives up too, releasing the tab.
+      yield* TestClock.adjust("2 seconds");
+      expect((yield* Fiber.join(first)).accessibilityTree).toEqual(expect.any(String));
+      // Once the stalled viewer detaches, the next snapshot no longer waits for it.
+      yield* Scope.close(viewerScope, Exit.void);
+      expect((yield* snapshot).accessibilityTree).toEqual(expect.any(String));
+      expect(captures()).toBe(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live(
   "takeover waits for the running agent and revokes snapshot refs before returning control",
   () =>

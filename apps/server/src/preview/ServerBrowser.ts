@@ -104,6 +104,12 @@ const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 /** A dialog blocks page script, so a desktop size read gives up after this. */
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
+/**
+ * A screencast that never acknowledges a pause or resume holds the capture lock no
+ * longer than this. Twice this plus the 10 second snapshot deadline fits the broker's
+ * 15 second budget.
+ */
+const SCREENCAST_SETTLE_TIMEOUT = "2 seconds";
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -1779,12 +1785,20 @@ const make = Effect.gen(function* () {
     return started;
   };
 
+  // A stalled viewer or recording keeps its own late answer; the capture goes on without it.
+  const settleScreencasts = (pending: ReadonlyArray<Promise<unknown> | undefined>) =>
+    runPromise(
+      Effect.promise(() => Promise.all(pending)).pipe(
+        Effect.timeoutOption(SCREENCAST_SETTLE_TIMEOUT),
+      ),
+    );
+
   const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
     withCaptureLock(tab, async () => {
       tab.capturing += 1;
       const recording = tab.recording;
       try {
-        await Promise.all([
+        await settleScreencasts([
           ...[...tab.viewers].map((viewer) => viewer.pause()),
           recording?.session.send("Page.stopScreencast").catch(constVoid),
         ]);
@@ -1792,7 +1806,7 @@ const make = Effect.gen(function* () {
       } finally {
         tab.capturing -= 1;
 
-        await Promise.all([
+        await settleScreencasts([
           ...[...tab.viewers].map((viewer) => viewer.resume()),
           recording && tab.recording === recording
             ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
