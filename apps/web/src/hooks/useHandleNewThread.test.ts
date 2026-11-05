@@ -278,16 +278,22 @@ describe.each([
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 
-  it("sets the prompt before the draft shows", async () => {
+  it("sets the prompt and pins the machine before the draft shows", async () => {
     testState.reset(draft);
     const pendingOpen = useNewThreadHandler()(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { prompt: "Read the playbook. " },
+      { prompt: "Read the playbook. ", environmentSelection: "manual" },
     );
 
     testState.completeProjectFileRead(null);
     const opened = await pendingOpen;
 
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      opened?.draftId,
+      expect.objectContaining({ environmentSelection: "manual" }),
+    );
     expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
       opened?.draftId,
       "Read the playbook. ",

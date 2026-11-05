@@ -21,6 +21,12 @@ import { type EnvironmentPresentation, useEnvironmentProviders } from "../../sta
 import { useProjects } from "../../state/entities";
 import type { DraftSessionState } from "../../composerDraftStore";
 
+interface EnvironmentChangeRequest {
+  readonly environmentId: EnvironmentId;
+  readonly scope: string;
+  readonly environmentSelection: "manual" | "auto";
+}
+
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
   readonly draftThread: DraftSessionState | null;
@@ -111,27 +117,17 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
-  useEffect(() => {
-    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
-    const target = logicalProjectEnvironments.find(
-      (environment) => environment.environmentId === loadBalancing.environmentId,
-    );
-    if (!target?.projectId) return;
-    setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
-    });
-  }, [
-    needsLoadBalancing,
-    loadBalancing.pending,
-    loadBalancing.environmentId,
-    draftId,
-    logicalProjectEnvironments,
-    sendInFlightRef,
-    setDraftThreadContext,
-  ]);
+  // A change in flight belongs to the draft and project it started on.
+  const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
+  // The busy state belongs to the request that set it, so an older request settling late
+  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
+  const [busyEnvironmentChange, setBusyEnvironmentChange] =
+    useState<EnvironmentChangeRequest | null>(null);
+  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
+  // Bumped by choosing Auto, so a pick whose change failed or was superseded is tried again.
+  const [autoGeneration, setAutoGeneration] = useState(0);
+  const environmentChangeRef = useRef<EnvironmentChangeRequest | null>(null);
+  const attemptedAutoKeyRef = useRef<string | null>(null);
   const onAutoEnvironment = () => {
     if (envLocked || !draftId) return;
     if (composerHasAttachments) {
@@ -144,6 +140,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       });
       return;
     }
+    environmentChangeRef.current = null;
+    setBusyEnvironmentChange(null);
+    setAutoGeneration((generation) => generation + 1);
     loadBalancing.refresh(
       logicalProjectEnvironments.map((environment) => environment.environmentId),
     );
@@ -165,12 +164,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           : "Auto balance"
     : undefined;
 
-  // A change in flight belongs to the draft and project it started on.
-  const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
-  const environmentChangeRef = useRef<{
-    readonly environmentId: EnvironmentId;
-    readonly scope: string;
-  } | null>(null);
   const environmentChangeScopeRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope into a ref that async environment switches compare against
   useLayoutEffect(() => {
@@ -182,6 +175,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     () => () => {
       if (environmentChangeRef.current?.scope === environmentChangeScope) {
         environmentChangeRef.current = null;
+        attemptedAutoKeyRef.current = null;
       }
     },
     [environmentChangeScope],
@@ -190,15 +184,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const pending = environmentChangeRef.current;
     return pending !== null && pending.scope === environmentChangeScopeRef.current ? pending : null;
   };
-  // The busy state belongs to the request that set it, so an older request settling late
-  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
-  const [busyEnvironmentChange, setBusyEnvironmentChange] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly scope: string;
-  } | null>(null);
-  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
-
-  const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
+  const changeEnvironment = (
+    nextEnvironmentId: EnvironmentId,
+    environmentSelection: "manual" | "auto",
+  ) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
     const originalDraft = getDraftSession(draftId);
     if (!originalDraft || originalDraft.promotedTo) return;
@@ -206,7 +195,15 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (env) => env.environmentId === nextEnvironmentId,
     );
     if (!target) return;
-    const request = { environmentId: target.environmentId, scope: environmentChangeScope };
+    const request = {
+      environmentId: target.environmentId,
+      scope: environmentChangeScope,
+      environmentSelection,
+    };
+    const selection =
+      environmentSelection === "auto"
+        ? { environmentSelection, loadBalancedEnvironmentId: target.environmentId }
+        : { environmentSelection, loadBalancedEnvironmentId: null };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
     const retarget = (project: (typeof allProjects)[number]) => {
@@ -218,7 +215,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         !currentDraft ||
         currentDraft.promotedTo ||
         currentDraft.environmentId !== originalDraft.environmentId ||
-        currentDraft.projectId !== originalDraft.projectId
+        currentDraft.projectId !== originalDraft.projectId ||
+        (environmentSelection === "auto" && currentDraft.environmentSelection === "manual")
       )
         return;
       const projectRef = scopeProjectRef(target.environmentId, project.id);
@@ -227,14 +225,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
           projectRef,
           draftId,
-          { environmentSelection: "manual", loadBalancedEnvironmentId: null },
+          selection,
         );
       } else {
-        setDraftThreadContext(draftId, {
-          projectRef,
-          environmentSelection: "manual",
-          loadBalancedEnvironmentId: null,
-        });
+        setDraftThreadContext(draftId, { projectRef, ...selection });
       }
     };
     const finish = () => {
@@ -257,7 +251,48 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       })
       .finally(finish);
   };
-  const onEnvironmentChangeStable = useStableCallback(onEnvironmentChange);
+  const changeEnvironmentStable = useStableCallback(changeEnvironment);
+  const onEnvironmentChangeStable = useStableCallback((environmentId: EnvironmentId) =>
+    changeEnvironment(environmentId, "manual"),
+  );
+
+  const autoEnvironmentId =
+    needsLoadBalancing && !loadBalancing.pending ? loadBalancing.environmentId : null;
+  // One attempt per pick, so a failed or superseded change waits for a new pick or Auto again.
+  const autoAttemptKey = `${environmentChangeScope}:${autoGeneration}:${autoEnvironmentId}`;
+  // A manual pick still opening its machine's scratch project wins over Auto.
+  const manualChangeInFlight =
+    isEnvironmentChanging && busyEnvironmentChange?.environmentSelection === "manual";
+  // Losing the pick (a pin, an attachment, Auto turned off, a newer pick) abandons its change.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an in-flight Auto change once its load-balancing pick no longer applies
+  useLayoutEffect(() => {
+    const pending = environmentChangeRef.current;
+    if (pending?.environmentSelection !== "auto" || pending.environmentId === autoEnvironmentId) {
+      return;
+    }
+    environmentChangeRef.current = null;
+    attemptedAutoKeyRef.current = null;
+    setBusyEnvironmentChange((busy) => (busy === pending ? null : busy));
+  }, [autoEnvironmentId]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the draft to the machine the async load-balancing pick settles on
+  useEffect(() => {
+    if (
+      autoEnvironmentId === null ||
+      attemptedAutoKeyRef.current === autoAttemptKey ||
+      manualChangeInFlight ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+    attemptedAutoKeyRef.current = autoAttemptKey;
+    changeEnvironmentStable(autoEnvironmentId, "auto");
+  }, [
+    autoEnvironmentId,
+    autoAttemptKey,
+    manualChangeInFlight,
+    sendInFlightRef,
+    changeEnvironmentStable,
+  ]);
 
   return {
     needsLoadBalancing,
