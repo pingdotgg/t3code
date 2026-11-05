@@ -15,7 +15,7 @@ interface NativeSecretInputProps extends ViewProps {
   readonly fontSize: number;
   readonly editable: boolean;
   readonly onChangeText: (event: NativeSyntheticEvent<{ readonly value: string }>) => void;
-  readonly onSubmit: () => void;
+  readonly onSubmit: (event: NativeSyntheticEvent<{ readonly value: string }>) => void;
 }
 
 const NativeSecretInput = requireNativeView<NativeSecretInputProps>("T3SecretInput");
@@ -48,7 +48,7 @@ export function SecretTextInput(props: SecretTextInputProps) {
         fontSize={FONT_SIZE}
         editable={props.editable}
         onChangeText={(event) => props.onChangeText(event.nativeEvent.value)}
-        onSubmit={props.onSubmitEditing}
+        onSubmit={(event) => props.onSubmitEditing(event.nativeEvent.value)}
         style={{ height: LINE_HEIGHT }}
       />
     </View>

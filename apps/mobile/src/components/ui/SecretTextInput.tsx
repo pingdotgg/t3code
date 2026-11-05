@@ -18,7 +18,7 @@ export function SecretTextInput(props: SecretTextInputProps) {
       importantForAutofill="no"
       spellCheck={false}
       returnKeyType="done"
-      onSubmitEditing={props.onSubmitEditing}
+      onSubmitEditing={(event) => props.onSubmitEditing(event.nativeEvent.text)}
     />
   );
 }

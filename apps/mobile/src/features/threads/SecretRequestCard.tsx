@@ -164,7 +164,7 @@ function PendingSecretRequestForm(props: {
           value={secret}
           onChangeText={setSecret}
           editable={!submitting}
-          onSubmitEditing={save}
+          onSubmitEditing={(value) => void send({ type: "save", secret: value })}
         />
       ) : (
         <TextInput
