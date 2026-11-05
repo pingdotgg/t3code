@@ -382,6 +382,43 @@ it.live("signs in a hosted agent with an https callback that asked for a client 
   ),
 );
 
+it.live("signs in Gemini, which registers six user-bound redirect URIs for one client", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const redirectUris = Array.from(
+        { length: 6 },
+        (_, index) =>
+          `https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-test${index}`,
+      );
+      const registered = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "Google",
+            redirect_uris: redirectUris,
+            token_endpoint_auth_method: "client_secret_basic",
+          }),
+        }),
+      );
+      const client = (yield* json<unknown>(registered)) as { client_id: string };
+      expect(client).toMatchObject({ redirect_uris: redirectUris });
+      expect(registered.status).toBe(201);
+
+      const callbackUrl = redirectUris[5]!;
+      const params = authorizeParams(client.client_id, callbackUrl);
+      const pairing = yield* auth.issuePairingCredential();
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: pairing.credential,
+      });
+      const callback = new URL(approved.redirectTo!);
+      expect(`${callback.origin}${callback.pathname}`).toBe(callbackUrl);
+    }),
+  ),
+);
+
 it.live("rejects a wrong PKCE verifier and spends the code", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
