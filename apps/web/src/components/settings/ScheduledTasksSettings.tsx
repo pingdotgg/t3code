@@ -363,12 +363,19 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
-function ScheduledTasksPolicyNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function ScheduledTasksPolicyNotice({
+  environmentId,
+  label,
+}: {
+  readonly environmentId: EnvironmentId;
+  /** Names the environment where no environment row sits above the notice. */
+  readonly label?: string;
+}) {
   const denial = managedCapabilityDenial(useManagedPolicy(environmentId), "scheduledTasks");
   if (denial === undefined) return null;
   return (
     <div className="px-3 py-2.5 sm:px-4">
-      <ManagedNotice>{denial}</ManagedNotice>
+      <ManagedNotice>{label === undefined ? denial : `${label}: ${denial}`}</ManagedNotice>
     </div>
   );
 }
@@ -599,6 +606,15 @@ function ScheduledTaskEnvironmentList({
           </div>
         );
       })}
+      {loaded
+        .filter((state) => state.tasks?.length === 0)
+        .map(({ environment }) => (
+          <ScheduledTasksPolicyNotice
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            label={settingsScopeEnvironmentLabel(environment, environments)}
+          />
+        ))}
       {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
         <SettingsRow
           title="Task unavailable"
