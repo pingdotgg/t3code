@@ -97,16 +97,13 @@ export interface NuxtOverridesInput {
  * overrides })`. The user's `nuxt.config.ts` remains authoritative for
  * everything this integration does not own.
  */
-export const makeNuxtOverrides = (
-  input: NuxtOverridesInput,
-): Record<string, unknown> => {
+export const makeNuxtOverrides = (input: NuxtOverridesInput): Record<string, unknown> => {
   const userNitro =
     input.nuxtConfig !== undefined && isPlainObject(input.nuxtConfig["nitro"])
       ? (input.nuxtConfig["nitro"] as Record<string, unknown>)
       : undefined;
   const userRuntimeConfig =
-    input.nuxtConfig !== undefined &&
-    isPlainObject(input.nuxtConfig["runtimeConfig"])
+    input.nuxtConfig !== undefined && isPlainObject(input.nuxtConfig["runtimeConfig"])
       ? (input.nuxtConfig["runtimeConfig"] as Record<string, unknown>)
       : undefined;
   const userExternals = isPlainObject(userNitro?.["externals"])
@@ -125,9 +122,7 @@ export const makeNuxtOverrides = (
     vite: { logLevel: "warn", ...userVite },
     nitro: {
       ...userNitro,
-      ...(input.nitroPreset !== undefined
-        ? { preset: input.nitroPreset }
-        : undefined),
+      ...(input.nitroPreset !== undefined ? { preset: input.nitroPreset } : undefined),
       ...(input.nitroPlugins !== undefined && input.nitroPlugins.length > 0
         ? {
             plugins: [
@@ -138,8 +133,7 @@ export const makeNuxtOverrides = (
             ],
           }
         : undefined),
-      ...(input.nitroExternalsInline !== undefined &&
-      input.nitroExternalsInline.length > 0
+      ...(input.nitroExternalsInline !== undefined && input.nitroExternalsInline.length > 0
         ? {
             externals: {
               ...userExternals,
@@ -176,11 +170,7 @@ export const findPresetConflict = (
 ): string | undefined => {
   for (const layer of layers ?? []) {
     const preset = layer.config?.nitro?.preset;
-    if (
-      typeof preset === "string" &&
-      preset.length > 0 &&
-      !isSamePreset(preset, targetPreset)
-    ) {
+    if (typeof preset === "string" && preset.length > 0 && !isSamePreset(preset, targetPreset)) {
       return preset;
     }
   }
@@ -188,10 +178,7 @@ export const findPresetConflict = (
 };
 
 /** The actionable error message for a user-configured foreign preset. */
-export const presetConflictMessage = (
-  userPreset: string,
-  targetPreset: string,
-): string =>
+export const presetConflictMessage = (userPreset: string, targetPreset: string): string =>
   `The project's nuxt.config sets \`nitro.preset: "${userPreset}"\`, but this integration ` +
   `deploys through the "${targetPreset}" preset — a "${userPreset}" build would never be ` +
   "deployed. Remove the `nitro.preset` (and any `NITRO_PRESET` env var) from the project " +
