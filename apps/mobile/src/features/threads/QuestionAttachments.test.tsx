@@ -1,12 +1,17 @@
 import type { UserInputQuestion } from "@t3tools/contracts";
-import type { ReactNode } from "react";
-import { act } from "react";
+import type { ReactNode, Ref } from "react";
+import { act, useImperativeHandle, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-type InputProps = { value: string; onChangeText: (text: string) => void };
+type InputProps = {
+  defaultValue: string;
+  onChangeText: (text: string) => void;
+  ref: Ref<{ clear: () => void }>;
+};
 
-const field = vi.hoisted(() => ({ props: null as InputProps | null }));
+// Models the uncontrolled native input: it keeps its own text and only `clear()` writes it.
+const field = vi.hoisted(() => ({ props: null as InputProps | null, text: "" }));
 
 vi.mock("react-native", () => ({
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -14,6 +19,14 @@ vi.mock("react-native", () => ({
 vi.mock("../../components/ui/AppText", () => ({
   AppTextInput: (props: InputProps) => {
     field.props = props;
+    useState(() => {
+      field.text = props.defaultValue;
+    });
+    useImperativeHandle(props.ref, () => ({
+      clear: () => {
+        field.text = "";
+      },
+    }));
     return null;
   },
 }));
@@ -91,6 +104,7 @@ function input() {
 }
 
 function type(text: string) {
+  field.text = text;
   act(() => input().onChangeText(text));
 }
 
@@ -98,6 +112,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   root = createRoot(document.createElement("div"));
   field.props = null;
+  field.text = "";
 });
 
 afterEach(() => {
@@ -111,10 +126,10 @@ describe("QuestionAttachments answer field", () => {
     type("de s");
 
     render("de ");
-    expect(input().value).toBe("de s");
+    expect(field.text).toBe("de s");
 
     render("de s");
-    expect(input().value).toBe("de s");
+    expect(field.text).toBe("de s");
   });
 
   it("keeps a 注音 composition when a late echo arrives mid-composition", () => {
@@ -124,15 +139,15 @@ describe("QuestionAttachments answer field", () => {
     type("ㄋㄧˇ");
 
     render("ㄋㄧ");
-    expect(input().value).toBe("ㄋㄧˇ");
+    expect(field.text).toBe("ㄋㄧˇ");
 
     // Picking a candidate replaces the composed symbols with the character.
     type("你");
     render("你");
-    expect(input().value).toBe("你");
+    expect(field.text).toBe("你");
 
     render("ㄋㄧ");
-    expect(input().value).toBe("你");
+    expect(field.text).toBe("你");
   });
 
   it("keeps a Japanese kana composition when a late echo arrives mid-composition", () => {
@@ -143,11 +158,11 @@ describe("QuestionAttachments answer field", () => {
     type("まって");
 
     render("まつ");
-    expect(input().value).toBe("まって");
+    expect(field.text).toBe("まって");
 
     type("待って");
     render("まっ");
-    expect(input().value).toBe("待って");
+    expect(field.text).toBe("待って");
   });
 
   it("adopts a draft changed from outside the field", () => {
@@ -156,7 +171,7 @@ describe("QuestionAttachments answer field", () => {
     render("my own colour");
 
     render("", 1);
-    expect(input().value).toBe("");
+    expect(field.text).toBe("");
   });
 
   it("adopts an outside change while its own echoes are still pending", () => {
@@ -166,16 +181,16 @@ describe("QuestionAttachments answer field", () => {
 
     render("a");
     render("", 1);
-    expect(input().value).toBe("");
+    expect(field.text).toBe("");
 
     type("new answer");
     render("", 2);
-    expect(input().value).toBe("");
+    expect(field.text).toBe("");
 
     type("a");
     type("");
     type("ab");
     render("", 3);
-    expect(input().value).toBe("");
+    expect(field.text).toBe("");
   });
 });
