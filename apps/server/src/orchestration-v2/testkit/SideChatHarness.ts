@@ -72,7 +72,10 @@ const runNoteScript = (script: SideChatNoteScript) =>
  * with scripted note and opening summary writers and the effect daemon running. Tests await events
  * instead of draining the worker, because a note may still be generating.
  */
-export const makeSideChatHarness = Effect.fn("makeSideChatHarness")(function* (name: string) {
+export const makeSideChatHarness = Effect.fn("makeSideChatHarness")(function* (
+  name: string,
+  options: { readonly worktreePath?: string | null } = {},
+) {
   const cwd = yield* checkpointWorkspace(name);
   const provider = yield* makePromptRecordingAdapter({
     instanceId: LESSON_SELECTION.instanceId,
@@ -204,7 +207,7 @@ export const makeSideChatHarness = Effect.fn("makeSideChatHarness")(function* (n
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
-      worktreePath: cwd,
+      worktreePath: options.worktreePath === undefined ? cwd : options.worktreePath,
       createdBy: "user",
       creationSource: "web",
     });

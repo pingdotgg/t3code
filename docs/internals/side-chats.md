@@ -55,7 +55,9 @@ fallback opening.
 
 A new side chat, including nested ones, starts with `sideChatModelSelection` when that instance is
 enabled; otherwise it uses the anchor's model. It may use another provider than the lesson, and that
-provider receives the opening: the lesson summary, the highlight and the text around it. Summaries
+provider receives the opening: the lesson summary, the highlight and the text around it. If the
+lesson is answering while the opening is built, it also receives a short newest-first digest of that
+turn. Summaries
 and notes still use the lesson's text model described above. Skills are appended as `$name` after the
 user text, in provider text only, on the turn that delivers the opening (the first turn or a later
 fresh native thread), when the run's provider lists them in its cached catalog (the run's cwd snapshot

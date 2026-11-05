@@ -243,6 +243,18 @@ it.effect("caps the side chat context block without summarizing discarded parent
   }).pipe(Effect.provide(layerTest)),
 );
 
+it("summarizes newest turn items within the supplied budget", () => {
+  const { lines, omitted } = ContextHandoffService.summarizeTurnItems(
+    Array.from({ length: 40 }, (_, index) => `- Assistant: item-${index} ${"x".repeat(100)}`),
+    4_000 - "- Earlier items truncated.".length - 1,
+  );
+
+  assert.isTrue(omitted);
+  assert.include(lines.at(-1), "item-39");
+  assert.notInclude(lines.join("\n"), "item-0");
+  assert.isAtMost(["- Earlier items truncated.", ...lines].join("\n").length, 4_000);
+});
+
 it("covers the run range of a very long delta", () => {
   const runs = [
     { id: RunId.make("run:long-delta-early"), ordinal: 2 },

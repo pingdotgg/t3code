@@ -741,6 +741,7 @@ describe("side chat opening context", () => {
             assert.isDefined(prompt);
             assert.include(prompt, SIDE_CHAT_OPENING_FRAMING);
             assert.include(prompt, LESSON_SUMMARY);
+            assert.notInclude(prompt, "The lesson is still answering. So far:");
             assert.notInclude(prompt, "Historical material is context");
             assert.include(prompt, OBSERVATION_PARAGRAPH);
             assert.include(prompt, "User message:\nWhat is an observation space?");
@@ -763,6 +764,40 @@ describe("side chat opening context", () => {
           }).pipe(Effect.provide(layer));
         }),
       ),
+  );
+
+  it.effect("includes the lesson's latest items when its turn is still running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeSideChatHarness("side-chat-opening-busy-lesson", {
+          worktreePath: null,
+        });
+        yield* Effect.gen(function* () {
+          const lesson = yield* harness.createLesson(LESSON_TOPIC);
+          yield* harness.send(lesson, "[hold] Explain reward shaping.");
+          const sideChat = yield* harness.openSideChat({
+            parentThreadId: lesson,
+            label: "observation space",
+          });
+          const afterSideChat = yield* harness.mark;
+          const sideChatMessage = yield* harness.send(sideChat, "What is an observation space?", {
+            await: "none",
+          });
+          yield* harness.awaitRun(afterSideChat, sideChatMessage, "running");
+          yield* harness.awaitEvent(
+            afterSideChat,
+            (event) => event.type === "provider-turn.updated" && event.threadId === sideChat,
+          );
+
+          const prompt = harness.prompts(sideChat).at(-1);
+          assert.isDefined(prompt);
+          assert.include(prompt, "The lesson is still answering. So far:");
+          assert.include(prompt, "- User: [hold] Explain reward shaping.");
+
+          yield* harness.finishHeldTurn(lesson);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+    ),
   );
 
   it.effect.each([
