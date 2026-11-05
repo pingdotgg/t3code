@@ -89,6 +89,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
   ),
   /** Checks still pending when required ones passed early, owed one wake once all settle. */
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** The agent was told every check on this head finished with a failure blocking the gate. */
+  finished: Schema.optional(Schema.Boolean),
   remarksThrough: IsoDateTime,
   /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
