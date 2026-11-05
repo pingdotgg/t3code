@@ -3947,73 +3947,86 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect.each([true, false])(
-    "projects viewed images as read rows with a preview path (completed: %s)",
-    (completed) =>
-      Effect.gen(function* () {
-        const scenario = `codex-image-view-${completed}`;
-        const path = "/workspace/shots/compare.png";
-        const base = finalAnswerTranscript(scenario, [{ id: "answer", text: "Looks right." }]);
-        const imageView = (phase: "started" | "completed") => ({
-          type: "emit_inbound" as const,
-          label: `image-view-${phase}`,
-          frame: {
-            method: `item/${phase}`,
-            params: {
-              threadId: `native-${scenario}-thread`,
-              turnId: `native-${scenario}-turn`,
-              item: { type: "imageView", id: "exec-image-view", path },
-            },
+  const viewedImage = "/workspace/shots/compare.png";
+  it.effect.each([
+    { name: "completed", completed: true, path: viewedImage, preview: true },
+    { name: "started only", completed: false, path: viewedImage, preview: false },
+    { name: "newline in path", completed: true, path: "/workspace/a\nb.png", preview: false },
+    {
+      name: "path over 4096 chars",
+      completed: true,
+      path: `/workspace/${"a".repeat(4096)}.png`,
+      preview: false,
+    },
+  ])("projects viewed images as read rows: $name", ({ name, completed, path, preview }) =>
+    Effect.gen(function* () {
+      const scenario = `codex-image-view-${name.replaceAll(" ", "-")}`;
+      const base = finalAnswerTranscript(scenario, [{ id: "answer", text: "Looks right." }]);
+      const imageView = (phase: "started" | "completed") => ({
+        type: "emit_inbound" as const,
+        label: `image-view-${phase}`,
+        frame: {
+          method: `item/${phase}`,
+          params: {
+            threadId: `native-${scenario}-thread`,
+            turnId: `native-${scenario}-turn`,
+            item: { type: "imageView", id: "exec-image-view", path },
           },
-        });
-        const harness = yield* makeCodexReplayHarness(
-          makeCodexReplayTranscript({
-            scenario,
-            entries: [
-              ...base.entries.slice(0, -2),
-              imageView("started"),
-              ...(completed ? [imageView("completed")] : []),
-              ...base.entries.slice(-2),
-            ],
-          }),
-        );
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-image-view"),
-            text: "Reply with the requested recovery marker.",
-          }),
-        );
-        yield* harness.firstTerminal;
+        },
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...base.entries.slice(0, -2),
+            imageView("started"),
+            ...(completed ? [imageView("completed")] : []),
+            ...base.entries.slice(-2),
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-image-view"),
+          text: "Reply with the requested recovery marker.",
+        }),
+      );
+      yield* harness.firstTerminal;
 
-        const items = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === "exec-image-view"
-            ? [event.turnItem]
-            : [],
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === "exec-image-view"
+          ? [event.turnItem]
+          : [],
+      );
+      // A started-only row would stay running after an interrupted turn.
+      assert.deepEqual(
+        items.map((item) => item.status),
+        completed ? ["completed"] : [],
+      );
+      if (completed) {
+        const item = items[0];
+        assert.strictEqual(item?.type, "dynamic_tool");
+        assert.strictEqual(item?.title, `Read ${path}`);
+        assert.strictEqual(
+          item?.type === "dynamic_tool" ? item.viewedImagePath : null,
+          preview ? path : undefined,
         );
-        // A started-only row would stay running after an interrupted turn.
-        assert.deepEqual(
-          items.map((item) => item.status),
-          completed ? ["completed"] : [],
-        );
-        if (completed) {
-          assert.strictEqual(items[0]?.type, "dynamic_tool");
-          assert.include(items[0], { title: `Read ${path}`, viewedImagePath: path });
-        }
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
   );
 
   it.effect.each(["complete", "stop"] as const)(
