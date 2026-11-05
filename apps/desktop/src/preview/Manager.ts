@@ -103,6 +103,7 @@ export interface PreviewTabState {
   audible: boolean;
   controller: "human" | "agent" | "none";
   capturing: boolean;
+  devToolsOpen: boolean;
   favicon?: DesktopPreviewFavicon;
   serverTab?: { readonly threadId: string; readonly tabId: string };
   updatedAt: string;
@@ -1261,6 +1262,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const audioStateChanged = (
       event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
     ) => runFork(syncTabAudible(tabId, wc, event.audible));
+    const devToolsOpened = () => runFork(update(tabId, { devToolsOpen: true }));
+    const devToolsClosed = () => runFork(update(tabId, { devToolsOpen: false }));
     const publishFavicon = Effect.fn("PreviewManager.publishFavicon")(function* (input: {
       readonly captureDocumentId: number;
       readonly dataUrl: string;
@@ -1512,6 +1515,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("dom-ready", restoreRecordingCursor);
         wc.off("did-fail-load", failed as never);
         wc.off("audio-state-changed", audioStateChanged);
+        wc.off("devtools-opened", devToolsOpened);
+        wc.off("devtools-closed", devToolsClosed);
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
@@ -1533,6 +1538,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("dom-ready", restoreRecordingCursor);
         wc.on("did-fail-load", failed as never);
         wc.on("audio-state-changed", audioStateChanged);
+        wc.on("devtools-opened", devToolsOpened);
+        wc.on("devtools-closed", devToolsClosed);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
@@ -1634,6 +1641,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           audible: false,
           controller: "none",
           capturing: false,
+          devToolsOpen: false,
           updatedAt,
         };
         return [
@@ -1715,6 +1723,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       audible: false,
       controller: "none",
       capturing: false,
+      devToolsOpen: false,
       updatedAt,
     };
     yield* emit(tabId, closed);
@@ -1835,6 +1844,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
           audible: attachedAudible,
+          devToolsOpen: current.webContentsId === webContentsId && current.devToolsOpen,
           updatedAt: registeredAt,
         };
         return [
@@ -1938,6 +1948,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
         capturing: current?.capturing ?? false,
+        devToolsOpen: current?.devToolsOpen ?? false,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
         ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
         updatedAt,

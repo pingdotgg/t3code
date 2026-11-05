@@ -47,6 +47,7 @@ interface Props {
   deviceToolbarVisible: boolean;
   onToggleDeviceToolbar: () => void;
   nativePictureInPicture: boolean;
+  devToolsOpen: boolean;
   profileName: string | undefined;
   move?: { readonly label: string; readonly onMove: () => void };
 }
@@ -74,6 +75,7 @@ export function PreviewMoreMenu({
   deviceToolbarVisible,
   onToggleDeviceToolbar,
   nativePictureInPicture,
+  devToolsOpen,
   profileName,
   move,
 }: Props) {
@@ -88,7 +90,7 @@ export function PreviewMoreMenu({
         </MenuItem>
         {actions.toggleDevTools ? (
           <MenuItem onClick={actions.toggleDevTools} disabled={disabled}>
-            Toggle DevTools
+            {devToolsOpen ? "Close DevTools" : "Open DevTools"}
           </MenuItem>
         ) : null}
         {actions.toggleNativePictureInPicture ? (

@@ -1112,6 +1112,11 @@ describe("PreviewManager", () => {
     let chromiumDetaches = 0;
     let destroyed = false;
     let devToolsOpened = false;
+    const eventListeners = new Map<string, Set<() => void>>();
+    const fire = (event: string) => {
+      listeners.get(event)?.();
+      for (const listener of eventListeners.get(event) ?? []) listener();
+    };
     const wc = {
       id,
       isDestroyed: () => destroyed,
@@ -1121,10 +1126,11 @@ describe("PreviewManager", () => {
       },
       openDevTools: vi.fn(() => {
         devToolsOpened = true;
+        fire("devtools-opened");
       }),
       closeDevTools: vi.fn(() => {
         devToolsOpened = false;
-        listeners.get("devtools-closed")?.();
+        fire("devtools-closed");
       }),
       getType: () => "webview",
       getURL: () => "http://localhost:5173/README.md",
@@ -1134,8 +1140,14 @@ describe("PreviewManager", () => {
       setZoomFactor: vi.fn(),
       setAudioMuted: vi.fn(),
       isCurrentlyAudible: () => false,
-      on: vi.fn(),
-      off: vi.fn(),
+      on: (event: string, listener: () => void) => {
+        const set = eventListeners.get(event) ?? new Set();
+        set.add(listener);
+        eventListeners.set(event, set);
+      },
+      off: (event: string, listener: () => void) => {
+        eventListeners.get(event)?.delete(listener);
+      },
       once: (event: string, listener: () => void) => {
         listeners.set(event, listener);
       },
@@ -1181,6 +1193,12 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const guest = makeAttachingGuest(49);
         fromId.mockReturnValue(guest.wc);
+        const devToolsOpen: Array<boolean> = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            if (devToolsOpen.at(-1) !== state.devToolsOpen) devToolsOpen.push(state.devToolsOpen);
+          }),
+        );
         yield* manager.createTab("tab_devtools");
         yield* manager.registerWebview("tab_devtools", 49);
 
@@ -1188,6 +1206,8 @@ describe("PreviewManager", () => {
         expect(guest.wc.isDevToolsOpened()).toBe(true);
         yield* manager.toggleDevTools("tab_devtools");
         expect(guest.wc.isDevToolsOpened()).toBe(false);
+        yield* Effect.yieldNow;
+        expect(devToolsOpen).toEqual([false, true, false]);
 
         yield* manager.toggleDevTools("tab_devtools");
         yield* manager.closeTab("tab_devtools");

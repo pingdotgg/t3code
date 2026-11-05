@@ -22,6 +22,7 @@ import {
   previewPdfAssetUrl,
   resolveSearchUrlTemplate,
 } from "@t3tools/shared/preview";
+import { X } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
@@ -76,6 +77,7 @@ import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
@@ -208,6 +210,7 @@ export function PreviewView({
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
+  const devToolsOpen = desktopOverlay?.devToolsOpen ?? false;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
@@ -937,11 +940,27 @@ export function PreviewView({
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
               nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              devToolsOpen={devToolsOpen}
             />
           ) : null
         }
       />
 
+      {devToolsOpen && moreMenuActions?.toggleDevTools ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
+          <span className="min-w-0 flex-1">DevTools are open in a separate window.</span>
+          <Button
+            variant="secondary"
+            size="micro"
+            type="button"
+            className="shrink-0"
+            onClick={moreMenuActions.toggleDevTools}
+          >
+            <X />
+            Close DevTools
+          </Button>
+        </div>
+      ) : null}
       <div ref={serverBodyRef} className="relative min-h-0 flex-1 overflow-hidden">
         {runtimeTabId && snapshot && isServerTab ? (
           <>

@@ -130,6 +130,7 @@ export function projectDesktopState(state: DesktopPreviewTabState): DesktopPrevi
     audioMuted: state.audioMuted,
     audible: state.audible,
     controller: state.controller,
+    devToolsOpen: state.devToolsOpen,
     favicon: state.favicon && originOf(state.favicon.pageUrl) === navOrigin ? state.favicon : null,
   };
 }

@@ -25,6 +25,7 @@ function state(navStatus: DesktopPreviewTabState["navStatus"]): DesktopPreviewTa
     audible: false,
     controller: "none",
     capturing: false,
+    devToolsOpen: false,
     favicon,
     updatedAt: "2026-08-09T00:00:00.000Z",
   };
