@@ -24,4 +24,6 @@ What the patches change, and why:
 - Pause freezes Doom's clock and skips frames (`t3_set_paused`), instead of pausing
   Emscripten's main loop, which races its async sleeps.
 - Frames run at Doom's native 35 Hz, not the display's refresh rate.
+- `t3_save` writes a quick save (no vanilla size cap) so the page can store it in `localStorage` and
+  boot with `-loadgame 0` for "Continue".
 - 5 MB stack (Emscripten now defaults to 64 KB), no debug symbols, `t3_kills` export.

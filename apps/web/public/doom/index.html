@@ -47,6 +47,10 @@
       const veil = document.getElementById("veil");
       const post = (event, detail = {}) =>
         window.parent.postMessage({ type: "t3doom", event, ...detail }, location.origin);
+      // One quick save per browser. The app's "Continue" boots with ?continue to load it.
+      const SAVE_KEY = "t3code:doom:save";
+      const SAVE_PATH = "/saves/doomsav0.dsg";
+      const continuing = new URLSearchParams(location.search).has("continue");
       let ready = false;
       let running = false;
       let playMs = 0;
@@ -71,8 +75,37 @@
         document.body.classList.add("playing");
       }
 
+      function readSave() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(SAVE_KEY) ?? "null");
+          if (!saved?.data) return null;
+          return Uint8Array.from(atob(saved.data), (c) => c.charCodeAt(0));
+        } catch {
+          return null;
+        }
+      }
+
+      function save() {
+        if (!ready || Module._t3_save() !== 1) return false;
+        const bytes = Module.FS.readFile(SAVE_PATH);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        }
+        try {
+          localStorage.setItem(
+            SAVE_KEY,
+            JSON.stringify({ data: btoa(binary), kills: Module._t3_kills(), savedAt: Date.now() }),
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
       window.t3doom = {
         pause,
+        save,
         resume,
         focus: () => window.focus(),
         stats: () => ({
@@ -93,6 +126,10 @@
           () => {
             Module.FS.createPreloadedFile("/", "freedoom1.wad", "freedoom1.wad", true, true);
             Module.FS.createPreloadedFile("/", "default.cfg", "default.cfg", true, true);
+            Module.FS.mkdir("/saves");
+            const saved = continuing ? readSave() : null;
+            if (saved) Module.FS.writeFile(SAVE_PATH, saved);
+            Module.startArgs = saved ? ["-loadgame", "0"] : ["-skill", "3", "-warp", "1", "1"];
           },
         ],
         onRuntimeInitialized: () => {
@@ -100,7 +137,8 @@
             "-iwad", "freedoom1.wad",
             "-config", "default.cfg",
             "-window", "-nogui", "-nomusic",
-            "-skill", "3", "-warp", "1", "1",
+            "-savedir", "/saves",
+            ...Module.startArgs,
           ]);
         },
         onExit: () => post("exit"),

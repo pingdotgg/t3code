@@ -90,4 +90,22 @@ block = dt[dt.index("#if defined(__cplusplus) || defined(__bool_true_false_are_d
 block = block[: block.index("#endif") + len("#endif")]
 if "typedef int boolean;" not in dt:
     doomtype.write_text(dt.replace(block, "#include <stdbool.h>\n\ntypedef int boolean;"))
+# Quick save for the host page: it saves when the game hides and boots with -loadgame 0 on
+# "Continue", so a reload (or Safari without moveBefore) resumes instead of restarting.
+# Freedoom levels outgrow vanilla's savegame size cap, which would otherwise I_Error.
+patch(
+    "src/doom/g_game.c",
+    "void G_DoSaveGame(void)\n{",
+    "extern int scaledviewwidth;\nextern boolean setsizeneeded;\n\n"
+    "EMSCRIPTEN_KEEPALIVE int t3_save(void)\n{\n"
+    "    // Saving redraws the view border, which needs the view size from the first rendered frame.\n"
+    "    if (gamestate != GS_LEVEL || demoplayback || !usergame) return 0;\n"
+    "    if (setsizeneeded || scaledviewwidth == 0) return 0;\n"
+    "    vanilla_savegame_limit = 0;\n"
+    "    savegameslot = 0;\n"
+    "    M_StringCopy(savedescription, \"T3CODE\", sizeof(savedescription));\n"
+    "    G_DoSaveGame();\n"
+    "    return 1;\n}\n\n"
+    "void G_DoSaveGame(void)\n{",
+)
 print("patched")
