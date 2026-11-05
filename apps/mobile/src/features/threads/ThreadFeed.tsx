@@ -2380,10 +2380,20 @@ function UserMessageContent(props: UserMessageContentProps) {
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
+    // Keep plain URL markdown when there is no matching record (not a chip).
+    if (!available && ref.url !== undefined) return ref.source;
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
-  const parseContextHref = (href: string) =>
-    parseComposerContextHref(href) ?? parseExternalComposerContextHref(href);
+  const parseContextHref = (href: string) => {
+    const opaque = parseComposerContextHref(href);
+    if (opaque) return opaque;
+    const records = props.context?.records;
+    if (!records || records.length === 0) return null;
+    const external = parseExternalComposerContextHref(href);
+    return external && records.some((record) => record.contextId === external.contextId)
+      ? external
+      : null;
+  };
   const onLinkPress = (href: string) => {
     const reference = parseContextHref(href);
     if (!reference) return props.linkHandlers.onLinkPress?.(href);
