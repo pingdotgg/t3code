@@ -10,4 +10,13 @@ it("describes the policy file as strictly as T3 Code reads it", () => {
   expect(schema.required).toEqual(["schemaVersion", "organization"]);
   expect(schema.additionalProperties).toBe(false);
   expect(schema.properties).toHaveProperty("$schema");
+  expect(schema).toMatchObject({
+    properties: {
+      limits: {
+        properties: {
+          updates: { properties: { feedUrl: { pattern: "^\\s*[Hh][Tt][Tt][Pp][Ss]://[^\\s/]+" } } },
+        },
+      },
+    },
+  });
 });

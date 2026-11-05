@@ -47,11 +47,13 @@ export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
 export const ManagedUpdatesMode = Schema.Literals(["auto", "off"]);
 export type ManagedUpdatesMode = typeof ManagedUpdatesMode.Type;
 
-const HttpsUrl = TrimmedNonEmptyString.check(
+// Checked on the encoded string, where the published JSON Schema can see it.
+const HttpsUrl = Schema.String.check(
   Schema.makeFilter((value: string) => /^https:\/\/[^\s/]+/i.test(value.trim()), {
     expected: "an https URL",
+    toJsonSchema: () => [{ pattern: "^\\s*[Hh][Tt][Tt][Pp][Ss]://[^\\s/]+" }, true],
   }),
-);
+).pipe(Schema.decodeTo(TrimmedNonEmptyString));
 
 export const ManagedUpdatesPolicy = Schema.Struct({
   mode: ManagedUpdatesMode,
