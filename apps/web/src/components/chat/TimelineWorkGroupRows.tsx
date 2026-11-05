@@ -14,6 +14,8 @@ import {
   MESSAGE_HEADING_LEVEL,
   SlashCommandChip,
   WORKING_BAR_CLASS_NAME,
+  WorkFoldCaret,
+  WorkFoldToggle,
   WorkingBarControl,
   useCarriedTextFade,
 } from "./TimelineRowParts";
@@ -48,6 +50,7 @@ import {
   use,
   useEffect,
   useLayoutEffect,
+  useReducer,
   useRef,
   useState,
   type ComponentProps,
@@ -69,8 +72,6 @@ import {
   ShieldQuestionMarkIcon,
   ArrowDownIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
-import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
 import {
@@ -326,6 +327,11 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup, pendingRequest } =
     use(TimelineRowActivityCtx);
   const window = row.window;
+  const [fit, onOverflowChange] = useReducer(
+    (current: { overflows: boolean; fade: boolean }, overflows: boolean) =>
+      current.overflows === overflows ? current : { overflows, fade: current.fade || !overflows },
+    { overflows: false, fade: false },
+  );
   if (
     window?.compactCommand &&
     window.items.length === 0 &&
@@ -363,19 +369,21 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     "Working..."
   );
   const historyOpen = window?.historyOpen ?? false;
-  const foldable = window !== undefined && (historyOpen || window.items.length > 0);
+  const foldable =
+    window !== undefined && (historyOpen || (fit.overflows && window.items.length > 0));
   return (
     <div>
       <div className={WORKING_BAR_CLASS_NAME}>
-        <WorkingBarControl
-          variant="history"
-          aria-expanded={foldable ? historyOpen : undefined}
+        <WorkFoldToggle
+          togglable={foldable}
+          expanded={historyOpen}
+          fadeCaret={fit.fade}
           aria-label={
             foldable ? (historyOpen ? "Close work history" : "Open work history") : undefined
           }
-          disabled={!foldable}
-          data-scroll-anchor-ignore
-          onClick={foldable ? () => ctx.onToggleWorkingHistory(window.key) : undefined}
+          onClick={() => {
+            if (window) ctx.onToggleWorkingHistory(window.key);
+          }}
         >
           <span
             ref={isPreparingWorktree ? observeVisibleAnimation : undefined}
@@ -384,14 +392,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             {label}
             {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
           </span>
-          {foldable ? (
-            <MorphIcon
-              aria-hidden
-              className="size-3 shrink-0 text-dim-foreground"
-              icon={historyOpen ? ChevronDown : ChevronRight}
-            />
-          ) : null}
-        </WorkingBarControl>
+        </WorkFoldToggle>
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
@@ -399,7 +400,9 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
         </div>
       </div>
-      {window ? <WorkingWindowView window={window} itemKey={row.id} /> : null}
+      {window ? (
+        <WorkingWindowView window={window} itemKey={row.id} onOverflowChange={onOverflowChange} />
+      ) : null}
     </div>
   );
 }
@@ -754,7 +757,7 @@ export function BackgroundActivityTimelineRow({
               );
             })}
           </span>
-          <span aria-hidden className="size-3 shrink-0" />
+          <WorkFoldCaret expanded={row.expanded} />
         </span>
       }
     />
@@ -882,7 +885,15 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
   );
 });
 
-function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey: string }) {
+function WorkingWindowView({
+  window,
+  itemKey,
+  onOverflowChange,
+}: {
+  window: WorkingWindow;
+  itemKey: string;
+  onOverflowChange: (overflows: boolean) => void;
+}) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest, liveAnswerPreview } =
     use(TimelineRowActivityCtx);
@@ -987,6 +998,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
             items={window.items}
             itemKey={itemKey}
             showThinking={showThinking}
+            onOverflowChange={onOverflowChange}
           />
         ) : (
           <>
@@ -1014,10 +1026,12 @@ function CollapsedWorkingWindow({
   items,
   itemKey,
   showThinking,
+  onOverflowChange,
 }: {
   items: WorkingWindow["items"];
   itemKey: string;
   showThinking: boolean;
+  onOverflowChange: (overflows: boolean) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1047,10 +1061,14 @@ function CollapsedWorkingWindow({
     const content = contentRef.current;
     if (!viewport || !content) return;
     viewport.scrollTop = viewport.scrollHeight;
+    const reportOverflow = () =>
+      onOverflowChange(viewport.scrollHeight - viewport.clientHeight > 1);
+    reportOverflow();
     return observeResize([content, viewport], () => {
+      reportOverflow();
       if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
     });
-  }, []);
+  }, [onOverflowChange]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as scrolling brings the spacer near the viewport
   useEffect(() => {
     const viewport = rootRef.current?.querySelector<HTMLElement>(
