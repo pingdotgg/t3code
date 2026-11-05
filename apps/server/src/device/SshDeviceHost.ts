@@ -6,6 +6,7 @@ import {
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
+import { SshCommandError } from "@t3tools/ssh/errors";
 import * as NetService from "@t3tools/shared/Net";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
 import * as Digest from "effect/crypto/Digest";
@@ -28,6 +29,17 @@ import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const UNHEALTHY_PROBE_LIMIT = 3;
+
+/** The host bootstrap failed on a host identified as Windows. */
+export class SshWindowsHostError extends Schema.TaggedError<SshWindowsHostError>()(
+  "SshWindowsHostError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.";
+  }
+}
+export const isSshWindowsHostError = Schema.is(SshWindowsHostError);
 
 const Probe = Schema.Struct({
   nodePath: Schema.String,
@@ -78,6 +90,49 @@ const bootstrap = (
     ),
   );
 
+const isSshCommandError = Schema.is(SshCommandError);
+
+// cmd expands only %OS% and PowerShell only $env:OS; POSIX shells expand neither to Windows_NT.
+const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(function* (
+  config: SshDeviceHostConfig,
+  error: DeviceHost.DeviceHostError,
+) {
+  const cause = error.cause;
+  // Windows ssh.exe preserves full remote exit statuses such as 9009.
+  if (
+    !isSshCommandError(cause) ||
+    cause.exitCode === null ||
+    cause.exitCode < 1 ||
+    (cause.exitCode > 254 && cause.exitCode !== 9009)
+  )
+    return yield* error;
+  let windows = yield* runSshCommand(targetFor(config), {
+    preHostArgs: identityArgs(config),
+    remoteCommandArgs: ["echo %OS% $env:OS"],
+    timeoutMs: 15_000,
+  }).pipe(
+    Effect.map(({ stdout }) => /(?:^|\s)Windows_NT(?:\s|$)/u.test(stdout)),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!windows) {
+    // Git Bash does not expand Windows shell variables, but its Node still reports win32.
+    windows = yield* runSshCommand(targetFor(config), {
+      preHostArgs: identityArgs(config),
+      remoteCommandArgs: ["node", "-p", "process.platform"],
+      timeoutMs: 15_000,
+    }).pipe(
+      Effect.map(({ stdout }) => stdout.trim() === "win32"),
+      Effect.orElseSucceed(() => false),
+    );
+  }
+  if (!windows) return yield* error;
+  return yield* new DeviceHost.DeviceHostError({
+    hostId: config.id,
+    step: error.step,
+    cause: new SshWindowsHostError({ cause }),
+  });
+});
+
 const ownerFor = Effect.fn("SshDeviceHost.ownerFor")(function* (hostId: string) {
   const fs = yield* FileSystem.FileSystem;
   const server = yield* ServerConfig.ServerConfig;
@@ -98,7 +153,9 @@ export const probe = Effect.fn("SshDeviceHost.probe")(function* (
   config: SshDeviceHostConfig,
   owner?: string,
 ) {
-  const result = yield* bootstrap(config, owner ?? (yield* ownerFor(config.id)), "probe");
+  const result = yield* bootstrap(config, owner ?? (yield* ownerFor(config.id)), "probe").pipe(
+    Effect.catchTags({ DeviceHostError: (error) => explainWindowsHost(config, error) }),
+  );
   const value = yield* decodeProbe(result.stdout.trim()).pipe(
     Effect.mapError(
       (cause) =>

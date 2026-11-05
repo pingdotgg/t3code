@@ -231,6 +231,10 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/environmentHttpAuth": {
+      "types": "./src/state/environmentHttpAuth.ts",
+      "default": "./src/state/environmentHttpAuth.ts"
+    },
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",
       "default": "./src/state/peerPairingCode.ts"
@@ -358,6 +362,10 @@
     "./state/composer-dispatch": {
       "types": "./src/state/composerDispatch.ts",
       "default": "./src/state/composerDispatch.ts"
+    },
+    "./state/context-window": {
+      "types": "./src/state/contextWindow.ts",
+      "default": "./src/state/contextWindow.ts"
     },
     "./state/thread-subagents": {
       "types": "./src/state/threadSubagents.ts",
@@ -522,6 +530,10 @@
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"
+    },
+    "./provider-instance-ids": {
+      "types": "./src/providerInstanceIds.ts",
+      "default": "./src/providerInstanceIds.ts"
     }
   },
   "scripts": {

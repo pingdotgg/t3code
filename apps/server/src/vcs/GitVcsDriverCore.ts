@@ -1,5 +1,4 @@
 import * as Cache from "effect/Cache";
-import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Digest from "effect/crypto/Digest";
@@ -42,7 +41,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
-import { removeEmptyDirectory } from "./removeEmptyDirectory.ts";
+import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
@@ -977,7 +976,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
         );
         const baseEnv = {
-          ...process.env,
+          ...(yield* HostProcess.Environment),
           // Concurrent status polls must not take index.lock to save refreshed indexes.
           GIT_OPTIONAL_LOCKS: "0",
           ...input.env,
@@ -4732,7 +4731,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   // Recursive filesystem traversal can visit many entries; removeWorktree owns the operation span.
   const removeLeftoverLinks = Effect.fnUntraced(function* (
     target: string,
-  ): Effect.fn.Return<boolean, PlatformError.PlatformError | Cause.UnknownError> {
+  ): Effect.fn.Return<boolean, PlatformError.PlatformError | RemoveEmptyDirectoryError> {
     if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
       yield* fileSystem.remove(target);
       return true;

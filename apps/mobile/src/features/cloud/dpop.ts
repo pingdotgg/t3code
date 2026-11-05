@@ -1,6 +1,5 @@
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
@@ -13,10 +12,10 @@ import { DpopProof } from "@t3tools/client-runtime/relay";
 import { DpopPublicJwk } from "@t3tools/shared/dpopCommon";
 import * as Layer from "effect/Layer";
 
-export class CloudDpopError extends Data.TaggedError("CloudDpopError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class CloudDpopError extends Schema.TaggedError<CloudDpopError>()("CloudDpopError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 function cloudDpopError(message: string) {
   return (cause: unknown) => new CloudDpopError({ message, cause });
@@ -60,7 +59,9 @@ export const layer = Layer.mergeAll(
     Digest.Digest,
     Digest.Digest.of({
       digest,
-      digestHex: (algorithm, data) => Effect.map(digest(algorithm, data), Hex.encode),
+      digestHex: Effect.fn("Digest.Digest.digestHex")((algorithm, data) =>
+        Effect.map(digest(algorithm, data), Hex.encode),
+      ),
     }),
   ),
 );

@@ -1,5 +1,4 @@
 import { settingsSecretLiteral, SourceControlProviderKind } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -318,10 +317,10 @@ export const makeDiscovery = Effect.gen(function* () {
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
-class GitHubFailure extends Data.TaggedError("GitHubFailure")<{
-  readonly detail: string;
-  readonly cause: unknown;
-}> {}
+class GitHubFailure extends Schema.TaggedError<GitHubFailure>()("GitHubFailure", {
+  detail: Schema.String,
+  cause: Schema.Defect(),
+}) {}
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
