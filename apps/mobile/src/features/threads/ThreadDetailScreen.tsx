@@ -287,6 +287,7 @@ export interface ThreadDetailScreenProps {
   readonly onStopThread: () => void;
   /** Present while the thread's queue is held. */
   readonly onResumeQueue: (() => Promise<void>) | null;
+  readonly offersSideChat: boolean;
   readonly onSendMessage: (
     followUp?: ActiveTurnComposerAction,
     beforeDispatch?: (
@@ -1819,6 +1820,9 @@ function ThreadDetailBody(
                               onFreshSession: () => setFreshSessionPending(selectedThreadKey, true),
                             }
                           : {})}
+                        offersSideChat={
+                          props.offersSideChat && !props.draftMode && props.canOperateThread
+                        }
                         serverConfig={props.serverConfig}
                         queueCount={props.selectedThreadQueueCount}
                         activeThreadBusy={props.activeThreadBusy}

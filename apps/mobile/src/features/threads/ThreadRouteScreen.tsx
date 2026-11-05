@@ -111,6 +111,7 @@ import {
   ThreadInspectorPreview,
   type ThreadInspectorPresentation,
 } from "./thread-inspector-preview";
+import { useStartSideChat } from "./useStartSideChat";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
@@ -368,7 +369,8 @@ function ThreadRouteContent(
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const composer = useThreadComposerState();
+  const startSideChat = useStartSideChat();
+  const composer = useThreadComposerState({ startSideChat });
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
@@ -1070,6 +1072,7 @@ function ThreadRouteContent(
             composer.queueHeld || composer.resumableRunId !== null ? handleResumeQueue : null
           }
           onSendMessage={composer.onSendMessage}
+          offersSideChat={composer.sideChatUnavailableReason === null}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
           onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
