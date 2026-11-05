@@ -248,7 +248,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
-  const [lineScroll] = useState(createSourceLineScroll);
+  const [tailReserve, setTailReserve] = useState(0);
+  const [lineScroll] = useState(() => createSourceLineScroll(setTailReserve));
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
@@ -377,10 +378,11 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
           })}
       contentContainerStyle={{
         minWidth: codeWordBreak ? undefined : "100%",
-        paddingBottom: codeSurface.rowHeight,
+        paddingBottom: codeSurface.rowHeight + tailReserve,
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      onContentSizeChange={lineScroll.onContentSizeChange}
       onScrollToIndexFailed={lineScroll.onScrollToIndexFailed}
       onScrollBeginDrag={lineScroll.cancel}
     />
