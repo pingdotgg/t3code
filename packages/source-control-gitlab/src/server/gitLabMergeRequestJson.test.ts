@@ -5,6 +5,7 @@ import {
   decodeAwardEmojiJson,
   decodeRepositoryBlobsJson,
   decodeCommitsJson,
+  decodeMergeMessagesJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
@@ -372,6 +373,7 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.patch).toBe(
       [
         String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        "similarity index 100%",
         String.raw`rename from " old\\name.ts "`,
         String.raw`rename to " new\\name.ts "`,
         String.raw`--- "a/ old\\name.ts "`,
@@ -788,5 +790,20 @@ describe("decodeMergeRequestStatsJson", () => {
       truncated: false,
     });
     expect(read(2).truncated).toBe(true);
+  });
+});
+
+describe("decodeMergeMessagesJson", () => {
+  it("fails a partial response instead of reading errored fields as absent templates", () => {
+    const decoded = decodeMergeMessagesJson(
+      JSON.stringify({
+        errors: [{ message: "Internal server error", path: ["project", "mergeRequest"] }],
+        data: {
+          project: { mergeRequest: { title: "Add thing", defaultMergeCommitMessage: null } },
+        },
+      }),
+    );
+
+    expect(Result.isFailure(decoded)).toBe(true);
   });
 });
