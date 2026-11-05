@@ -74,18 +74,18 @@ export class ConnectionOnboarding extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
 
-const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.resolvePairingTarget")(
-  function* (input: PairingConnectionInput) {
-    return yield* Effect.try({
-      try: () => resolveRemotePairingTarget(input),
-      catch: (cause) =>
-        new ConnectionBlockedError({
-          reason: "configuration",
-          detail: cause instanceof Error ? cause.message : "The pairing details are invalid.",
-        }),
-    });
-  },
-);
+export const resolvePairingTarget = Effect.fn(
+  "clientRuntime.connection.onboarding.resolvePairingTarget",
+)(function* (input: PairingConnectionInput) {
+  return yield* Effect.try({
+    try: () => resolveRemotePairingTarget(input),
+    catch: (cause) =>
+      new ConnectionBlockedError({
+        reason: "configuration",
+        detail: cause instanceof Error ? cause.message : "The pairing details are invalid.",
+      }),
+  });
+});
 
 function bearerConnectionId(environmentId: EnvironmentId, httpBaseUrl: string): string {
   return `bearer:${environmentId}:${new URL(httpBaseUrl).origin}`;

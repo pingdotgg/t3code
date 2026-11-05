@@ -2,6 +2,7 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -73,10 +74,16 @@ interface SupervisorIntent {
   readonly network: NetworkStatus;
 }
 
+/** A lifecycle request that `control` applies and waits for. */
+export type SupervisorControl = "connect" | "disconnect" | "retry";
+
+// Completed when the run loop takes the request, with the state it replaces.
+type ControlAck = Deferred.Deferred<Option.Option<SupervisorConnectionState>>;
+
 type SupervisorSignal =
-  | { readonly _tag: "ConnectRequested" }
-  | { readonly _tag: "DisconnectRequested" }
-  | { readonly _tag: "RetryRequested" }
+  | { readonly _tag: "ConnectRequested"; readonly ack?: ControlAck }
+  | { readonly _tag: "DisconnectRequested"; readonly ack?: ControlAck }
+  | { readonly _tag: "RetryRequested"; readonly ack?: ControlAck }
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
   | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup }
   | { readonly _tag: "BetterRouteAvailable"; readonly routeId: string };
@@ -269,7 +276,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   entry: ConnectionCatalogEntry,
   options?: EnvironmentSupervisorOptions,
 ): Effect.fn.Return<
-  EnvironmentSupervisor["Service"],
+  EnvironmentSupervisor["Service"] & {
+    readonly control: (
+      request: SupervisorControl,
+    ) => Effect.Effect<Option.Option<SupervisorConnectionState>>;
+  },
   never,
   | Connectivity.Connectivity
   | ConnectionDriver.ConnectionDriver
@@ -438,6 +449,28 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* Queue.offer(signals, next);
   });
 
+  const ackOf = (next: SupervisorSignal) =>
+    next._tag === "ConnectRequested" ||
+    next._tag === "DisconnectRequested" ||
+    next._tag === "RetryRequested"
+      ? next.ack
+      : undefined;
+
+  // Answers a waiting `control` call once the run loop has taken its signal.
+  // `replaces` is false when the signal leaves a live session current.
+  const acknowledge = (next: SupervisorSignal, replaces: boolean) => {
+    const ack = ackOf(next);
+    if (ack === undefined) return Effect.void;
+    return (replaces ? SubscriptionRef.get(state).pipe(Effect.asSome) : Effect.succeedNone).pipe(
+      Effect.flatMap((replaced) => Deferred.succeed(ack, replaced)),
+    );
+  };
+
+  // Waiting stays interruptible; once taken, a control must be answered before a race can discard it.
+  const takeSignal = Effect.uninterruptibleMask((restore) =>
+    restore(Queue.take(signals)).pipe(Effect.tap((next) => acknowledge(next, true))),
+  );
+
   const logManagedRelayAccountChange = Effect.logInfo(
     "Managed relay account changed; restarting the environment connection.",
   ).pipe(
@@ -579,7 +612,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     // network returning restarts it in case it stalled meanwhile.
     let deviceOffline = (yield* connectivity.status) === "offline";
     for (;;) {
-      const next = yield* Queue.take(signals);
+      const next = yield* takeSignal;
       switch (next._tag) {
         case "DisconnectRequested":
         case "RetryRequested":
@@ -727,7 +760,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const monitorConnectedLease = Effect.fnUntraced(function* (lease: ConnectedLease) {
     // A probe answers an explicit retry here, so the retry must not also reset
     // the backoff of a later, unrelated failure.
-    const takeSignal = Queue.take(signals).pipe(
+    // Only a disconnect ends the lease; a retry or connect keeps it current.
+    const takeLeaseSignal = Effect.uninterruptibleMask((restore) =>
+      restore(Queue.take(signals)).pipe(
+        Effect.tap((next) => acknowledge(next, next._tag === "DisconnectRequested")),
+      ),
+    ).pipe(
       Effect.tap((next) =>
         next._tag === "RetryRequested" ? Ref.set(resetRetryState, false) : Effect.void,
       ),
@@ -741,7 +779,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
     const routeKind = yield* leaseRouteKind(lease);
     for (;;) {
-      const next = yield* takeSignal;
+      const next = yield* takeLeaseSignal;
       const end = yield* connectedLeaseEnd(next, lease);
       if (end !== undefined) {
         return end === "reset";
@@ -791,7 +829,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           Fiber.await(probe).pipe(
             Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
           ),
-          takeSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
+          takeLeaseSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
           Effect.sleep(Duration.nanos(remaining > 0n ? remaining : 0n)).pipe(
             Effect.as({ _tag: "TimedOut" as const }),
           ),
@@ -830,6 +868,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             yield* Ref.set(probeUnanswered, false);
           }
           yield* probeEvent.exit;
+          // A losing signal arm can acknowledge a disconnect before the probe wins the race.
+          if (!(yield* Ref.get(intent)).desired) return false;
           break;
         }
         const endDuringProbe = yield* connectedLeaseEnd(probeEvent.signal, lease);
@@ -1039,7 +1079,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Effect.sleep(delayMs).pipe(Effect.as(false)),
       Effect.gen(function* () {
         for (;;) {
-          const next = yield* Queue.take(signals);
+          const next = yield* takeSignal;
           switch (next._tag) {
             case "Wakeup":
               return ConnectionWakeups.resetsRetryBackoff(next.reason);
@@ -1056,7 +1096,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForSignal = Queue.take(signals).pipe(
+  const waitForSignal = takeSignal.pipe(
     Effect.repeat({ while: (next) => next._tag === "BetterRouteAvailable" }),
     Effect.map(
       (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
@@ -1217,36 +1257,69 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   );
   yield* run().pipe(Effect.forkScoped);
 
-  const connect = Ref.update(intent, (current) => ({
-    ...current,
-    desired: true,
-  })).pipe(
+  const desire = (desired: boolean) => Ref.update(intent, (current) => ({ ...current, desired }));
+  const resetRetry = Ref.set(resetRetryState, true);
+
+  const connect = desire(true).pipe(
     Effect.andThen(signal({ _tag: "ConnectRequested" })),
     Effect.withSpan("EnvironmentSupervisor.connect"),
   );
 
-  const disconnect = Ref.update(intent, (current) => ({
-    ...current,
-    desired: false,
-  })).pipe(
+  const disconnect = desire(false).pipe(
     Effect.andThen(signal({ _tag: "DisconnectRequested" })),
     Effect.withSpan("EnvironmentSupervisor.disconnect"),
   );
 
-  const retryNow = Ref.set(resetRetryState, true).pipe(
+  const retryNow = resetRetry.pipe(
     Effect.andThen(signal({ _tag: "RetryRequested" })),
     Effect.withSpan("EnvironmentSupervisor.retryNow"),
   );
 
-  yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
-
-  return EnvironmentSupervisor.of({
-    target,
-    state,
-    session,
-    prepared,
-    connect,
-    disconnect,
-    retryNow,
+  // Returns the state replaced when the run loop takes the request, or none if a live session stays current.
+  // Shutdown interrupts callers whose request has not been taken.
+  const control = Effect.fn("EnvironmentSupervisor.control")(function* (
+    request: SupervisorControl,
+  ) {
+    const ack: ControlAck = yield* Deferred.make<Option.Option<SupervisorConnectionState>>();
+    const offered = yield* request === "connect"
+      ? desire(true).pipe(Effect.andThen(Queue.offer(signals, { _tag: "ConnectRequested", ack })))
+      : request === "disconnect"
+        ? desire(false).pipe(
+            Effect.andThen(Queue.offer(signals, { _tag: "DisconnectRequested", ack })),
+          )
+        : resetRetry.pipe(Effect.andThen(Queue.offer(signals, { _tag: "RetryRequested", ack })));
+    if (!offered) return yield* Effect.interrupt;
+    return yield* Deferred.await(ack);
   });
+
+  // Requests still queued at shutdown are never taken, so their callers end.
+  yield* Effect.addFinalizer(() =>
+    Queue.clear(signals).pipe(
+      Effect.tap(() => Queue.shutdown(signals)),
+      Effect.flatMap((pending) =>
+        Effect.forEach(
+          pending,
+          (next) => {
+            const ack = ackOf(next);
+            return ack === undefined ? Effect.void : Deferred.interrupt(ack);
+          },
+          { discard: true },
+        ),
+      ),
+      Effect.andThen(clearLease),
+    ),
+  );
+
+  return {
+    ...EnvironmentSupervisor.of({
+      target,
+      state,
+      session,
+      prepared,
+      connect,
+      disconnect,
+      retryNow,
+    }),
+    control,
+  };
 });
