@@ -1559,9 +1559,11 @@ export function threadShellFromProjection(
       .filter((request) => request.status === "pending")
       .toSorted(
         (left, right) =>
+          Number(left.kind === "user_input") - Number(right.kind === "user_input") ||
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null,
   );
+
   const userMessages = projection.messages
     .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
     .toSorted(
@@ -1570,20 +1572,26 @@ export function threadShellFromProjection(
     );
   const latestUserAuthoredMessageAt =
     userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null;
-  if (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) {
-    pendingRuntimeRequest =
-      secretRequestAsPendingInput(
-        projection.turnItems
-          .filter(
-            (item) =>
-              item.status === "waiting" &&
-              waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
-          )
-          .toSorted(
-            (left, right) =>
-              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-          )[0] ?? null,
-      ) ?? pendingRuntimeRequest;
+  if (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") {
+    const waitingCard = secretRequestAsPendingInput(
+      projection.turnItems
+        .filter(
+          (item) =>
+            item.status === "waiting" && waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+        )
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+        )[0] ?? null,
+    );
+    if (
+      waitingCard !== null &&
+      (pendingRuntimeRequest === null ||
+        DateTime.toEpochMillis(waitingCard.createdAt) >=
+          DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
+    ) {
+      pendingRuntimeRequest = waitingCard;
+    }
   }
   const latestUserMessage = userMessages[0] ?? null;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
@@ -6230,7 +6238,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
-                ORDER BY request.created_at DESC, request.runtime_request_id DESC
+                ORDER BY (request.kind = 'user_input') ASC,
+                  request.created_at DESC, request.runtime_request_id DESC
                 LIMIT 1
               ) AS pending_request_payload_json,
               (
@@ -6760,16 +6769,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
             : null;
         if (
-          (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) &&
+          (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") &&
           waitingCards.length > 0
         ) {
-          pendingRuntimeRequest =
-            secretRequestAsPendingInput(
-              waitingCards.toSorted(
-                (left, right) =>
-                  DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-              )[0] ?? null,
-            ) ?? pendingRuntimeRequest;
+          const waitingCard = secretRequestAsPendingInput(
+            waitingCards.toSorted(
+              (left, right) =>
+                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+            )[0] ?? null,
+          );
+          if (
+            waitingCard !== null &&
+            (pendingRuntimeRequest === null ||
+              DateTime.toEpochMillis(waitingCard.createdAt) >=
+                DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
+          ) {
+            pendingRuntimeRequest = waitingCard;
+          }
         }
         let terminalFailureItem =
           row.terminal_failure_payload_json === null
