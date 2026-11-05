@@ -1219,7 +1219,7 @@ it.effect("a task on another model waits for the user's answer before the box la
       const lateAnswer = yield* approvals
         .answer({ threadId: parentThreadId, turnItemId: third.id, decision: "approve" })
         .pipe(Effect.flip);
-      expect(lateAnswer.reason).toBe("record_failed");
+      expect(lateAnswer.reason).toBe("agent_stopped");
       const blocked = yield* a.remote
         .delegate(
           {

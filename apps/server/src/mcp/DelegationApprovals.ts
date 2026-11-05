@@ -48,6 +48,21 @@ const make = Effect.gen(function* () {
       if (run === undefined || !ThreadManagementService.isActiveRun(run)) {
         return yield* new DelegationApprovalError({ reason: "agent_stopped" });
       }
+      if (input.decision === "approve") {
+        const { turnItems } = yield* threadManagement
+          .getThreadRecords(input.threadId, ["turnItems"], {
+            turnItemTypes: ["run_interrupt_request"],
+            turnItemRunIds: [run.id],
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new DelegationApprovalError({ reason: "load_failed", cause }),
+            ),
+          );
+        if (turnItems.length > 0) {
+          return yield* new DelegationApprovalError({ reason: "agent_stopped" });
+        }
+      }
       const approvalStatus = input.decision === "approve" ? "approved" : "declined";
       yield* threadManagement
         .dispatch({
