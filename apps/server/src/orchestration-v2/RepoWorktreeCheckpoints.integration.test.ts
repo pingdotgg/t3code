@@ -66,6 +66,7 @@ const agentInstanceId = ProviderInstanceId.make("codex");
 const noRollbackInstanceId = ProviderInstanceId.make("codex-no-rollback");
 const folderProjectId = ProjectId.make("project:repo-checkpoints:folder");
 const alphaProjectId = ProjectId.make("project:repo-checkpoints:alpha");
+const serverProjectId = ProjectId.make("project:repo-checkpoints:server");
 
 interface ActiveTurn {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
@@ -831,6 +832,66 @@ describe("repository worktree checkpoints", () => {
           );
         }),
       ),
+  );
+
+  it.effect("moves the submodule of a thread's own checkout back with its files", () =>
+    withHarness(({ fixture, agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        yield* createProject(serverProjectId, fixture.server);
+        const own = path.join(fixture.worktrees, "server", "own");
+        yield* git(fixture.server, ["worktree", "add", "-b", "t3/own", own]);
+        yield* git(own, ["submodule", "update", "--init", "--quiet"]);
+        yield* configureIdentity(own);
+        const threadId = yield* createThread({
+          threadId: "thread:own-checkout",
+          projectId: serverProjectId,
+          worktreePath: own,
+          branch: "t3/own",
+        });
+        let framework = "";
+        const pin = (contents: string) =>
+          Effect.gen(function* () {
+            yield* write(path.join(framework, "README.md"), contents);
+            yield* git(framework, ["commit", "-am", contents.trim()]);
+            return (yield* repoWorktrees.setSubmoduleCommit({
+              threadId,
+              worktreePath: own,
+              submodulePath: "framework",
+              sourceWorktreePath: framework,
+            })).commit;
+          });
+
+        let firstPin = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            // Pinning into its own checkout needs it attached.
+            const attached = yield* repoWorktrees.ensure({
+              threadId,
+              repository: "server",
+              branch: "t3/own",
+            });
+            assert.equal(attached.repoWorktree.worktreePath, own);
+            framework = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "server/framework",
+              branch: "t3/framework",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* configureIdentity(framework);
+            firstPin = yield* pin("framework one\n");
+          }),
+        );
+        yield* runTurn(agent, threadId, Effect.asVoid(pin("framework two\n")));
+
+        const rewound = yield* rollback(threadId, 1);
+        assert.isNull(rewound.thread.rollbackFailure ?? null);
+        assert.equal(yield* git(path.join(own, "framework"), ["rev-parse", "HEAD"]), firstPin);
+      }),
+    ),
   );
 
   it.effect("restores a worktree first attached after the target, and one detached since", () =>

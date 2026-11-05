@@ -275,6 +275,8 @@ export interface CheckpointServiceV2Shape {
   readonly restore: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoint: OrchestrationV2Checkpoint;
+    /** Also move submodule checkouts, as a repository worktree restore does. */
+    readonly alignSubmodules?: boolean;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
   /** Repository refs that a `keep` checkpoint still names survive. */
   readonly deleteStaleRefs: (input: {
@@ -1315,6 +1317,25 @@ export const layer: Layer.Layer<
       return present.ok ? null : ("submodule-commit-missing" as const);
     });
 
+    // The restored tree records each submodule's commit; its checkout has to
+    // follow, as pinning a submodule left it. Nothing moves unless all can.
+    const alignSubmodules = Effect.fnUntraced(function* (cwd: string, ref: CheckpointRef) {
+      const changes = yield* submoduleAlignment(cwd, ref);
+      for (const change of changes) {
+        const problem = yield* submoduleProblem(change);
+        if (problem !== null) return { problem, path: change.path };
+      }
+      for (const change of changes) {
+        yield* run(change.dir, "alignSubmodule", [
+          "checkout",
+          "--quiet",
+          "--detach",
+          change.commit,
+        ]);
+      }
+      return null;
+    });
+
     const commonDirOf = (cwd: string) =>
       probe(cwd, "commonDir", ["rev-parse", "--path-format=absolute", "--git-common-dir"]).pipe(
         Effect.flatMap((result) =>
@@ -1419,24 +1440,14 @@ export const layer: Layer.Layer<
               reason: "checkpoint-missing",
             });
           }
-          // The restored tree records each submodule's commit; its checkout
-          // has to follow, as pinning a submodule left it.
-          for (const change of yield* submoduleAlignment(cwd, input.ref)) {
-            const problem = yield* submoduleProblem(change);
-            if (problem !== null) {
-              return yield* new CheckpointRepositoryUnavailableError({
-                repository: input.repository.repository,
-                worktreePath: cwd,
-                reason: problem,
-                submodulePath: change.path,
-              });
-            }
-            yield* run(change.dir, "alignSubmodule", [
-              "checkout",
-              "--quiet",
-              "--detach",
-              change.commit,
-            ]);
+          const misaligned = yield* alignSubmodules(cwd, input.ref);
+          if (misaligned !== null) {
+            return yield* new CheckpointRepositoryUnavailableError({
+              repository: input.repository.repository,
+              worktreePath: cwd,
+              reason: misaligned.problem,
+              submodulePath: misaligned.path,
+            });
           }
         }),
       ).pipe(
@@ -1484,6 +1495,17 @@ export const layer: Layer.Layer<
               scopeId: input.scope.id,
               checkpointId: input.checkpoint.id,
               cause: "Checkpoint ref is unavailable.",
+            });
+          }
+          const misaligned =
+            input.alignSubmodules === true
+              ? yield* alignSubmodules(input.scope.cwd, input.checkpoint.ref)
+              : null;
+          if (misaligned !== null) {
+            return yield* new CheckpointRestoreError({
+              scopeId: input.scope.id,
+              checkpointId: input.checkpoint.id,
+              cause: `Submodule ${misaligned.path} was not moved: ${misaligned.problem}.`,
             });
           }
         }),

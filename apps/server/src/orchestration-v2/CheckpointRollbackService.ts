@@ -410,7 +410,26 @@ export const layer: Layer.Layer<
         );
         if (missingLeaseKeys.length > 0) return { missingLeaseKeys };
       }
+      const refuseUnavailable = Effect.catchTags({
+        CheckpointRepositoryUnavailableError: (cause: CheckpointRepositoryUnavailableError) =>
+          Effect.fail(
+            new CheckpointRollbackExecutionError({
+              ...refusal,
+              reason: "repository-unavailable",
+              repository: cause.repository,
+              worktreePath: cause.worktreePath,
+              repositoryProblem: cause.reason,
+              ...(cause.submodulePath === undefined ? {} : { submodulePath: cause.submodulePath }),
+            }),
+          ),
+      });
       // Every repository is checked before the provider or any file changes.
+      const workspaceRepository = plan?.workspaceRepository ?? null;
+      if (workspaceRepository !== null) {
+        yield* checkpoints
+          .inspectRepositoryRestore({ repository: workspaceRepository, ref: checkpoint.ref })
+          .pipe(refuseUnavailable);
+      }
       const repositoryTargets =
         plan === null
           ? []
@@ -423,23 +442,7 @@ export const layer: Layer.Layer<
                   runs: history.runs,
                 },
                 targetOrdinal: checkpoint.ordinalWithinScope,
-              }).pipe(
-                Effect.catchTags({
-                  CheckpointRepositoryUnavailableError: (cause) =>
-                    Effect.fail(
-                      new CheckpointRollbackExecutionError({
-                        ...refusal,
-                        reason: "repository-unavailable",
-                        repository: cause.repository,
-                        worktreePath: cause.worktreePath,
-                        repositoryProblem: cause.reason,
-                        ...(cause.submodulePath === undefined
-                          ? {}
-                          : { submodulePath: cause.submodulePath }),
-                      }),
-                    ),
-                }),
-              ),
+              }).pipe(refuseUnavailable),
             );
 
       const modelSelection = context.thread.modelSelection;
@@ -492,18 +495,24 @@ export const layer: Layer.Layer<
         );
       const restoreFilesAndCleanUp = Effect.gen(function* () {
         if (plan?._tag === "restore" && plan.workspace) {
-          yield* checkpoints.restore({ scope, checkpoint }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new CheckpointRollbackExecutionError({
-                  ...refusal,
-                  reason: "workspace-restore-failed",
-                  worktreePath: scope.cwd,
-                  conversationRewound,
-                  cause,
-                }),
-            ),
-          );
+          yield* checkpoints
+            .restore({
+              scope,
+              checkpoint,
+              ...(workspaceRepository === null ? {} : { alignSubmodules: true }),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new CheckpointRollbackExecutionError({
+                    ...refusal,
+                    reason: "workspace-restore-failed",
+                    worktreePath: scope.cwd,
+                    conversationRewound,
+                    cause,
+                  }),
+              ),
+            );
         }
         // In order, stopping at the first failure: the worktrees not reached
         // keep their files, and the error names the ones already restored.

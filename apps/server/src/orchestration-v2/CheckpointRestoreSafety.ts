@@ -210,6 +210,8 @@ export type CheckpointRestorePlan =
   | {
       readonly _tag: "restore";
       readonly workspace: boolean;
+      /** The thread's own checkout, when it also attached it as a repository worktree. */
+      readonly workspaceRepository: CheckpointRepositoryIdentity | null;
       readonly repositories: ReadonlyArray<CheckpointRepositoryIdentity>;
     }
   | { readonly _tag: "shared-workspace" }
@@ -270,9 +272,19 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
       repository: isolation.sharedRepository,
     } satisfies CheckpointRestorePlan;
   }
+  const workspace = workspaceReady && isolation.workspace === true;
+  let workspaceRepository: CheckpointRepositoryIdentity | null = null;
+  for (const attached of workspace ? (input.thread.repoWorktrees ?? []) : []) {
+    if ((yield* realPathOr(attached.worktreePath)) === workspaceCwd) {
+      const { repository, repositoryPath, worktreePath, branch } = attached;
+      workspaceRepository = { repository, repositoryPath, worktreePath, branch };
+      break;
+    }
+  }
   return {
     _tag: "restore",
-    workspace: workspaceReady && isolation.workspace === true,
+    workspace,
+    workspaceRepository,
     repositories,
   } satisfies CheckpointRestorePlan;
 });
