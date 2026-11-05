@@ -340,8 +340,8 @@ export function resolvePullRequestSnoozePreset(shell: ThreadPullRequestShell): S
   if (!open) return null;
   return {
     id: "pull-request",
-    label: "Until PR needs attention",
-    whenLabel: "no time limit",
+    label: "Until PR update",
+    whenLabel: "",
     snoozedUntil: UNTIMED_SNOOZE_WAKE_AT,
     wakeOnPullRequest: true,
   };

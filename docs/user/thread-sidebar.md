@@ -339,7 +339,7 @@ a new question, a failed run, or a message or answer you send. You can snooze an
 question and answer when the thread wakes; the question stays unanswered.
 
 To park a thread while its pull request is busy, such as while checks run, choose
-**Snooze → Until PR needs attention**. The option appears when the thread has an open linked
+**Snooze → Until PR update**. The option appears when the thread has an open linked
 pull request. The thread returns when checks finish, the branch starts to conflict, someone
 else comments or reviews, or the pull request merges or closes. Checks that had already
 finished when you snoozed do not wake it. There is no time limit, so a quiet pull request keeps

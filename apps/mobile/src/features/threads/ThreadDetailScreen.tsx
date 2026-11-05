@@ -837,7 +837,7 @@ function ThreadDetailBody(
       const state = lifecycleSnoozed ? "snoozed" : settled ? "settled" : "woke";
       const label =
         lifecycleSnoozed && snoozeWaitsOnPullRequest(props.selectedThread)
-          ? "Snoozed until PR needs attention"
+          ? "Snoozed until PR update"
           : lifecycleSnoozed && snoozedUntil !== null
             ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
             : settled

@@ -619,7 +619,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         icon={<AlarmClockIcon />}
         label={
           activeThreadShell !== null && snoozeWaitsOnPullRequest(activeThreadShell)
-            ? "Snoozed until PR needs attention"
+            ? "Snoozed until PR update"
             : snoozeWake && snoozeWake !== "now"
               ? `Snoozed, ${snoozeWake} left`
               : "Snoozed"
