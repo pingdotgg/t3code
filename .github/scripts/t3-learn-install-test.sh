@@ -30,7 +30,6 @@ screenshot() {
   fi
 }
 
-# Waits for the desktop app's server under a T3 home and prints its version.
 # What you know, courses and the clip cache must survive updates and uninstalls like the database.
 learning="$HOME/.t3-learn/userdata"
 plant_learning() {
@@ -46,6 +45,7 @@ check_learning() {
     diff -r "$artifacts/kept/$item" "$learning/$item" >/dev/null || fail "$1 changed or removed $item"
   done
 }
+# Waits for the desktop app's server under a T3 home and prints its version.
 wait_for_server() {
   local home="$1" expected="${2:-}" state="$1/userdata/server-runtime.json" origin="" reported=""
   for _ in $(seq 1 180); do
@@ -155,7 +155,7 @@ learn_version="$(wait_for_server "$HOME/.t3-learn" "$version")"
 log "OminaX $learn_version is running"
 sleep 5
 screenshot t3-learn
-[ -d "$artifacts/kept" ] || plant_learning
+if [ ! -d "$artifacts/kept" ]; then plant_learning; fi
 
 if [ "$os" = Darwin ]; then
   app="/Applications/OminaX.app"

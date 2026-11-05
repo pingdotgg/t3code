@@ -426,11 +426,9 @@ const ingestYoutube = Effect.fn("course.ingestYoutube")(function* (
 const extractPdf = Effect.fn("course.extractPdf")(function* (source: string) {
   const pdfjs = yield* Effect.tryPromise({
     try: async () => {
-      // The server bundle has no pdf.worker.mjs beside pdf.mjs, so hand pdf.js the bundled worker.
-      Object.assign(globalThis, {
-        // @ts-expect-error pdfjs-dist ships no types for its worker module.
-        pdfjsWorker: await import("pdfjs-dist/legacy/build/pdf.worker.mjs"),
-      });
+      // The server bundle has no pdf.worker.mjs beside pdf.mjs; importing it sets globalThis.pdfjsWorker.
+      // @ts-expect-error pdfjs-dist ships no types for its worker module.
+      await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
       return import("pdfjs-dist/legacy/build/pdf.mjs");
     },
     catch: (cause) =>
