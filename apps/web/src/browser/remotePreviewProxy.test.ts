@@ -158,4 +158,14 @@ it("refuses a port beyond the grant limit and keeps the ports already approved",
 
   await h.module.approveRemotePreviewPorts(ENV, [], { refresh: true });
   expect(mocks.command.mock.lastCall?.[2].input.ports.toSorted()).toEqual(ports);
+
+  // Concurrent requests are judged in the order they were made.
+  await h.module.revokeRemotePreview(ENV);
+  await h.module.approveRemotePreviewPorts(ENV, ports.slice(0, 15));
+  const first = h.module.approveRemotePreviewPorts(ENV, [5000]);
+  const second = h.module.approveRemotePreviewPorts(ENV, [5001]);
+  await expect(first).resolves.not.toBeNull();
+  await expect(second).rejects.toThrow(/at most 16/);
+  expect(mocks.command.mock.lastCall?.[2].input.ports).toContain(5000);
+  expect(mocks.command.mock.lastCall?.[2].input.ports).not.toContain(5001);
 });
