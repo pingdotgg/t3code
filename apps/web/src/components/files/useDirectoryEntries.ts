@@ -9,7 +9,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
 /** Folder reads in flight; the server shares one Git ignore check among reads beyond its four. */
-export const FOLDER_READS_IN_FLIGHT = 64;
+const FOLDER_READS_IN_FLIGHT = 64;
 
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
