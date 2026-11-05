@@ -1,4 +1,5 @@
 import { Course, OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -29,6 +30,7 @@ const CourseAddTool = Tool.make("course_add", {
     ServerSettings.ServerSettingsService,
     ThreadManagementService.ThreadManagementService,
     ProcessRunner.ProcessRunner,
+    FileSystem.FileSystem,
     Path.Path,
   ],
 })
