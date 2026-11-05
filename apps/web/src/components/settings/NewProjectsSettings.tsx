@@ -2,6 +2,7 @@ import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { resolvePastedPath } from "@t3tools/shared/path";
 
 import { DraftInput } from "../ui/draft-input";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
@@ -84,6 +85,30 @@ export function NewProjectsSettingsSection() {
             placeholder={mixedAddProjectBaseDirectory ? "Mixed" : "~/"}
             spellCheck={false}
             aria-label="Add project base directory"
+          />
+        }
+      />
+      <SettingsRow
+        serverScoped
+        settingKeys={["ghqCloneLayout"]}
+        {...searchableSetting("ghq-clone-layout")}
+        description="Clones go to github.com/owner/repo under the folder above, like ghq."
+        resetAction={
+          settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout ? (
+            <SettingResetButton
+              label="clone into host folders"
+              onClick={() =>
+                updateSettings({ ghqCloneLayout: DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout })
+              }
+            />
+          ) : null
+        }
+        control={
+          <ScopedSwitch
+            settingKeys={["ghqCloneLayout"]}
+            checked={settings.ghqCloneLayout}
+            onCheckedChange={(checked) => updateSettings({ ghqCloneLayout: Boolean(checked) })}
+            aria-label="Clone into host folders"
           />
         }
       />
