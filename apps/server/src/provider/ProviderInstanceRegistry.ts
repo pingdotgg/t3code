@@ -106,9 +106,14 @@ const readInstanceSecrets = Effect.fn("ProviderInstanceRegistry.readInstanceSecr
     references.length === 0 ? [] : yield* (yield* SecretResolver.SecretResolver).read(references);
   const unreadable: Array<string> = [];
   let index = 0;
+  // An empty secret reads as unreadable, so a driver cannot fall back to an inherited credential.
+  const next = () => {
+    const secret = values[index++];
+    return secret === undefined || secret.trim() === "" ? undefined : secret;
+  };
   const environment: ResolvedProviderInstanceEnvironment = variables.flatMap((variable) => {
     if (typeof variable.value === "string") return [{ ...variable, value: variable.value }];
-    const secret = values[index++];
+    const secret = next();
     if (secret === undefined) {
       unreadable.push(variable.name);
       return [];
@@ -116,7 +121,7 @@ const readInstanceSecrets = Effect.fn("ProviderInstanceRegistry.readInstanceSecr
     return [{ ...variable, value: secret, sensitive: true }];
   });
   const config = configFields.flatMap(({ field, key }) => {
-    const secret = values[index++];
+    const secret = next();
     if (secret !== undefined) return [{ field, key, value: secret }];
     unreadable.push(field);
     return [];

@@ -79,8 +79,11 @@ export const SimlockDeviceHostConfig = Schema.Struct({
   label: TrimmedNonEmptyString,
   /** The gateway's origin, such as https://gateway.example.ts.net:4700. */
   gatewayUrl: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/[^\s/]+\/?$/)),
-  /** Leases, drives, watches, and takes input on its own leases. Kept in the secret store. */
-  agentToken: TrimmedString.pipe(
+  /**
+   * Leases, drives, watches, and takes input on its own leases. Kept in the secret store, or the
+   * secret provider to read it from.
+   */
+  agentToken: SettingsSecretValue.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
   ),
@@ -133,7 +136,7 @@ export const DeviceSimlockIdentityInput = Schema.Struct({
   gatewayUrl: Schema.optional(TrimmedString),
   /** A saved Simlock host whose stored token is checked when no new token is given. */
   hostId: Schema.optional(DeviceHostId),
-  agentToken: Schema.optional(TrimmedString),
+  agentToken: Schema.optional(SettingsSecretValue),
 });
 export type DeviceSimlockIdentityInput = typeof DeviceSimlockIdentityInput.Type;
 
