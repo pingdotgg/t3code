@@ -34,7 +34,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { rewindToMessage } from "./chatViewSend";
-import { makeThreadErrorSetter } from "../ChatView.logic";
+import { fileRestoreRetryApplies, makeThreadErrorSetter } from "../ChatView.logic";
 interface TimelineRewindInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadRef: ScopedThreadRef;
@@ -100,6 +100,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   if (fileRestoreRetry && fileRestoreRetry.routeThreadKey !== routeThreadKey) {
     setFileRestoreRetry(null);
   }
+  const currentFileRestoreRetry =
+    fileRestoreRetry !== null &&
+    fileRestoreRetryApplies(serverProjection?.runs ?? [], fileRestoreRetry.turnCount)
+      ? fileRestoreRetry
+      : null;
   // A retry that nothing awaits reports its failure once the server gives up.
   const watchedRetriesRef = useRef(new Map<CommandId, { readonly turnCount: number }>());
   const rollbackFailure = serverProjection?.thread.rollbackFailure ?? null;
@@ -206,7 +211,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const onConfirmRevertStable = useStableCallback(onConfirmRevert);
 
   const onRetryFileRestore = async () => {
-    if (!fileRestoreRetry || !activeThread || isRevertingCheckpoint) return;
+    if (!currentFileRestoreRetry || !activeThread || isRevertingCheckpoint) return;
     if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
       setThreadError(
         activeThread.id,
@@ -214,7 +219,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       );
       return;
     }
-    const { turnCount } = fileRestoreRetry;
+    const { turnCount } = currentFileRestoreRetry;
     setFileRestoreRetry(null);
     setThreadError(activeThread.id, null);
     useComposerDraftStore.setState((store) => ({
@@ -290,7 +295,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     onConfirmRevertStable,
     onForkFromRunStable,
     onRevertTimelineTurnStable,
-    fileRestoreRetryMessage: fileRestoreRetry?.message ?? null,
+    fileRestoreRetryMessage: currentFileRestoreRetry?.message ?? null,
     onRetryFileRestoreStable,
     clearFileRestoreRetryStable,
   };

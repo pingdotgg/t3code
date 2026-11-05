@@ -7,6 +7,7 @@ import {
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
+  fileRestoreRetryApplies,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -1012,6 +1013,15 @@ describe("waitForRevertedMessage", () => {
     });
 
     await expect(waiting).resolves.toBe("Restoring files stopped.");
+  });
+
+  it("offers that file restore again only until another turn runs", () => {
+    const rewound = [
+      { ordinal: 1, status: "completed" as const },
+      { ordinal: 2, status: "rolled_back" as const },
+    ];
+    expect(fileRestoreRetryApplies(rewound, 1)).toBe(true);
+    expect(fileRestoreRetryApplies([...rewound, { ordinal: 3, status: "running" }], 1)).toBe(false);
   });
 
   it("rejects a stale edit already rewound by another client during attachment preparation", async () => {

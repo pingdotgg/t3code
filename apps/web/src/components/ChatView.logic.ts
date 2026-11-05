@@ -1,4 +1,8 @@
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -952,6 +956,17 @@ export async function waitForStartedServerThread(
     predicate: threadHasStarted,
     timeoutMs,
   });
+}
+
+/**
+ * Whether trying a stopped file restore again still restores only its files. A turn that ran
+ * since, from any client, would be rewound by it.
+ */
+export function fileRestoreRetryApplies(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>,
+  turnCount: number,
+): boolean {
+  return runs.every((run) => run.ordinal <= turnCount || run.status === "rolled_back");
 }
 
 /**
