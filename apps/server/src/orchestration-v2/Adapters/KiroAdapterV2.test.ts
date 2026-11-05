@@ -307,6 +307,12 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   readonly wrapCancel?: (
     send: AcpSessionRuntime.AcpSessionRuntime["Service"]["cancel"],
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["cancel"];
+  /** Wraps the runtime's `session/prompt` send. */
+  readonly wrapPrompt?: (
+    send: AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"],
+  ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
+  /** The user's message text for every turn. */
+  readonly text?: string;
   readonly drive: (session: {
     readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
     readonly startTurn: Effect.Effect<void, ProviderAdapterV2Error>;
@@ -360,11 +366,11 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
         fileSystem,
         ...(input.replayGate === undefined ? {} : { replayGate: input.replayGate }),
       })(runtimeInput).pipe(
-        Effect.map((runtime) =>
-          input.wrapCancel === undefined
-            ? runtime
-            : { ...runtime, cancel: input.wrapCancel(runtime.cancel) },
-        ),
+        Effect.map((runtime) => ({
+          ...runtime,
+          ...(input.wrapCancel === undefined ? {} : { cancel: input.wrapCancel(runtime.cancel) }),
+          ...(input.wrapPrompt === undefined ? {} : { prompt: input.wrapPrompt(runtime.prompt) }),
+        })),
       ),
     ...(input.testHooks === undefined ? {} : { testHooks: input.testHooks }),
   });
@@ -428,7 +434,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
           createdBy: "user",
           creationSource: "web",
           messageId: MessageId.make(`message:${suffix}`),
-          text: "Say hello",
+          text: input.text ?? "Say hello",
           attachments: [],
         },
         modelSelection: turnSelection,
@@ -829,6 +835,59 @@ describe("KiroAdapterV2", () => {
         }),
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
+});
+
+describe("KiroAdapterV2 skills", () => {
+  // Shaped like kiro-cli 2.37.1's second `available_commands_update` after
+  // `session/new` with `~/.kiro/skills/probe-skill/SKILL.md` installed.
+  const skillCommands = update({
+    sessionUpdate: "available_commands_update",
+    availableCommands: [
+      {
+        name: "probe-skill",
+        description: "A probe skill that checks skill discovery over ACP.",
+        input: { hint: "optional context" },
+        _meta: {
+          kiro: {
+            type: "skill",
+            resource: { resourceType: "skill", source: { origin: "user" } },
+            originalName: "probe-skill",
+          },
+        },
+      },
+    ],
+  });
+
+  // Kiro runs a command only from a leading `/name`; T3's `$` picker inserts `$name`.
+  it.effect("sends a $ skill mention as the /command Kiro runs", () => {
+    const sent: Array<string> = [];
+    return runKiroScript({
+      scenario: "skill-mention",
+      text: "$probe-skill rest",
+      frames: [
+        ...openSessionFrames({
+          initialize: KIRO_V3_INITIALIZE,
+          configOptions: [modeOption, autopilotOption("on")],
+        }),
+        skillCommands,
+        turnPrompt,
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      wrapPrompt: (send) => (payload, options) => {
+        for (const block of payload.prompt) {
+          if (block.type === "text") sent.push(block.text);
+        }
+        return send(payload, options);
+      },
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
+          assert.deepEqual(sent, ["/probe-skill rest"]);
+        }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped);
+  });
 });
 
 describe("KiroAdapterV2 agents", () => {
