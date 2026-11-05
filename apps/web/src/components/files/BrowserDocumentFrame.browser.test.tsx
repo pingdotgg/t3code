@@ -34,6 +34,98 @@ describe("HtmlRenderDocument", () => {
     await delivered;
     expect(onContentHeight).toHaveBeenCalledTimes(1);
   });
+
+  it("restores form input when the page mounts again, as after a thread switch", async () => {
+    // The page reports its fields on load and after every edit, including restored ones. Its
+    // startup input event must not erase saved input, and its note handler rebuilds a later field.
+    const html = injectHtmlRenderBootstrap(`<!doctype html><html><body>
+      <textarea name="note"></textarea>
+      <input name="extra">
+      <select name="tags" multiple><option>x</option><option>y</option><option>z</option></select>
+      <input type="radio" name="pick" value="a" checked>
+      <input type="radio" name="pick" value="b">
+      <output id="echo"></output>
+      <script>
+        var note = document.querySelector("textarea");
+        var tags = document.querySelector("select");
+        var extra = function() { return document.querySelector('input[name="extra"]'); };
+        note.addEventListener("input", function() {
+          document.getElementById("echo").textContent = note.value;
+          extra().replaceWith(extra().cloneNode());
+        });
+        function report() {
+          window.parent.postMessage({
+            type: "fields",
+            note: note.value,
+            extra: extra().value,
+            tags: Array.from(tags.selectedOptions, function(option) { return option.value; }),
+            pick: document.querySelector('input[name="pick"]:checked').value,
+            echo: document.getElementById("echo").textContent
+          }, "*");
+        }
+        document.addEventListener("input", report);
+        document.addEventListener("change", report);
+        window.addEventListener("message", function(event) {
+          if (event.source !== window.parent || event.data.type !== "edit") return;
+          note.value = "keep this";
+          note.dispatchEvent(new Event("input", { bubbles: true }));
+          extra().value = "two";
+          extra().dispatchEvent(new Event("input", { bubbles: true }));
+          tags.options[1].selected = true;
+          tags.options[2].selected = true;
+          tags.dispatchEvent(new Event("change", { bubbles: true }));
+          var pick = document.querySelector('input[value="b"]');
+          pick.checked = true;
+          pick.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        note.dispatchEvent(new Event("input", { bubbles: true }));
+      </script></body></html>`);
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    let fields: unknown;
+    const messages = new AbortController();
+    using _messages = { [Symbol.dispose]: () => messages.abort() };
+    window.addEventListener(
+      "message",
+      (event) => {
+        if (event.data?.type === "fields") fields = event.data;
+      },
+      { signal: messages.signal },
+    );
+    const edited = {
+      type: "fields",
+      note: "keep this",
+      extra: "two",
+      tags: ["y", "z"],
+      pick: "b",
+      echo: "keep this",
+    };
+
+    {
+      await using screen = await render(
+        <HtmlRenderDocument src={src} title="Form" formStateKey="env:form" />,
+      );
+      await vi.waitFor(() =>
+        expect(fields).toEqual({
+          type: "fields",
+          note: "",
+          extra: "",
+          tags: [],
+          pick: "a",
+          echo: "",
+        }),
+      );
+      const frame = screen.getByTitle("Form").element() as HTMLIFrameElement;
+      frame.contentWindow?.postMessage({ type: "edit" }, "*");
+      await vi.waitFor(() => expect(fields).toEqual(edited));
+    }
+
+    fields = undefined;
+    await using _screen = await render(
+      <HtmlRenderDocument src={src} title="Form" formStateKey="env:form" />,
+    );
+    await vi.waitFor(() => expect(fields).toEqual(edited));
+  });
 });
 
 it("keeps the first and last selected card rings inside the fitted renderer frame", async () => {

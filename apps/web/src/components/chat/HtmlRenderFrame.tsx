@@ -74,6 +74,7 @@ export function HtmlRenderFrame(props: {
             src={src}
             title={title}
             threadRef={props.threadRef}
+            formStateKey={`${props.environmentId}:${attachmentId}`}
             className="block size-full"
             onContentHeight={setContentHeight}
             onFullscreenChange={onFullscreenChange}
