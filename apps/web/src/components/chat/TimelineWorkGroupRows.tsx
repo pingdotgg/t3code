@@ -902,17 +902,20 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
     if (open) return;
     setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
   }, [open]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted until the collapse transition finishes clipping them
+  const { onWorkingHistoryCollapsing } = ctx;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted, and the timeline stops following its end, until the collapse transition finishes
   useEffect(() => {
     if (open || history === null) return;
+    onWorkingHistoryCollapsing(true);
     let cancelled = false;
     void transitionsSettled(windowRef.current).then(() => {
       if (!cancelled) setHistory(null);
     });
     return () => {
       cancelled = true;
+      onWorkingHistoryCollapsing(false);
     };
-  }, [open, history]);
+  }, [open, history, onWorkingHistoryCollapsing]);
   const head = history?.head;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as the timeline scroll brings them near the viewport
   useEffect(() => {
