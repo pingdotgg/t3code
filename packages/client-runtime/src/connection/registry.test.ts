@@ -2275,6 +2275,28 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
+  it.effect("a rename keeps the SSH target the broker last saved", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const moved = { ...SSH_TARGET, hostname: "moved.example.test" };
+        yield* Ref.update(harness.storedProfiles, (current) =>
+          new Map(current).set(
+            SSH_CONNECTION.connectionId,
+            new SshConnectionProfile({ ...SSH_PROFILE, target: moved }),
+          ),
+        );
+
+        yield* registry.setLabel(SSH_CONNECTION.environmentId, "Studio");
+
+        expect((yield* Ref.get(harness.storedProfiles)).get(SSH_CONNECTION.connectionId)).toEqual(
+          new SshConnectionProfile({ ...SSH_PROFILE, label: "Studio", target: moved }),
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("removing the last route forgets the environment", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(

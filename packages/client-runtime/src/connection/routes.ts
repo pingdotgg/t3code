@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
+  type ConnectionProfile,
   type ConnectionRoute,
   SshConnectionProfile,
 } from "./catalog.ts";
@@ -88,12 +89,14 @@ function targetWithLabel(target: ConnectionTarget, label: string): ConnectionTar
 export function routeWithLabel(route: ConnectionRoute, label: string): ConnectionRoute {
   return {
     target: targetWithLabel(route.target, label),
-    profile: Option.map(route.profile, (profile) =>
-      profile._tag === "SshConnectionProfile"
-        ? new SshConnectionProfile({ ...profile, label })
-        : new BearerConnectionProfile({ ...profile, label }),
-    ),
+    profile: Option.map(route.profile, (profile) => profileWithLabel(profile, label)),
   };
+}
+
+export function profileWithLabel(profile: ConnectionProfile, label: string): ConnectionProfile {
+  return profile._tag === "SshConnectionProfile"
+    ? new SshConnectionProfile({ ...profile, label })
+    : new BearerConnectionProfile({ ...profile, label });
 }
 
 export function routeHttpBaseUrl(route: ConnectionRoute): string | null {

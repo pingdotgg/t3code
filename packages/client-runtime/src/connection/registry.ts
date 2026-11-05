@@ -51,6 +51,7 @@ import {
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
+  profileWithLabel,
   routeWithLabel,
   routesAfterRemoving,
   upsertRoute,
@@ -1055,8 +1056,16 @@ export const make = Effect.gen(function* () {
         if (routes.every((route) => route.target.label === trimmed)) return;
         // Every route carries the label: the first one is displayed, and reordering can change it.
         const renamed = routes.map((route) => routeWithLabel(route, trimmed));
-        for (const route of renamed) {
-          if (Option.isSome(route.profile)) yield* profiles.put(route.profile.value);
+        for (const { profile } of routes) {
+          if (Option.isNone(profile)) continue;
+          // The SSH broker saves a freshly resolved target only to the store, so relabel that copy.
+          const saved = yield* profiles.get(profile.value.connectionId);
+          yield* profiles.put(
+            profileWithLabel(
+              Option.getOrElse(saved, () => profile.value),
+              trimmed,
+            ),
+          );
         }
         const next = entryWithRoutes(entry, renamed);
         yield* registrations.setRoutes(environmentId, persistedRoutes(next));
