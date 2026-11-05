@@ -93,6 +93,7 @@ import {
 import {
   DispatchModeLimit,
   type DispatchModeRefusal,
+  callerModes,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import type {
   ProjectionRecordField,
@@ -1149,10 +1150,7 @@ const make = Effect.gen(function* () {
     const parent = yield* loadProjection(scope.thread.threadId, false);
     return {
       parent,
-      limits: {
-        runtimeMode: parent.thread.runtimeMode,
-        interactionMode: parent.thread.interactionMode,
-      },
+      limits: callerModes(parent.thread, ThreadManagementService.latestActiveRun(parent)),
     } as const;
   });
 
@@ -2411,13 +2409,14 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
+      const parentModes = callerModes(parent.thread, parentRun);
       const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
+        parentModes.runtimeMode,
         input.runtimeMode,
         target,
       );
       const interactionMode = yield* resolveInteractionMode(
-        parent.thread.interactionMode,
+        parentModes.interactionMode,
         input.interactionMode,
       );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
@@ -2582,7 +2581,13 @@ const make = Effect.gen(function* () {
         return yield* remoteDelegation.cancel(scope, remoteTask, input);
       }
       const key = yield* requestKey(input.clientRequestId);
-      const parentProjection = yield* loadThreadRecords(scope.thread.threadId, []);
+      const parentProjection = yield* loadThreadRecords(scope.thread.threadId, ["runs"], {
+        runStatuses: ["preparing", "starting", "running", "waiting"],
+      });
+      const parentModes = callerModes(
+        parentProjection.thread,
+        ThreadManagementService.latestActiveRun(parentProjection),
+      );
       // Cancelling stops the child and every task under it, each a write to a
       // thread its user may have raised above the parent's modes since it was
       // delegated. All of them are checked before anything is stopped.
@@ -2593,11 +2598,8 @@ const make = Effect.gen(function* () {
           .getThreadShell(threadId)
           .pipe(Effect.mapError(threadManagementFailure));
         if (shell !== null && shell.deletedAt === null) {
-          yield* resolveRuntimeMode(parentProjection.thread.runtimeMode, shell.runtimeMode);
-          yield* resolveInteractionMode(
-            parentProjection.thread.interactionMode,
-            shell.interactionMode,
-          );
+          yield* resolveRuntimeMode(parentModes.runtimeMode, shell.runtimeMode);
+          yield* resolveInteractionMode(parentModes.interactionMode, shell.interactionMode);
         }
         const childThreadIds = yield* threadManagement
           .listAppOwnedChildThreadIds(threadId)
@@ -2691,11 +2693,7 @@ const make = Effect.gen(function* () {
       // caught again under that thread's lock, which leaves it running.
       const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
       const stopWithinLimit = stopChild.pipe(
-        Effect.provideService(DispatchModeLimit, {
-          runtimeMode: parentProjection.thread.runtimeMode,
-          interactionMode: parentProjection.thread.interactionMode,
-          refused,
-        }),
+        Effect.provideService(DispatchModeLimit, { ...parentModes, refused }),
         Effect.catch((error) =>
           Effect.flatMap(Ref.get(refused), (refusal) =>
             Effect.fail(
@@ -2789,6 +2787,7 @@ const make = Effect.gen(function* () {
           );
         }
         const parentNodeId = parentRun.rootNodeId;
+        const parentModes = callerModes(parent.thread, parentRun);
         const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
@@ -2825,12 +2824,12 @@ const make = Effect.gen(function* () {
                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
               });
               const runtimeMode = yield* resolveRuntimeMode(
-                parent.thread.runtimeMode,
+                parentModes.runtimeMode,
                 request.runtimeMode,
                 target,
               );
               const interactionMode = yield* resolveInteractionMode(
-                parent.thread.interactionMode,
+                parentModes.interactionMode,
                 request.interactionMode,
               );
               yield* assertTargetEnabledForProject(parent, commandId, target);

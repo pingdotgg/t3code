@@ -36,6 +36,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
+import { runModes } from "./DispatchModeLimit.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -699,6 +700,8 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus } = runControls;
 
+      // A run keeps the modes it was sent with; a later send may change the thread's.
+      const runThread = { ...projection.thread, ...runModes(projection.thread, run) };
       // A side chat shares its parent's worktree; the turn that gets its context asks before acting.
       const resolvedPolicy = yield* runtimePolicy
         .resolve({
@@ -706,8 +709,8 @@ export const layer: Layer.Layer<
             projection.thread.lineage.sideChat === true &&
             (sideChatHandoff !== undefined ||
               !projection.runs.some((previous) => previous.ordinal < run.ordinal))
-              ? { ...projection.thread, runtimeMode: "approval-required" }
-              : projection.thread,
+              ? { ...runThread, runtimeMode: "approval-required" }
+              : runThread,
           modelSelection: run.modelSelection,
         })
         .pipe(Effect.result);
