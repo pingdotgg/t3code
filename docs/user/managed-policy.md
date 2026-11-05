@@ -276,6 +276,10 @@ error. Users also cannot run a local command or override an agent's executable, 
 run something other than the listed agent. T3 Code does not check the IDs against the registry, so
 a misspelled ID matches nothing.
 
+This limit picks the agent, not everything around it. A user can still set variables on the
+provider, and `PATH` decides which `npm` or `uv` installs an agent. `maxRuntimeMode` locks those
+variables too.
+
 ### Updates
 
 - `mode`: `auto` keeps the normal update flow. `off` stops T3 Code from checking for updates, for
