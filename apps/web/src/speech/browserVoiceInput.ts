@@ -11,7 +11,6 @@ import {
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import type { SpeechStreamText } from "@t3tools/contracts";
 
 import { runtime } from "../lib/runtime";
 import workletUrl from "./pcmWorklet.ts?worker&url";
@@ -22,7 +21,6 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
-  readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string) => void;
 }): {
   readonly recorder: VoiceRecorder;
@@ -207,7 +205,6 @@ export function createBrowserVoiceInputPlatform(input: {
           const session = openSpeechStream({
             url,
             signal: options.signal,
-            onText: input.onText,
             onError: (error) => input.onError(error.message),
           }).then((prepared) => {
             live = prepared;

@@ -6,7 +6,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { DEFAULT_CLIENT_SETTINGS, type EnvironmentId } from "@t3tools/contracts";
 
 import { act, fakeTimers, render } from "../../test/render";
-import { ComposerSpeechTray } from "../components/chat/ComposerSpeechButton";
+import { ComposerSpeechMicButton } from "../components/chat/ComposerSpeechButton";
 import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
@@ -117,11 +117,11 @@ function Probe({
     onChange(value);
   });
   return (
-    <ComposerSpeechTray
+    <ComposerSpeechMicButton
       state={value.state}
-      progress={value.progress}
       level={value.level}
-      preview={value.preview}
+      onStart={() => void value.start()}
+      onStop={() => void value.stop()}
       onCancel={value.cancel}
       onSkipPostProcessing={value.skipPostProcessing}
     />
@@ -363,11 +363,11 @@ it("updates the recording meter without rerendering the draft owner", async () =
     await act(() => mocks.onLevel(level));
   }
   expect(onChange).not.toHaveBeenCalled();
-  expect(
-    screen.container
-      .querySelector('[aria-label="Recording"] div[aria-hidden] > span:last-child')
-      ?.getAttribute("style"),
-  ).toContain("scaleY(0.8)");
+  const bars = screen.container.querySelectorAll<HTMLElement>(
+    'button[aria-label="Finish voice input"] span[style*="scaleY"]',
+  );
+  expect(bars).toHaveLength(3);
+  expect(Number.parseFloat(bars[1]!.style.transform.slice("scaleY(".length))).toBeCloseTo(0.88);
   expect(voice.level.getSnapshot()).toBe(0.8);
   await act(() => voice.cancel());
 });

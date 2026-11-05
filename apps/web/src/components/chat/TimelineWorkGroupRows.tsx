@@ -17,6 +17,7 @@ import {
   WorkFoldCaret,
   WorkFoldToggle,
   WorkingBarControl,
+  useCarriedTextFade,
 } from "./TimelineRowParts";
 import {
   ToolActivityIconView,
@@ -817,9 +818,10 @@ function WorkingWindowText({
     item.projectedItemId,
   );
   const text = liveText ?? item.message.text;
+  const textRef = useCarriedTextFade(item.message.id);
   if (text.trim().length === 0) return null;
   return (
-    <div className="min-w-0 py-2">
+    <div ref={textRef} className="min-w-0 py-2">
       <AssistantCitationSource
         messageId={item.message.id}
         {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}

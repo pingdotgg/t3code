@@ -219,9 +219,10 @@ export function ComposerControlsBar(props: {
         "group/model-trigger",
         TEXT_CONTROL_STATES,
         composerControlsCollapsed && "text-meta!",
-        "@max-[440px]/composer-surface:min-w-0 @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:pointer-events-none @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:invisible @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:absolute @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-max @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:max-w-none",
+        // Icon-only: the 16px icon box already pads its 11px glyph, so 6px matches the other chips' ink inset.
+        "@max-[440px]/composer-surface:min-w-0 @max-[440px]/composer-surface:px-1.5 @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:pointer-events-none @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:invisible @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:absolute @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-max @max-[440px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:max-w-none",
         pickerIconOnly
-          ? "min-w-0 shrink-0 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
+          ? "min-w-0 shrink-0 px-1.5 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
           : "min-w-13 shrink",
       )}
       effortColumn={

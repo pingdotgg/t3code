@@ -13,7 +13,7 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamE
 export async function openSpeechStream(input: {
   readonly url: string;
   readonly signal: AbortSignal;
-  readonly onText: (text: SpeechStreamText) => void;
+  readonly onText?: (text: SpeechStreamText) => void;
   readonly onError: (error: Error) => void;
   readonly createSocket?: (url: string) => WebSocket;
 }) {
@@ -96,7 +96,7 @@ export async function openSpeechStream(input: {
           revision = message.revision;
           inFlightBytes -= inFlight.shift()!;
           clearTimeout(timer);
-          if (message.text) input.onText(message.text);
+          if (message.text) input.onText?.(message.text);
           pump();
           if (inFlight.length) armTimeout();
           break;
