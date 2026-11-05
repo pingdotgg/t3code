@@ -157,11 +157,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
-      if (
-        target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
-      ) {
-        return;
+      if (target instanceof HTMLElement) {
+        // The composer takes focus on load, so an empty one must still answer to the shortcuts.
+        const editor = target.closest('[contenteditable]:not([contenteditable="false"])');
+        if (editor?.textContent?.trim()) return;
       }
       const digit = Number.parseInt(event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
