@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -55,13 +57,15 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     true;
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const stopServer = useAtomCommand(previewEnvironment.stopLocalServer, {
-    label: "thread server stop",
+    label: t({ message: "thread server stop" }),
   });
   const [stoppingKey, setStoppingKey] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(SERVER_PAGE_COUNT);
 
   if (servers.length === 0) return null;
-  const externalClickLabel = isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click";
+  const externalClickLabel = isMacPlatform(navigator.platform)
+    ? t({ message: "⌘-click" })
+    : "Ctrl-click";
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
   const hiddenCount = Math.max(0, servers.length - visibleCount);
 
@@ -105,8 +109,15 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     }
   };
 
+  const MathMinText =
+    servers.length > SERVER_PAGE_COUNT && hiddenCount > 0
+      ? Math.min(hiddenCount, SERVER_PAGE_COUNT)
+      : undefined;
   return (
-    <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
+    <ThreadDetailsSection
+      headingId="thread-details-servers-heading"
+      title={t({ message: "Servers" })}
+    >
       <ul className="m-0 list-none p-0">
         {servers.slice(0, visibleCount).map((server, index) => {
           const key = serverKey(server);
@@ -136,7 +147,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                   {/* The end padding keeps text clear of the stop button. */}
                   <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
                     <span className="truncate text-sm font-medium leading-4 text-foreground/85">
-                      localhost:{server.port}
+                      <Trans>localhost:{server.port}</Trans>
                     </span>
                     <span className="truncate text-2xs font-normal leading-4 text-muted-foreground">
                       {[server.terminal === null ? "Agent" : "Terminal", server.processName]
@@ -146,7 +157,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                   </span>
                 </TooltipTrigger>
                 <TooltipPopup side="left">
-                  Open in the browser panel. {externalClickLabel} for your browser.
+                  <Trans>Open in the browser panel. {externalClickLabel} for your browser.</Trans>
                 </TooltipPopup>
               </Tooltip>
               {stoppable ? (
@@ -171,7 +182,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                         <SquareIcon aria-hidden className="size-3 fill-current" />
                       )}
                     </TooltipTrigger>
-                    <TooltipPopup side="left">Stop server</TooltipPopup>
+                    <TooltipPopup side="left">
+                      <Trans>Stop server</Trans>
+                    </TooltipPopup>
                   </Tooltip>
                 </div>
               ) : null}
@@ -195,7 +208,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
             className="size-4 shrink-0"
             icon={hiddenCount > 0 ? ChevronDown : ChevronUp}
           />
-          {hiddenCount > 0 ? `Show ${Math.min(hiddenCount, SERVER_PAGE_COUNT)} more` : "Show less"}
+          {hiddenCount > 0 ? <Trans>Show {MathMinText} more</Trans> : <Trans>Show less</Trans>}
         </ThreadDetailsControl>
       ) : null}
     </ThreadDetailsSection>

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
@@ -95,9 +97,11 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
         <TooltipPopup>
-          {forceNewWorktree
-            ? "Each model starts in its own worktree."
-            : resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)}
+          {forceNewWorktree ? (
+            <Trans>Each model starts in its own worktree.</Trans>
+          ) : (
+            resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
+          )}
         </TooltipPopup>
       </Tooltip>
     );
@@ -122,7 +126,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             <ComposerSelectControl
               size="xs"
               className="min-w-0 shrink"
-              aria-label="Workspace"
+              aria-label={t({ message: "Workspace" })}
               data-composer-shortcut="composer.workspace"
               data-composer-context-control
               onMouseDownCapture={stopContextMenuMouseDown}
@@ -144,7 +148,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           {effectiveEnvMode === "worktree"
             ? resolveEnvModeLabel("worktree")
             : resolveCurrentWorkspaceLabel(activeWorktreePath)}
-          {shortcutLabel ? ` · ${shortcutLabel}` : null}
+          {shortcutLabel ? <Trans> · {shortcutLabel}</Trans> : null}
         </TooltipPopup>
       </Tooltip>
       <SelectPopup
@@ -153,7 +157,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         className={showPreviousWorktree ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
       >
         <SelectGroup>
-          <SelectGroupLabel>Workspace</SelectGroupLabel>
+          <SelectGroupLabel>
+            <Trans>Workspace</Trans>
+          </SelectGroupLabel>
           <SelectItem value="local">
             <span className="inline-flex items-center gap-1.5">
               {activeWorktreePath ? (

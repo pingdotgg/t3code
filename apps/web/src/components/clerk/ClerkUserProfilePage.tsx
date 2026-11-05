@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 
 import type { ReactNode } from "react";
@@ -57,7 +58,7 @@ export function ClerkUserProfileRefreshButton({
       onClick={onClick}
     >
       <RefreshIcon aria-hidden="true" size="sm" refreshing={isPending} />
-      Refresh
+      <Trans>Refresh</Trans>
     </Button>
   );
 }

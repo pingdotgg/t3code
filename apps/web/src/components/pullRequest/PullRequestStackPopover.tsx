@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { EnvironmentId, PullRequestRef, PullRequestStackMembership } from "@t3tools/contracts";
 import { useState } from "react";
@@ -28,7 +29,11 @@ function StackBody({
           notice={query.notice}
           stale={!!query.error}
         />
-        {query.error ? <MenuItem onClick={query.refresh}>Retry stack refresh</MenuItem> : null}
+        {query.error ? (
+          <MenuItem onClick={query.refresh}>
+            <Trans>Retry stack refresh</Trans>
+          </MenuItem>
+        ) : null}
         <PullRequestStackLayers stack={query.data} reference={reference} onSelect={onSelect} />
       </>
     );
@@ -80,7 +85,9 @@ export function PullRequestStackPopover({
           }
         />
         <TooltipPopup>
-          View stack #{membership.number}, layer {membership.position} of {membership.size}
+          <Trans>
+            View stack #{membership.number}, layer {membership.position} of {membership.size}
+          </Trans>
         </TooltipPopup>
       </Tooltip>
       <MenuPopup

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import * as Schema from "effect/Schema";
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -74,7 +76,10 @@ export function DeviceAndroidFoldControls(props: {
   };
 
   return (
-    <div aria-label="Android fold controls" className="flex flex-col items-center gap-2">
+    <div
+      aria-label={t({ message: "Android fold controls" })}
+      className="flex flex-col items-center gap-2"
+    >
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm">
         <Tooltip>
           <TooltipTrigger
@@ -82,7 +87,7 @@ export function DeviceAndroidFoldControls(props: {
               <Button
                 size="icon"
                 variant={fold.posture === "closed" ? "secondary" : "ghost"}
-                aria-label="Fold device"
+                aria-label={t({ message: "Fold device" })}
                 aria-pressed={fold.posture === "closed"}
                 disabled={pending || !props.enabled}
                 onClick={() => change("closed")}
@@ -91,7 +96,9 @@ export function DeviceAndroidFoldControls(props: {
           >
             <DeviceDuoGlyph pose="closed" />
           </TooltipTrigger>
-          <TooltipPopup side="left">Fold device</TooltipPopup>
+          <TooltipPopup side="left">
+            <Trans>Fold device</Trans>
+          </TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -99,7 +106,7 @@ export function DeviceAndroidFoldControls(props: {
               <Button
                 size="icon"
                 variant={fold.posture === "opened" ? "secondary" : "ghost"}
-                aria-label="Unfold device"
+                aria-label={t({ message: "Unfold device" })}
                 aria-pressed={fold.posture === "opened"}
                 disabled={pending || !props.enabled}
                 onClick={() => change("opened")}
@@ -108,7 +115,9 @@ export function DeviceAndroidFoldControls(props: {
           >
             <DeviceDuoGlyph pose="open" />
           </TooltipTrigger>
-          <TooltipPopup side="left">Unfold device</TooltipPopup>
+          <TooltipPopup side="left">
+            <Trans>Unfold device</Trans>
+          </TooltipPopup>
         </Tooltip>
       </div>
       {error ? (

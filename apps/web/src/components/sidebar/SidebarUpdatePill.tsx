@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   type DesktopBridge,
   type DesktopUpdateState,
@@ -129,7 +131,9 @@ function SidebarUpdateArchitectureWarningContent() {
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>
+        <Trans>Intel build on Apple Silicon</Trans>
+      </AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -252,10 +256,10 @@ function SidebarUpdateControl() {
     : showUpdateDetails
       ? state
         ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
+        : t({ message: "Update available" })
       : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+        ? t({ message: "Checking for updates…" })
+        : (idleTooltip?.title ?? t({ message: "Check for updates" }));
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -307,8 +311,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
+            title: t({ message: "Could not confirm update" }),
+            description:
+              error instanceof Error
+                ? error.message
+                : t({ message: "Update confirmation failed." }),
           }),
         );
         return;
@@ -332,11 +339,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
+            title: t({ message: "Could not check for updates" }),
             description:
               updatesDenial ??
               result.state.message ??
-              "Automatic updates are not available in this build.",
+              t({ message: "Automatic updates are not available in this build." }),
           }),
         );
       })
@@ -344,8 +351,9 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: t({ message: "Could not check for updates" }),
+            description:
+              error instanceof Error ? error.message : t({ message: "Update check failed." }),
           }),
         );
       })
@@ -374,8 +382,11 @@ function SidebarUpdateControl() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: t({ message: "Could not update everything" }),
+          description:
+            error instanceof Error
+              ? error.message
+              : t({ message: "An unexpected error occurred." }),
         }),
       );
     }
@@ -452,7 +463,7 @@ function SidebarUpdateControl() {
   const updateButton = (
     <button
       type="button"
-      aria-label={idleTooltip?.detail ? `${tooltip}: ${idleTooltip.detail}` : tooltip}
+      aria-label={idleTooltip?.detail ? t`${tooltip}: ${idleTooltip.detail}` : tooltip}
       aria-disabled={isInteractionDisabled || undefined}
       className={cn(
         "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
@@ -551,7 +562,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Update release notes"
+            aria-label={t({ message: "Update release notes" })}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

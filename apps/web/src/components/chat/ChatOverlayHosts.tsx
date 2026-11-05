@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type {
   DeviceServiceState,
   EnvironmentId,
@@ -154,15 +155,21 @@ export function BranchRestoreConfirmHost(props: {
       <AlertDialogPopup>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            Switch to <code className="font-medium">{props.threadBranch}</code>?
+            <Trans>
+              Switch to <code className="font-medium">{props.threadBranch}</code>?
+            </Trans>
           </AlertDialogTitle>
           <AlertDialogDescription>
-            You have uncommitted changes. They'll carry over to the other branch, or block the
-            switch if they conflict.
+            <Trans>
+              You have uncommitted changes. They'll carry over to the other branch, or block the
+              switch if they conflict.
+            </Trans>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <Trans>Cancel</Trans>
+          </AlertDialogClose>
           <Button
             variant="default"
             disabled={!props.canWriteSourceControl}
@@ -171,7 +178,7 @@ export function BranchRestoreConfirmHost(props: {
               props.onConfirm();
             }}
           >
-            Switch branch
+            <Trans>Switch branch</Trans>
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
@@ -209,18 +216,26 @@ export function RevertConfirmHost(props: {
     >
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Edit from here?</AlertDialogTitle>
+          <AlertDialogTitle>
+            <Trans>Edit from here?</Trans>
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            Rewind chat to before this message. Your prompt and attachments return to the composer.
-            “Revert files too” also undoes your own edits.
+            <Trans>
+              Rewind chat to before this message. Your prompt and attachments return to the
+              composer. “Revert files too” also undoes your own edits.
+            </Trans>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <Trans>Cancel</Trans>
+          </AlertDialogClose>
           <Button variant="destructive-outline" onClick={() => confirm(true)}>
-            Revert files too
+            <Trans>Revert files too</Trans>
           </Button>
-          <Button onClick={() => confirm(false)}>Revert and keep changes</Button>
+          <Button onClick={() => confirm(false)}>
+            <Trans>Revert and keep changes</Trans>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

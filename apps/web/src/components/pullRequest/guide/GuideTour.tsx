@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuide } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
@@ -104,11 +105,13 @@ export function GuideTour({
           {banner}
           {diff.error !== null ? (
             <p className="text-xs text-muted-foreground">
-              The diff could not be loaded, so excerpts are missing: {diff.error}
+              <Trans>The diff could not be loaded, so excerpts are missing: {diff.error}</Trans>
             </p>
           ) : null}
           {stop === null ? (
-            <p className="text-sm text-muted-foreground">This change has no files to tour.</p>
+            <p className="text-sm text-muted-foreground">
+              <Trans>This change has no files to tour.</Trans>
+            </p>
           ) : (
             <GuideStop
               key={position}

@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import {
   DndContext,
   type DragEndEvent,
@@ -118,7 +119,7 @@ export function EnvironmentRoutesList({
       <div className="-ml-1.5 pt-1">
         <Button size="xs" variant="ghost-muted" onClick={onAddRoute}>
           <PlusIcon className="size-3" />
-          Add route
+          <Trans>Add route</Trans>
         </Button>
       </div>
     </div>
@@ -165,14 +166,14 @@ function SortableRouteRow({
           {label}
           {inUse ? (
             <span className="rounded-sm bg-success/12 px-1 text-2xs font-normal text-success-foreground">
-              In use
+              <Trans>In use</Trans>
             </span>
           ) : null}
         </p>
         {address !== null ? (
           <p className="truncate text-2xs text-muted-foreground">
             {address}
-            {isLearned(route) ? " · found automatically" : ""}
+            {isLearned(route) ? <Trans> · found automatically</Trans> : ""}
           </p>
         ) : null}
       </div>
@@ -201,7 +202,9 @@ function SortableRouteRow({
           >
             <XIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="top">Remove route</TooltipPopup>
+          <TooltipPopup side="top">
+            <Trans>Remove route</Trans>
+          </TooltipPopup>
         </Tooltip>
       ) : null}
     </li>

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { useState, type ReactNode } from "react";
 
@@ -53,16 +55,16 @@ function getEmptyStateMessage(query: string, error: string | null, isPending: bo
 function EmptyProjectFilePicker() {
   return (
     <CommandPaletteContent
-      aria-label="File picker"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search files…" }}
+      aria-label={t({ message: "File picker" })}
+      escapeLabel={t({ message: "Back" })}
+      footerActionLabel={t({ message: "Open file" })}
+      inputProps={{ disabled: true, placeholder: t({ message: "Search files…" }) }}
       mode="none"
       testId="project-file-picker"
       value=""
     >
       <div className="py-10 text-center text-sm text-muted-foreground">
-        Open a project to search its files.
+        <Trans>Open a project to search its files.</Trans>
       </div>
     </CommandPaletteContent>
   );
@@ -110,11 +112,11 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
 
   return (
     <CommandPaletteContent
-      aria-label="File picker"
+      aria-label={t({ message: "File picker" })}
       autoHighlight="always"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ placeholder: "Search files…" }}
+      escapeLabel={t({ message: "Back" })}
+      footerActionLabel={t({ message: "Open file" })}
+      inputProps={{ placeholder: t({ message: "Search files…" }) }}
       mode="none"
       onItemHighlighted={(value) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);

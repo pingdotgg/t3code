@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import {
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
@@ -13,17 +15,39 @@ import { TimelineRowCtx } from "./timelineRowContext";
 import { WorkLogRow } from "./WorkLog";
 
 const APPROVAL_PRESENTATION = {
-  command: { icon: "terminal", label: "Command approval", detailLabel: "Command" },
-  "file-change": { icon: "square-pen", label: "File change approval", detailLabel: "File change" },
-  "file-read": { icon: "eye", label: "File read approval", detailLabel: "File to read" },
+  command: {
+    icon: "terminal",
+    get label() {
+      return t({ message: "Command approval" });
+    },
+    detailLabel: "Command",
+  },
+  "file-change": {
+    icon: "square-pen",
+    get label() {
+      return t({ message: "File change approval" });
+    },
+    detailLabel: "File change",
+  },
+  "file-read": {
+    icon: "eye",
+    get label() {
+      return t({ message: "File read approval" });
+    },
+    detailLabel: "File to read",
+  },
   permission: {
     icon: "wrench",
-    label: "App permission approval",
+    get label() {
+      return t({ message: "App permission approval" });
+    },
     detailLabel: "Permission request",
   },
   "mcp-elicitation": {
     icon: "hammer",
-    label: "App access approval",
+    get label() {
+      return t({ message: "App access approval" });
+    },
     detailLabel: "App access request",
   },
 } satisfies Record<
@@ -76,7 +100,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
             <>
               <span className="inline-flex items-center gap-1 text-warning">
                 <ShieldIcon aria-hidden className="size-3 shrink-0" />
-                Waiting for approval
+                <Trans>Waiting for approval</Trans>
               </span>
               {onRespondToApproval ? (
                 <>
@@ -97,7 +121,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
             </>
           ) : (
             <span className="text-warning">
-              Provider process is gone. Interrupt or restart the run to respond.
+              <Trans>Provider process is gone. Interrupt or restart the run to respond.</Trans>
             </span>
           )}
           {approval.fullAccessOverride ? (

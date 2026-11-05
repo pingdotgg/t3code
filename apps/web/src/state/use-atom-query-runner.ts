@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { RegistryContext } from "@effect/atom-react";
 import {
   executeAtomQuery,
@@ -20,7 +21,7 @@ export function useAtomQueryRunner<T, A, E>(
   return (target: T) => {
     const atom = family(target);
     return executeAtomQuery(registry, atom, {
-      label: explicitLabel ?? atom.label?.[0] ?? "atom query",
+      label: explicitLabel ?? atom.label?.[0] ?? t({ message: "atom query" }),
       reportFailure,
       reportDefect,
       refresh,

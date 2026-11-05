@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -19,7 +20,7 @@ function reportFailure(title: string, cause: unknown) {
   toastManager.add({
     type: "error",
     title,
-    description: cause instanceof Error ? cause.message : "Try again.",
+    description: cause instanceof Error ? cause.message : t({ message: "Try again." }),
     data: traceId
       ? {
           secondaryActionProps: {

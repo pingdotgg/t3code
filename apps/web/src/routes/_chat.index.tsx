@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -101,14 +102,16 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       {isElectron ? <WorkspacePageHeader electron /> : null}
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle>Couldn’t start a new thread</EmptyTitle>
+          <EmptyTitle>
+            <Trans>Couldn’t start a new thread</Trans>
+          </EmptyTitle>
           <EmptyDescription>
-            The project is still available. Try opening the draft again.
+            <Trans>The project is still available. Try opening the draft again.</Trans>
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
               <RefreshIcon size="md" />
-              Try again
+              <Trans>Try again</Trans>
             </Button>
           </div>
         </EmptyHeader>

@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useEffect, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -23,7 +24,7 @@ export function DiffFileLoadingBoundary({ load, count }: { load: () => void; cou
   }, [isNear, count, loadLatest]);
 
   return (
-    <div ref={observe} role="status" aria-label="Loading diff…">
+    <div ref={observe} role="status" aria-label={t({ message: "Loading diff…" })}>
       {Array.from({ length: Math.min(count, 4) }, (_, index) => (
         <div key={index} aria-hidden className="border-b border-border/40">
           <DiffFileHeaderSkeleton titleWidth="medium" />

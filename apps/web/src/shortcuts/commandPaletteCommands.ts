@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { AnyRouter } from "@tanstack/react-router";
 
 import {
@@ -71,9 +72,10 @@ export function installCommandPaletteCommands(
           notifyThemeSaveFailure();
           return;
         }
+        const messageText = APPEARANCE_OPTIONS.find((option) => option.mode === nextMode)?.label;
         toastManager.add({
           id: "appearance-cycle",
-          title: `Appearance: ${APPEARANCE_OPTIONS.find((option) => option.mode === nextMode)?.label}`,
+          title: t`Appearance: ${messageText}`,
           timeout: 1500,
         });
       },

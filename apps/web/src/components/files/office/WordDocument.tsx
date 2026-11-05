@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 /* oxlint-disable react/no-array-index-key -- Text spans retain their order within an immutable page. */
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
@@ -98,7 +99,7 @@ export default function WordDocument(props: {
     <OfficePages
       pages={opened.pages}
       paint={opened.paint}
-      label="Page"
+      label={t({ message: "Page" })}
       scrollRef={scroll}
       onError={onError}
       overlay={(index) => (

@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useLoadBalancedEnvironment } from "../../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjectEnvironments";
 import { useScratchProject } from "../../hooks/useScratchProject";
@@ -138,9 +139,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       toastManager.add({
         type: "warning",
         id: "load-balancing-attachments",
-        title: "Keep attachments on this machine",
-        description:
-          "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+        title: t({ message: "Keep attachments on this machine" }),
+        description: t({
+          message:
+            "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+        }),
       });
       return;
     }
@@ -157,12 +160,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
   const autoEnvironmentLabel = automaticEnvironment
     ? draftThread?.loadBalancedEnvironmentId
-      ? "Auto balance"
+      ? t({ message: "Auto balance" })
       : loadBalancing.pending
-        ? "Checking machines…"
+        ? t({ message: "Checking machines…" })
         : loadBalancing.failed
-          ? "Auto balance unavailable"
-          : "Auto balance"
+          ? t({ message: "Auto balance unavailable" })
+          : t({ message: "Auto balance" })
     : undefined;
 
   // A change in flight belongs to the draft and project it started on.

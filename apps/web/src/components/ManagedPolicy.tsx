@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { ManagedPolicySummary } from "@t3tools/contracts";
 import { BuildingIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -50,22 +51,24 @@ export function ManagedNotice({ children }: { children: ReactNode }) {
 
 /** "This environment is managed by <organization>", linking the support page when there is one. */
 export function ManagedByOrganization({ policy }: { policy: ManagedPolicySummary }) {
+  const policySupportUrlText = policy.supportUrl ? (
+    <>
+      {" "}
+      <a
+        href={policy.supportUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="text-foreground underline underline-offset-2"
+      >
+        <Trans>Get help</Trans>
+      </a>
+    </>
+  ) : null;
   return (
     <ManagedNotice>
-      This environment is managed by {policy.organization}.
-      {policy.supportUrl ? (
-        <>
-          {" "}
-          <a
-            href={policy.supportUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-foreground underline underline-offset-2"
-          >
-            Get help
-          </a>
-        </>
-      ) : null}
+      <Trans>
+        This environment is managed by {policy.organization}.{policySupportUrlText}
+      </Trans>
     </ManagedNotice>
   );
 }

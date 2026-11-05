@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
@@ -64,17 +66,23 @@ export function LinkedEnvironmentsSettings({
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
-      title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
+      title={environmentLabel === null ? search.title : t`${search.title} · ${environmentLabel}`}
       headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
     >
       {links.error ? (
-        <SettingsRow title="Could not load linked environments" description={links.error} />
+        <SettingsRow
+          title={t({ message: "Could not load linked environments" })}
+          description={links.error}
+        />
       ) : !links.data ? (
-        <SettingsRow title="Loading linked environments…" role="status" />
+        <SettingsRow title={t({ message: "Loading linked environments…" })} role="status" />
       ) : links.data.links.length === 0 ? (
         <SettingsRow
-          title="No linked environments"
-          description="Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there."
+          title={t({ message: "No linked environments" })}
+          description={t({
+            message:
+              "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there.",
+          })}
         />
       ) : (
         links.data.links.map((link) => (
@@ -98,7 +106,9 @@ function LinkedEnvironmentRow({
 }) {
   const nowMinute = useNowMinute();
   const health = peerLinkHealth(link, DateTime.makeUnsafe(nowMinute));
-  const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: "unlink environment" });
+  const unlink = useAtomCommand(peerLinkEnvironment.unlink, {
+    label: t({ message: "unlink environment" }),
+  });
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
   const [busy, setBusy] = useState(false);
   const forget = async () => {
@@ -157,7 +167,7 @@ function LinkedEnvironmentRow({
               disabled={busy}
               onClick={() => void forget()}
             >
-              {busy ? "Forgetting…" : "Forget"}
+              {busy ? <Trans>Forgetting…</Trans> : <Trans>Forget</Trans>}
             </Button>
           </div>
         ) : null}
@@ -180,7 +190,9 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
   // Enter then a click can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
   const formId = useId();
-  const link = useAtomCommand(peerLinkEnvironment.link, { label: "link environment" });
+  const link = useAtomCommand(peerLinkEnvironment.link, {
+    label: t({ message: "link environment" }),
+  });
   const selected = choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
   const machine = machines.find((candidate) => candidate.environmentId === selected) ?? null;
   // This client can mint a code there when it is connected to that
@@ -240,7 +252,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
     setBusy(false);
     if (result === null) return;
     if (result._tag === "Success") {
-      toastManager.add({ type: "success", title: `Linked ${result.value.label}` });
+      toastManager.add({ type: "success", title: t`Linked ${result.value.label}` });
       handleOpenChange(false);
     } else if (!isAtomCommandInterrupted(result)) {
       failureToast("Could not link the environment", String(squashAtomCommandFailure(result)));
@@ -258,16 +270,20 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
         render={
           <Button size="xs" variant="default">
             <PlusIcon className="size-3" />
-            Link
+            <Trans>Link</Trans>
           </Button>
         }
       />
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Link an environment</DialogTitle>
+          <DialogTitle>
+            <Trans>Link an environment</Trans>
+          </DialogTitle>
           <DialogDescription>
-            Agents here can then launch, message and wait on threads there. It appears in that
-            environment's Connections, where it can be revoked.
+            <Trans>
+              Agents here can then launch, message and wait on threads there. It appears in that
+              environment's Connections, where it can be revoked.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -290,12 +306,14 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
             ) : null}
             {machine?.linked ? (
               <p className="text-xs text-muted-foreground">
-                Already linked. Linking again renews it with the access you pick.
+                <Trans>Already linked. Linking again renews it with the access you pick.</Trans>
               </p>
             ) : null}
             {needsAddress ? (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">Address</span>
+                <span className="block text-xs font-medium text-foreground">
+                  <Trans>Address</Trans>
+                </span>
                 <Input
                   value={address}
                   onChange={(event) => {
@@ -311,22 +329,26 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                 />
                 {machine !== null ? (
                   <span className="block text-xs text-muted-foreground">
-                    This app has no address for {machine.label} that another machine can reach.
-                    Enter its https or Tailscale address.
+                    <Trans>
+                      This app has no address for {machine.label} that another machine can reach.
+                      Enter its https or Tailscale address.
+                    </Trans>
                   </span>
                 ) : null}
               </label>
             ) : null}
             {selected === null || canMint ? null : (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">Pairing code</span>
+                <span className="block text-xs font-medium text-foreground">
+                  <Trans>Pairing code</Trans>
+                </span>
                 <Input
                   value={pairingCode}
                   onChange={(event) => setPairingCode(event.target.value)}
                   placeholder={
                     machine === null
-                      ? "From that environment's Connections, or t3 pair there"
-                      : "Paste the code"
+                      ? t({ message: "From that environment's Connections, or t3 pair there" })
+                      : t({ message: "Paste the code" })
                   }
                   disabled={busy}
                   autoComplete="one-time-code"
@@ -335,8 +357,10 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                 />
                 {machine !== null ? (
                   <span className="block text-xs text-muted-foreground">
-                    Create a link on {machine.label}: Settings → Connections → Create link, then
-                    paste its code here.
+                    <Trans>
+                      Create a link on {machine.label}: Settings → Connections → Create link, then
+                      paste its code here.
+                    </Trans>
                   </span>
                 ) : null}
               </label>
@@ -346,10 +370,10 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
         </DialogPanel>
         <DialogFooter variant="bare">
           <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
-            Cancel
+            <Trans>Cancel</Trans>
           </DialogClose>
           <Button form={formId} type="submit" disabled={busy || !ready}>
-            {busy ? "Linking…" : "Link"}
+            {busy ? <Trans>Linking…</Trans> : <Trans>Link</Trans>}
           </Button>
         </DialogFooter>
       </DialogPopup>

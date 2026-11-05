@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { UsageTokenTotals } from "@t3tools/contracts";
 import {
   isModelCostUnknown,
@@ -47,11 +48,15 @@ const TYPE_COLORS = {
 
 export function costTypeSegments(cost: CategoryCost): readonly ShareSegment[] {
   return [
-    { label: "Input", value: cost.input, color: TYPE_COLORS.input },
-    { label: "Cache read", value: cost.cacheRead, color: TYPE_COLORS.cacheRead },
-    { label: "Cache write", value: cost.cacheWrite, color: TYPE_COLORS.cacheWrite },
-    { label: "Output", value: cost.output, color: TYPE_COLORS.output },
-    { label: "Other", value: cost.unsplit >= 0.005 ? cost.unsplit : 0, color: TYPE_COLORS.other },
+    { label: t({ message: "Input" }), value: cost.input, color: TYPE_COLORS.input },
+    { label: t({ message: "Cache read" }), value: cost.cacheRead, color: TYPE_COLORS.cacheRead },
+    { label: t({ message: "Cache write" }), value: cost.cacheWrite, color: TYPE_COLORS.cacheWrite },
+    { label: t({ message: "Output" }), value: cost.output, color: TYPE_COLORS.output },
+    {
+      label: t({ message: "Other" }),
+      value: cost.unsplit >= 0.005 ? cost.unsplit : 0,
+      color: TYPE_COLORS.other,
+    },
   ];
 }
 
@@ -59,17 +64,25 @@ export function tokenTypeSegments(
   tokens: Omit<UsageTokenTotals, "reasoningTokens">,
 ): readonly ShareSegment[] {
   return [
-    { label: "Input", value: tokens.uncachedInputTokens, color: TYPE_COLORS.input },
-    { label: "Cache read", value: tokens.cachedInputTokens, color: TYPE_COLORS.cacheRead },
-    { label: "Cache write", value: tokens.cacheCreationTokens, color: TYPE_COLORS.cacheWrite },
-    { label: "Output", value: tokens.outputTokens, color: TYPE_COLORS.output },
+    { label: t({ message: "Input" }), value: tokens.uncachedInputTokens, color: TYPE_COLORS.input },
+    {
+      label: t({ message: "Cache read" }),
+      value: tokens.cachedInputTokens,
+      color: TYPE_COLORS.cacheRead,
+    },
+    {
+      label: t({ message: "Cache write" }),
+      value: tokens.cacheCreationTokens,
+      color: TYPE_COLORS.cacheWrite,
+    },
+    { label: t({ message: "Output" }), value: tokens.outputTokens, color: TYPE_COLORS.output },
   ];
 }
 
 export function speedCostSegments(cost: SpeedCost): readonly ShareSegment[] {
   return [
-    { label: "Standard", value: cost.standard, color: ink(34) },
-    { label: "Fast", value: cost.fast, color: ink(66) },
-    { label: "Ultrafast", value: cost.ultrafast, color: ink(100) },
+    { label: t({ message: "Standard" }), value: cost.standard, color: ink(34) },
+    { label: t({ message: "Fast" }), value: cost.fast, color: ink(66) },
+    { label: t({ message: "Ultrafast" }), value: cost.ultrafast, color: ink(100) },
   ];
 }

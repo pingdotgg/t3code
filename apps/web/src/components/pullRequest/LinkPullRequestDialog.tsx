@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   pullRequestLinkProject,
@@ -123,16 +125,20 @@ function LinkPullRequestDialog({
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
       <DialogPopup className="max-w-xl" initialFocus={inputRef}>
         <DialogHeader>
-          <DialogTitle>Link pull request</DialogTitle>
+          <DialogTitle>
+            <Trans>Link pull request</Trans>
+          </DialogTitle>
           <DialogDescription>
-            Attach a pull request to this thread by its URL, or by its number for this thread's
-            repository.
+            <Trans>
+              Attach a pull request to this thread by its URL, or by its number for this thread's
+              repository.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <Input
             ref={inputRef}
-            placeholder="Pull request URL or #42"
+            placeholder={t({ message: "Pull request URL or #42" })}
             value={reference}
             onChange={(event) => {
               setDirty(true);
@@ -161,7 +167,7 @@ function LinkPullRequestDialog({
             onClick={() => onOpenChange(false)}
             disabled={pending}
           >
-            Cancel
+            <Trans>Cancel</Trans>
           </Button>
           <Button
             type="button"
@@ -169,7 +175,7 @@ function LinkPullRequestDialog({
             onClick={() => void submit()}
             disabled={pending || resolved === null || "error" in resolved}
           >
-            {pending ? "Linking..." : "Link"}
+            {pending ? <Trans>Linking...</Trans> : <Trans>Link</Trans>}
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 
@@ -29,7 +31,7 @@ export function GuideRail({
           <>
             {stop.attention !== null ? (
               <Badge size="sm" variant="warning">
-                Look closely
+                <Trans>Look closely</Trans>
               </Badge>
             ) : null}
             <span>{stopSubline(stop)}</span>
@@ -40,9 +42,11 @@ export function GuideRail({
   );
 
   return (
-    <nav aria-label="Review tour" className="flex min-h-0 flex-col gap-4">
+    <nav aria-label={t({ message: "Review tour" })} className="flex min-h-0 flex-col gap-4">
       <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
-        {reviewed} of {stops.length} read
+        <Trans>
+          {reviewed} of {stops.length} read
+        </Trans>
       </p>
       <div className="flex flex-col gap-4">
         <ol className="flex flex-col gap-0.5">{stops.map(renderStop)}</ol>

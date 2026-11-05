@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -188,10 +190,10 @@ function ConfiguredConnectOnboardingDialog() {
     if (!ok) return;
     toastManager.add({
       type: "success",
-      title: "T3 Connect enabled",
+      title: t({ message: "T3 Connect enabled" }),
       description: exposeEnvironment
-        ? "This environment is available to your other devices through T3 Connect."
-        : "This environment publishes agent activity to your mobile clients.",
+        ? t({ message: "This environment is available to your other devices through T3 Connect." })
+        : t({ message: "This environment publishes agent activity to your mobile clients." }),
     });
     setStep("devices");
   };
@@ -214,11 +216,13 @@ function ConfiguredConnectOnboardingDialog() {
     >
       <WizardPopup>
         <WizardHeader
-          title="Set up T3 Connect"
+          title={t({ message: "Set up T3 Connect" })}
           description={
             <>
-              Mesh your devices together. Publish this environment and connect the rest, all in one
-              place.
+              <Trans>
+                Mesh your devices together. Publish this environment and connect the rest, all in
+                one place.
+              </Trans>
             </>
           }
         >
@@ -278,25 +282,25 @@ function ConfiguredConnectOnboardingDialog() {
                 checked={dontShowAgain}
                 onCheckedChange={(checked) => setDontShowAgain(checked === true)}
               />
-              Don&apos;t show this again
+              <Trans>Don&apos;t show this again</Trans>
             </label>
           }
         >
           {step === "publish" ? (
             <>
               <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                Not now
+                <Trans>Not now</Trans>
               </Button>
               <Button
                 disabled={isApplying || !canManageRelay || linkStateData === null}
                 onClick={() => void applyPublishSelection()}
               >
-                {isApplying ? "Enabling…" : "Continue"}
+                {isApplying ? <Trans>Enabling…</Trans> : <Trans>Continue</Trans>}
               </Button>
             </>
           ) : (
             <Button disabled={isApplying} onClick={complete}>
-              Done
+              <Trans>Done</Trans>
             </Button>
           )}
         </WizardFooter>
@@ -308,8 +312,12 @@ function ConfiguredConnectOnboardingDialog() {
 }
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: "Publish",
-  devices: "Connect devices",
+  get publish() {
+    return t({ message: "Publish" });
+  },
+  get devices() {
+    return t({ message: "Connect devices" });
+  },
 };
 
 function PublishStep({
@@ -335,15 +343,20 @@ function PublishStep({
     <div className="space-y-3">
       <div className="rounded-lg border">
         <OnboardingToggleRow
-          title="Publish this environment"
-          description="Make this environment available to your other devices through T3 Connect."
+          title={t({ message: "Publish this environment" })}
+          description={t({
+            message: "Make this environment available to your other devices through T3 Connect.",
+          })}
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}
         />
         <OnboardingToggleRow
-          title="Publish agent activity"
-          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
+          title={t({ message: "Publish agent activity" })}
+          description={t({
+            message:
+              "Send activity from this environment to your mobile clients for push notifications and Live Activities.",
+          })}
           checked={publishAgentActivity}
           disabled={disabled}
           onCheckedChange={onPublishAgentActivityChange}
@@ -416,8 +429,10 @@ function DevicesStep() {
         showSavedEnvironments
         empty={
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-            No other environments are published to your account yet. Publish one from another device
-            and it will show up here.
+            <Trans>
+              No other environments are published to your account yet. Publish one from another
+              device and it will show up here.
+            </Trans>
           </p>
         }
       />

@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { InfoIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -150,7 +151,7 @@ export function NoticeText({
             <InfoIcon />
           </PopoverTrigger>
           <PopoverPopup
-            aria-label="Notice details"
+            aria-label={t({ message: "Notice details" })}
             tooltipStyle
             side="top"
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
@@ -211,7 +212,7 @@ function NoticeCard({
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss
-                aria-label={item.dismissLabel ?? "Dismiss warning"}
+                aria-label={item.dismissLabel ?? t({ message: "Dismiss warning" })}
                 onClick={item.onDismiss}
               />
             ) : null}

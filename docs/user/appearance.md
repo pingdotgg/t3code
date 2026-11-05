@@ -1,5 +1,17 @@
 # Appearance and themes
 
+## Interface language
+
+On web and desktop, open **Settings → Appearance → Language** to choose English,
+German, French, Spanish, or Simplified Chinese. Select **Apply and reload** to use the language.
+Save unfinished work before reloading. The choice is stored on this device and
+requires local storage. English is used until you choose another language.
+
+Translation coverage varies by language. Text that has not been translated yet
+appears in English. Native desktop menus and the mobile app still use English.
+
+## Themes
+
 On web and desktop, open **Settings → Appearance** to choose a theme and follow the system
 appearance or stay in light or dark mode. To use different themes for light and dark mode, select
 the corresponding preview within each theme. Appearance preferences are saved separately on each

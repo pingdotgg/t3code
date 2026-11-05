@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
+import { palamedes } from "@palamedes/vite-plugin";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
 import { playwright } from "vite-plus/test/browser-playwright";
@@ -83,11 +84,14 @@ const unitTestProject = {
   extends: true,
   test: {
     name: "unit",
+    // Palamedes sidecar registration must run even when Vitest has cached a transform.
+    fsModuleCache: false,
     include: ["src/**/*.test.{ts,tsx}"],
     exclude: ["src/**/*.browser.test.{ts,tsx}"],
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: [
+      "./test/i18nSetup.ts",
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",
     ],
@@ -280,12 +284,18 @@ export default defineConfig(() => {
             ],
           }),
       tanstackRouter({ autoCodeSplitting: true }),
+      palamedes(),
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
       warmBundledDevPlugin(),
     ],
     optimizeDeps: {
       include: [
+        "@palamedes/core",
+        "@palamedes/core/compiled",
+        "@palamedes/react/compiled",
+        "@palamedes/runtime",
+        "@palamedes/runtime/internal",
         "@clerk/clerk-js",
         "@clerk/react/internal",
         "@pierre/diffs",

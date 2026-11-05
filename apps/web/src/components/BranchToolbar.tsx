@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { readLocalApi } from "../localApi";
@@ -109,7 +111,7 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
   event.preventDefault();
   event.stopPropagation();
   void api.contextMenu
-    .show([{ id: "copy-path", label: "Copy full path", icon: "copy" }], {
+    .show([{ id: "copy-path", label: t({ message: "Copy full path" }), icon: "copy" }], {
       x: event.clientX,
       y: event.clientY,
     })
@@ -121,7 +123,7 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
           if (didCopy) {
             toastManager.add({
               type: "success",
-              title: "Path copied",
+              title: t({ message: "Path copied" }),
               description: clipboardPath,
             });
           }
@@ -130,8 +132,9 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to copy path",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: t({ message: "Failed to copy path" }),
+              description:
+                error instanceof Error ? error.message : t({ message: "An error occurred." }),
             }),
           );
         },
@@ -217,11 +220,15 @@ const RunContextSelector = memo(function RunContextSelector({
         <WorkspaceIcon className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"} />
       </TooltipTrigger>
       <TooltipPopup>
-        {isPanel
-          ? forceNewWorktree
-            ? "Each model starts in its own worktree."
-            : (workspacePath ?? workspaceLabel)
-          : workspaceLabel}
+        {isPanel ? (
+          forceNewWorktree ? (
+            <Trans>Each model starts in its own worktree.</Trans>
+          ) : (
+            (workspacePath ?? workspaceLabel)
+          )
+        ) : (
+          workspaceLabel
+        )}
       </TooltipPopup>
     </Tooltip>
   );
@@ -243,7 +250,9 @@ const RunContextSelector = memo(function RunContextSelector({
           />
         )}
       </TooltipTrigger>
-      <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+      <TooltipPopup>
+        {autoEnvironmentLabel ?? activeEnvironment?.label ?? <Trans>Run on</Trans>}
+      </TooltipPopup>
     </Tooltip>
   );
   const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
@@ -260,6 +269,11 @@ const RunContextSelector = memo(function RunContextSelector({
   );
 
   if (isLocked) {
+    const autoEnvironmentLabelActiveEnvironmentLabelWorkspaceLabelFilterBooleanJoinText = isPanel
+      ? [autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel]
+          .filter(Boolean)
+          .join(", ")
+      : undefined;
     return (
       <span
         className={cn(
@@ -270,7 +284,7 @@ const RunContextSelector = memo(function RunContextSelector({
         onContextMenu={handleContextMenu}
         aria-label={
           isPanel
-            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
+            ? t`Run context: ${autoEnvironmentLabelActiveEnvironmentLabelWorkspaceLabelFilterBooleanJoinText}`
             : undefined
         }
         data-composer-context-control
@@ -280,6 +294,9 @@ const RunContextSelector = memo(function RunContextSelector({
     );
   }
 
+  const autoEnvironmentLabelActiveEnvironmentLabelWorkspaceLabelFilterBooleanJoinText2 = isPanel
+    ? [autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")
+    : undefined;
   return (
     <Menu>
       <MenuTrigger
@@ -295,7 +312,7 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         aria-label={
           isPanel
-            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
+            ? t`Run context: ${autoEnvironmentLabelActiveEnvironmentLabelWorkspaceLabelFilterBooleanJoinText2}`
             : undefined
         }
         data-composer-context-control
@@ -322,7 +339,9 @@ const RunContextSelector = memo(function RunContextSelector({
         ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0) ? (
           <>
             <MenuGroup>
-              <MenuGroupLabel>Run on</MenuGroupLabel>
+              <MenuGroupLabel>
+                <Trans>Run on</Trans>
+              </MenuGroupLabel>
               <MenuRadioGroup
                 value={autoEnvironmentLabel ? "auto" : environmentId}
                 onValueChange={(value) =>
@@ -343,7 +362,7 @@ const RunContextSelector = memo(function RunContextSelector({
                     <span className="flex min-w-0 items-center gap-1.5">
                       <ScaleIcon className="size-3" aria-hidden="true" />
                       <span className="min-w-0 truncate">
-                        {autoEnvironmentLabel ?? "Auto balance"}
+                        {autoEnvironmentLabel ?? <Trans>Auto balance</Trans>}
                       </span>
                     </span>
                   </MenuRadioItem>
@@ -369,7 +388,9 @@ const RunContextSelector = memo(function RunContextSelector({
                   <MenuSubTrigger>
                     <span className={ADD_TO_MACHINE_LABEL_CLASS}>
                       <PlusIcon className="size-3" />
-                      <span className="min-w-0 truncate">Add to another machine</span>
+                      <span className="min-w-0 truncate">
+                        <Trans>Add to another machine</Trans>
+                      </span>
                     </span>
                   </MenuSubTrigger>
                   <MenuSubPopup {...(!isPanel ? composerFloatingLayerProps : {})}>
@@ -392,7 +413,9 @@ const RunContextSelector = memo(function RunContextSelector({
           </>
         ) : null}
         <MenuGroup>
-          <MenuGroupLabel>Workspace</MenuGroupLabel>
+          <MenuGroupLabel>
+            <Trans>Workspace</Trans>
+          </MenuGroupLabel>
           <MenuRadioGroup
             value={effectiveEnvMode}
             onValueChange={(value) => {

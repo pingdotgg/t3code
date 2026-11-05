@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type * as React from "react";
 import type {
   EnvironmentId,
@@ -45,7 +47,7 @@ function LazyChecksBody({
   if (detailQuery.data === null) {
     return (
       <p className="text-muted-foreground text-xs">
-        {detailQuery.isPending ? "Loading checks…" : "No checks reported"}
+        {detailQuery.isPending ? <Trans>Loading checks…</Trans> : <Trans>No checks reported</Trans>}
       </p>
     );
   }
@@ -66,7 +68,11 @@ function ChecksBody({
   const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
   const hasDetails = visibleChecks.some((check) => check.url !== null);
   if (checks.length === 0) {
-    return <p className="text-muted-foreground text-xs">No checks reported</p>;
+    return (
+      <p className="text-muted-foreground text-xs">
+        <Trans>No checks reported</Trans>
+      </p>
+    );
   }
   return (
     <>
@@ -101,11 +107,14 @@ function ChecksBody({
                       if (!check.url) return;
                       void openLink(check.url).catch((error: unknown) => {
                         console.error(error);
-                        toastManager.add({ type: "error", title: "Unable to open check details" });
+                        toastManager.add({
+                          type: "error",
+                          title: t({ message: "Unable to open check details" }),
+                        });
                       });
                     }}
                   >
-                    Details
+                    <Trans>Details</Trans>
                   </button>
                 )}
               </li>
@@ -120,7 +129,7 @@ function ChecksBody({
           aria-expanded={showAll}
           onClick={() => setShowAll(!showAll)}
         >
-          {showAll ? "Show less" : "Show all"}
+          {showAll ? <Trans>Show less</Trans> : <Trans>Show all</Trans>}
         </Button>
       ) : null}
     </>
@@ -156,14 +165,17 @@ export function PullRequestChecksPopover({
     checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
     0;
   const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
+  const summaryText = variant === "count" ? (summary ?? presentation.label) : undefined;
+  const checksLengthText =
+    variant === "count" && checks !== undefined && incompleteCount > 0
+      ? checks.length - incompleteCount
+      : undefined;
   return (
     <Popover>
       <PopoverTrigger
         nativeButton={variant === "count"}
         aria-label={
-          variant === "count"
-            ? `Open checks: ${summary ?? presentation.label}`
-            : `Checks: ${presentation.label}`
+          variant === "count" ? t`Open checks: ${summaryText}` : t`Checks: ${presentation.label}`
         }
         render={
           variant === "count" ? (
@@ -183,10 +195,14 @@ export function PullRequestChecksPopover({
           <>
             {checks !== undefined && incompleteCount > 0 ? (
               <span className="tabular-nums">
-                {checks.length - incompleteCount}/{checks.length} checks
+                <Trans>
+                  {checksLengthText}/{checks.length} checks
+                </Trans>
               </span>
             ) : failedCount > 0 ? (
-              <span className="tabular-nums">{failedCount} failed</span>
+              <span className="tabular-nums">
+                <Trans>{failedCount} failed</Trans>
+              </span>
             ) : null}
           </>
         ) : null}
@@ -196,7 +212,7 @@ export function PullRequestChecksPopover({
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {stale ? (
           <p className="text-muted-foreground text-xs">
-            Check details are out of date. Refresh the pull request to update them.
+            <Trans>Check details are out of date. Refresh the pull request to update them.</Trans>
           </p>
         ) : checks !== undefined ? (
           <ChecksBody checks={checks} threadRef={threadRef} />

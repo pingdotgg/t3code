@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { EnvironmentId, OrchestrationV2ThreadTranscript } from "@t3tools/contracts";
 import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
@@ -12,7 +13,8 @@ export function threadContextAttachment(
     "thread",
     `${environmentId}:${transcript.threadId}:${updatedAt}`,
   );
-  const title = transcript.title.replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 64) || "Thread";
+  const title =
+    transcript.title.replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 64) || t({ message: "Thread" });
   return new File(
     [
       threadTranscriptHeader(environmentId, transcript),

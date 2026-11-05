@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -29,20 +31,22 @@ export function PreviewFileNotShown({
       <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-8 py-12 sm:py-16">
         <ErrorIcon className="mb-6 size-12 text-muted-foreground/70" />
         <h1 className="mb-3 text-2xl font-semibold leading-tight text-foreground">
-          This file can&rsquo;t be shown here
+          <Trans>This file can&rsquo;t be shown here</Trans>
         </h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          <span className="font-semibold text-foreground">{fileName}</span> from {host} was
-          downloaded instead.
+          <Trans>
+            <span className="font-semibold text-foreground">{fileName}</span> from {host} was
+            downloaded instead.
+          </Trans>
         </p>
         <div className="mt-auto flex items-center gap-2 pt-8">
           <div className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={onOpen}>
-            Open in browser
+            <Trans>Open in browser</Trans>
           </Button>
           {downloadUrl ? (
             <Button type="button" size="sm" render={<a href={downloadUrl} download={fileName} />}>
-              Download
+              <Trans>Download</Trans>
             </Button>
           ) : null}
         </div>
@@ -55,14 +59,15 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
   const [showDetails, setShowDetails] = useState(false);
   const host = safeHost(url) ?? url;
   const friendly = describePreviewError(description);
-  const errorLabel = description.length > 0 ? description : `ERR_${Math.abs(code) || "FAILED"}`;
+  const MathAbsCodeText = !(description.length > 0) ? Math.abs(code) || "FAILED" : undefined;
+  const errorLabel = description.length > 0 ? description : t`ERR_${MathAbsCodeText}`;
 
   return (
     <div className="scrollbar-gutter-both relative flex h-full min-h-0 w-full overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-8 py-12 sm:py-16">
         <ErrorIcon className="mb-6 size-12 text-muted-foreground/70" />
         <h1 className="mb-3 text-2xl font-semibold leading-tight text-foreground">
-          This site can&rsquo;t be reached
+          <Trans>This site can&rsquo;t be reached</Trans>
         </h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
           <span className="font-semibold text-foreground">{host}</span>: {friendly}.
@@ -70,14 +75,26 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
 
         {showDetails ? (
           <div className="mt-6 rounded-lg border border-border bg-muted/40 p-4 text-sm">
-            <p className="mb-2 font-medium text-foreground">Try:</p>
+            <p className="mb-2 font-medium text-foreground">
+              <Trans>Try:</Trans>
+            </p>
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-              <li>Checking your connection</li>
-              <li>Confirming the dev server is running</li>
+              <li>
+                <Trans>Checking your connection</Trans>
+              </li>
+              <li>
+                <Trans>Confirming the dev server is running</Trans>
+              </li>
               {move ? (
-                <li>Opening it in the environment&rsquo;s browser, which reaches its network</li>
+                <li>
+                  <Trans>
+                    Opening it in the environment&rsquo;s browser, which reaches its network
+                  </Trans>
+                </li>
               ) : null}
-              <li>Checking the proxy and the firewall</li>
+              <li>
+                <Trans>Checking the proxy and the firewall</Trans>
+              </li>
             </ul>
           </div>
         ) : null}
@@ -93,7 +110,7 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
             size="sm"
             onClick={() => setShowDetails((value) => !value)}
           >
-            {showDetails ? "Hide details" : "Details"}
+            {showDetails ? <Trans>Hide details</Trans> : <Trans>Details</Trans>}
           </Button>
           <div className="flex-1" />
           {move ? (
@@ -102,7 +119,7 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
             </Button>
           ) : null}
           <Button type="button" size="sm" onClick={onReload}>
-            Reload
+            <Trans>Reload</Trans>
           </Button>
         </div>
       </div>

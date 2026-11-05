@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type {
   DiffLineAnnotation,
   FileDiffContentsLoader,
@@ -165,16 +167,18 @@ export function GuideExcerpt({
         />
       ) : loading ? (
         <p className="rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
-          Loading {excerpt.path}...
+          <Trans>Loading {excerpt.path}...</Trans>
         </p>
       ) : (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
           <span className="min-w-0 truncate">
-            <span className="font-mono text-foreground">{excerpt.path}</span> lines {excerpt.start}-
-            {excerpt.end} are not in the loaded diff.
+            <Trans>
+              <span className="font-mono text-foreground">{excerpt.path}</span> lines{" "}
+              {excerpt.start}-{excerpt.end} are not in the loaded diff.
+            </Trans>
           </span>
           <Button size="xs" variant="outline" onClick={() => onOpenFile(excerpt.path)}>
-            Open in Code
+            <Trans>Open in Code</Trans>
           </Button>
         </div>
       )}
@@ -324,13 +328,15 @@ function ExcerptDiff({
                 rangeLabel={`${excerpt.path}:${getReviewPositionAnchor(draft.position).line}`}
                 text=""
                 placeholder={
-                  commenting.canComment ? "Add a comment…" : "Ask the agent about these lines…"
+                  commenting.canComment
+                    ? t({ message: "Add a comment…" })
+                    : t({ message: "Ask the agent about these lines…" })
                 }
                 submitLabel={commenting.canComment ? "Add to review" : "Ask agent"}
                 {...(commenting.canComment && onAskAgent !== null
                   ? {
                       secondaryAction: {
-                        label: "Ask agent",
+                        label: t({ message: "Ask agent" }),
                         onAction: (text: string) => askAgent(text),
                       },
                     }
@@ -354,22 +360,26 @@ function ExcerptDiff({
             ) : null}
           </div>
         )}
-        renderHeaderMetadata={() => (
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="tabular-nums">
-              {excerpt.side === "old" ? "removed code, " : ""}showing {slice.shown} of {slice.total}{" "}
-              diff lines
+        renderHeaderMetadata={() => {
+          const excerptSideOldText = excerpt.side === "old" ? "removed code, " : "";
+          return (
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="tabular-nums">
+                <Trans>
+                  {excerptSideOldText}showing {slice.shown} of {slice.total} diff lines
+                </Trans>
+              </span>
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={`Open ${excerpt.path} in Code`}
+                onClick={() => onOpenFile(excerpt.path)}
+              >
+                <ArrowUpRightIcon aria-hidden />
+              </Button>
             </span>
-            <Button
-              size="icon-xs"
-              variant="ghost-muted"
-              aria-label={`Open ${excerpt.path} in Code`}
-              onClick={() => onOpenFile(excerpt.path)}
-            >
-              <ArrowUpRightIcon aria-hidden />
-            </Button>
-          </span>
-        )}
+          );
+        }}
       />
     </div>
   );

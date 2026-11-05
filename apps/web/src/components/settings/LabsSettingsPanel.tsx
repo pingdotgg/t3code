@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
@@ -18,7 +20,7 @@ import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPoli
 export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
-      <SettingsSection id="beta" title="Beta">
+      <SettingsSection id="beta" title={t({ message: "Beta" })}>
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
@@ -37,7 +39,10 @@ function BoringSidebarRow() {
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar")}
-      description="Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders."
+      description={t({
+        message:
+          "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+      })}
       control={
         <Switch
           checked={settings.boringSidebarEnabled || settings.legacySidebarEnabled}
@@ -45,7 +50,7 @@ function BoringSidebarRow() {
           onCheckedChange={(checked) =>
             updateSettings({ boringSidebarEnabled: Boolean(checked), legacySidebarEnabled: false })
           }
-          aria-label="Boring sidebar (group by project)"
+          aria-label={t({ message: "Boring sidebar (group by project)" })}
         />
       }
     />
@@ -58,14 +63,17 @@ function BoringSidebarMultilineRow() {
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
-      description="In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent."
+      description={t({
+        message:
+          "In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent.",
+      })}
       control={
         <Switch
           checked={settings.boringSidebarMultilineRows}
           onCheckedChange={(checked) =>
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
-          aria-label="Two-line folder rows"
+          aria-label={t({ message: "Two-line folder rows" })}
         />
       }
     />
@@ -81,10 +89,13 @@ function GuestLinksRowWithSignIn() {
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links."
+      description={t({
+        message:
+          "Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
+      })}
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-          Sign in
+          <Trans>Sign in</Trans>
         </Button>
       }
     />
@@ -112,12 +123,14 @@ function GuestLinksRow() {
       managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
-          Share a thread with a guest who watches it live in their browser and sends messages you
-          approve. Needs T3 Connect: sign in and link this machine in{" "}
-          <Link to="/settings/access" className="underline underline-offset-2">
-            Sharing & access
-          </Link>
-          . While it is off, every guest link stops working.
+          <Trans>
+            Share a thread with a guest who watches it live in their browser and sends messages you
+            approve. Needs T3 Connect: sign in and link this machine in{" "}
+            <Link to="/settings/access" className="underline underline-offset-2">
+              Sharing & access
+            </Link>
+            . While it is off, every guest link stops working.
+          </Trans>
         </>
       }
       control={
@@ -125,7 +138,7 @@ function GuestLinksRow() {
           settingKeys={["guestSharingEnabled"]}
           checked={settings.guestSharingEnabled}
           onCheckedChange={(checked) => updateSettings({ guestSharingEnabled: Boolean(checked) })}
-          aria-label="Guest links"
+          aria-label={t({ message: "Guest links" })}
         />
       }
     />
@@ -142,12 +155,14 @@ function LinkedEnvironmentsRow() {
       settingKeys={["linkedEnvironmentsEnabled"]}
       description={
         <>
-          Let agents here work on your other machines, and theirs here. Turn it on for each machine,
-          then link them in{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
-          </Link>
-          . While it is off, nothing new starts over a link; tasks already running finish.
+          <Trans>
+            Let agents here work on your other machines, and theirs here. Turn it on for each
+            machine, then link them in{" "}
+            <Link to="/settings/connections" className="underline underline-offset-2">
+              Connections
+            </Link>
+            . While it is off, nothing new starts over a link; tasks already running finish.
+          </Trans>
         </>
       }
       control={
@@ -157,7 +172,7 @@ function LinkedEnvironmentsRow() {
           onCheckedChange={(checked) =>
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
-          aria-label="Linked environments"
+          aria-label={t({ message: "Linked environments" })}
         />
       }
     />
@@ -174,20 +189,22 @@ function SimlockHostsRow() {
       settingKeys={["simlockDeviceHostsEnabled"]}
       description={
         <>
-          Let the Device panel lease simulators and emulators from your own{" "}
-          <a
-            href="https://incubator.callstack.com/simlock/"
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-2"
-          >
-            Simlock
-          </a>{" "}
-          pool, added in{" "}
-          <Link to="/settings/devices" className="underline underline-offset-2">
-            Devices
-          </Link>
-          . An alpha that may change or break. T3 Code never installs Simlock.
+          <Trans>
+            Let the Device panel lease simulators and emulators from your own{" "}
+            <a
+              href="https://incubator.callstack.com/simlock/"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              Simlock
+            </a>{" "}
+            pool, added in{" "}
+            <Link to="/settings/devices" className="underline underline-offset-2">
+              Devices
+            </Link>
+            . An alpha that may change or break. T3 Code never installs Simlock.
+          </Trans>
         </>
       }
       control={
@@ -197,7 +214,7 @@ function SimlockHostsRow() {
           onCheckedChange={(checked) =>
             updateSettings({ simlockDeviceHostsEnabled: Boolean(checked) })
           }
-          aria-label="Simlock device hosts"
+          aria-label={t({ message: "Simlock device hosts" })}
         />
       }
     />

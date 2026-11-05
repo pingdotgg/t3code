@@ -7,6 +7,7 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { isValidElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -125,7 +126,8 @@ function findAction(node: ReactNode, label: string): (() => unknown) | null {
     return null;
   }
   if (!isValidElement<{ children?: ReactNode; onClick?: () => unknown }>(node)) return null;
-  if (node.props.children === label) return node.props.onClick ?? null;
+  if (node.props.onClick && renderToStaticMarkup(node.props.children) === label)
+    return node.props.onClick;
   return findAction(node.props.children, label);
 }
 

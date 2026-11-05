@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useState } from "react";
 
 import { MermaidDiagram } from "../chat/MermaidDiagram";
@@ -15,8 +16,10 @@ export default function MermaidViewer(props: { readonly text: string }) {
   )
     return (
       <div role="alert" className="p-6 text-xs text-muted-foreground">
-        This diagram contains resource URLs, markup, node metadata, or custom configuration. Show
-        Mermaid source to inspect it safely.
+        <Trans>
+          This diagram contains resource URLs, markup, node metadata, or custom configuration. Show
+          Mermaid source to inspect it safely.
+        </Trans>
       </div>
     );
   return (

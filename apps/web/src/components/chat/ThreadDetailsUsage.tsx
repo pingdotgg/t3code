@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type {
   ProviderInstanceId,
   ServerProvider,
@@ -62,13 +64,13 @@ export function ThreadDetailsUsage({
   return (
     <ThreadDetailsSection
       headingId="thread-details-usage-heading"
-      title="Usage limits"
+      title={t({ message: "Usage limits" })}
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         {notice ? (
           <UsageRow
-            label="Limits"
+            label={t({ message: "Limits" })}
             fill={null}
             tone={null}
             value="Unavailable"
@@ -95,15 +97,19 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
       ? (threshold / maxTokens) * 100
       : null;
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  const usageUsedTokensToLocaleStringText =
+    maxTokens !== null ? usage.usedTokens.toLocaleString("en-US") : undefined;
+  const maxTokensToLocaleStringText =
+    maxTokens !== null ? maxTokens.toLocaleString("en-US") : undefined;
   return (
     <ThreadDetailsSection
       headingId="thread-details-context-heading"
-      title="Context window"
+      title={t({ message: "Context window" })}
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         <UsageRow
-          label="Context"
+          label={t({ message: "Context" })}
           fill={used}
           tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
           tick={tick}
@@ -117,12 +123,17 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
           tooltip={
             <>
               <span className="text-foreground">
-                {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
+                {used !== null ? (
+                  <Trans>Context: {used}% used</Trans>
+                ) : (
+                  <Trans>Context: {usedTokens} tokens used</Trans>
+                )}
               </span>
               {maxTokens !== null ? (
                 <span className="text-muted-foreground">
-                  {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                  tokens
+                  <Trans>
+                    {usageUsedTokensToLocaleStringText} of {maxTokensToLocaleStringText} tokens
+                  </Trans>
                 </span>
               ) : null}
               {threshold !== null && threshold > 0 ? (
@@ -149,6 +160,12 @@ function LimitRow({
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+  const formatDurationText =
+    window.resetsAt && resetsAt > now ? formatDuration(resetsAt - now) : undefined;
+  const formatUpcomingTimestampText =
+    window.resetsAt && resetsAt > now
+      ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
+      : undefined;
   return (
     <UsageRow
       label={window.label}
@@ -159,12 +176,15 @@ function LimitRow({
       tooltip={
         <>
           <span className="text-foreground">
-            {window.label}: {left}% left
+            <Trans>
+              {window.label}: {left}% left
+            </Trans>
           </span>
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">
-              Resets in {formatDuration(resetsAt - now)} ·{" "}
-              {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
+              <Trans>
+                Resets in {formatDurationText} · {formatUpcomingTimestampText}
+              </Trans>
             </span>
           ) : null}
           {pace ? <span className="text-muted-foreground">{PACE_LABEL[pace]}</span> : null}

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
@@ -332,7 +334,7 @@ export function BranchToolbarBranchSelector({
         if (!didCopy) return;
         toastManager.add({
           type: "success",
-          title: "Branch name copied",
+          title: t({ message: "Branch name copied" }),
           description: branchName,
         });
       },
@@ -340,7 +342,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to copy branch name",
+            title: t({ message: "Failed to copy branch name" }),
             description: toBranchActionErrorMessage(error),
           }),
         );
@@ -355,7 +357,7 @@ export function BranchToolbarBranchSelector({
     event.preventDefault();
     event.stopPropagation();
     const items: ContextMenuItem<"copy-branch-name">[] = [
-      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+      { id: "copy-branch-name", label: t({ message: "Copy branch name" }), icon: "copy" },
     ];
     void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
       if (action === "copy-branch-name") copyBranchName(branchName);
@@ -370,8 +372,8 @@ export function BranchToolbarBranchSelector({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Action unavailable",
-          description: "This connection cannot change the thread's branch.",
+          title: t({ message: "Action unavailable" }),
+          description: t({ message: "This connection cannot change the thread's branch." }),
         }),
       );
       return;
@@ -437,7 +439,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch ref.",
+            title: t({ message: "Failed to switch ref." }),
             description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
@@ -474,7 +476,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to create and switch ref.",
+            title: t({ message: "Failed to create and switch ref." }),
             description: toBranchActionErrorMessage(squashAtomCommandFailure(createBranchResult)),
           }),
         );
@@ -568,10 +570,12 @@ export function BranchToolbarBranchSelector({
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
-  const panelPrLabel =
-    prNumber === undefined
-      ? ""
-      : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
+  const displayedPrTitleTrimText = !(prNumber === undefined)
+    ? displayedPr?.title.trim()
+      ? `: ${displayedPr.title}`
+      : ""
+    : undefined;
+  const panelPrLabel = prNumber === undefined ? "" : t`#${prNumber}${displayedPrTitleTrimText}`;
 
   function selectPickerItem(itemValue: string) {
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
@@ -600,7 +604,7 @@ export function BranchToolbarBranchSelector({
             <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col items-start">
               <span className="truncate font-medium">
-                Checkout {sourceControlPresentation.terminology.singular}
+                <Trans>Checkout {sourceControlPresentation.terminology.singular}</Trans>
               </span>
               <span className="truncate text-muted-foreground text-xs">{prReference}</span>
             </span>
@@ -617,7 +621,9 @@ export function BranchToolbarBranchSelector({
           value={itemValue}
           onClick={() => selectPickerItem(itemValue)}
         >
-          <span className="truncate">Create new ref &quot;{newRefName}&quot;</span>
+          <span className="truncate">
+            <Trans>Create new ref &quot;{newRefName}&quot;</Trans>
+          </span>
         </ComboboxItem>
       );
     }

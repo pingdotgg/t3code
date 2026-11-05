@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -1175,11 +1176,11 @@ function deriveTurnFolds(input: {
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
       ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
+        ? t`You stopped after ${duration}`
+        : t({ message: "You stopped this response" })
       : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+        ? t`Worked for ${duration}`
+        : t({ message: "Worked" });
 
     // The top row keeps the whole turn's time, steers included. Work after a
     // steer folds under its own row below that steer, keyed apart from the run
@@ -1204,13 +1205,15 @@ function deriveTurnFolds(input: {
         entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
           steer.createdAt,
       );
+      const formatDurationText = segmentMs !== null ? formatDuration(segmentMs) : undefined;
       foldsByAnchorEntryId.set(anchorEntry.id, {
         runId: RunId.make(`${runId}:steer:${steer.id}`),
         anchorEntryId: anchorEntry.id,
         createdAt: steer.createdAt,
         hiddenEntryIds: segmentHiddenIds(entries),
         entryIds: new Set(entries.map((entry) => entry.id)),
-        label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
+        label:
+          segmentMs !== null ? t`Continued for ${formatDurationText}` : t({ message: "Continued" }),
       });
     }
   }
@@ -1740,7 +1743,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: supersededFold.createdAt,
         runId: supersededFold.runId,
         attemptId: supersededFold.attemptId,
-        label: "Superseded attempt",
+        label: t({ message: "Superseded attempt" }),
         expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
       });
     }
@@ -2014,8 +2017,8 @@ export function deriveMessagesTimelineRows(input: {
           label: pending
             ? reason
               ? IDLE_COMPACTING_LABELS[reason]
-              : "Compacting context"
-            : "Context compaction",
+              : t({ message: "Compacting context" })
+            : t({ message: "Context compaction" }),
           tokenCounts: null,
           active: pending,
         });

@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
@@ -77,15 +79,15 @@ export function ProjectFaviconPickerDialog(props: {
     <CommandDialog open={props.open} onOpenChange={props.onOpenChange}>
       {props.open ? (
         <CommandDialogPopup
-          aria-label="Choose project icon"
+          aria-label={t({ message: "Choose project icon" })}
           className="overflow-hidden"
           onBackdropPointerDown={() => props.onOpenChange(false)}
         >
           <CommandPaletteContent
-            aria-label="Choose project icon"
+            aria-label={t({ message: "Choose project icon" })}
             autoHighlight="always"
-            escapeLabel="Close"
-            footerActionLabel="Select icon"
+            escapeLabel={t({ message: "Close" })}
+            footerActionLabel={t({ message: "Select icon" })}
             footerTrailing={
               pickExternal ? (
                 <CommandFooterAction
@@ -101,19 +103,21 @@ export function ProjectFaviconPickerDialog(props: {
                       .catch((error: unknown) => {
                         toastManager.add({
                           type: "error",
-                          title: "Could not open image picker",
+                          title: t({ message: "Could not open image picker" }),
                           description:
-                            error instanceof Error ? error.message : "An error occurred.",
+                            error instanceof Error
+                              ? error.message
+                              : t({ message: "An error occurred." }),
                         });
                       })
                       .finally(() => setIsPickingExternal(false));
                   }}
                 >
-                  {`Open in ${fileManagerName}`}
+                  {<Trans>Open in {fileManagerName}</Trans>}
                 </CommandFooterAction>
               ) : null
             }
-            inputProps={{ placeholder: "Search image files…" }}
+            inputProps={{ placeholder: t({ message: "Search image files…" }) }}
             mode="none"
             onItemHighlighted={(value) => {
               setHighlightedItemValue(typeof value === "string" ? value : null);

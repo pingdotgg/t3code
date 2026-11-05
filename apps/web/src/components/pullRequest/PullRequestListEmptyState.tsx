@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { PlusIcon, SearchIcon } from "lucide-react";
 
@@ -73,15 +74,17 @@ export function PullRequestListEmptyState({
       <Empty>
         <BranchMark joined={false} />
         <EmptyHeader>
-          <EmptyTitle>No projects in this workspace</EmptyTitle>
+          <EmptyTitle>
+            <Trans>No projects in this workspace</Trans>
+          </EmptyTitle>
           <EmptyDescription>
-            Add a project, and the pull requests from its repository appear here.
+            <Trans>Add a project, and the pull requests from its repository appear here.</Trans>
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
             <PlusIcon className="size-3.5" />
-            Add project
+            <Trans>Add project</Trans>
           </Button>
         </EmptyContent>
       </Empty>
@@ -98,25 +101,29 @@ export function PullRequestListEmptyState({
   }
 
   if (query.length > 0) {
+    const queryLength48Text = query.length > 48 ? `${query.slice(0, 48)}…` : query;
     return (
       <Empty>
         <BranchMark joined={false} />
         <EmptyHeader>
           <EmptyTitle>
-            Nothing matches “{query.length > 48 ? `${query.slice(0, 48)}…` : query}”
+            <Trans>Nothing matches “{queryLength48Text}”</Trans>
           </EmptyTitle>
           <EmptyDescription>
-            The hosts were searched for it. Try fewer words, or search by number, author or branch.
+            <Trans>
+              The hosts were searched for it. Try fewer words, or search by number, author or
+              branch.
+            </Trans>
           </EmptyDescription>
         </EmptyHeader>
         <div className="flex flex-wrap justify-center gap-2">
           <Button size="sm" variant="outline" onClick={onClearQuery}>
             <SearchIcon className="size-3.5" />
-            Clear search
+            <Trans>Clear search</Trans>
           </Button>
           <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
             <RefreshIcon size="sm" refreshing={refreshing} />
-            {refreshing ? "Checking..." : "Check again"}
+            {refreshing ? <Trans>Checking...</Trans> : <Trans>Check again</Trans>}
           </Button>
         </div>
       </Empty>
@@ -127,22 +134,26 @@ export function PullRequestListEmptyState({
     <Empty>
       <BranchMark joined={false} />
       <EmptyHeader>
-        <EmptyTitle>{filtered ? "Nothing under these filters" : "No pull requests"}</EmptyTitle>
+        <EmptyTitle>
+          {filtered ? <Trans>Nothing under these filters</Trans> : <Trans>No pull requests</Trans>}
+        </EmptyTitle>
         <EmptyDescription>
-          {filtered
-            ? "Widen the state, involvement or project filter to see more."
-            : "Pull requests from every project in this workspace appear here."}
+          {filtered ? (
+            <Trans>Widen the state, involvement or project filter to see more.</Trans>
+          ) : (
+            <Trans>Pull requests from every project in this workspace appear here.</Trans>
+          )}
         </EmptyDescription>
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
         {canLoadMore ? (
           <Button size="sm" variant="outline" disabled={loadingMore} onClick={onLoadMore}>
-            {loadingMore ? "Loading..." : "Load more pull requests"}
+            {loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more pull requests</Trans>}
           </Button>
         ) : null}
         <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
           <RefreshIcon size="sm" refreshing={refreshing} />
-          {refreshing ? "Checking..." : "Check again"}
+          {refreshing ? <Trans>Checking...</Trans> : <Trans>Check again</Trans>}
         </Button>
       </div>
     </Empty>

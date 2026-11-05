@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
@@ -26,19 +28,25 @@ const VERDICTS: ReadonlyArray<{
 }> = [
   {
     value: "comment",
-    label: "Comment",
+    get label() {
+      return t({ message: "Comment" });
+    },
     sent: () => "Review submitted",
     icon: <MessageSquareIcon className="size-3" />,
   },
   {
     value: "approve",
-    label: "Approve",
+    get label() {
+      return t({ message: "Approve" });
+    },
     sent: (term) => `${capitalizeTerm(term)} approved`,
     icon: <CheckIcon className="size-3" />,
   },
   {
     value: "request-changes",
-    label: "Request changes",
+    get label() {
+      return t({ message: "Request changes" });
+    },
     sent: () => "Changes requested",
     icon: <XCircleIcon className="size-3" />,
   },
@@ -99,7 +107,7 @@ export function PullRequestReviewForm({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "The review could not be submitted",
+        title: t({ message: "The review could not be submitted" }),
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused the review. Your draft is still here to try again.",
@@ -124,10 +132,10 @@ export function PullRequestReviewForm({
       : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "")
-      ? "Summarize your review (optional)"
+      ? t({ message: "Summarize your review (optional)" })
       : selectedVerdict.value === "request-changes" && requestChangesSummaryRequired
-        ? "Summarize your review (required to request changes)"
-        : "Summarize your review or add line comments";
+        ? t({ message: "Summarize your review (required to request changes)" })
+        : t({ message: "Summarize your review or add line comments" });
 
   return (
     <>
@@ -136,7 +144,7 @@ export function PullRequestReviewForm({
         rows={3}
         value={body}
         placeholder={placeholder}
-        aria-label="Review summary"
+        aria-label={t({ message: "Review summary" })}
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
       <div className="mt-2 flex justify-end gap-2">
@@ -148,7 +156,11 @@ export function PullRequestReviewForm({
               if (value !== null) setRequestedVerdict(value);
             }}
           >
-            <SelectTrigger size="xs" className="mr-auto w-auto min-w-0" aria-label="Review verdict">
+            <SelectTrigger
+              size="xs"
+              className="mr-auto w-auto min-w-0"
+              aria-label={t({ message: "Review verdict" })}
+            >
               <span className="flex items-center gap-1.5">
                 {selectedVerdict?.icon}
                 {selectedVerdict?.label}
@@ -175,7 +187,7 @@ export function PullRequestReviewForm({
             if (selectedVerdict !== undefined) void submit(selectedVerdict);
           }}
         >
-          {pending ? "Submitting..." : "Submit review"}
+          {pending ? <Trans>Submitting...</Trans> : <Trans>Submit review</Trans>}
         </Button>
       </div>
     </>

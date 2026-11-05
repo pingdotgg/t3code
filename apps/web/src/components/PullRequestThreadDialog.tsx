@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -170,9 +172,9 @@ export function PullRequestThreadDialog({
   const validationMessage = !referenceDirty
     ? null
     : reference.trim().length === 0
-      ? `Paste a ${terminology.singular} URL, checkout command, or enter 123 / #123.`
+      ? t`Paste a ${terminology.singular} URL, checkout command, or enter 123 / #123.`
       : parsedReference === null
-        ? `Use a ${terminology.singular} URL, checkout command, 123, or #123.`
+        ? t`Use a ${terminology.singular} URL, checkout command, 123, or #123.`
         : null;
   const errorMessage =
     validationMessage ??
@@ -182,7 +184,7 @@ export function PullRequestThreadDialog({
       : preparePullRequestThreadAction.error instanceof Error
         ? preparePullRequestThreadAction.error.message
         : preparePullRequestThreadAction.error
-          ? `Failed to prepare ${terminology.singular} thread.`
+          ? t`Failed to prepare ${terminology.singular} thread.`
           : null);
 
   return (
@@ -205,11 +207,13 @@ export function PullRequestThreadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center">
             <SourceControlIcon className="me-2 size-4" />
-            Checkout {terminology.singular}
+            <Trans>Checkout {terminology.singular}</Trans>
           </DialogTitle>
           <DialogDescription>
-            Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread in the main repo or in a dedicated worktree.
+            <Trans>
+              Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
+              the draft thread in the main repo or in a dedicated worktree.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -246,8 +250,10 @@ export function PullRequestThreadDialog({
                 <div className="min-w-0">
                   <p className="truncate font-medium text-sm">{resolvedPullRequest.title}</p>
                   <p className="truncate text-muted-foreground text-xs">
-                    #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
-                    {resolvedPullRequest.baseBranch}
+                    <Trans>
+                      #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
+                      {resolvedPullRequest.baseBranch}
+                    </Trans>
                   </p>
                 </div>
                 <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
@@ -260,7 +266,7 @@ export function PullRequestThreadDialog({
           {isResolving ? (
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
               <Spinner size="sm" />
-              Resolving {terminology.singular}...
+              <Trans>Resolving {terminology.singular}...</Trans>
             </div>
           ) : null}
 
@@ -274,7 +280,7 @@ export function PullRequestThreadDialog({
             onClick={() => onOpenChange(false)}
             disabled={preparePullRequestThreadAction.isPending}
           >
-            Cancel
+            <Trans>Cancel</Trans>
           </Button>
           <Button
             type="button"
@@ -289,7 +295,7 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "local" ? "Preparing local..." : "Local"}
+            {preparingMode === "local" ? <Trans>Preparing local...</Trans> : <Trans>Local</Trans>}
           </Button>
           <Button
             type="button"
@@ -304,7 +310,11 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
+            {preparingMode === "worktree" ? (
+              <Trans>Preparing worktree...</Trans>
+            ) : (
+              <Trans>Worktree</Trans>
+            )}
           </Button>
         </DialogFooter>
       </DialogPopup>

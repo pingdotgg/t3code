@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type {
   EnvironmentId,
   PullRequestDiffSide,
@@ -87,12 +89,14 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>Pending. Sent when you submit the review</span>
+        <span>
+          <Trans>Pending. Sent when you submit the review</Trans>
+        </span>
         <Button
           size="icon-xs"
           variant="ghost"
           className="ml-auto"
-          aria-label="Discard this comment"
+          aria-label={t({ message: "Discard this comment" })}
           onClick={onRemove}
         >
           <Trash2Icon className="size-3.5" />
@@ -229,10 +233,14 @@ export function ReviewThreadCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
-          {commentCount === 1 ? "comment" : "comments"}
+          {thread.isResolved ? <Trans>Resolved</Trans> : <Trans>Open</Trans>} · {commentCount}{" "}
+          {commentCount === 1 ? <Trans>comment</Trans> : <Trans>comments</Trans>}
         </button>
-        {thread.isOutdated ? <span>outdated</span> : null}
+        {thread.isOutdated ? (
+          <span>
+            <Trans>outdated</Trans>
+          </span>
+        ) : null}
         {onFix ? (
           <Button
             size="xs"
@@ -242,7 +250,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? "Preparing..." : fixLabel}
+            {fixPending ? <Trans>Preparing...</Trans> : fixLabel}
           </Button>
         ) : null}
         {canResolve ? (
@@ -253,7 +261,7 @@ export function ReviewThreadCard({
             disabled={pending}
             onClick={onToggleResolved}
           >
-            {thread.isResolved ? "Unresolve" : "Resolve"}
+            {thread.isResolved ? <Trans>Unresolve</Trans> : <Trans>Resolve</Trans>}
           </Button>
         ) : null}
       </div>
@@ -284,7 +292,7 @@ export function ReviewThreadCard({
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}
-                    label="Edit comment"
+                    label={t({ message: "Edit comment" })}
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
                     onCancel={() => setEditingId(null)}
@@ -299,7 +307,7 @@ export function ReviewThreadCard({
                     />
                     {canEditComment(comment) ? (
                       <PullRequestEditButton
-                        aria-label="Edit comment"
+                        aria-label={t({ message: "Edit comment" })}
                         onClick={() => setEditingId(comment.id)}
                       />
                     ) : null}
@@ -316,7 +324,7 @@ export function ReviewThreadCard({
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
-                {loadingMore ? "Loading..." : "Load more comments"}
+                {loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more comments</Trans>}
               </Button>
             </div>
           ) : null}
@@ -328,8 +336,8 @@ export function ReviewThreadCard({
                   autoFocus
                   size="sm"
                   value={reply}
-                  placeholder="Reply"
-                  aria-label="Reply to this conversation"
+                  placeholder={t({ message: "Reply" })}
+                  aria-label={t({ message: "Reply to this conversation" })}
                   onChange={(event) => setReply(event.target.value)}
                   onKeyDown={(event) =>
                     submitKeys({
@@ -342,20 +350,20 @@ export function ReviewThreadCard({
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                    Cancel
+                    <Trans>Cancel</Trans>
                   </Button>
                   <Button
                     size="xs"
                     disabled={pending || reply.trim().length === 0}
                     onClick={() => void send()}
                   >
-                    Reply
+                    <Trans>Reply</Trans>
                   </Button>
                 </div>
               </div>
             ) : (
               <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
-                Reply
+                <Trans>Reply</Trans>
               </Button>
             )
           ) : null}

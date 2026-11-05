@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   AuthSettingsWriteScope,
@@ -156,7 +158,9 @@ export default function ProjectScriptsControl({
     <>
       {scripts.length > 0 && <MenuSeparator />}
       <MenuGroup>
-        <MenuGroupLabel>From t3.json</MenuGroupLabel>
+        <MenuGroupLabel>
+          <Trans>From t3.json</Trans>
+        </MenuGroupLabel>
         {importableScripts.map((fileScript) => (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
@@ -166,7 +170,7 @@ export default function ProjectScriptsControl({
             <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4" />
             <MenuItemLabel>{fileScript.name}</MenuItemLabel>
             <MenuShortcut>
-              <DownloadIcon className="size-3.5" aria-label="Import" />
+              <DownloadIcon className="size-3.5" aria-label={t({ message: "Import" })} />
             </MenuShortcut>
           </MenuItem>
         ))}
@@ -229,7 +233,9 @@ export default function ProjectScriptsControl({
       {importMenuItems}
       <MenuItem density={presentation === "menu" ? "touch" : "default"} onClick={openAddDialog}>
         <PlusIcon className="size-4" />
-        <MenuItemLabel>{isPanel ? "Add project script" : "Add action"}</MenuItemLabel>
+        <MenuItemLabel>
+          {isPanel ? <Trans>Add project script</Trans> : <Trans>Add action</Trans>}
+        </MenuItemLabel>
       </MenuItem>
     </>
   );
@@ -245,7 +251,9 @@ export default function ProjectScriptsControl({
               onClick={() => onRunScript?.(primaryScript)}
             >
               <ScriptIcon icon={primaryScript.icon} className="size-4" />
-              <MenuItemLabel>Run {primaryScript.name}</MenuItemLabel>
+              <MenuItemLabel>
+                <Trans>Run {primaryScript.name}</Trans>
+              </MenuItemLabel>
               <MenuShortcut>
                 {shortcutLabelForCommand(keybindings, commandForProjectScript(primaryScript.id))}
               </MenuShortcut>
@@ -260,7 +268,9 @@ export default function ProjectScriptsControl({
             >
               <MenuSubTrigger density="touch">
                 <ScriptIcon icon="play" className="size-4" />
-                <MenuItemLabel>Project actions</MenuItemLabel>
+                <MenuItemLabel>
+                  <Trans>Project actions</Trans>
+                </MenuItemLabel>
               </MenuSubTrigger>
               <MenuSubPopup>{scriptItems}</MenuSubPopup>
             </MenuSub>
@@ -270,14 +280,16 @@ export default function ProjectScriptsControl({
               onClick={openAddDialog}
             >
               <PlusIcon className="size-4" />
-              <MenuItemLabel>Add project action…</MenuItemLabel>
+              <MenuItemLabel>
+                <Trans>Add project action…</Trans>
+              </MenuItemLabel>
             </MenuItem>
           )}
         </>
       ) : primaryScript ? (
         <ActionGroup
           role="group"
-          aria-label="Project scripts"
+          aria-label={t({ message: "Project scripts" })}
           {...(isPanel
             ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
             : {})}
@@ -313,9 +325,11 @@ export default function ProjectScriptsControl({
               </span>
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {onRunScript
-                ? `Run ${primaryScript.name}`
-                : "Pair this client again with permission to run terminal commands."}
+              {onRunScript ? (
+                <Trans>Run {primaryScript.name}</Trans>
+              ) : (
+                <Trans>Pair this client again with permission to run terminal commands.</Trans>
+              )}
             </TooltipPopup>
           </Tooltip>
           {isPanel ? (
@@ -336,7 +350,7 @@ export default function ProjectScriptsControl({
                   variant={isPanel ? "ghost" : "outline"}
                   part="secondary"
                   panel={isPanel}
-                  aria-label="Script actions"
+                  aria-label={t({ message: "Script actions" })}
                 />
               }
             >
@@ -357,7 +371,7 @@ export default function ProjectScriptsControl({
         isPanel ? (
           <div
             role="group"
-            aria-label="Project actions"
+            aria-label={t({ message: "Project actions" })}
             className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}
             ref={panelAnchorRef}
           >
@@ -365,12 +379,12 @@ export default function ProjectScriptsControl({
               size="sm"
               variant="ghost"
               part="primary"
-              aria-label="Project actions"
+              aria-label={t({ message: "Project actions" })}
               onClick={() => setActionsMenuOpen({ presentation, scripts: false, imports: true })}
             >
               <WrenchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
               <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                Actions
+                <Trans>Actions</Trans>
               </span>
             </ThreadDetailsControl>
             <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
@@ -387,7 +401,7 @@ export default function ProjectScriptsControl({
                     size="sm"
                     variant="ghost"
                     part="secondary"
-                    aria-label="Choose project action"
+                    aria-label={t({ message: "Choose project action" })}
                   />
                 }
               >
@@ -407,11 +421,17 @@ export default function ProjectScriptsControl({
             }
           >
             <MenuTrigger
-              render={<Button size="xs" variant="outline" aria-label="Project actions" />}
+              render={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  aria-label={t({ message: "Project actions" })}
+                />
+              }
             >
               <WrenchIcon className="size-3.5" />
               <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                Actions
+                <Trans>Actions</Trans>
               </span>
               <ChevronDownIcon className="size-3.5" />
             </MenuTrigger>
@@ -428,7 +448,9 @@ export default function ProjectScriptsControl({
                 part="row"
                 panel={isPanel}
                 className={isPanel ? undefined : "w-7 sm:w-6 @3xl/header-actions:w-auto!"}
-                aria-label={isPanel ? "Add project script" : "Add action"}
+                aria-label={
+                  isPanel ? t({ message: "Add project script" }) : t({ message: "Add action" })
+                }
                 data-toolbar-control=""
                 onClick={openAddDialog}
               />
@@ -441,10 +463,12 @@ export default function ProjectScriptsControl({
                 isPanel && cn("not-sr-only ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS),
               )}
             >
-              {isPanel ? "Add project script" : "Add action"}
+              {isPanel ? <Trans>Add project script</Trans> : <Trans>Add action</Trans>}
             </span>
           </TooltipTrigger>
-          <TooltipPopup side="top">{isPanel ? "Add project script" : "Add action"}</TooltipPopup>
+          <TooltipPopup side="top">
+            {isPanel ? <Trans>Add project script</Trans> : <Trans>Add action</Trans>}
+          </TooltipPopup>
         </Tooltip>
       )}
 

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
@@ -160,18 +162,20 @@ function UserMessagePreviewAnnotationDetails(props: {
         >
           <img
             src={props.image.previewUrl}
-            alt="Annotated preview crop"
+            alt={t({ message: "Annotated preview crop" })}
             className="max-h-64 w-full object-contain"
           />
         </button>
       ) : (
         <div className="border-b border-border/70 bg-muted/40 px-3 py-2 text-secondary-label text-xs">
-          Screenshot unavailable
+          <Trans>Screenshot unavailable</Trans>
         </div>
       )}
       <div className="min-w-0 px-3 py-2.5">
         <div className="text-message-foreground text-xs font-medium">
-          {props.record.pageTitle?.trim() || props.record.pageUrl || "Preview annotation"}
+          {props.record.pageTitle?.trim() || props.record.pageUrl || (
+            <Trans>Preview annotation</Trans>
+          )}
         </div>
         {props.record.comment ? (
           <div className="mt-1 whitespace-pre-wrap wrap-break-word text-sm">
@@ -193,8 +197,13 @@ function UserMessagePreviewAnnotationDetails(props: {
           <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
             {visibleElements.map((element) => {
               const source = element.source;
+              const sourceLineNumberNullText = source?.fileName
+                ? source.lineNumber === null
+                  ? ""
+                  : `:${source.lineNumber}`
+                : undefined;
               const sourceLabel = source?.fileName
-                ? `${source.fileName}${source.lineNumber === null ? "" : `:${source.lineNumber}`}`
+                ? `${source.fileName}${sourceLineNumberNullText}`
                 : null;
               return (
                 <div
@@ -203,7 +212,7 @@ function UserMessagePreviewAnnotationDetails(props: {
                 >
                   <div className="flex min-w-0 items-center gap-2 text-xs">
                     <code className="truncate text-message-foreground">
-                      {element.selector || `<${element.tagName}>`}
+                      {element.selector || <Trans>&lt;{element.tagName}&gt;</Trans>}
                     </code>
                     {sourceLabel ? (
                       <span className="ml-auto shrink-0 text-secondary-label">{sourceLabel}</span>
@@ -229,8 +238,13 @@ function UserMessageElementDetails({
 }: {
   record: Extract<KnownComposerContextRecord, { kind: "element" }>;
 }) {
+  const recordSourceLineNumberNullText = record.source?.fileName
+    ? record.source.lineNumber === null
+      ? ""
+      : `:${record.source.lineNumber}`
+    : undefined;
   const sourceLabel = record.source?.fileName
-    ? `${record.source.fileName}${record.source.lineNumber === null ? "" : `:${record.source.lineNumber}`}`
+    ? `${record.source.fileName}${recordSourceLineNumberNullText}`
     : null;
   return (
     <div className="max-w-full overflow-hidden rounded-lg border border-border/70 bg-background/70">
@@ -243,7 +257,7 @@ function UserMessageElementDetails({
       <div className="space-y-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2 text-xs">
           <code className="truncate text-message-foreground">
-            {record.selector || `<${record.tagName}>`}
+            {record.selector || <Trans>&lt;{record.tagName}&gt;</Trans>}
           </code>
           {sourceLabel ? (
             <span className="ml-auto shrink-0 text-secondary-label">{sourceLabel}</span>
@@ -281,7 +295,7 @@ function UnavailableUserMessageContextChip(props: UserMessageContextRenderContex
     <UnresolvedChip
       label={props.reference.label}
       copyMarkdown={props.copyMarkdown}
-      tooltip="This context is no longer available."
+      tooltip={t({ message: "This context is no longer available." })}
     />
   );
 }
@@ -446,7 +460,9 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         }
         const isPullRequest = isPullRequestSummaryContext(record);
         const label = reviewCommentContextLabel(record);
-        const kindLabel = isPullRequest ? pullRequestContextKindLabel(record) : "Review comment";
+        const kindLabel = isPullRequest
+          ? pullRequestContextKindLabel(record)
+          : t({ message: "Review comment" });
         const pullRequestState = pullRequestContextDisplayState(record) ?? "unknown";
         if (isPullRequest && record.pullRequest !== undefined) {
           return (

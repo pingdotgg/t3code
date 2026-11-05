@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
@@ -215,9 +217,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     const resetTime = resetAt
       ? `${formatUpcomingTimestamp(resetAt, timestampFormat, undefined, timeZone)} (${timeZone})`
       : null;
-    const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
-      : workEntry.label;
+    const resetTimeText = warning ? (resetTime ? ` Retry after ${resetTime}.` : "") : undefined;
+    const label = warning ? t`Usage limit reached.${resetTimeText}` : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&
       retryableWorkspacePreparationRunIds.has(failureItem.runId) &&
@@ -263,7 +264,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               onClick={() => onRetryWorkspacePreparation(retryRunId)}
             >
               <RotateCcwIcon aria-hidden />
-              Retry
+              <Trans>Retry</Trans>
             </Button>
           </div>
         ) : null}
@@ -405,7 +406,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          aria-label={showFailedIndicator ? t({ message: "Tool call failed" }) : undefined}
         >
           <ToolActivityIconView
             icon={entryToolIcon}
@@ -473,19 +474,19 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               }}
               onKeyDown={stopRowToggle}
             >
-              Open chat
+              <Trans>Open chat</Trans>
             </button>
           ) : null}
           {notifiedSubagentThreadId ? (
             <InlineButton
-              aria-label="Open subagent thread"
+              aria-label={t({ message: "Open subagent thread" })}
               onClick={(event) => {
                 event.stopPropagation();
                 ctx.onOpenThread(notifiedSubagentThreadId);
               }}
               onKeyDown={stopRowToggle}
             >
-              Open subagent
+              <Trans>Open subagent</Trans>
             </InlineButton>
           ) : null}
           {showFailedIndicator &&

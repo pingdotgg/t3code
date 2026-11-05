@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, LayersIcon } from "lucide-react";
@@ -77,12 +79,18 @@ export function SettingsScopeSentence() {
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4">
       <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">Applying settings for</span>
+        <span className="shrink-0">
+          <Trans>Applying settings for</Trans>
+        </span>
         <ProjectScopeMenu {...props} />
       </span>
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">
-          {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
+          {scope.search.machine || scope.scope.kind === "checkout" ? (
+            <Trans>on</Trans>
+          ) : (
+            <Trans>across</Trans>
+          )}
         </span>
         <EnvironmentScopeMenu {...props} />
       </span>
@@ -109,7 +117,9 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
         ) : null}
       </span>
       {option.offline ? (
-        <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          <Trans>Offline</Trans>
+        </span>
       ) : null}
     </>
   );
@@ -181,7 +191,9 @@ function ScopeMenu({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <ComboboxEmpty>No matches found.</ComboboxEmpty>
+          <ComboboxEmpty>
+            <Trans>No matches found.</Trans>
+          </ComboboxEmpty>
           <ComboboxList>
             {(option: ScopeOption) => (
               <ComboboxItem key={option.value} value={option}>
@@ -249,7 +261,7 @@ function EnvironmentScopeMenu({
     : environments;
   return (
     <ScopeMenu
-      ariaLabel="Environment scope"
+      ariaLabel={t({ message: "Environment scope" })}
       icon={
         selected ? (
           <EnvironmentMachineIcon
@@ -263,10 +275,10 @@ function EnvironmentScopeMenu({
         selected
           ? settingsScopeEnvironmentLabel(selected, environments)
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
-            ? "Unavailable environment"
+            ? t({ message: "Unavailable environment" })
             : singleEnvironment
-              ? "No environments"
-              : "All environments"
+              ? t({ message: "No environments" })
+              : t({ message: "All environments" })
       }
       value={environmentValue}
       onChange={(next) => onChange(selectEnvironmentAxis(value, next))}
@@ -276,7 +288,7 @@ function EnvironmentScopeMenu({
           ? null
           : {
               value: ALL_ENVIRONMENTS_VALUE,
-              label: "All environments",
+              label: t({ message: "All environments" }),
               icon: <LayersIcon aria-hidden className="size-3.5 shrink-0" />,
             }
       }
@@ -311,13 +323,16 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
   }));
   return (
     <ScopeMenu
-      ariaLabel="Project scope"
+      ariaLabel={t({ message: "Project scope" })}
       icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
-      label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
+      label={
+        selected?.displayName ??
+        (value.project ? t({ message: "Unavailable project" }) : t({ message: "All projects" }))
+      }
       value={projectAxisValue(value)}
       onChange={(next) => onChange(selectProjectAxis(value, next))}
       searchLabel="Search projects"
-      allOption={{ value: ALL_PROJECTS_VALUE, label: "All projects" }}
+      allOption={{ value: ALL_PROJECTS_VALUE, label: t({ message: "All projects" }) }}
       options={projects.map(({ group, machines }) => {
         const sameName = projects.filter(
           (other) =>

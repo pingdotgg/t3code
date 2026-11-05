@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ChatFileAttachment,
@@ -129,7 +130,7 @@ export function useComposerAttachmentIntake(input: {
     ) {
       toastManager.add({
         type: "error",
-        title: "This question cannot accept attachments.",
+        title: t({ message: "This question cannot accept attachments." }),
       });
       return false;
     }
@@ -229,11 +230,15 @@ export function useComposerAttachmentIntake(input: {
       }
       if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
         const attached = storedFiles[0]!;
+        const formatAttachmentSizeText = formatAttachmentSize(attached.sizeBytes);
+        const isMacPlatformNavigatorPlatformText = isMacPlatform(navigator.platform)
+          ? "⌘⇧V"
+          : "Ctrl+Shift+V";
         toastManager.add({
           type: "info",
-          title: `Large paste attached as ${attached.name}`,
-          description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
-            isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
+          title: t`Large paste attached as ${attached.name}`,
+          description: t`${formatAttachmentSizeText} · Use ${
+            isMacPlatformNavigatorPlatformText
           } to keep a large paste inline.`,
           data: { hideCopyButton: true },
         });
@@ -397,8 +402,8 @@ export function useComposerAttachmentIntake(input: {
       }
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large for this message",
-        description: "Remove some text or an attachment, then paste again.",
+        title: t({ message: "Pasted text is too large for this message" }),
+        description: t({ message: "Remove some text or an attachment, then paste again." }),
         data: { hideCopyButton: true },
       });
       return true;
@@ -419,8 +424,10 @@ export function useComposerAttachmentIntake(input: {
       if (!wouldExceedInputLimit) return false;
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large to attach",
-        description: "Reduce the clipboard contents or save a smaller excerpt as a file.",
+        title: t({ message: "Pasted text is too large to attach" }),
+        description: t({
+          message: "Reduce the clipboard contents or save a smaller excerpt as a file.",
+        }),
         data: { hideCopyButton: true },
       });
       return true;

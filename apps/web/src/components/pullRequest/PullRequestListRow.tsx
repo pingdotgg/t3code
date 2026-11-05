@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type {
   PullRequestActor,
   PullRequestMergeability,
@@ -122,7 +123,13 @@ export function PullRequestRowAuthor({
         <span className={cn("truncate", labelClassName)}>{login}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
+        {actor?.name && actor.name !== login ? (
+          <Trans>
+            {actor.name} (@{login})
+          </Trans>
+        ) : (
+          login
+        )}
       </TooltipPopup>
     </Tooltip>
   );

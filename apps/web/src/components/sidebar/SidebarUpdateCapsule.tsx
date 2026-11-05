@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { type ReactNode, useSyncExternalStore } from "react";
 
@@ -77,7 +79,11 @@ export function SidebarUpdateCapsule({
   const settled = !hasActiveMachine && run.localVersion === null;
 
   const actionLabel =
-    view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
+    view.action === "later"
+      ? t({ message: "Later" })
+      : view.action === "retry"
+        ? t({ message: "Retry" })
+        : t({ message: "Dismiss" });
   const runAction = () => {
     if (view.action === "later") postponeUpdateRestart();
     else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
@@ -130,49 +136,61 @@ export function SidebarUpdateCapsule({
         <div className="flex flex-col gap-1 text-xs">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>
+                <Trans>This app</Trans>
+              </span>
               <span className="text-muted-foreground tabular-nums">
                 {localStatusLabel(run, local, now)}
               </span>
             </div>
           ) : onRestart ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>
+                <Trans>This app</Trans>
+              </span>
               <Button size="xs" variant="outline" onClick={() => void onRestart()}>
-                Restart to update
+                <Trans>Restart to update</Trans>
               </Button>
             </div>
           ) : null}
-          {machines.map(({ machine, status }) => (
-            <div key={machine.environmentId} className="flex min-w-0 flex-col">
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate">{machine.label}</span>
-                <span
-                  className={cn(
-                    "shrink-0 tabular-nums",
-                    status === "failed" ? "text-destructive" : "text-muted-foreground",
-                  )}
-                >
-                  {RUN_STATUS_LABELS[status]}
-                  {status !== "done" && status !== "failed" && status !== "waiting"
-                    ? ` ${formatUpdateElapsed(now - machine.startedAt)}`
-                    : ""}
-                </span>
+          {machines.map(({ machine, status }) => {
+            const formatUpdateElapsedText =
+              status !== "done" && status !== "failed" && status !== "waiting"
+                ? formatUpdateElapsed(now - machine.startedAt)
+                : undefined;
+            return (
+              <div key={machine.environmentId} className="flex min-w-0 flex-col">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="truncate">{machine.label}</span>
+                  <span
+                    className={cn(
+                      "shrink-0 tabular-nums",
+                      status === "failed" ? "text-destructive" : "text-muted-foreground",
+                    )}
+                  >
+                    {RUN_STATUS_LABELS[status]}
+                    {status !== "done" && status !== "failed" && status !== "waiting" ? (
+                      <> {formatUpdateElapsedText}</>
+                    ) : (
+                      ""
+                    )}
+                  </span>
+                </div>
+                {machine.failure !== null ? (
+                  <span className="break-words text-muted-foreground">{machine.failure}</span>
+                ) : null}
               </div>
-              {machine.failure !== null ? (
-                <span className="break-words text-muted-foreground">{machine.failure}</span>
-              ) : null}
-            </div>
-          ))}
+            );
+          })}
           {settled && failed ? (
             <div className="mt-1 flex justify-end gap-1">
               {view.action === "retry" ? (
                 <Button size="xs" variant="outline" onClick={runAction}>
-                  Retry
+                  <Trans>Retry</Trans>
                 </Button>
               ) : null}
               <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-                Dismiss
+                <Trans>Dismiss</Trans>
               </Button>
             </div>
           ) : null}

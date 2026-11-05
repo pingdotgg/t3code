@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   type ClientSettings,
   type EnvironmentId,
@@ -29,7 +30,11 @@ export function useEnvironmentLookups() {
         environment.environmentId,
         {
           kind: isLocal ? "local" : "remote",
-          label: isPrimary ? "Local" : isLocal ? `${environment.label} (Local)` : environment.label,
+          label: isPrimary
+            ? t({ message: "Local" })
+            : isLocal
+              ? t`${environment.label} (Local)`
+              : environment.label,
           machine: resolveEnvironmentMachineKind(environment.serverConfig),
         },
       ] as const;

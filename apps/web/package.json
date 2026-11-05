@@ -8,8 +8,11 @@
     "dev": "vp dev",
     "dev:built": "vp build --watch",
     "build": "vp build",
+    "i18n:extract": "pmds extract",
+    "i18n:check": "pmds extract --check && pmds lint --fail-on warning && pmds catalog compile --target js --output .palamedes/check",
     "preview": "vp preview",
-    "test": "vp test run --passWithNoTests --project unit --project browser"
+    "test": "vp test run --passWithNoTests --project unit --project browser",
+    "i18n:coverage": "pmds report --fail-if-below 100"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -29,6 +32,9 @@
     "@fontsource-variable/inter": "^5.3.0",
     "@legendapp/list": "catalog:",
     "@noble/hashes": "catalog:",
+    "@palamedes/core": "2.1.0",
+    "@palamedes/react": "2.1.0",
+    "@palamedes/runtime": "2.1.0",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "1.0.0-beta.6",
     "@t3tools/client-runtime": "workspace:*",
@@ -95,6 +101,8 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@palamedes/cli": "2.1.0",
+    "@palamedes/vite-plugin": "2.1.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
     "@types/canvas-confetti": "1.9.0",

@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { MessageCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -77,7 +79,7 @@ export function DiffCommentAnnotation({
             <Button
               variant="ghost-muted"
               size="icon-xs"
-              aria-label="Delete comment"
+              aria-label={t({ message: "Delete comment" })}
               onClick={onDelete}
             >
               <Trash2 className="size-3" />
@@ -121,9 +123,11 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-3xs text-muted-foreground/70">
+          <Trans>⌘/Ctrl Enter to send</Trans>
+        </span>
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
-          Cancel
+          <Trans>Cancel</Trans>
         </Button>
         {secondaryAction ? (
           <Button
