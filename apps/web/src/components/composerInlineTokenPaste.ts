@@ -23,7 +23,8 @@ const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 export function readPastedComposerLink(
   clipboardData: Pick<DataTransfer, "getData">,
 ): string | null {
-  const text = clipboardData.getData("text/plain").trim();
+  const pastedText = clipboardData.getData("text/plain");
+  const text = pastedText.trim();
   if (!text || /^[a-z][a-z\d+.-]*:\S+$/i.test(text)) return null;
   if (clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) return null;
   const html = clipboardData.getData("text/html");
@@ -36,7 +37,8 @@ export function readPastedComposerLink(
   const label = link.textContent?.trim();
   if (label !== text || document.body.textContent?.trim() !== text) return null;
   const href = link.getAttribute("href")?.trim();
-  return href && /^https?:\/\/\S+$/i.test(href) && URL.canParse(href) ? href : null;
+  if (!href || !/^https?:\/\/\S+$/i.test(href) || !URL.canParse(href)) return null;
+  return pastedText.replace(text, () => href);
 }
 
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */

@@ -255,6 +255,13 @@ it.each([
     richText: true,
   },
   {
+    name: "a titled link with surrounding whitespace",
+    plain: " Example report ",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: " https://example.com/report ",
+    richText: true,
+  },
+  {
     name: "a titled link in plain mode",
     plain: "Example report",
     html: '<a href="https://example.com/report">Example report</a>',
