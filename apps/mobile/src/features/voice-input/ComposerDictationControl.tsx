@@ -281,7 +281,7 @@ function VoiceActionButton(props: {
       onPress={props.onPress}
       style={{
         opacity: props.disabled && !props.loading ? 0.4 : 1,
-        // Matches ComposerActionButton so the circle stays concentric with the large composer corner.
+        // Matches ComposerActionButton's large hit target width.
         // An undefined width would still override the class's 44px width.
         ...(variant === "primary" && large ? { width: 62 } : null),
       }}

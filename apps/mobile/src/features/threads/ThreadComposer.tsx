@@ -876,8 +876,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         <ComposerSurface
           animateLayout={false}
           style={{
-            borderRadius: usesLargeControls ? 31 : 27,
-            borderCurve: "circular",
+            borderRadius: 20,
+            borderCurve: "continuous",
             overflow: "hidden",
             paddingVertical: surfacePaddingVertical,
           }}
