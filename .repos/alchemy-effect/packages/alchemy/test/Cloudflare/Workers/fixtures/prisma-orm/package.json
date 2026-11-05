@@ -1,5 +1,0 @@
-{
-  "private": true,
-  "type": "module",
-  "sideEffects": ["./validation.ts"]
-}

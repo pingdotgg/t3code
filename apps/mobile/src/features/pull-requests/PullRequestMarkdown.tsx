@@ -1,4 +1,5 @@
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
+import { markdownTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useProject } from "../../state/entities";
@@ -30,6 +31,7 @@ import {
 } from "../../components/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
+import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
 
 const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
   null,
@@ -55,7 +57,9 @@ export function PullRequestMarkdownRepository(props: {
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
-  const media = cwd ? { environmentId: target.environmentId, cwd } : null;
+  const media = cwd
+    ? { environmentId: target.environmentId, cwd, repository: target.input.repository }
+    : null;
   return (
     <AutolinksContext value={autolinks}>
       <LineBreaksContext value={lineBreaks}>
@@ -97,17 +101,46 @@ export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
   readonly lineBreaks?: boolean;
+  /**
+   * `markerOffset` is into `markdown`. Returning false, or a tap that can't be traced back to
+   * the source, undoes the tick the renderer already drew.
+   */
+  readonly onTaskListChange?: (input: {
+    readonly markerOffset: number;
+    readonly checked: boolean;
+  }) => boolean;
 }) {
+  const { onTaskListChange } = props;
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const [undoneTicks, setUndoneTicks] = useState(0);
   return (
     <View style={{ gap: 12 }}>
       {segments.map((segment) =>
         segment.kind === "markdown" ? (
           <PullRequestMarkdownContent
-            key={segment.id}
+            key={`${segment.id}:${undoneTicks}`}
             markdown={segment.text}
             imageGroupMarkdown={props.imageGroupMarkdown ?? props.markdown}
             lineBreaks={props.lineBreaks}
+            onTaskListItemPress={
+              onTaskListChange
+                ? (event) => {
+                    const offset = markdownTaskMarkerOffset(
+                      segment.text,
+                      event.index,
+                      event.text,
+                      event.checked,
+                    );
+                    const kept =
+                      offset !== null &&
+                      onTaskListChange({
+                        markerOffset: segment.sourceOffset + offset,
+                        checked: event.checked,
+                      });
+                    if (!kept) setUndoneTicks((count) => count + 1);
+                  }
+                : undefined
+            }
           />
         ) : (
           <PullRequestMedia key={segment.id} url={segment.url} kind={segment.media} />
@@ -121,6 +154,7 @@ function PullRequestMarkdownContent(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
   readonly lineBreaks: boolean | undefined;
+  readonly onTaskListItemPress?: SelectableMarkdownTextProps["onTaskListItemPress"];
 }) {
   const hostLineBreaks = useContext(LineBreaksContext);
   const autolinks = useContext(AutolinksContext);
@@ -153,6 +187,7 @@ function PullRequestMarkdownContent(props: {
         onLinkPress={openLink}
         renderImage={renderImage}
         onImagePress={(href) => setPreview(pullRequestImageSource(href, mediaContext))}
+        onTaskListItemPress={props.onTaskListItemPress}
       />
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </FilePreviewGallery>
