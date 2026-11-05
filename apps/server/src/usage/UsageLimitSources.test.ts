@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -165,102 +166,137 @@ it.effect("reads a management key from its secret provider", () => {
   );
 });
 
-it.effect("retains another window's account when provider-filtered usage refreshes finish", () => {
-  let fail = false;
-  let includeCodex = false;
-  return Effect.gen(function* () {
-    const sources = yield* UsageLimitSources.make;
-    yield* sources.streamChanges.pipe(
-      Stream.filter((next) => next.length > 0),
-      Stream.runHead,
-    );
-    includeCodex = true;
-    yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["claudeAgent"]));
-    expect((yield* sources.current)[0]?.accounts.map((account) => account.driver)).toEqual([
-      "claudeAgent",
-    ]);
-    yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["codex"]));
-    expect((yield* sources.current)[0]?.accounts.map((account) => account.driver).sort()).toEqual([
-      "claudeAgent",
-      "codex",
-    ]);
-    const prior = (yield* sources.current)[0]!;
-    fail = true;
-    yield* sources.refresh;
-    const failed = (yield* sources.current)[0]!;
-    expect(failed.accounts).toEqual(
-      prior.accounts.map((account) => ({
-        ...account,
-        usageLimits: { ...account.usageLimits, stale: true },
-      })),
-    );
-    expect(failed.error).toContain("401");
-    fail = false;
-    yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["codex"]));
-    expect(
-      (yield* sources.current)[0]?.accounts.find((account) => account.driver === "claudeAgent")
-        ?.usageLimits.stale,
-    ).toBe(true);
-  }).pipe(
-    Effect.provide([
-      ServerSettings.layerTest({
-        usageLimitSources: {
-          [UsageLimitSourceId.make("hub")]: {
-            kind: "cliproxy",
-            url: "https://hub.test",
-            managementKey: "key",
-            enabled: true,
+it.effect.each(["listing", "quota", "changed-account"] as const)(
+  "retains provider-filtered readings through %s failures with account isolation",
+  (failure) => {
+    let fail = false;
+    let includeCodex = false;
+    return Effect.gen(function* () {
+      const sources = yield* UsageLimitSources.make;
+      yield* sources.streamChanges.pipe(
+        Stream.filter((next) => next.length > 0),
+        Stream.runHead,
+      );
+      includeCodex = true;
+      yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["claudeAgent"]));
+      expect((yield* sources.current)[0]?.accounts.map((account) => account.driver)).toEqual([
+        "claudeAgent",
+      ]);
+      yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["codex"]));
+      expect((yield* sources.current)[0]?.accounts.map((account) => account.driver).sort()).toEqual(
+        ["claudeAgent", "codex"],
+      );
+      const prior = (yield* sources.current)[0]!;
+      yield* TestClock.adjust("5 minutes");
+      fail = true;
+      yield* sources.refresh;
+      const failed = (yield* sources.current)[0]!;
+      if (failure === "changed-account") {
+        expect(
+          failed.accounts.every(
+            (account) =>
+              account.usageLimits.windows.length === 0 &&
+              account.usageLimits.unavailable?.reason === "probeFailed",
+          ),
+        ).toBe(true);
+      } else if (failure === "listing")
+        expect(failed.accounts).toEqual(
+          prior.accounts.map((account) => ({
+            ...account,
+            usageLimits: { ...account.usageLimits, stale: true },
+          })),
+        );
+      if (failure === "quota")
+        expect(failed.accounts.map((account) => account.usageLimits)).toEqual(
+          prior.accounts.map((account) => ({ ...account.usageLimits, stale: true })),
+        );
+      if (failure === "listing") expect(failed.error).toContain("401");
+      else expect(failed.error).toBeUndefined();
+      fail = false;
+      yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["codex"]));
+      expect(
+        (yield* sources.current)[0]?.accounts.find((account) => account.driver === "claudeAgent")
+          ?.usageLimits.stale,
+      ).toBe(failure === "changed-account" ? undefined : true);
+    }).pipe(
+      Effect.provide([
+        ServerSettings.layerTest({
+          usageLimitSources: {
+            [UsageLimitSourceId.make("hub")]: {
+              kind: "cliproxy",
+              url: "https://hub.test",
+              managementKey: "key",
+              enabled: true,
+            },
           },
-        },
-      }),
-      Layer.succeed(SecretResolver.SecretResolver, {
-        read: () => Effect.succeed([]),
-        invalidate: () => Effect.void,
-      }),
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.sync(() => {
-            if (fail)
-              return HttpClientResponse.fromWeb(request, Response.json({}, { status: 401 }));
-            if (request.url.endsWith("/auth-files"))
+        }),
+        Layer.succeed(SecretResolver.SecretResolver, {
+          read: () => Effect.succeed([]),
+          invalidate: () => Effect.void,
+        }),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              if (fail && failure === "listing")
+                return HttpClientResponse.fromWeb(request, Response.json({}, { status: 401 }));
+              if (request.url.endsWith("/auth-files"))
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({
+                    files: [
+                      { id: "claude", auth_index: "claude", provider: "claude" },
+                      ...(includeCodex
+                        ? [{ id: "codex", auth_index: "codex", provider: "codex" }]
+                        : []),
+                    ].map((account) => ({
+                      ...account,
+                      auth_index:
+                        fail && failure === "changed-account"
+                          ? `${account.auth_index}-new`
+                          : account.auth_index,
+                    })),
+                  }),
+                );
+              const input = decodeSourceRequest(
+                request.body._tag === "Uint8Array"
+                  ? new TextDecoder().decode(request.body.body)
+                  : "{}",
+              );
+              if (fail)
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ status_code: 503, body: "{}" }),
+                );
+              const body = input.url.endsWith("/rate-limit-reset-credits")
+                ? { credits: [] }
+                : input.auth_index === "claude"
+                  ? { five_hour: { utilization: 20, resets_at: null } }
+                  : { rate_limit: { primary_window: { used_percent: 20 } } };
               return HttpClientResponse.fromWeb(
                 request,
-                Response.json({
-                  files: [
-                    { id: "claude", auth_index: "claude", provider: "claude" },
-                    ...(includeCodex
-                      ? [{ id: "codex", auth_index: "codex", provider: "codex" }]
-                      : []),
-                  ],
-                }),
+                Response.json({ status_code: 200, body: encodeSourceBody(body) }),
               );
-            const input = decodeSourceRequest(
-              request.body._tag === "Uint8Array"
-                ? new TextDecoder().decode(request.body.body)
-                : "{}",
-            );
-            const body = input.url.endsWith("/rate-limit-reset-credits")
-              ? { credits: [] }
-              : input.auth_index === "claude"
-                ? { five_hour: { utilization: 20, resets_at: null } }
-                : { rate_limit: { primary_window: { used_percent: 20 } } };
-            return HttpClientResponse.fromWeb(
-              request,
-              Response.json({ status_code: 200, body: encodeSourceBody(body) }),
-            );
-          }),
+            }),
+          ),
         ),
-      ),
-      NodeCrypto.layer,
-    ]),
-    Effect.scoped,
-  );
-});
+        NodeCrypto.layer,
+      ]),
+      Effect.scoped,
+    );
+  },
+);
 
-it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
-  "removes retained credits after %s when account listing fails",
-  (code) => {
+it.effect.each([
+  { code: "reset", failure: "listing" },
+  { code: "already_redeemed", failure: "listing" },
+  { code: "no_credit", failure: "listing" },
+  { code: "reset", failure: "quota" },
+  { code: "already_redeemed", failure: "quota" },
+  { code: "no_credit", failure: "quota" },
+] as const)(
+  "removes retained credits after $code during $failure failures",
+  ({ code, failure }) => {
     let consumed = false;
     const sourceId = UsageLimitSourceId.make("hub");
     const otherId = UsageLimitSourceId.make("other-hub");
@@ -278,20 +314,38 @@ it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
       expect(
         yield* sources.consumeResetCredit({ sourceId, accountId: "first", creditId: "credit" }),
       ).toEqual({ outcome });
+      if (failure === "quota") {
+        yield* TestClock.adjust("5 minutes");
+        yield* sources.refresh;
+      }
       for (let attempt = 0; attempt < 2; attempt++) {
         const snapshots = yield* sources.current;
         const after = snapshots.find((source) => source.id === sourceId)!;
-        expect(after.error).toContain("503");
+        if (failure === "listing") expect(after.error).toContain("503");
+        else expect(after.error).toBeUndefined();
         expect(after.accounts[0]?.usageLimits.stale).toBe(true);
         expect(after.accounts[0]?.usageLimits.windows).toEqual(
           before.accounts[0]?.usageLimits.windows,
         );
-        expect(after.accounts[0]?.usageLimits.resetCredits).toBeUndefined();
+        expect(after.accounts[0]?.usageLimits.resetCredits?.nextCreditId).toBeUndefined();
+        expect(after.accounts[0]?.usageLimits.resetCredits?.availableCount ?? 0).toBe(0);
         expect(after.accounts[1]?.usageLimits.resetCredits).toEqual(
           before.accounts[1]?.usageLimits.resetCredits,
         );
-        expect(snapshots.find((source) => source.id === otherId)?.accounts).toEqual(
-          initial.find((source) => source.id === otherId)?.accounts,
+        expect(
+          snapshots
+            .find((source) => source.id === otherId)
+            ?.accounts.map((account) => [
+              account.usageLimits.windows,
+              account.usageLimits.resetCredits,
+            ]),
+        ).toEqual(
+          initial
+            .find((source) => source.id === otherId)
+            ?.accounts.map((account) => [
+              account.usageLimits.windows,
+              account.usageLimits.resetCredits,
+            ]),
         );
         if (attempt === 0) yield* sources.refresh;
       }
@@ -324,7 +378,7 @@ it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
               if (request.url.endsWith("/auth-files"))
                 return HttpClientResponse.fromWeb(
                   request,
-                  consumed && new URL(request.url).host === "hub.test"
+                  consumed && failure === "listing" && new URL(request.url).host === "hub.test"
                     ? Response.json({}, { status: 503 })
                     : Response.json({
                         files: [
@@ -341,18 +395,33 @@ it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
                   : "{}",
               );
               if (input.url.endsWith("/consume")) consumed = true;
+              if (
+                consumed &&
+                failure === "quota" &&
+                new URL(request.url).host === "hub.test" &&
+                input.url.endsWith("/usage")
+              )
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ status_code: 503, body: "{}" }),
+                );
               const body = input.url.endsWith("/consume")
                 ? { code }
                 : input.url.endsWith("/rate-limit-reset-credits")
                   ? {
-                      credits: [
-                        {
-                          id: "credit",
-                          expires_at: "2099-01-01T00:00:00Z",
-                          status: "available",
-                          reset_type: "codex_rate_limits",
-                        },
-                      ],
+                      credits:
+                        consumed &&
+                        input.auth_index === "a" &&
+                        new URL(request.url).host === "hub.test"
+                          ? []
+                          : [
+                              {
+                                id: "credit",
+                                expires_at: "2099-01-01T00:00:00Z",
+                                status: "available",
+                                reset_type: "codex_rate_limits",
+                              },
+                            ],
                     }
                   : { rate_limit: { primary_window: { used_percent: 20 } } };
               return HttpClientResponse.fromWeb(

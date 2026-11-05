@@ -203,7 +203,7 @@ describe("CLIProxyAPI hub failures", () => {
 
 describe("CLIProxyAPI built-in management API", () => {
   it.effect.each([429, 503])(
-    "paces filtered Claude accounts, preserves readings, and shares HTTP %s cooldowns",
+    "paces filtered Claude accounts, caches responses, and shares HTTP %s cooldowns",
     (status) =>
       Effect.gen(function* () {
         let limited = false;
@@ -231,9 +231,10 @@ describe("CLIProxyAPI built-in management API", () => {
         limited = true;
         yield* TestClock.adjust("4 minutes");
         const stale = yield* api.readAccounts(config, ["claudeAgent"]);
-        expect(stale.map((account) => account.usageLimits)).toEqual(
-          first.map((account) => ({ ...account.usageLimits, stale: true })),
-        );
+        expect(stale.map((account) => account.usageLimits.unavailable?.reason)).toEqual([
+          "probeFailed",
+          "probeFailed",
+        ]);
         yield* TestClock.adjust("5 minutes");
         yield* api.readAccounts(config, ["claudeAgent"]);
         expect(
@@ -458,7 +459,7 @@ describe("CLIProxyAPI built-in management API", () => {
   );
 
   it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
-    "pins redemption and reconciles retained credit metadata after %s",
+    "pins redemption and clears the correct routing cooldown after %s",
     (code) =>
       Effect.gen(function* () {
         let consumed = false;
@@ -500,14 +501,6 @@ describe("CLIProxyAPI built-in management API", () => {
             .filter((request) => request.path.endsWith("/reset-quota"))
             .map((request) => request.body?.auth_index),
         ).toEqual(code === "no_credit" ? [] : ["b", "b"]);
-        yield* TestClock.adjust("5 minutes");
-        const refreshed = yield* api.readAccounts(config);
-        expect(refreshed[1]?.usageLimits.stale).toBe(true);
-        expect(refreshed[1]?.usageLimits.windows).toEqual(initial[1]?.usageLimits.windows);
-        expect(refreshed[1]?.usageLimits.resetCredits).toBeUndefined();
-        expect(refreshed[0]?.usageLimits.resetCredits).toEqual(
-          initial[0]?.usageLimits.resetCredits,
-        );
       }),
   );
 

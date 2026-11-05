@@ -1,4 +1,7 @@
-import { UsageProviderFilter } from "@t3tools/provider-core/server/usageLimits";
+import {
+  resolveUsageLimitsAfterProbe,
+  UsageProviderFilter,
+} from "@t3tools/provider-core/server/usageLimits";
 import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
@@ -109,7 +112,20 @@ export const make = Effect.gen(function* () {
         : (lastGoodSources.get(accountKey) ?? []).filter(
             (account) => !providers.includes(account.driver),
           );
-    const merged = [...retained, ...accounts.success];
+    const previous = lastGoodSources.get(accountKey) ?? [];
+    const merged = [
+      ...retained,
+      ...accounts.success.map((account) => ({
+        ...account,
+        usageLimits:
+          resolveUsageLimitsAfterProbe({
+            published: previous.find(
+              (prior) => prior.id === account.id && prior.driver === account.driver,
+            )?.usageLimits,
+            probed: account.usageLimits,
+          }) ?? account.usageLimits,
+      })),
+    ];
     lastGoodSources.set(accountKey, merged);
     return { ...base, accounts: merged };
   });
