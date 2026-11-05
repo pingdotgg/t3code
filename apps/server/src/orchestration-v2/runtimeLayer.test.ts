@@ -3889,6 +3889,35 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isUndefined(yield* snoozeWatch);
       assert.isNull((yield* shell)?.snoozedUntil);
 
+      // A read in flight when the user pins must not bring back a snooze the pin cleared.
+      yield* snooze("raced", true);
+      const raced = yield* snoozeWatch;
+      assert.isDefined(raced);
+      if (raced === undefined) return;
+      yield* orchestrator.dispatch({
+        type: "thread.pin",
+        commandId: CommandId.make("pr-snooze-raced-pin"),
+        threadId,
+      });
+      yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-snooze-raced-wake"),
+          threadId,
+          ...key,
+          startedAt: raced.startedAt,
+          watch: null,
+          snooze: true,
+          wakeThread: true,
+        })
+        .pipe(Effect.ignore);
+      assert.isNull((yield* shell)?.snoozedUntil);
+      yield* orchestrator.dispatch({
+        type: "thread.unpin",
+        commandId: CommandId.make("pr-snooze-raced-unpin"),
+        threadId,
+      });
+
       yield* snooze("retime", true);
       yield* snooze("retimed", false);
       assert.isUndefined(yield* snoozeWatch);

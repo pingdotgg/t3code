@@ -3215,7 +3215,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.settledAt !== null ||
         isProviderNativeSubagentThread(thread);
       const watch = command.snooze === true ? link?.snoozeWatch : link?.watch;
-      if (watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
+      if (
+        watch?.startedAt !== command.startedAt ||
+        (command.wake && inactive) ||
+        (command.wakeThread === true && thread.snoozedUntil == null)
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
