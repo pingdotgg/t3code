@@ -31,6 +31,7 @@ const reactTests = [
   "src/features/threads/UsageLimitRecoveryCard.test.tsx",
   "src/features/threads/NewTaskDraftRouteScreen.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
+  "src/components/ComposerEditor.ios.test.tsx",
   "src/native/V5StackHeader.ios.test.tsx",
   "src/native/useRestingTopOffset.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
@@ -43,6 +44,7 @@ const reactTests = [
   "src/features/home/home-list-options.test.tsx",
   "src/features/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
+  "src/features/devices/device-stream.browser.test.ts",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
