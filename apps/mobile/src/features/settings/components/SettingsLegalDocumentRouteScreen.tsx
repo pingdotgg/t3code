@@ -12,6 +12,7 @@ import { LoadingStrip } from "../../../components/ui/LoadingStrip";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
+import { webViewDecelerationRate } from "../../../lib/webViewDecelerationRate";
 
 export function SettingsLegalDocumentCloseHeaderButton() {
   const navigation = useNavigation();
@@ -121,6 +122,7 @@ export function SettingsLegalDocumentRouteScreen({
         cacheEnabled={false}
         cacheMode="LOAD_NO_CACHE"
         allowsBackForwardNavigationGestures
+        decelerationRate={webViewDecelerationRate}
         domStorageEnabled={false}
         incognito
         javaScriptEnabled={false}
