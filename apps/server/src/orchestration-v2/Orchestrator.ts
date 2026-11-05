@@ -9257,6 +9257,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.environmentId === undefined ? {} : { environmentId: command.environmentId }),
           approvalStatus: command.approvalStatus,
         };
+    if (
+      !unchanged &&
+      command.approvalStatus === "approved" &&
+      projection.thread.snoozedUntil != null
+    ) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.unsnoozed",
+        threadId: command.threadId,
+        providerInstanceId: projection.thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+      });
+    }
     yield* emit(
       events,
       command,

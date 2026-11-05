@@ -1152,6 +1152,13 @@ it.effect("a task on another model waits for the user's answer before the box la
         current: modelSelection,
         proposed: { instanceId, model: "gpt-5.5" },
       });
+      const snoozedUntil = "2099-07-25T09:00:00.000Z";
+      yield* a.threads.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("command:snooze-delegation"),
+        threadId: parentThreadId,
+        snoozedUntil,
+      });
       yield* approvals.answer({
         threadId: parentThreadId,
         turnItemId: card.id,
@@ -1161,6 +1168,9 @@ it.effect("a task on another model waits for the user's answer before the box la
       expect(refused.isError).toBe(true);
       expect(JSON.stringify(refused.content)).toContain("delegation_not_approved");
       expect(yield* Ref.get(thread.launched)).toBeNull();
+      expect(
+        DateTime.formatIso((yield* a.projections.getThread(parentThreadId)).snoozedUntil!),
+      ).toBe(snoozedUntil);
       // The first answer stands.
       const late = yield* approvals
         .answer({ threadId: parentThreadId, turnItemId: card.id, decision: "approve" })
@@ -1172,17 +1182,46 @@ it.effect("a task on another model waits for the user's answer before the box la
       const second = yield* nextCard(sequence);
       expect(second.id).not.toBe(card.id);
       expect(yield* Ref.get(thread.launched)).toBeNull();
+      expect((yield* a.projections.getThread(parentThreadId)).snoozedUntil).not.toBeNull();
       yield* approvals.answer({
         threadId: parentThreadId,
         turnItemId: second.id,
         decision: "approve",
       });
+      const awake = yield* a.projections.getThread(parentThreadId);
+      expect(awake.snoozedUntil).toBeNull();
+      expect(awake.snoozedAt).toBeNull();
       const started = yield* Fiber.join(approved);
       expect(started.isError, JSON.stringify(started.content)).toBe(false);
       expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual({
         instanceId,
         model: "gpt-5.5",
       });
+      yield* a.threads.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("command:resnooze-delegation"),
+        threadId: parentThreadId,
+        snoozedUntil,
+      });
+      for (const approvalStatus of ["pending", "approved"] as const) {
+        yield* a.threads.dispatch({
+          type: "delegation_approval.record",
+          commandId: CommandId.make(`command:replay-${approvalStatus}-delegation`),
+          threadId: parentThreadId,
+          runId: second.runId!,
+          nodeId: second.nodeId!,
+          turnItemId: second.id,
+          title: second.title ?? "Delegate task",
+          task: second.task,
+          current: second.current,
+          proposed: second.proposed,
+          environmentId: box.environmentId,
+          approvalStatus,
+        });
+        expect(
+          DateTime.formatIso((yield* a.projections.getThread(parentThreadId)).snoozedUntil!),
+        ).toBe(snoozedUntil);
+      }
       const beforeStop = yield* a.threads.getThreadEventSequence(parentThreadId);
       const stopping = yield* delegate("stopping").pipe(Effect.forkChild);
       const third = yield* nextCard(beforeStop);
