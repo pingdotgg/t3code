@@ -93,6 +93,17 @@ in the receiving app. Connection settings are under **Settings → Environments*
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
+If your other devices reach the server through a reverse proxy or a forwarded
+port, such as a container behind Tailscale Serve on its host, pass the address
+they open:
+
+```bash
+t3 pair --base-url https://my-host.my-tailnet.ts.net
+```
+
+The QR code and pairing URL then use that address. T3 Code does not check that
+it reaches the server. `--base-url` cannot be combined with `--tailscale`.
+
 On a computer with the desktop app, you can open the printed `t3code://pair`
 app link instead. The desktop app asks you to confirm the server address, then
 adds it.
