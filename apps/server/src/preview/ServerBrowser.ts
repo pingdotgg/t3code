@@ -174,6 +174,7 @@ const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, modifiers, optionLimit) => {
     const pressed =
       element.dispatchEvent(new view.PointerEvent("pointerdown", { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true })) &&
       element.dispatchEvent(new view.MouseEvent("mousedown", { ...init, detail: 1 }));
+    if (pressed) element.focus({ preventScroll: true });
     return { select: element, x, y, keys, pressed };
   }
 }`;
@@ -191,7 +192,6 @@ const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
     left += box.left + frame.clientLeft + parseFloat(style.paddingLeft);
     top += box.top + frame.clientTop + parseFloat(style.paddingTop);
   }
-  select.focus({ preventScroll: true });
   const view = select.ownerDocument.defaultView;
   const shown = (element) => !element.hidden && view.getComputedStyle(element).display !== "none";
   this.offered = Array.from(select.options).filter(
