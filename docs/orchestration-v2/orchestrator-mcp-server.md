@@ -87,14 +87,17 @@ Claude receives an HTTP MCP server in its query options:
       },
     },
   },
+  settings: {
+    permissions: {
+      allow: ["mcp__t3-code__*"],
+    },
+  },
 }
 ```
 
-T3 tools run without a prompt unless a user ask rule or hook asks. Auto, Full
-access and `dontAsk` pre-approve them with `allowedTools: ["mcp__t3-code__*"]`.
-Modes that consult `canUseTool` approve them in the adapter's callback instead,
-because a bare `allowedTools` entry stops the SDK from calling it. Read-only
-sandboxes approve only read-only tools.
+The allow rule goes in flag settings, not `allowedTools`: the SDK warns on every
+query whose bare `allowedTools` entries skip `canUseTool`. A `--settings` file
+path cannot take extra keys, so then the rule stays in `allowedTools`.
 
 The adapter logs only whether MCP configuration exists; it does not log the
 server headers or token.

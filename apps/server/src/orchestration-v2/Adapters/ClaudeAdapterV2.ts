@@ -1829,22 +1829,35 @@ export function makeClaudeQueryOptions(input: {
           ...compactQuerySettings,
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
+  // The SDK warns on every query whose bare allowedTools entries shadow canUseTool. T3 means its
+  // own tools to skip the callback, so their allow rules go through flag settings, which the CLI
+  // applies the same way. A settings file path cannot take them, so they stay in allowedTools.
+  const t3McpAllowRules =
+    typeof effectiveQuerySettings === "string"
+      ? []
+      : (input.allowedTools ?? []).filter((tool) => tool.startsWith("mcp__t3-code__"));
+  const allowedTools = input.allowedTools?.filter((tool) => !t3McpAllowRules.includes(tool));
+  const settings: ClaudeSdkSettings | undefined =
+    t3McpAllowRules.length === 0 || typeof effectiveQuerySettings === "string"
+      ? effectiveQuerySettings
+      : ({
+          ...effectiveQuerySettings,
+          permissions: {
+            ...effectiveQuerySettings?.permissions,
+            allow: [...(effectiveQuerySettings?.permissions?.allow ?? []), ...t3McpAllowRules],
+          },
+        } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
-  const permissionMode: PermissionMode =
-    (launchArgPermissionMode as PermissionMode | null | undefined) ??
-    (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
-      ? "bypassPermissions"
-      : (input.permissionMode ?? "default"));
-  const allowedTools =
-    input.canUseTool !== undefined && CLAUDE_CAN_USE_TOOL_PERMISSION_MODES.has(permissionMode)
-      ? input.allowedTools?.filter((tool) => !tool.startsWith("mcp__t3-code__"))
-      : input.allowedTools;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
     ...(input.title === undefined ? {} : { title: input.title }),
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
-    permissionMode,
+    permissionMode:
+      (launchArgPermissionMode as PermissionMode | null | undefined) ??
+      (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
+        ? "bypassPermissions"
+        : (input.permissionMode ?? "default")),
     includePartialMessages: true,
     ...(compiledSelection.effort === undefined
       ? {}
@@ -1853,7 +1866,9 @@ export function makeClaudeQueryOptions(input: {
         }),
     ...threadIdentity,
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
-    ...(allowedTools === undefined ? {} : { allowedTools: [...allowedTools] }),
+    ...(allowedTools === undefined || allowedTools.length === 0
+      ? {}
+      : { allowedTools: [...allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
@@ -1863,16 +1878,16 @@ export function makeClaudeQueryOptions(input: {
       ? {
           thinking: { type: "adaptive" as const, display: "summarized" as const },
           settings:
-            typeof effectiveQuerySettings === "string"
-              ? effectiveQuerySettings
+            typeof settings === "string"
+              ? settings
               : {
-                  ...effectiveQuerySettings,
+                  ...settings,
                   showThinkingSummaries: true,
                 },
         }
-      : effectiveQuerySettings === undefined
+      : settings === undefined
         ? {}
-        : { settings: effectiveQuerySettings }),
+        : { settings }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.supportedDialogKinds === undefined
@@ -2009,33 +2024,9 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
 // T3 waits can block for an hour; exceed Claude's default 60 s timeout.
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 
-// A user's ask rule or hook outranks allowedTools, so it must still prompt. The SDK passes
-// the CLI's decisionReasonType at runtime but leaves it out of its types.
-function isClaudeUserForcedAsk(callbackOptions: Parameters<CanUseTool>[2]): boolean {
-  const { decisionReasonType } = callbackOptions as { readonly decisionReasonType?: unknown };
-  return (
-    callbackOptions.matchedAskRule !== undefined ||
-    decisionReasonType === "rule" ||
-    decisionReasonType === "hook"
-  );
-}
-
-function isClaudeAutoApprovedT3McpTool(toolName: string, readOnlySandbox: boolean): boolean {
-  return readOnlySandbox
-    ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS.includes(toolName)
-    : toolName.startsWith("mcp__t3-code__");
-}
-
-// Bare allowedTools entries skip canUseTool (the SDK warns on each query), so in these modes
-// canUseTool approves T3 tools instead of allowedTools.
-const CLAUDE_CAN_USE_TOOL_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set([
-  "default",
-  "acceptEdits",
-  "plan",
-]);
-
 // allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
 // limited to annotated read-only tools in read-only sandboxes.
+
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
@@ -10253,20 +10244,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return {
               behavior: "deny",
               message: "Claude V2 adapter has no active turn for this tool request.",
-              toolUseID: callbackOptions.toolUseID,
-            } satisfies PermissionResult;
-          }
-
-          if (
-            !isClaudeUserForcedAsk(callbackOptions) &&
-            isClaudeAutoApprovedT3McpTool(
-              toolName,
-              sandboxPolicyKindForClaudeRuntimePolicy(context.input.runtimePolicy) === "readOnly",
-            )
-          ) {
-            return {
-              behavior: "allow",
-              updatedInput: toolInput,
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }

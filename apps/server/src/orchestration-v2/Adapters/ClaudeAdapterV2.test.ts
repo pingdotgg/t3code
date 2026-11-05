@@ -4806,14 +4806,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
     );
 
-    // dontAsk never calls canUseTool, so T3 tools need the allowedTools pre-approval.
-    it.effect.each(["approval-required", "auto-accept-edits"] as const)(
-      "keeps T3 MCP pre-approval when --permission-mode dontAsk overrides %s",
-      (runtimeMode) =>
+    it.effect.each([
+      ["approval-required", undefined],
+      ["auto-accept-edits", undefined],
+      ["approval-required", "--permission-mode dontAsk"],
+    ] as const)(
+      "pre-approves T3 MCP tools through flag settings in %s %s",
+      ([runtimeMode, launchArgs]) =>
         Effect.gen(function* () {
-          const turn = yield* openMcpTurn(runtimeMode, "--permission-mode dontAsk");
-          assert.equal(turn.openedOptions.permissionMode, "dontAsk");
-          assert.include(turn.openedOptions.allowedTools ?? [], "mcp__t3-code__*");
+          const turn = yield* openMcpTurn(runtimeMode, launchArgs);
+          const settings = turn.openedOptions.settings;
+          assert.isObject(settings);
+          if (typeof settings !== "object") return;
+          assert.include(settings.permissions?.allow ?? [], "mcp__t3-code__*");
         }).pipe(
           Effect.scoped,
           Effect.provide(
@@ -4825,80 +4830,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           ),
         ),
-    );
-
-    it.effect.each(["approval-required", "auto-accept-edits"] as const)(
-      "approves T3 MCP tools in canUseTool without asking in %s",
-      (runtimeMode) =>
-        Effect.gen(function* () {
-          const turn = yield* openMcpTurn(runtimeMode);
-          const decision = yield* Effect.promise(() =>
-            turn.openedOptions.canUseTool!(
-              "mcp__t3-code__t3_project_list",
-              {},
-              {
-                signal: new AbortController().signal,
-                toolUseID: "tool-t3-project-list",
-                requestId: "request-t3-project-list",
-              },
-            ),
-          ).pipe(Effect.forkScoped);
-          const first = yield* Effect.raceFirst(
-            Queue.take(turn.runtimeRequestReceipts).pipe(
-              Effect.map((event) => ({ type: "request", event }) as const),
-            ),
-            Fiber.join(decision).pipe(
-              Effect.map((result) => ({ type: "decision", result }) as const),
-            ),
-          );
-          assert.equal(first.type, "decision", "a T3 MCP tool call raised an approval request");
-          if (first.type !== "decision") return;
-          assert.equal(first.result?.behavior, "allow");
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-            ),
-          ),
-        ),
-    );
-
-    it.effect("still asks for a T3 MCP tool under a user ask rule", () =>
-      Effect.gen(function* () {
-        const turn = yield* openMcpTurn("approval-required");
-        const decision = yield* Effect.promise(() =>
-          turn.openedOptions.canUseTool!("mcp__t3-code__t3_project_delete", {}, {
-            signal: new AbortController().signal,
-            toolUseID: "tool-t3-project-delete",
-            requestId: "request-t3-project-delete",
-            decisionReason: "Permission rule requires approval",
-            decisionReasonType: "rule",
-          } as Parameters<NonNullable<typeof turn.openedOptions.canUseTool>>[2]),
-        ).pipe(Effect.forkScoped);
-        const first = yield* Effect.raceFirst(
-          Queue.take(turn.runtimeRequestReceipts).pipe(
-            Effect.map((event) => ({ type: "request", event }) as const),
-          ),
-          Fiber.join(decision).pipe(
-            Effect.map((result) => ({ type: "decision", result }) as const),
-          ),
-        );
-        assert.equal(first.type, "request", "a user ask rule on a T3 MCP tool was auto-approved");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
     );
   });
 
