@@ -91,10 +91,12 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
     npmPath,
   );
   yield* fileSystem.chmod(npmPath, 0o755);
+  // The fake toolchain runs on the real host, not the simulated provider environment.
+  const hostEnv = HostProcess.Environment.defaultValue();
   return {
     environment: {
-      ...process.env,
-      PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      ...hostEnv,
+      PATH: `${toolchainBin}:${hostEnv.PATH ?? ""}`,
       FAKE_NPM_LOG: logPath,
       FAKE_NPM_PREFIX: path.join(rootDirectory, "external-npm-global"),
       FAKE_NPM_MANIFEST: encodeUnknownJson({
@@ -127,10 +129,12 @@ const makeFakeUvToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeUvToolcha
     uvPath,
   );
   yield* fileSystem.chmod(uvPath, 0o755);
+  // The fake toolchain runs on the real host, not the simulated provider environment.
+  const hostEnv = HostProcess.Environment.defaultValue();
   return {
     environment: {
-      ...process.env,
-      PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      ...hostEnv,
+      PATH: `${toolchainBin}:${hostEnv.PATH ?? ""}`,
       FAKE_UV_LOG: logPath,
       FAKE_UV_BIN: path.join(rootDirectory, "external-uv-bin"),
       FAKE_UV_EXECUTABLE: executablePath,

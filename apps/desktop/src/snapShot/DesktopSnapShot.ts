@@ -768,6 +768,8 @@ export const make = Effect.gen(function* () {
   const captureDirectory = path.join(environment.stateDir, "snap-shots");
   const linuxAppId = environment.linuxDesktopEntryName.replace(/\.desktop$/, "");
   const home = yield* HostProcess.HomeDirectory;
+  // Shell discovery can replace XDG_CURRENT_DESKTOP after startup, so read the live env per state.
+  const hostEnv = yield* HostProcess.Environment;
   let shortcutVerified = false;
   const gnomeSetupPaths = {
     bundle: environment.isPackaged
@@ -1621,7 +1623,8 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const linuxDesktop =
             state.mode === "portal"
-              ? process.env.XDG_CURRENT_DESKTOP?.toLowerCase()
+              ? (hostEnv.XDG_CURRENT_DESKTOP ?? "")
+                  .toLowerCase()
                   .split(":")
                   .find(
                     (name) =>
