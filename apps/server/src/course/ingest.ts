@@ -327,20 +327,27 @@ const ocwDownloadUrl = (source: string) =>
     try: async (signal) => {
       const fetchPage = (url: URL) =>
         fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
-      let parsed = new URL(source);
+      // Every URL we fetch stays on OCW: the source can come from a YouTube description.
+      const onOcw = (url: URL) => {
+        if (url.hostname !== "ocw.mit.edu" || !/^https?:$/.test(url.protocol))
+          throw new Error(`${url.origin} is not MIT OpenCourseWare.`);
+        return url;
+      };
+      let parsed = onOcw(new URL(source));
       // Short links such as ocw.mit.edu/18-06S05 redirect to /courses/<slug>/.
       if (!parsed.pathname.startsWith("/courses/")) {
         const landing = await fetchPage(parsed);
         await landing.body?.cancel();
-        parsed = new URL(landing.url);
+        parsed = onOcw(new URL(landing.url));
       }
-      const page = new URL(`${parsed.pathname.replace(/\/$/, "")}/download/`, parsed.origin);
+      const page = new URL(parsed.origin);
+      page.pathname = `${parsed.pathname.replace(/\/$/, "")}/download/`;
       const response = await fetchPage(page);
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
       const html = await response.text();
       const match = html.match(/href=["']([^"']+\.zip(?:\?[^"']*)?)["']/i);
       if (!match) throw new Error("The OCW download page did not contain a course zip.");
-      return new URL(match[1]!, page).toString();
+      return onOcw(new URL(match[1]!, page)).toString();
     },
     catch: (cause) =>
       new CourseIngestError({
