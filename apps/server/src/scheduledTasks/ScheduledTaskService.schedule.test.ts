@@ -7,6 +7,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -233,4 +234,61 @@ it.effect(
         expect(yield* Deferred.await(launched)).toBe(created.task.title);
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("shows a slot missed while the server was off as failed, without counting a run", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-07-01T09:00:00.000Z"));
+    const serviceLayer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          Scheduler.layer,
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+        ),
+      ),
+    );
+    const { task } = yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      return yield* service.upsert(
+        yield* decodeUpsertInput({
+          title: "Daily notes",
+          prompt: "Update the model notes.",
+          enabled: true,
+          schedule: { type: "fixed_time", timeOfDay: "08:00" },
+          projectId: "project-missed-slot",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+    }).pipe(Effect.provide(serviceLayer));
+
+    yield* TestClock.setTime(Date.parse(task.nextRunAt ?? "") + 60 * 60_000);
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* TestClock.adjust("6 seconds");
+      const updated = yield* service.subscribeList().pipe(
+        Stream.map(({ tasks }) => tasks[0]),
+        Stream.filter((listed) => listed?.nextRunAt !== task.nextRunAt),
+        Stream.runHead,
+      );
+      expect(updated).toMatchObject({
+        value: {
+          lastRunStatus: "failed",
+          lastRunError: "Skipped the 08:00 run because T3 Code wasn't running at that time.",
+          lastRunAt: null,
+          runCount: 0,
+        },
+      });
+    }).pipe(Effect.provide(serviceLayer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

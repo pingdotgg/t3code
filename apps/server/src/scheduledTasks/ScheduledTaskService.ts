@@ -1067,10 +1067,15 @@ export const layer = Layer.effect(
         missedRunAt: task.nextRunAt,
         rescheduledTo: next,
       });
+      const slot = task.schedule.type === "fixed_time" ? `${task.schedule.timeOfDay} ` : "";
+      // A run started since this task was listed keeps its own status.
       yield* sql`
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
-            updated_at = ${iso(now)}
+            updated_at = ${iso(now)},
+            last_run_error = CASE WHEN last_run_status = 'running' THEN last_run_error
+              ELSE ${`Skipped the ${slot}run because T3 Code wasn't running at that time.`} END,
+            last_run_status = CASE WHEN last_run_status = 'running' THEN 'running' ELSE 'failed' END
         WHERE task_id = ${task.id}
       `.pipe(
         Effect.mapError((cause) =>
