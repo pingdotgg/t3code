@@ -32,10 +32,8 @@ of downloaded again: add its folder under Settings, then Voice, then
 Transcription models, then Model folders. T3 Code only reads those folders,
 so those models can't be deleted from Voice settings.
 
-Models marked Streaming show a live preview while you speak. The tentative ending
-may change as the model hears more. Stop recording to finish and insert the text;
-cancel to discard the preview without changing your draft. Other models transcribe
-after recording stops.
+Models marked Streaming transcribe while you speak, so the text is ready sooner
+after you stop. Other models transcribe after recording stops.
 
 In Voice settings, you can also choose the microphone used by this browser or
 app, switch between downloaded models, or remove models from the environment.
