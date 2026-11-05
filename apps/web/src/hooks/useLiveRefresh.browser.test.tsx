@@ -10,12 +10,14 @@ function Probe(props: {
   readonly intervalMs?: number | null;
   readonly refreshOnShow?: boolean;
   readonly refreshWhileIdle?: boolean;
+  readonly refreshKeys?: readonly string[];
 }) {
   useLiveRefresh(props.refresh, {
     key: props.viewKey,
     enabled: props.enabled ?? true,
     ...(props.intervalMs !== undefined ? { intervalMs: props.intervalMs } : {}),
     refreshWhileIdle: props.refreshWhileIdle ?? false,
+    ...(props.refreshKeys ? { refreshKeys: props.refreshKeys } : {}),
     ...(props.refreshOnShow !== undefined ? { refreshOnShow: props.refreshOnShow } : {}),
   });
   return null;
@@ -58,15 +60,17 @@ describe("useLiveRefresh", () => {
     },
   );
 
-  it.each(["reenabled", "remounted"])(
+  it.each(["reenabled", "remounted", "another entry point"])(
     "keeps the completed usage deadline when %s",
     async (lifecycle) => {
       const refresh = vi.fn();
+      let otherEntry = false;
       using _timers = fakeTimers({ now: 4_000_000 });
       const probe = (enabled: boolean) => (
         <Probe
           refresh={refresh}
-          viewKey={`completed-usage:${lifecycle}`}
+          viewKey={`completed-usage:${lifecycle}:${otherEntry}`}
+          {...(lifecycle === "another entry point" ? { refreshKeys: ["completed-provider"] } : {})}
           enabled={enabled}
           refreshOnShow
           refreshWhileIdle
@@ -75,8 +79,9 @@ describe("useLiveRefresh", () => {
       // A bare hook probe; nothing here navigates.
       await using screen = await render(probe(true), { router: false });
       expect(refresh).toHaveBeenCalledTimes(1);
-      await screen.rerender(lifecycle === "remounted" ? <></> : probe(false));
+      await screen.rerender(lifecycle !== "reenabled" ? <></> : probe(false));
       await act(() => vi.advanceTimersByTime(4 * 60_000));
+      otherEntry = lifecycle === "another entry point";
       await screen.rerender(probe(true));
       expect(refresh).toHaveBeenCalledTimes(1);
       await act(() => vi.advanceTimersByTime(60_000));
@@ -101,8 +106,20 @@ describe("useLiveRefresh", () => {
     // Bare hook probes share one usage surface key; nothing here navigates.
     await using _screen = await render(
       <>
-        <Probe refresh={refresh} viewKey="shared-usage" refreshOnShow refreshWhileIdle />
-        <Probe refresh={refresh} viewKey="shared-usage" refreshOnShow refreshWhileIdle />
+        <Probe
+          refresh={refresh}
+          viewKey="shared-composer"
+          refreshKeys={["shared-provider"]}
+          refreshOnShow
+          refreshWhileIdle
+        />
+        <Probe
+          refresh={refresh}
+          viewKey="shared-limits"
+          refreshKeys={["shared-provider"]}
+          refreshOnShow
+          refreshWhileIdle
+        />
       </>,
       { router: false },
     );
@@ -118,6 +135,31 @@ describe("useLiveRefresh", () => {
     await act(() => vi.advanceTimersByTime(1000));
     expect(refresh).toHaveBeenCalledTimes(3);
     await act(() => reads[2]!.resolve());
+  });
+
+  it("refreshes a newly visible provider without postponing another provider's deadline", async () => {
+    const refresh = vi.fn();
+    using _timers = fakeTimers({ now: 6_000_000 });
+    const probe = (keys: string[]) => (
+      <Probe
+        refresh={refresh}
+        viewKey={keys.join(":")}
+        refreshKeys={keys}
+        refreshOnShow
+        refreshWhileIdle
+      />
+    );
+    // Bare hook probes; no navigation occurs.
+    await using screen = await render(probe(["provider-a"]), { router: false });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await screen.rerender(<></>);
+    await act(() => vi.advanceTimersByTime(240_000));
+    await screen.rerender(probe(["provider-a", "provider-b"]));
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTime(60_000));
+    expect(refresh).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTime(240_000));
+    expect(refresh).toHaveBeenCalledTimes(4);
   });
 
   it.each([true, false])(

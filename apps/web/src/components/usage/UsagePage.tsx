@@ -230,6 +230,10 @@ export function UsagePage() {
     reportFailure: false,
   });
 
+  const visibleDrivers = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider)).map(
+    (provider) => ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
+  );
+
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
@@ -265,11 +269,7 @@ export function UsagePage() {
                   environmentId,
                   input: {
                     usage: true,
-                    usageProviders: PROVIDER_ORDER.filter(
-                      (provider) => !hiddenProviders.has(provider),
-                    ).map((provider) =>
-                      ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
-                    ),
+                    usageProviders: visibleDrivers,
                   },
                 }),
               false,
@@ -357,6 +357,20 @@ export function UsagePage() {
       connectedLimitsEnvironments !== "" &&
       PROVIDER_ORDER.some((provider) => !hiddenProviders.has(provider)),
     key: `usage-page:${connectedLimitsEnvironments}:${[...hiddenProviders].sort().join(",")}`,
+    refreshKeys: Array.from(presentationsWithProviders).flatMap(([environmentId, presentation]) =>
+      presentation.connection.phase === "connected" &&
+      presentation.serverConfig !== null &&
+      (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId))
+        ? [
+            ...visibleDrivers.map((driver) => JSON.stringify([environmentId, driver])),
+            ...presentation.serverConfig.providers
+              .filter((provider) => visibleDrivers.includes(provider.driver))
+              .map((provider) =>
+                JSON.stringify([environmentId, provider.driver, provider.instanceId]),
+              ),
+          ]
+        : [],
+    ),
     refreshOnShow: true,
     refreshWhileIdle: true,
   });

@@ -30,6 +30,10 @@ export function useUsageLimitsRefresh(
     {
       enabled: enabled && connected && chatVisible && instanceId !== null,
       key: `usage:${environmentId}:${instanceId}:${driver ?? ""}`,
+      refreshKeys: [
+        ...(driver ? [JSON.stringify([environmentId, driver])] : []),
+        JSON.stringify([environmentId, driver, instanceId]),
+      ],
       refreshOnShow: true,
       refreshWhileIdle: true,
     },
