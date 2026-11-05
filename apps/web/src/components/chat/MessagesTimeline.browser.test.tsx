@@ -478,7 +478,7 @@ describe("MessagesTimeline work rows", () => {
       .toBeInTheDocument();
   });
 
-  it("keeps the bar still when work arrives while the history collapses at the bottom", async () => {
+  it("keeps the bar still when work arrives while collapsing, and the rows still when collapsing at the end", async () => {
     const runId = RunId.make("collapse-run");
     const props = {
       ...baseProps(),
@@ -527,6 +527,29 @@ describe("MessagesTimeline work rows", () => {
       expect(history.querySelector('[data-slot="scroll-area-viewport"]')).not.toBeNull(),
     );
     expect([...barTops]).toEqual([barTop]);
+
+    history.style.transitionDuration = "";
+    await bar.click();
+    await expect.element(screen.getByText("Step 0", { exact: true })).toBeInTheDocument();
+    await Promise.all(history.getAnimations().map((animation) => animation.finished));
+    await vi.waitFor(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      expect(props.listRef.current!.getState().scroll).toBe(viewport.scrollTop);
+    });
+    const row = screen.getByText("Step 25", { exact: true }).element();
+    const rowTops: number[] = [];
+    const rowResizes = new ResizeObserver(() => rowTops.push(row.getBoundingClientRect().top));
+    rowResizes.observe(history);
+    using _rowResizes = { [Symbol.dispose]: () => rowResizes.disconnect() };
+    history.style.transitionDuration = "2s";
+
+    await act(() => {
+      barElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(expandedHeight - 200));
+    expect(Math.max(...rowTops) - Math.min(...rowTops)).toBeLessThan(2);
+    for (const animation of history.getAnimations()) animation.finish();
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(

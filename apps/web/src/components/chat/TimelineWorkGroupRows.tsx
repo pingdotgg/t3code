@@ -909,7 +909,17 @@ function WorkingWindowView({
     if (open) return;
     setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
   }, [open]);
-  const { onWorkingHistoryCollapsing } = ctx;
+  const { onWorkingHistoryCollapsing, listRef } = ctx;
+  const collapsing = !open && history !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the list applies shrinks a frame late, so the collapse reports each frame's row size itself
+  useLayoutEffect(() => {
+    const row = windowRef.current?.closest<HTMLElement>("[data-timeline-row-id]");
+    if (!collapsing || !row) return;
+    const report = () =>
+      listRef.current?.setItemSize(itemKey, { width: row.offsetWidth, height: row.offsetHeight });
+    report();
+    return observeResize(row, report);
+  }, [collapsing, itemKey, listRef]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted, and the timeline stops following its end, until the collapse transition finishes
   useEffect(() => {
     if (open || history === null) return;
