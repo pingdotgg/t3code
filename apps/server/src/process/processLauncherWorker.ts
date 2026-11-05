@@ -18,11 +18,12 @@ export interface LauncherError {
   readonly path?: string | undefined;
 }
 
-/** Per child, in order: `stdio` per piped fd (carrying its socket), `spawn`, then `exit`; or `error`. */
+/** Per child, in order: `pid`, `stdio` per piped fd (carrying its socket), `spawn`, then `exit`; or `error`. */
 export type LauncherEvent =
   | { readonly type: "ready" }
+  | { readonly type: "pid"; readonly id: number; readonly pid: number }
   | { readonly type: "stdio"; readonly id: number; readonly fd: number }
-  | { readonly type: "spawn"; readonly id: number; readonly pid: number }
+  | { readonly type: "spawn"; readonly id: number }
   | {
       readonly type: "exit";
       readonly id: number;
@@ -95,10 +96,12 @@ export function runProcessLauncher(): void {
     });
     child.once("spawn", () => {
       children.set(id, child);
+      // First, so the server can kill the child if this process dies while handing over its pipes.
+      send({ type: "pid", id, pid: child.pid! });
       stdio.forEach((socket, fd) => {
         if (socket) send({ type: "stdio", id, fd }, socket);
       });
-      send({ type: "spawn", id, pid: child.pid! });
+      send({ type: "spawn", id });
     });
     child.once("exit", (code, signal) => {
       children.delete(id);

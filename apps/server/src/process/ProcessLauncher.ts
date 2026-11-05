@@ -6,6 +6,7 @@ import type * as NodeStream from "node:stream";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -18,7 +19,7 @@ import type { LauncherEvent, LauncherSpawnRequest } from "./processLauncherWorke
 
 // A launcher that misses either is treated as hung; neither happens to a healthy one.
 const READY_TIMEOUT = "10 seconds";
-const SPAWN_REPLY_TIMEOUT_MS = 10_000;
+const SPAWN_REPLY_TIMEOUT = "10 seconds";
 
 /** A child of the launcher, presented to the native spawner as a Node ChildProcess. */
 class HostedChild
@@ -33,6 +34,8 @@ class HostedChild
   stderr: NodeStream.Readable | null = null;
   readonly stdio: Array<NodeStream.Readable | NodeStream.Writable | null | undefined> = [];
   referenced = true;
+  /** Its pipes are handed over and the native spawner owns it. */
+  started = false;
   /** No longer awaited: its spawn failed, timed out or it exited. */
   settled = false;
   readonly launcher: Launcher;
@@ -129,7 +132,9 @@ const launcherArguments = Effect.fn("ProcessLauncher.launcherArguments")(functio
 // On Linux, libuv forks the whole server for every spawn and blocks the event loop while the
 // kernel copies its page tables, so commands are launched by a small long-lived helper instead.
 // The helper passes each child's pipes back, so the native spawner keeps all of its semantics.
-const make = Effect.fn("ProcessLauncher.make")(function* () {
+export const make = Effect.fn("ProcessLauncher.make")(function* (
+  replyTimeout: Duration.Input = SPAWN_REPLY_TIMEOUT,
+) {
   const fallback = yield* ChildProcessSpawner.ChildProcessSpawner;
   if ((yield* HostProcess.Platform) !== "linux") return fallback;
 
@@ -138,30 +143,34 @@ const make = Effect.fn("ProcessLauncher.make")(function* () {
   let current: Launcher | undefined;
   // A launcher that never starts will not start next time either; stop forking for it.
   let unavailable = false;
+  let warned = false;
   let shutDown = false;
   let nextId = 0;
 
-  const close = (launcher: Launcher) => {
+  const close = (launcher: Launcher, hung = false) => {
     if (launcher.closed) return;
     launcher.closed = true;
     if (current === launcher) current = undefined;
     const ready = Deferred.isDoneUnsafe(launcher.ready);
     if (!ready) unavailable = true;
     Deferred.doneUnsafe(launcher.ready, Exit.succeed(false));
-    const error = new Error("The process launcher exited.");
+    const error = new Error(
+      hung ? "The process launcher did not respond." : "The process launcher exited.",
+    );
     for (const child of launcher.children.values()) {
       if (child.settled) continue;
-      if (child.pid === undefined) {
-        child.fail(error);
-      } else {
-        killGroup(child.pid);
+      if (child.pid !== undefined) killGroup(child.pid);
+      if (child.started) {
         child.exit(null, "SIGKILL");
+      } else {
+        for (const stream of child.stdio) stream?.destroy();
+        child.fail(error);
       }
     }
     launcher.children.clear();
     if (launcher.worker.connected) launcher.worker.disconnect();
-    // A started launcher kills its children and exits once disconnected; one that never started may be hung.
-    if (!ready) launcher.worker.kill("SIGKILL");
+    // A started launcher kills its children and exits once disconnected; a hung one never reads that.
+    if (hung || !ready) launcher.worker.kill("SIGKILL");
   };
 
   const onEvent = (
@@ -191,11 +200,12 @@ const make = Effect.fn("ProcessLauncher.make")(function* () {
           else if (event.fd === 2) child.stderr = socket;
         }
         break;
-      case "spawn":
+      case "pid":
         child.pid = event.pid;
-        // Its spawn timed out and nobody owns it any more.
-        if (child.settled) killGroup(event.pid);
-        else child.emit("spawn");
+        break;
+      case "spawn":
+        child.started = true;
+        child.emit("spawn");
         break;
       case "exit":
         launcher.children.delete(event.id);
@@ -268,9 +278,8 @@ const make = Effect.fn("ProcessLauncher.make")(function* () {
     });
     // The native spawner waits for the reply uninterruptibly, so a hung launcher must not hold it.
     setTimeout(() => {
-      if (child.pid !== undefined || child.settled) return;
-      child.fail(new Error("The process launcher did not respond."));
-    }, SPAWN_REPLY_TIMEOUT_MS).unref();
+      if (!child.started && !child.settled) close(launcher, true);
+    }, Duration.toMillis(replyTimeout)).unref();
     return child;
   };
 
@@ -285,11 +294,13 @@ const make = Effect.fn("ProcessLauncher.make")(function* () {
     return Deferred.await(launcher.ready).pipe(
       Effect.timeoutOption(READY_TIMEOUT),
       Effect.map(Option.getOrElse(() => false)),
-      Effect.tap((ready) =>
-        Effect.sync(() => {
-          if (!ready) close(launcher);
-        }),
-      ),
+      Effect.tap((ready) => {
+        if (ready) return Effect.void;
+        close(launcher);
+        if (!unavailable || warned || shutDown) return Effect.void;
+        warned = true;
+        return Effect.logWarning("The process launcher did not start; commands fork the server.");
+      }),
     );
   });
 
