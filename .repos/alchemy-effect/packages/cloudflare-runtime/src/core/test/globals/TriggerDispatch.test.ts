@@ -122,9 +122,7 @@ const testTriggerRoutes = (worker: TestWorker) =>
       method: "POST",
       body: JSON.stringify({
         queue: "trigger-test-queue",
-        messages: [
-          { id: "message-1", timestamp: 1000, attempts: 1, body: "hello" },
-        ],
+        messages: [{ id: "message-1", timestamp: 1000, attempts: 1, body: "hello" }],
       }),
     });
     expect(queueResponse.status).toBe(200);
@@ -139,15 +137,13 @@ const testTriggerRoutes = (worker: TestWorker) =>
     expect(yield* worker.fetchText("/anything")).toBe("fetch-ok");
   });
 
-class ImagesEventsWorker extends Context.Service<
-  ImagesEventsWorker,
-  TestWorker
->()("test/ImagesEventsWorker") {}
+class ImagesEventsWorker extends Context.Service<ImagesEventsWorker, TestWorker>()(
+  "test/ImagesEventsWorker",
+) {}
 
-class StreamEventsWorker extends Context.Service<
-  StreamEventsWorker,
-  TestWorker
->()("test/StreamEventsWorker") {}
+class StreamEventsWorker extends Context.Service<StreamEventsWorker, TestWorker>()(
+  "test/StreamEventsWorker",
+) {}
 
 const EventsWorkersLive = Layer.mergeAll(
   Layer.effect(
@@ -181,9 +177,7 @@ layer(EventsWorkersLive.pipe(Layer.provideMerge(localRuntimeLayer)), {
       yield* testTriggerRoutes(worker);
       // The images delivery middleware still intercepts its own path (the
       // user worker would answer "fetch-ok" with a 200).
-      const delivery = yield* worker.fetch(
-        "/cdn-cgi/mf/imagedelivery/does-not-exist/public",
-      );
+      const delivery = yield* worker.fetch("/cdn-cgi/mf/imagedelivery/does-not-exist/public");
       expect(delivery.status).toBe(404);
       yield* Effect.promise(() => delivery.arrayBuffer());
     }),

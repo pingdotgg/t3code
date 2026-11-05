@@ -5,7 +5,7 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useEffect } from "react";
 import { Platform, Pressable, View } from "react-native";
-import { AndroidScreenHeader } from "../../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../../components/ui/AppBar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   letterStopNotes,
@@ -139,7 +139,8 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
           title={`Stop ${route.params.position + 1}`}
           onBack={() => navigation.goBack()}
           trailing={
@@ -188,7 +189,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               <>
                 <GuideNotice state={state} />
                 <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
-                <PullRequestMarkdown markdown={stop.summary} />
+                <PullRequestMarkdown lineBreaks={false} markdown={stop.summary} />
                 {stop.attention ? (
                   <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
                     <View className="flex-row items-center gap-2">
@@ -197,7 +198,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                         {attentionLabels[stop.attention.kind]}
                       </Text>
                     </View>
-                    <PullRequestMarkdown markdown={stop.attention.note} />
+                    <PullRequestMarkdown lineBreaks={false} markdown={stop.attention.note} />
                   </View>
                 ) : null}
                 {stale ? (
@@ -237,7 +238,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                           <Text className="text-xs text-foreground-muted">
                             {note.path.split("/").at(-1)}:{note.line}
                           </Text>
-                          <PullRequestMarkdown markdown={note.body} />
+                          <PullRequestMarkdown lineBreaks={false} markdown={note.body} />
                         </View>
                       </View>
                     ))}
@@ -266,7 +267,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   <View className="gap-3">
                     <Text className="font-t3-semibold">Questions to consider</Text>
                     {stop.questions.map((question) => (
-                      <PullRequestMarkdown key={question} markdown={question} />
+                      <PullRequestMarkdown key={question} lineBreaks={false} markdown={question} />
                     ))}
                   </View>
                 ) : null}

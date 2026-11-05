@@ -267,6 +267,7 @@ export class GitLabCli extends Context.Service<
   {
     readonly execute: (input: {
       readonly cwd: string;
+      readonly host?: string | undefined;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
       /** Keeps sensitive payloads out of argv. */
@@ -410,11 +411,18 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
-// glab prints a missing project or merge request as a bare 404.
+// glab prints a missing project or merge request as a bare 404, and an expired
+// OAuth login as an `invalid_grant` refresh failure without suggesting `glab auth login`.
 const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null => {
   const normalized = stderr.toLowerCase();
-  if (normalized.includes("glab auth login")) return "authentication";
-  if (normalized.includes("not found") || normalized.includes("404")) return "not-found";
+  if (normalized.includes("glab auth login") || normalized.includes("invalid_grant")) {
+    return "authentication";
+  }
+
+  if (normalized.includes("not found") || normalized.includes("404")) {
+    return "not-found";
+  }
+
   return null;
 };
 
@@ -432,6 +440,8 @@ export const make = Effect.gen(function* () {
         command: "glab",
         args: input.args,
         cwd: input.cwd,
+        // glab may otherwise prefer a different checkout remote.
+        ...(input.host === undefined ? {} : { env: { GITLAB_HOST: input.host } }),
         classifyFailure: classifyGlabFailure,
         notFoundDetail: "Merge request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,

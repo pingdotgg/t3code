@@ -106,6 +106,10 @@ export class ManagedTunnelLimits extends Context.Service<
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError, R>;
+    /** The user's manual cap, which replaces the default and any T3 Chat plan cap. */
+    readonly getOverride: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<number | null, ManagedTunnelLimitPersistenceError>;
   }
 >()("t3code-relay/environments/ManagedTunnelLimits") {}
 
@@ -126,7 +130,24 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const loadOverride = (userId: string) =>
+    db
+      .select({ maxTunnels: relayManagedTunnelLimits.maxTunnels })
+      .from(relayManagedTunnelLimits)
+      .where(eq(relayManagedTunnelLimits.userId, userId))
+      .limit(1)
+      .pipe(
+        Effect.map((rows) => rows[0]?.maxTunnels ?? null),
+        Effect.mapError(
+          (cause) =>
+            new ManagedTunnelLimitPersistenceError({ operation: "load-limit", userId, cause }),
+        ),
+      );
+
   return ManagedTunnelLimits.of({
+    getOverride: Effect.fn("relay.managed_tunnel_limits.get_override")(function* (input) {
+      return yield* loadOverride(input.userId);
+    }),
     withCapacity: Effect.fn("relay.managed_tunnel_limits.with_capacity")(function* <A, E, R>(
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
@@ -148,22 +169,8 @@ const make = Effect.gen(function* () {
             ),
           );
 
-        const overrides = yield* db
-          .select({ maxTunnels: relayManagedTunnelLimits.maxTunnels })
-          .from(relayManagedTunnelLimits)
-          .where(eq(relayManagedTunnelLimits.userId, input.userId))
-          .limit(1)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ManagedTunnelLimitPersistenceError({
-                  operation: "load-limit",
-                  userId: input.userId,
-                  cause,
-                }),
-            ),
-          );
-        const baseMaxTunnels = overrides[0]?.maxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
+        const override = yield* loadOverride(input.userId);
+        const baseMaxTunnels = override ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
 
         const pendingCutoff = DateTime.formatIso(
           DateTime.subtract(yield* DateTime.now, {
@@ -196,7 +203,7 @@ const make = Effect.gen(function* () {
         // A manual override is the exact cap; a T3 Chat plan raises only the default.
         // Runs under the user lock, bounded by the T3 Chat request timeout.
         const maxTunnels =
-          t3Chat.available && overrides.length === 0
+          t3Chat.available && override === null
             ? Math.max(baseMaxTunnels, yield* t3ChatTunnelLimit(input.userId))
             : baseMaxTunnels;
         if (activeTunnels >= maxTunnels) {

@@ -44,6 +44,10 @@ export function useSecretSources(environmentId: EnvironmentId): ReadonlyArray<Se
     .map(([id, config]) => ({ id, kind: config.kind, label: config.label }));
 }
 
+function SourceIcon(props: { readonly icon: ComponentType<{ readonly className?: string }> }) {
+  return <props.icon className="size-3.5 shrink-0" />;
+}
+
 function SourceLabel(props: {
   readonly icon: ComponentType<{ readonly className?: string }>;
   readonly label: string;
@@ -60,6 +64,8 @@ type SecretSourceInputProps = Omit<ComponentProps<typeof SecretInput>, "value" |
   readonly value: string | SecretReference;
   readonly sources: ReadonlyArray<SecretSource>;
   readonly onSecretChange: (secret: SecretReference | undefined) => void;
+  /** Whether the selected source and committed field can be saved or used. */
+  readonly onValidityChange?: (valid: boolean) => void;
   /** Places the parts in the caller's layout; `source` is null when there is nothing to pick. */
   readonly children?: (parts: {
     readonly source: ReactNode;
@@ -72,6 +78,7 @@ export function SecretSourceInput({
   value,
   sources,
   onSecretChange,
+  onValidityChange,
   children,
   ...rest
 }: SecretSourceInputProps) {
@@ -98,20 +105,23 @@ export function SecretSourceInput({
           setRejectedReference(null);
           if (value === STORED_VALUE || value === null) {
             setPendingProvider(null);
+            onValidityChange?.(true);
             if (secret !== undefined) onSecretChange(undefined);
             return;
           }
           const next = value as SecretProviderId;
+          onValidityChange?.(next === secret?.provider);
           setPendingProvider(next === secret?.provider ? null : next);
         }}
       >
-        <SelectTrigger size="sm" className="w-full min-w-0" aria-label={`${label} source`}>
+        <SelectTrigger
+          size="sm"
+          className="w-auto min-w-0 shrink-0"
+          aria-label={`${label} source`}
+          title={provider === null ? "Value" : providerLabel(provider)}
+        >
           <SelectValue>
-            {provider === null ? (
-              <SourceLabel icon={TypeIcon} label="Value" />
-            ) : (
-              <SourceLabel icon={providerIcon(provider)} label={providerLabel(provider)} />
-            )}
+            <SourceIcon icon={provider === null ? TypeIcon : providerIcon(provider)} />
           </SelectValue>
         </SelectTrigger>
         <SelectPopup align="start" alignItemWithTrigger={false}>
@@ -145,6 +155,7 @@ export function SecretSourceInput({
           onCommit={(next) => {
             if (next.trim().length === 0) {
               setRejectedReference(null);
+              onValidityChange?.(pendingProvider === null && secret !== undefined);
               if (pendingProvider === null && secret !== undefined) onSecretChange(undefined);
               return;
             }
@@ -154,10 +165,12 @@ export function SecretSourceInput({
               definition?.isReference(decoded.value.reference) === false
             ) {
               setRejectedReference(next);
+              onValidityChange?.(false);
               return;
             }
             setRejectedReference(null);
             setPendingProvider(null);
+            onValidityChange?.(true);
             onSecretChange(decoded.value);
           }}
           autoComplete="off"
@@ -178,7 +191,7 @@ export function SecretSourceInput({
   if (source === null) return valueField;
   return (
     <div className="flex min-w-0 flex-1 items-start gap-1.5">
-      <div className="w-28 shrink-0">{source}</div>
+      {source}
       {valueField}
     </div>
   );
