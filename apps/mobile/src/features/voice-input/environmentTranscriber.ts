@@ -19,7 +19,7 @@ export function createEnvironmentTranscriber(input: {
     if (!input.canSend()) {
       throw new VoiceTranscriptionError({
         code: "cancelled",
-        message: "The transcription destination changed.",
+        message: "Your transcription choice changed.",
       });
     }
   }
@@ -41,7 +41,7 @@ export function createEnvironmentTranscriber(input: {
           ) {
             throw new VoiceTranscriptionError({
               code: "transcription-failed",
-              message: "Invalid voice recording.",
+              message: "This recording couldn’t be read. Try recording again.",
             });
           }
           // A timed native stop can include a final encoder packet beyond the recording limit.

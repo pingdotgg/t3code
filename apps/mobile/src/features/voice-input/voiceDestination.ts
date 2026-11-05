@@ -4,6 +4,7 @@ import {
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
 } from "@t3tools/contracts";
 import {
+  getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
   transcribeEnvironmentPcm,
   VoiceTranscriptionError,
@@ -67,20 +68,20 @@ export const voiceConnectionAtom = Atom.family((id: EnvironmentId) =>
 );
 
 // React Native's XMLHttpRequest fetch follows redirects. Expo's native transport honors redirect: "error".
-function runSpeech<A, E>(
+export function runSpeech<A, E>(
   effect: Effect.Effect<A, E, HttpClient.HttpClient>,
-  signal: AbortSignal,
-  canSend: () => boolean,
+  signal?: AbortSignal,
+  canSend: () => boolean = () => true,
 ) {
   return Effect.runPromise(
     AtomRegistry.getResult(appAtomRegistry, connectionAtomRuntime).pipe(
       Effect.flatMap((context) =>
         effect.pipe(
           Effect.provideService(FetchHttpClient.Fetch, async (url, options) => {
-            if (signal.aborted || !canSend())
+            if (signal?.aborted || !canSend())
               throw new VoiceTranscriptionError({
                 code: "cancelled",
-                message: "The transcription destination changed.",
+                message: "Your transcription choice changed.",
               });
             return expoFetch(url, { ...options, redirect: "error" });
           }),
@@ -102,7 +103,7 @@ function environmentTranscriber(prepared: PreparedConnection, canSend: () => boo
         throw new VoiceTranscriptionError({
           code: "unavailable",
           message:
-            "Install a transcription model in this environment’s Voice settings, then try again.",
+            "Install a transcription model for this environment in Settings → Voice, then try again.",
         });
       return status.languages
         ? effectiveSpeechLanguage(
@@ -118,7 +119,7 @@ function environmentTranscriber(prepared: PreparedConnection, canSend: () => boo
       if (!native?.decodeRecording)
         throw new VoiceTranscriptionError({
           code: "unavailable",
-          message: "Update the app to use environment transcription.",
+          message: "Update T3 Code to transcribe on an environment.",
         });
       return native.decodeRecording(uri);
     },
@@ -132,6 +133,35 @@ function environmentTranscriber(prepared: PreparedConnection, canSend: () => boo
       ).text,
   });
 }
+
+const speechAtom = <A, E>(
+  id: EnvironmentId,
+  read: (prepared: PreparedConnection) => Effect.Effect<A, E, HttpClient.HttpClient>,
+) =>
+  Atom.make((get) => {
+    const prepared = get(voiceConnectionAtom(id));
+    return prepared
+      ? Effect.tryPromise({
+          try: (signal) => runSpeech(read(prepared), signal),
+          catch: (cause) =>
+            new VoiceTranscriptionError({
+              code: "unavailable",
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        })
+      : Effect.succeed(null);
+  });
+
+export const voiceSpeechStatusAtom = Atom.family((id: EnvironmentId) =>
+  speechAtom(id, getEnvironmentSpeechStatus),
+);
+export const voiceSpeechModelsAtom = Atom.family((id: EnvironmentId) =>
+  speechAtom(id, (prepared) => getEnvironmentSpeechModels(prepared)),
+);
+// Fetched once for the model sheet; download progress polls the lighter list above.
+export const voiceSpeechBenchmarksAtom = Atom.family((id: EnvironmentId) =>
+  speechAtom(id, (prepared) => getEnvironmentSpeechModels(prepared, true)),
+);
 
 // null selects on-device; a grant with no usable transcriber must never fall back.
 export const voiceRouteAtom = Atom.make((get) => {

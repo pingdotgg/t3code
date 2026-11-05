@@ -63,7 +63,7 @@ it("trims at most one second of recorder padding and rejects longer recordings",
   await expect(recording.transcribe("file:///padded.m4a", options)).resolves.toBe("hello");
   bytes = padded;
   await expect(recording.transcribe("file:///too-long.m4a", options)).rejects.toThrow(
-    "Invalid voice recording",
+    "This recording couldn’t be read. Try recording again.",
   );
   expect(upload).toHaveBeenCalledOnce();
 });

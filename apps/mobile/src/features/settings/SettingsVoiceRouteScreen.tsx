@@ -26,8 +26,10 @@ import {
   chooseVoiceDestination,
   voiceConnectionAtom,
   voiceGrantAtom,
+  voiceSpeechStatusAtom,
   hasEnvironmentVoiceCapture,
 } from "../voice-input/voiceDestination";
+import { VoiceModelSection } from "./VoiceModelSection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -79,7 +81,7 @@ const KINDS: Record<
   wired: {
     label: "Wired",
     row: "Other wired",
-    rowDescription: "Headsets and USB microphones not listed",
+    rowDescription: "Headsets and USB microphones not listed here",
     icon: "cable.connector",
   },
   bluetooth: {
@@ -87,8 +89,8 @@ const KINDS: Record<
     row: "Other Bluetooth",
     rowDescription:
       Platform.OS === "android"
-        ? "Earbuds, headsets, and cars, including Android Auto, not listed"
-        : "AirPods, headsets, and cars not listed",
+        ? "Earbuds, headsets, and cars, including Android Auto, not listed here"
+        : "AirPods, headsets, and cars not listed here",
     icon: "headphones",
   },
   builtIn: {
@@ -107,8 +109,8 @@ const KINDS: Record<
 
 const UNAVAILABLE_EXPLANATION =
   Platform.OS === "android"
-    ? "On-device dictation needs Android 12 or later and compatible Google speech services for this language. Keyboard voice typing is separate."
-    : "On-device dictation needs iOS 26 or later and a supported device and language. Keyboard dictation is separate.";
+    ? "Dictation on this device needs Android 12 or later and Google speech services that support your language. Your keyboard’s voice typing is separate."
+    : "Dictation on this device needs iOS 26 or later, a supported device, and a supported language. Your keyboard’s dictation is separate.";
 
 function saveDestination(id: EnvironmentId | null) {
   try {
@@ -116,7 +118,7 @@ function saveDestination(id: EnvironmentId | null) {
   } catch {
     Dialog.alert(
       "Could not save transcription choice",
-      "Remote dictation is off for this session. Try saving again before closing the app; otherwise your previous choice may return after restart.",
+      "Dictation on an environment is off for this session. Save again before closing the app, or your previous choice may return when it restarts.",
     );
   }
 }
@@ -129,24 +131,32 @@ function EnvironmentChoice({
   selected: boolean;
 }) {
   const usable = useAtomValue(voiceConnectionAtom(environment.environmentId)) !== null;
+  const status = AsyncResult.getOrElse(
+    useAtomValue(voiceSpeechStatusAtom(environment.environmentId)),
+    () => null,
+  );
   return (
     <ListChoiceRow
       label={environment.label}
       selected={selected}
       disabled={!usable}
       description={
-        usable
-          ? (environment.displayUrl ?? "Send finished recordings to this environment.")
-          : environment.connection.phase !== "connected"
+        !usable
+          ? environment.connection.phase !== "connected"
             ? "Not connected"
             : "Transcription unavailable"
+          : status?.supported === false
+            ? status.reason
+            : status?.state === "missing-model"
+              ? "No transcription model installed"
+              : (environment.displayUrl ?? "Send finished recordings to this environment.")
       }
       separated
       onPress={() => {
         if (!selected)
           Dialog.confirm({
             title: `Send microphone audio to ${environment.label}?`,
-            message: `When you finish a recording, this phone will send it to ${environment.displayUrl ?? environment.label} for transcription. You can switch back to this device at any time.`,
+            message: `Finished recordings will be sent to ${environment.displayUrl ?? environment.label} for transcription. You can switch back to This device at any time.`,
             confirmText: "Use environment",
             onConfirm: () => saveDestination(environment.environmentId),
           });
@@ -159,6 +169,11 @@ export function SettingsVoiceRouteScreen() {
   const transcriber = useAtomValue(localVoiceTranscriberAtom);
   const grant = useAtomValue(voiceGrantAtom);
   const { environments, isReady } = useEnvironments();
+  const grantEnvironment = grant
+    ? environments.find(
+        (environment) => environment.environmentId === grant.destination.environmentId,
+      )
+    : undefined;
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -217,7 +232,7 @@ export function SettingsVoiceRouteScreen() {
         <SettingsSection title="Transcribe on">
           <ListChoiceRow
             label="This device"
-            description="Keep recordings on this phone. No audio is sent."
+            description="Audio stays on this device and is transcribed here."
             selected={!grant}
             onPress={() => saveDestination(null)}
           />
@@ -229,11 +244,7 @@ export function SettingsVoiceRouteScreen() {
                 selected={grant?.destination.environmentId === environment.environmentId}
               />
             ))}
-          {isReady &&
-          grant &&
-          !environments.some(
-            (environment) => environment.environmentId === grant.destination.environmentId,
-          ) ? (
+          {isReady && grant && !grantEnvironment ? (
             <ListChoiceRow
               label="Previously selected environment"
               description="No longer paired"
@@ -244,6 +255,12 @@ export function SettingsVoiceRouteScreen() {
             />
           ) : null}
         </SettingsSection>
+        {grantEnvironment ? (
+          <VoiceModelSection
+            environmentId={grantEnvironment.environmentId}
+            label={grantEnvironment.label}
+          />
+        ) : null}
         {!grant && transcriber === null ? (
           <Text className="px-2 text-sm text-foreground-muted">{UNAVAILABLE_EXPLANATION}</Text>
         ) : null}
@@ -260,8 +277,8 @@ export function SettingsVoiceRouteScreen() {
             </SettingsSection>
             <Text className="px-2 text-sm text-foreground-muted">
               {permission === "ask"
-                ? "Voice input needs microphone access before it can record or list your microphones."
-                : "Microphone access is off for T3 Code. Turn it on in Settings to use voice input."}
+                ? "Allow microphone access to record and to see your microphones."
+                : "Turn on microphone access for T3 Code in Settings to use voice input."}
             </Text>
           </>
         ) : null}
@@ -300,11 +317,11 @@ export function SettingsVoiceRouteScreen() {
           })}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Voice input prefers the first connected microphone in this list. Wired and Bluetooth
-          devices are added by name after you use voice input with them connected; until then, the
-          Other row ranks them. Swipe a device left to forget it.
+          Voice input uses the first connected microphone in this list. A wired or Bluetooth
+          microphone is added by name the first time you dictate with it connected; until then it
+          falls under Other. Swipe left on a named microphone to forget it.
           {Platform.OS === "android"
-            ? " Android may use another input when the preferred microphone cannot be routed."
+            ? " Android may still use a different microphone if the preferred one can’t be routed."
             : null}
         </Text>
       </ScrollView>

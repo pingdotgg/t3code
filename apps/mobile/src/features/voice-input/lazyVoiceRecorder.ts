@@ -120,7 +120,7 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
       );
     },
     record(options) {
-      if (!recorder) throw new Error("Voice recorder is not prepared.");
+      if (!recorder) throw new Error("The voice recorder isn’t ready. Try again.");
       recorder.record(options);
     },
     stop() {
