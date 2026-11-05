@@ -46,11 +46,11 @@ Every user on the machine can read the policy, so do not put credentials in it.
 
 Use one of these per machine:
 
-| OS      | Native policy                                                       | Policy file                                       |
-| ------- | ------------------------------------------------------------------- | ------------------------------------------------- |
-| macOS   | Configuration profile for `com.t3tools.t3code`                      | `/Library/Application Support/T3Code/policy.json` |
-| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\Program Files\T3Code\policy.json`             |
-| Linux   |                                                                     | `/etc/t3code/policy.json`                         |
+| OS      | Native policy                                                                                        | Policy file                                       |
+| ------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| macOS   | Configuration profile for `com.t3tools.t3code`                                                       | `/Library/Application Support/T3Code/policy.json` |
+| Windows | Group Policy template, or a `Policy` JSON value (both under `HKLM\SOFTWARE\Policies\T3Tools\T3Code`) | `C:\Program Files\T3Code\policy.json`             |
+| Linux   |                                                                                                      | `/etc/t3code/policy.json`                         |
 
 T3 Code does not merge sources. If a machine has both a native policy and a policy file, T3 Code
 refuses to start until you remove one.
@@ -62,14 +62,28 @@ administrators.
 `com.t3tools.t3code`. The payload's keys are the policy's top-level keys (`schemaVersion`,
 `organization`, `supportUrl`, `settings`, `limits`); JSON objects become dictionaries and lists
 become arrays. To make the payload from a policy file you checked, run
-`plutil -convert xml1 -o com.t3tools.t3code.plist policy.json` and upload the result. Install it as
+`plutil -convert xml1 -o com.t3tools.t3code.plist policy.json` and upload the result, or run
+`t3 policy templates <directory> --policy policy.json` to write a complete
+`macos/t3code.mobileconfig`. Install it as
 a device profile, since T3 Code ignores user profiles, and deploy only one profile for this domain.
 A profile cannot hold `null`, so use a policy file if a setting's value must be `null`.
 
-**Windows registry.** Set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
+**Windows Group Policy.** Run `t3 policy templates <directory>` and copy
+`windows/t3code.admx` and `windows/en-US/t3code.adml` into your `PolicyDefinitions` folder or
+central store, or import them into Intune. The policies appear under Computer Configuration >
+Administrative Templates > T3 Code. Set **Organization** whenever you set any other T3 Code policy.
+Locks and provider fields go in the two JSON policies, as the same objects a policy file would hold.
+Machines pick up a change at the next Group Policy refresh; run `gpupdate /target:computer /force`
+to apply it now, then restart T3 Code.
+Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, or
+**Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
+**Disabled** restricts nothing, the same as **Not Configured**.
+
+**Windows registry value.** Instead of the template, set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
 from Group Policy Preferences or an Intune script. T3 Code reads it through the Windows registry
-API, so it works where registry tools such as `reg.exe` are blocked for users. In PowerShell, as an
-administrator:
+API, so it works where registry tools such as `reg.exe` are blocked for users. Use one or the other:
+T3 Code refuses to start when the key holds both a `Policy` value and the template's settings. In
+PowerShell, as an administrator:
 
 ```powershell
 $json = (Get-Content -Raw -Encoding UTF8 policy.json) -replace '\r?\n\s*', ''
@@ -92,7 +106,8 @@ reopen the desktop app, or run `t3 service restart` for the
 [background service](./background-service.md). Reconnecting a phone or browser does not reload the
 policy.
 
-To remove a policy, delete the file, remove the profile, or delete the registry value, then restart
+To remove a policy, delete the file, remove the profile, set the Group Policy settings to
+**Not Configured**, or delete the registry value, then restart
 the server. Users get back the settings they had chosen, since T3 Code never writes policy values
 into them.
 
@@ -104,7 +119,9 @@ version does not support, or a machine with both a native policy and a file. The
 the policy came from and what is wrong.
 
 `t3 policy check` catches the same problems in a JSON file. For a profile or registry value, check
-the JSON before you convert it. A policy written for a newer version can use keys an older one
+the JSON before you convert it. For the Group Policy template, check a complete policy file that
+holds the same settings, then paste its `settings` and `limits.providers.instances` objects into the
+two JSON policies. A policy written for a newer version can use keys an older one
 cannot enforce, so upgrade T3 Code before you deploy a policy that uses them.
 
 ## Settings
@@ -178,8 +195,13 @@ config home, and the environment variables set on each provider. They come from
 [`providers.instances`](#providers) or T3 Code's defaults, and users cannot change them, because a
 wrapper script, a launch flag, or a variable such as `NODE_OPTIONS` could otherwise turn off the
 provider's approvals. Pin the variables your users need, such as a gateway URL, in
-`providers.instances`. Variables in the environment that starts T3 Code itself still reach
-providers.
+`providers.instances`.
+
+Variables in the environment that starts T3 Code itself still reach providers, and a default
+binary path such as `claude` is looked up on that environment's `PATH`. The desktop app builds that
+environment from settings the user controls, such as their shell profile, so a user could put their
+own `claude` earlier on their `PATH`. Pin an absolute `binaryPath` in `providers.instances` for each
+provider you allow.
 
 ACP agents' own mode menus have no effect under `maxRuntimeMode`, except Antigravity's, whose modes
 T3 Code can place under the limit. Users still choose which ACP Registry agent runs; leave
@@ -202,8 +224,10 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server listens only on a loopback address, creates no pairing links, and
 signs out devices that paired earlier. It does not start with a host other than a loopback
-address or `localhost`. The [background service](./background-service.md) listens on private
-networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The desktop app starts
+address or `localhost`. A [background service](./background-service.md) installed before
+`T3CODE_LAN` existed keeps private-network access, so without `remote` it refuses to start.
+Run `t3 up --no-lan` when its `service.env` sets no `T3CODE_HOST`, or set
+`T3CODE_HOST=127.0.0.1` in `service.env`, then run `t3 service restart`. The desktop app starts
 with network access and Tailscale Serve off, whatever the user chose. That also turns off
 T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
 
@@ -232,7 +256,8 @@ so restart T3 Code after that.
 
 `providers.allowedDrivers` lists the providers that may run, by ID: `codex` (Codex),
 `claudeAgent` (Claude), `cursor` (Cursor), `grok` (Grok), `opencode` (OpenCode), `antigravity`
-(Antigravity), `fx` (fx), `pi` (Pi), `muse` (Muse Code), and `acpRegistry` (ACP Registry).
+(Antigravity), `fx` (fx), `kiro` (Kiro), `pi` (Pi), `muse` (Muse Code), and `acpRegistry` (ACP
+Registry).
 `t3 policy check` rejects an ID this version does not know. Threads on other providers stay,
 marked unavailable, and users can still turn those providers off.
 
@@ -249,9 +274,13 @@ starts the binary you set.
 
 - `mode`: `auto` keeps the normal update flow. `off` stops T3 Code from checking for updates, for
   machines that get T3 Code through device management.
-- `feedUrl`: the desktop app updates from your own mirror of the release feed instead of GitHub.
-  Publish only the versions you have approved. The `t3` command-line server updates through npm,
-  so pin it with your package tooling.
+- `feedUrl`: T3 Code updates from your own mirror instead of GitHub: the desktop app, `t3 update`,
+  and updates started from another device. Publish only the versions you have approved, laid out
+  as on a GitHub release. The release's update files (`latest.yml`, `latest-mac.yml`,
+  `latest-linux.yml`, `latest-linux-arm64.yml`, and their `nightly` versions if you allow nightly)
+  and the desktop installers they list go at the URL's root. The release's `t3-*` archives and
+  `SHA256SUMS` go under `v<version>/`. A `t3` run through `npx` comes from npm, so pin it with your
+  package tooling.
 - `allowNightly: false`: the nightly channel is unavailable.
 
 ## What a policy does not cover

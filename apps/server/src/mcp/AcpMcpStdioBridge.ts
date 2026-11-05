@@ -1,5 +1,5 @@
 // Relay JSON-RPC verbatim; schema decoding would reject foreign payloads.
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off
 import * as NodeReadline from "node:readline";
 
 import * as Cause from "effect/Cause";
