@@ -40,6 +40,16 @@ it.effect("gives each worktree its own path prefix, also when folder names match
       [...prefixes.values()],
       ["alpha@shared", "alpha@shared-2", "alpha@shared-2-2", "beta"],
     );
+    // Captured before prefixes were kept: both took `alpha`, and the first keeps it.
+    const kept = CheckpointService.repositoryPathPrefixes(
+      path,
+      [worktree("alpha", "/worktrees/two/shared"), worktree("alpha", "/worktrees/one/shared")],
+      [
+        { ...worktree("alpha", "/worktrees/one/shared"), pathPrefix: "alpha" },
+        { ...worktree("alpha", "/worktrees/two/shared"), pathPrefix: "alpha" },
+      ],
+    );
+    assert.deepEqual([...kept.values()], ["alpha@shared", "alpha"]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

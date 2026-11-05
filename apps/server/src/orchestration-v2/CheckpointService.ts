@@ -245,6 +245,10 @@ export interface CheckpointServiceV2Shape {
     readonly repoWorktrees?: ReadonlyArray<ThreadRepoWorktree>;
     /** Decides whether the previous ordinal's snapshot can be counted against. */
     readonly runs?: CheckpointRunHistory;
+    /** The thread's checkpoints so far; their path prefixes stay their worktrees'. */
+    readonly checkpoints?: ReadonlyArray<
+      Pick<OrchestrationV2Checkpoint, "scopeId" | "repositories">
+    >;
     readonly forceMissing?: boolean;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
   /**
@@ -355,30 +359,48 @@ export function checkpointWorkspaceFiles(
 }
 
 /**
- * Names each worktree's paths after its repository. Two worktrees of one
- * repository, or of the folder itself, add the worktree's folder name, and a
- * number when those folder names match too, so file opens find the right one.
+ * Names each worktree's paths after its repository; two worktrees of one repository, ever in
+ * the scope, or of the folder itself, add the folder name, and a number if those match too.
+ * An earlier checkpoint's prefix stays its worktree's, so diffs across turns name each apart.
  */
 export function repositoryPathPrefixes(
   path: Path.Path,
   repositories: ReadonlyArray<
     Pick<ThreadRepoWorktree, "repository" | "repositoryPath" | "worktreePath">
   >,
+  earlier: ReadonlyArray<
+    Pick<
+      OrchestrationV2CheckpointRepository,
+      "repository" | "repositoryPath" | "worktreePath" | "pathPrefix"
+    >
+  > = [],
 ): ReadonlyMap<string, string> {
-  const nameOf = (entry: (typeof repositories)[number]) =>
+  const nameOf = (entry: Pick<ThreadRepoWorktree, "repository" | "repositoryPath">) =>
     entry.repository === "."
       ? path.basename(entry.repositoryPath) || "repository"
       : entry.repository;
-  const counts = new Map<string, number>();
-  for (const entry of repositories) {
-    counts.set(nameOf(entry), (counts.get(nameOf(entry)) ?? 0) + 1);
+  // The first worktree to use a prefix owns it.
+  const owners = new Map<string, string>();
+  const kept = new Map<string, string>();
+  for (const entry of earlier) {
+    if (!owners.has(entry.pathPrefix)) owners.set(entry.pathPrefix, entry.worktreePath);
+    kept.set(entry.worktreePath, entry.pathPrefix);
   }
-  const used = new Set<string>();
+  const worktreesByName = new Map<string, Set<string>>();
+  for (const entry of [...earlier, ...repositories]) {
+    const worktrees = worktreesByName.get(nameOf(entry)) ?? new Set<string>();
+    worktreesByName.set(nameOf(entry), worktrees.add(entry.worktreePath));
+  }
+  const used = new Set(owners.keys());
   return new Map(
     repositories.map((entry) => {
+      const previous = kept.get(entry.worktreePath);
+      if (previous !== undefined && owners.get(previous) === entry.worktreePath) {
+        return [entry.worktreePath, previous] as const;
+      }
       const name = nameOf(entry);
       const base =
-        entry.repository === "." || (counts.get(name) ?? 0) > 1
+        entry.repository === "." || (worktreesByName.get(name)?.size ?? 0) > 1
           ? `${name}@${path.basename(entry.worktreePath)}`
           : name;
       let prefix = base;
@@ -1096,7 +1118,13 @@ export const layer: Layer.Layer<
             repoWorktrees.push(repoWorktree);
           }
         }
-        const prefixes = repositoryPathPrefixes(path, repoWorktrees);
+        const prefixes = repositoryPathPrefixes(
+          path,
+          repoWorktrees,
+          (input.checkpoints ?? []).flatMap((checkpoint) =>
+            checkpoint.scopeId === input.scope.id ? (checkpoint.repositories ?? []) : [],
+          ),
+        );
         const captured = yield* Effect.forEach(repoWorktrees, (repoWorktree) =>
           captureRepository({
             scopeId: input.scope.id,

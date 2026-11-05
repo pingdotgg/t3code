@@ -107,6 +107,11 @@ export const layer: Layer.Layer<
         thread: { repoWorktrees },
         runs,
       } = yield* projections.getThreadRecords(input.threadId, ["runs"]);
+      // Read only when worktrees are snapshot, so each keeps its earlier path prefix.
+      const earlier =
+        repoWorktrees === undefined || repoWorktrees.length === 0 || sideChat
+          ? undefined
+          : (yield* projections.getThreadRecords(input.threadId, ["checkpoints"])).checkpoints;
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
@@ -116,6 +121,7 @@ export const layer: Layer.Layer<
         capturedAt,
         // A side chat shares its parent's checkouts, so it snapshots none of them.
         ...(repoWorktrees === undefined || sideChat ? {} : { repoWorktrees }),
+        ...(earlier === undefined ? {} : { checkpoints: earlier }),
         runs,
         forceMissing: sideChat,
       });

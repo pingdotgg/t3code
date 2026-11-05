@@ -970,6 +970,63 @@ describe("repository worktree checkpoints", () => {
     ),
   );
 
+  it.effect("names a detached worktree and a later one of its repository apart", () =>
+    withHarness(({ agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        const threadId = yield* createThread({ threadId: "thread:history-prefix" });
+        const work = (branch: string, contents: string) =>
+          Effect.gen(function* () {
+            const worktree = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "alpha",
+              branch,
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* write(path.join(worktree, "README.md"), contents);
+            return worktree;
+          });
+        let first = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.map(work("t3/history-one", "# alpha\nfirst worktree\n"), (worktree) => {
+            first = worktree;
+          }),
+        );
+        yield* repoWorktrees.detach({ threadId, worktreePath: first });
+        let second = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.map(work("t3/history-two", "# alpha\nsecond worktree\n"), (worktree) => {
+            second = worktree;
+          }),
+        );
+
+        const prefixes = (yield* projectionOf(threadId)).checkpoints
+          .filter((checkpoint) => checkpoint.appRunOrdinal !== null)
+          .flatMap((checkpoint) => checkpoint.repositories ?? [])
+          .map((entry) => [entry.worktreePath, entry.pathPrefix]);
+        const secondPrefix = `alpha@${path.basename(second)}`;
+        assert.deepEqual(prefixes, [
+          [first, "alpha"],
+          [second, secondPrefix],
+        ]);
+        const full = yield* diffs.getFullThreadDiff({ threadId, toTurnCount: 2 });
+        assert.include(full.diff, "diff --git a/alpha/README.md b/alpha/README.md");
+        assert.include(
+          full.diff,
+          `diff --git a/${secondPrefix}/README.md b/${secondPrefix}/README.md`,
+        );
+        assert.include(full.diff, "+first worktree");
+        assert.include(full.diff, "+second worktree");
+      }),
+    ),
+  );
+
   it.effect("refuses file restore of a checkout another thread works in, both ways", () =>
     withHarness(({ fixture, agent }) =>
       Effect.gen(function* () {
