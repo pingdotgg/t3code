@@ -1,3 +1,10 @@
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 /**
  * Destroy/state consistency: a destroy that cannot see the stack's
  * persisted state must FAIL LOUDLY — never report "no changes" and leak
@@ -22,16 +29,9 @@ import { apply } from "@/Apply.ts";
 import { provideFreshArtifactStore } from "@/Artifacts";
 import * as Plan from "@/Plan.ts";
 import { Stack } from "@/Stack";
+import { Stage } from "@/Stage.ts";
 import * as State from "@/State/index";
 import { makeLocalState } from "@/State/LocalState.ts";
-import { Stage } from "@/Stage.ts";
-import * as Test from "@/Test/Alchemy";
-import { expect } from "alchemy-test";
-import * as Cause from "effect/Cause";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import { TestLayers, TestResourceHooks } from "../test.resources.ts";
 
 const { test } = Test.make({ providers: TestLayers() });
@@ -127,9 +127,7 @@ test(
     const flakyLayer = Layer.succeed(State.State, Effect.succeed(flaky));
 
     const deleted: string[] = [];
-    const exit = yield* runDestroy(stackName, flakyLayer, deleted).pipe(
-      Effect.exit,
-    );
+    const exit = yield* runDestroy(stackName, flakyLayer, deleted).pipe(Effect.exit);
 
     // The destroy must NOT report success: its plan saw no rows, so the
     // provider never deleted the cloud resource — reporting success here
@@ -139,17 +137,13 @@ test(
     expect(error?.message).toContain("state row(s) remain");
     expect(deleted).toEqual([]);
     // The row survives for the next (healthy) destroy to reclaim.
-    expect(
-      yield* inner.get({ stack: stackName, stage: STAGE, fqn: "A" }),
-    ).toBeDefined();
+    expect(yield* inner.get({ stack: stackName, stage: STAGE, fqn: "A" })).toBeDefined();
 
     // A healthy session then destroys normally: provider delete runs, the
     // row is dropped, and the post-destroy verification passes.
     yield* runDestroy(stackName, flakyLayer, deleted);
     expect(deleted).toEqual(["A"]);
-    expect(
-      yield* inner.get({ stack: stackName, stage: STAGE, fqn: "A" }),
-    ).toBeUndefined();
+    expect(yield* inner.get({ stack: stackName, stage: STAGE, fqn: "A" })).toBeUndefined();
   }),
   { tags: ["unit", "local"] },
 );
@@ -176,9 +170,7 @@ test(
       // a transient cwd excursion would otherwise see an empty tree and
       // plan "no changes" over live state.
       const reader = yield* makeLocalState();
-      expect(yield* reader.list({ stack: stackName, stage: STAGE })).toEqual([
-        "A",
-      ]);
+      expect(yield* reader.list({ stack: stackName, stage: STAGE })).toEqual(["A"]);
     }).pipe(Effect.ensuring(Effect.sync(() => process.chdir(original))));
 
     yield* writer.deleteStack({ stack: stackName });

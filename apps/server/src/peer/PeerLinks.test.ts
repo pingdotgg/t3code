@@ -453,6 +453,27 @@ it.effect("reads one stored link without asking the peer", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a linked peer that is renamed shows its new name", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      yield* Ref.set(b.descriptor, descriptorOf(box.environmentId, "Box Mini"));
+      expect((yield* a.links.resolve(box.environmentId)).link.label).toBe("Box Mini");
+      const stored = yield* a.links.get(box.environmentId);
+      expect(Option.map(stored, (link) => link.label)).toEqual(Option.some("Box Mini"));
+
+      yield* Ref.set(b.descriptor, descriptorOf(box.environmentId, "Box Studio"));
+      expect((yield* a.links.list).map((link) => link.label)).toEqual(["Box Studio"]);
+      const storedAfterList = yield* a.links.get(box.environmentId);
+      expect(Option.map(storedAfterList, (link) => link.label)).toEqual(Option.some("Box Studio"));
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>
   Effect.scoped(
     Effect.gen(function* () {
