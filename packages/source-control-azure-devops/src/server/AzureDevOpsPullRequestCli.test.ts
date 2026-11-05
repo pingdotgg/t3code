@@ -151,6 +151,7 @@ it.effect(
       let shown = {
         ...pullRequestRow,
         creationDate: "2026-06-01T00:00:00Z",
+        isDraft: false,
         lastMergeSourceCommit: { commitId: "a".repeat(40) },
       };
       let threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T10:30:00.1234567Z")] });
@@ -297,6 +298,16 @@ it.effect(
       expect(threadReads()).toBe(10);
       expect(yield* datedAt("after push")).toBe("2026-07-10T11:40:00.000Z");
       expect(threadReads()).toBe(10);
+
+      // An action's reply is dated like a read, and nothing reads the pull request again.
+      const shows = () =>
+        mockedRun.mock.calls.filter(([call]) => call.args.includes("show")).length;
+      const shownBefore = shows();
+      shown = { ...shown, isDraft: true };
+      const drafted = yield* provider.runAction({ ...input, action: "draft" });
+      expect(drafted && drafted.updatedAt).toBe("2026-07-10T11:40:00.000Z");
+      expect(threadReads()).toBe(11);
+      expect(shows()).toBe(shownBefore);
     }).pipe(Effect.provide(driverServices)),
 );
 
