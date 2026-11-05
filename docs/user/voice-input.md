@@ -6,7 +6,8 @@ also works in citation comments, diff and file annotations, pull request
 comments, replies, and review summaries, and in the desktop app's browser
 annotation editor.
 
-On iPhone and Android, voice input transcribes on the device. See
+On iPhone and Android, voice input transcribes on the device by default. To opt in
+to a named environment on that phone, open **Settings → Voice → Transcribe on**. See
 [Voice input on mobile](./composer.md#voice-input-on-mobile).
 
 ## Choose where audio goes

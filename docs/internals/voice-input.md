@@ -2,8 +2,8 @@
 
 Transcription edits a composer draft. It does not submit an agent turn. Audio is
 temporary client input, and only normal message submission sends the resulting
-text. Mobile transcribes on the device; web and desktop send audio to one
-environment the person chose.
+text. Mobile defaults to on-device transcription; any client that sends audio off
+the device needs a grant for one environment.
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
 owns the operation while the client supplies capture and transcription. Preparation
@@ -15,8 +15,11 @@ capture and `finish` replaces the file-based `transcribe`.
 
 ## Where audio may go
 
-Only an explicit [audio grant](../../apps/web/src/speech/voiceConsent.ts) authorizes
-off-device transcription. It lives outside the preferences snapshot so another
+Only an explicit audio grant authorizes off-device transcription. On mobile the
+grant is stored in device-bound secure storage, outside preference backups. The
+recorder is the same for both destinations; only a finished recording can be
+uploaded, and its grant is checked again after native decoding and before dispatch.
+The [web grant](../../apps/web/src/speech/voiceConsent.ts) lives outside the preferences snapshot so another
 window saving unrelated settings cannot resurrect a revoked grant. Each new
 choice gets a distinct grant, even if the destination was previously selected. The
 [web hook](../../apps/web/src/speech/useEnvironmentSpeechInput.ts) binds a
