@@ -29,6 +29,7 @@ const modelMentionsAtom = Atom.family((environmentId: EnvironmentId) =>
           return (
             model.source === next.source &&
             model.label === next.label &&
+            model.providerLabel === next.providerLabel &&
             model.iconUrl === next.iconUrl
           );
         })
@@ -38,11 +39,13 @@ const modelMentionsAtom = Atom.family((environmentId: EnvironmentId) =>
   }),
 );
 
-export function useModelMentions(environmentId: EnvironmentId, markdown: string) {
+export function useModelMentions(environmentId: EnvironmentId | undefined, markdown: string) {
   const sources = [
     ...new Set(collectComposerModelMentions(markdown).map((mention) => mention.source)),
   ].sort();
   return useAtomValue(
-    sources.length ? modelMentionsAtom(environmentId)(JSON.stringify(sources)) : emptyModelsAtom,
+    environmentId && sources.length
+      ? modelMentionsAtom(environmentId)(JSON.stringify(sources))
+      : emptyModelsAtom,
   );
 }

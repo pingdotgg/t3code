@@ -77,8 +77,8 @@ function presentation(
   if (model)
     return {
       label: model.label,
-      ...(model.iconUrl ? { icon: { uri: model.iconUrl } } : {}),
-      chip: { accent: contextChipPresentation("model").accent, tintsIcon: false },
+      icon: model.iconUrl ? { uri: model.iconUrl } : CONTEXT_CHIP_ICON_SOURCES.bot,
+      chip: { accent: contextChipPresentation("model").accent, tintsIcon: !model.iconUrl },
     };
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")

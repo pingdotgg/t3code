@@ -131,6 +131,7 @@ export function enrichedSkillInstructionsPath(skill: SelectableMarkdownSkill) {
 export function buildEnrichedModelReferences(
   providers: ReadonlyArray<{
     readonly instanceId: string;
+    readonly displayName?: string | undefined;
     readonly iconUrl?: string | undefined;
     readonly models: ReadonlyArray<{
       readonly slug: string;
@@ -162,6 +163,7 @@ export function buildEnrichedModelReferences(
         return {
           source: formatComposerModelMention(provider.instanceId, model.slug),
           label,
+          providerLabel: qualifier || provider.displayName || provider.instanceId,
           iconUrl: provider.iconUrl,
         };
       }),
@@ -185,6 +187,10 @@ export function enrichedModelReference(
   models?: ReadonlyArray<SelectableMarkdownModel>,
 ) {
   return models?.find((model) => model.source === source);
+}
+
+export function enrichedModelDetails(model: SelectableMarkdownModel) {
+  return `${model.providerLabel}\n${model.source}`;
 }
 
 export function enrichedTextLinkRegex(

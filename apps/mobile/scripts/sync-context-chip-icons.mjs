@@ -33,6 +33,7 @@ if (!skillSvg) {
 }
 
 const lucideIcons = [
+  "bot",
   "circle-dashed",
   "film",
   "git-merge",

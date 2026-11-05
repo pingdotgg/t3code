@@ -25,10 +25,12 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
+import * as Dialog from "../components/ui/Dialog";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedTextLinkRegex,
+  enrichedModelDetails,
   enrichedModelReference,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
@@ -212,7 +214,11 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   } | null>(null);
   const { fileContextMenu, onFileContextMenuAction } = props;
   const onLinkPress = (url: string) => {
-    if (enrichedModelReference(url, props.models)) return;
+    const model = enrichedModelReference(url, props.models);
+    if (model) {
+      Dialog.alert(model.label, enrichedModelDetails(model));
+      return;
+    }
     (fileHrefs.has(url) ? (props.onImagePress ?? props.onLinkPress) : props.onLinkPress)?.(url);
   };
   const modelContextMenu = (url: string) => {

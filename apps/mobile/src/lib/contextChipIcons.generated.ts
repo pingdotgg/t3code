@@ -1,6 +1,7 @@
 import type { ImageSourcePropType } from "react-native";
 
 export const CONTEXT_CHIP_ICON_SOURCES = {
+  bot: require("../../assets/context-chip-icons/bot.png"),
   "circle-dashed": require("../../assets/context-chip-icons/circle-dashed.png"),
   film: require("../../assets/context-chip-icons/film.png"),
   "git-merge": require("../../assets/context-chip-icons/git-merge.png"),

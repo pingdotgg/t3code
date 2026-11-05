@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   buildEnrichedModelReferences,
+  enrichedModelDetails,
   enrichedModelLinkRegex,
   enrichedModelReference,
   enrichedTextLinkRegex,
@@ -86,6 +87,22 @@ describe("Enriched link presentation", () => {
     expect(
       "Use $review with (model:codex/gpt-6.1).".match(new RegExp(combined!.source, "gu")),
     ).toEqual(["$review", "model:codex/gpt-6.1"]);
+  });
+
+  it("describes a mentioned model the way its web popover does", () => {
+    const [direct, routed] = buildEnrichedModelReferences([
+      {
+        instanceId: "codex",
+        displayName: "Codex",
+        models: [{ slug: "gpt-6.1", name: "GPT-6.1" }],
+      },
+      {
+        instanceId: "opencode",
+        models: [{ slug: "traex/gpt-6.1", name: "GPT-6.1", subProvider: "Traex" }],
+      },
+    ]);
+    expect(enrichedModelDetails(direct!)).toBe("Codex\nmodel:codex/gpt-6.1");
+    expect(enrichedModelDetails(routed!)).toBe("Traex\nmodel:opencode/traex/gpt-6.1");
   });
 
   it("matches only the complete URL, including literal regex metacharacters", () => {

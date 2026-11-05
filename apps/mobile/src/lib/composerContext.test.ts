@@ -155,6 +155,28 @@ describe("mobile composer context", () => {
     expect(restore("deleted")?.records ?? []).toEqual([]);
     expect(createComposerContextHistory()(source)?.records).toEqual([]);
   });
+  it("chips a model reference only once it is complete and names a known model", () => {
+    const known = new Set(["model:codex/gpt-6.1"]);
+    const modelTokens = (text: string) =>
+      composerContextEditorTokens(text, collectComposerInlineTokens(text), new Set(), known)
+        .filter((token) => token.type === "model")
+        .map((token) => [token.source, token.start, token.end]);
+
+    expect(modelTokens("Use model:codex/gpt-6.1 then stop")).toEqual([
+      ["model:codex/gpt-6.1", 4, 23],
+    ]);
+    // Still being typed, so `gpt-6` cannot chip on the way to `gpt-6.1`.
+    expect(modelTokens("Use model:codex/gpt-6.1")).toEqual([]);
+    expect(modelTokens("Use model:openai/gpt-4o then stop")).toEqual([]);
+    expect(modelTokens("Use `model:codex/gpt-6.1` then stop")).toEqual([]);
+    const reference = formatComposerContextReference(terminal);
+    expect(
+      composerContextEditorTokens(`${reference} model:codex/gpt-6.1 `, [], new Set(), known).map(
+        (token) => token.type,
+      ),
+    ).toEqual(["context", "model"]);
+  });
+
   it("keeps exact source positions and repeated references alongside existing native tokens", () => {
     const reference = formatComposerContextReference(terminal);
     const text = `Use $babysit with $disabled $agentOnly $HOME $PATH $anything $notaskill $20 $20k and [app.ts](src/app.ts) with ${reference} then ${reference}`;
