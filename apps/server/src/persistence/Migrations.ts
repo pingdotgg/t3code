@@ -257,5 +257,15 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
       "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
     ).pipe(Effect.annotateLogs({ divergent }));
   }
+  if (includesV2) {
+    // Fork-only index kept outside the migrator ids (see legacy-orchestration-migration.md).
+    yield* sql`
+      CREATE INDEX IF NOT EXISTS orchestration_v2_projection_threads_side_chat_anchor_idx
+      ON orchestration_v2_projection_threads(
+        json_extract(payload_json, '$.sideChat.anchor.threadId')
+      )
+      WHERE json_extract(payload_json, '$.sideChat.anchor.threadId') IS NOT NULL
+    `.pipe(Effect.catch((cause) => Effect.logWarning("Side-chat anchor index failed", { cause })));
+  }
   return executedMigrations;
 });

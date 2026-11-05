@@ -116,6 +116,30 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("adds the side-chat anchor expression index", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+
+      const plans = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN
+        SELECT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_threads
+          WHERE project_id = 'project-1' AND deleted_at IS NULL
+            AND json_extract(payload_json, '$.sideChat.anchor.threadId') = 'thread-1'
+        ) AS found
+      `;
+
+      assert.isTrue(
+        plans.some((row) =>
+          row.detail.includes(
+            "USING INDEX orchestration_v2_projection_threads_side_chat_anchor_idx",
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([30, 54])("still starts with a site-local migration at id %s", (id) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
