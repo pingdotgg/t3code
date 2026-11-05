@@ -392,6 +392,7 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
     : ({
         command: install.interpreter,
         args: ["-X", "utf8", "-IBm", "azure.cli"],
+        // What the launcher sets before running this same interpreter.
         env: { AZ_INSTALLER: install.installer },
       } satisfies AzureCliInvocation);
 });
