@@ -163,7 +163,6 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       boolean,
       DesktopConnectionCatalogStoreWriteError | DesktopConnectionCatalogStoreProtectionError
     >;
-    readonly clear: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopConnectionCatalogStore") {}
 
@@ -503,15 +502,6 @@ export const make = Effect.gen(function* () {
       yield* writeCatalog(catalog);
       return true;
     }),
-    clear: fileSystem.remove(catalogPath, { force: true }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not clear the desktop connection catalog.", {
-          catalogPath,
-          error,
-        }),
-      ),
-      Effect.withSpan("desktop.connectionCatalogStore.clear"),
-    ),
   });
 });
 

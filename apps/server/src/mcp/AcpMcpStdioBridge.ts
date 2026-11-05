@@ -1,19 +1,16 @@
-// The bridge relays opaque JSON-RPC lines verbatim; schema-decoding foreign
-// payloads here would reject traffic it must pass through untouched.
+// Relay JSON-RPC verbatim; schema decoding would reject foreign payloads.
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
 import * as NodeReadline from "node:readline";
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
-/**
- * ACP agents must support stdio MCP servers, while optional http/sse support is
- * unevenly implemented.
- */
+/** ACP mandates stdio MCP support; HTTP/SSE support varies. */
 
 export class AcpMcpBridgeError extends Error {
   readonly _tag = "AcpMcpBridgeError";
@@ -92,11 +89,12 @@ export const mcpToolSession = (
     message: unknown,
   ): Effect.fn.Return<ReadonlyArray<unknown>, AcpMcpBridgeError> {
     const response = yield* Effect.tryPromise({
-      try: () =>
+      try: (signal) =>
         fetchImplementation(options.endpoint, {
           method: "POST",
           headers: { "content-type": "application/json", ...headers() },
           body: JSON.stringify(message),
+          signal,
         }),
       catch: bridgeError,
     });
@@ -212,7 +210,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
     )(
       function* (line: string, envelope: JsonRpcEnvelope) {
         const response = yield* Effect.tryPromise({
-          try: () =>
+          try: (signal) =>
             fetchImplementation(options.endpoint, {
               method: "POST",
               headers: {
@@ -223,6 +221,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
                 ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
               },
               body: line,
+              signal,
             }),
           catch: bridgeError,
         });
@@ -251,10 +250,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
         ),
     );
 
-    // Only session establishment is ordered; client responses to
-    // server-initiated SSE requests must bypass the barrier or they would
-    // deadlock the still-open HTTP exchange, and normal MCP calls stay
-    // concurrent after initialization.
+    // Order only session establishment; SSE responses must bypass it to avoid deadlock. Calls remain concurrent after initialization.
     let sessionBarrier: Effect.Effect<void> = Effect.void;
     let sessionBarrierPending = false;
 
@@ -278,13 +274,11 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       line: string,
     ): Effect.fn.Return<void> {
       if (line.trim().length === 0) return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
+      const parsed = yield* Effect.try((): unknown => JSON.parse(line)).pipe(Effect.result);
+      if (Result.isFailure(parsed)) {
         return yield* respondWithError(null, "Parse error", -32700);
       }
-      const envelope = asEnvelope(parsed);
+      const envelope = asEnvelope(parsed.success);
       if (envelope === null) return;
       const isResponse = envelope.id !== undefined && ("result" in envelope || "error" in envelope);
       const isSessionHandshake =
@@ -319,16 +313,13 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
 
     const reader = NodeReadline.createInterface({ input: options.input });
     yield* Stream.runForEach(Stream.fromAsyncIterable(reader, bridgeError), dispatch).pipe(
-      Effect.catchCause(() => Effect.void),
+      Effect.ignoreCause,
     );
     yield* Fiber.awaitAll(running);
   });
 }
 
-/**
- * Kept free of heavy imports: these commands run on the ACP first-message
- * critical path.
- */
+/** Avoid heavy imports on the ACP first-message path. */
 export async function runAcpMcpCliFastPath(
   command: "acp-mcp-bridge" | "acp-mcp-call",
   args: ReadonlyArray<string>,
@@ -370,7 +361,7 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const result = await Effect.runPromise(
+  let result = await Effect.runPromise(
     callAcpMcpTool({
       endpoint,
       authorization,
@@ -378,5 +369,30 @@ export async function runAcpMcpCliFastPath(
       arguments: parsed as Record<string, unknown>,
     }),
   );
+  // Terminal callers see both fields, unlike native MCP clients that choose one.
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "structuredContent" in result &&
+    result.structuredContent !== undefined &&
+    "content" in result &&
+    Array.isArray(result.content)
+  ) {
+    const encoded = JSON.stringify(result.structuredContent);
+    result = {
+      ...result,
+      content: result.content.filter(
+        (part: unknown) =>
+          !(
+            typeof part === "object" &&
+            part !== null &&
+            "type" in part &&
+            part.type === "text" &&
+            "text" in part &&
+            part.text === encoded
+          ),
+      ),
+    };
+  }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

@@ -38,11 +38,7 @@ export const PreviewViewportSize = Schema.Struct({
 }).check(viewportAreaFilter);
 export type PreviewViewportSize = typeof PreviewViewportSize.Type;
 
-/**
- * The page's measured viewport can be smaller than the minimum selectable
- * fixed size while fill mode follows a narrow panel. Keep measurement
- * validation separate from the stricter user-selectable size constraints.
- */
+/** Fill mode can measure below selectable minimum sizes; validate measurements separately. */
 export const PreviewRenderedViewportSize = Schema.Struct({
   width: Schema.Int.check(Schema.isGreaterThan(0)),
   height: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -104,10 +100,7 @@ export const FILL_PREVIEW_VIEWPORT = {
   _tag: "fill",
 } as const satisfies PreviewViewportSetting;
 
-/**
- * Zoom is applied by the desktop main process to the Chromium guest, but the ladder lives here so
- * the settings UI can offer exactly the steps the zoom controls step through.
- */
+/** Shared steps keep settings aligned with desktop Chromium zoom controls. */
 export const PREVIEW_ZOOM_LEVELS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
 ] as const;
@@ -147,11 +140,7 @@ export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
 export type PreviewRuntime = typeof PreviewRuntime.Type;
 
-/**
- * Host setup the server's browser is missing, sent as JSON in the reason when
- * the preview stream closes with code 4503. Close reasons are capped at 123
- * bytes, which this fits.
- */
+/** JSON reason for preview stream close code 4503; must fit the 123-byte close-reason limit. */
 export const PreviewStreamHostSetup = Schema.Struct({
   need: Schema.Literals(["sandbox", "libraries"]),
   command: Schema.String,
@@ -168,13 +157,11 @@ export const PreviewSessionSnapshot = Schema.Struct({
   viewport: Schema.optional(PreviewViewportSetting),
   colorScheme: Schema.optional(PreviewAppearancePreference),
   zoomFactor: Schema.optional(PreviewZoomFactor),
-  /**
-   * Browser profile the tab's Chromium partition is derived from. Fixed at
-   * open: Electron only honours a `<webview>`'s partition before attach, so
-   * switching would require tearing the guest down and losing page state.
-   */
+  /** Fixed at open; Electron cannot change a webview partition after attach without losing page state. */
   profileId: Schema.optional(BrowserProfileId),
   runtime: Schema.optional(PreviewRuntime),
+  /** The server runs this tab in headless Chromium, so the desktop streams it like other clients. */
+  headless: Schema.optional(Schema.Boolean),
   automationOwner: Schema.optional(Schema.String),
   reveal: Schema.optional(Schema.Boolean),
   revealRequest: Schema.optional(Schema.Struct({ id: Schema.String, force: Schema.Boolean })),
@@ -192,14 +179,6 @@ export const PreviewOpenInput = Schema.Struct({
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
-export const PreviewNavigateInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-  url: Url,
-  resolvedTitle: Schema.optional(Title),
-});
-export type PreviewNavigateInput = typeof PreviewNavigateInput.Type;
-
 export const PreviewReportStatusInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
@@ -209,12 +188,6 @@ export const PreviewReportStatusInput = Schema.Struct({
 });
 export type PreviewReportStatusInput = typeof PreviewReportStatusInput.Type;
 
-export const PreviewRefreshInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-});
-export type PreviewRefreshInput = typeof PreviewRefreshInput.Type;
-
 export const PreviewResizeInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
@@ -222,9 +195,7 @@ export const PreviewResizeInput = Schema.Struct({
 });
 export type PreviewResizeInput = typeof PreviewResizeInput.Type;
 
-/**
- * Unlike page input, these need no control of the tab.
- */
+/** Requires no tab control, unlike page input. */
 export const PreviewAdjustInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
@@ -241,9 +212,16 @@ export const PreviewCloseInput = Schema.Struct({
 });
 export type PreviewCloseInput = typeof PreviewCloseInput.Type;
 
+export const BROWSER_RECORDING_FRAME_RATES = [30, 60] as const;
+export const BrowserRecordingFrameRate = Schema.Literals(BROWSER_RECORDING_FRAME_RATES);
+export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
+export const DEFAULT_BROWSER_RECORDING_FRAME_RATE: BrowserRecordingFrameRate = 30;
+
 export const PreviewReportProfilesInput = Schema.Struct({
   profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
   defaultProfileId: BrowserProfileId,
+  /** Optional so older clients keep reporting; omitting it keeps the last reported rate. */
+  recordingFrameRate: Schema.optional(BrowserRecordingFrameRate),
 });
 export type PreviewReportProfilesInput = typeof PreviewReportProfilesInput.Type;
 
@@ -322,9 +300,11 @@ export const PreviewEvent = Schema.Union([
 ]);
 export type PreviewEvent = typeof PreviewEvent.Type;
 
+const LocalServerPort = Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536));
+
 export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,
-  port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),
+  port: LocalServerPort,
   url: Url,
   processName: Schema.NullOr(TrimmedNonEmptyString),
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -334,8 +314,37 @@ export const DiscoveredLocalServer = Schema.Struct({
       terminalId: TrimmedNonEmptyString,
     }),
   ),
+  /** Started by the thread's agent. Older servers omit it. */
+  agent: Schema.optionalKey(Schema.NullOr(Schema.Struct({ threadId: ThreadId }))),
 });
 export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
+
+export const PreviewStopLocalServerInput = Schema.Struct({
+  pid: PositiveInt,
+  port: LocalServerPort,
+});
+export type PreviewStopLocalServerInput = typeof PreviewStopLocalServerInput.Type;
+
+export class PreviewStopLocalServerError extends Schema.TaggedError<PreviewStopLocalServerError>()(
+  "PreviewStopLocalServerError",
+  {
+    reason: Schema.Literals(["not-found", "shared-group", "unsupported", "signal-failed"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message() {
+    switch (this.reason) {
+      case "not-found":
+        return "This server is no longer running.";
+      case "shared-group":
+        return "This server shares a process group with T3 Code, an agent, or a terminal shell, so it can't be stopped on its own.";
+      case "unsupported":
+        return "Stopping servers is not supported on this environment's platform.";
+      case "signal-failed":
+        return "The server's processes could not be signaled.";
+    }
+  }
+}
 
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),

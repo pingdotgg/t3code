@@ -1,7 +1,9 @@
-import { useEffect } from "react";
+import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts } from "./useChatShortcuts";
@@ -25,7 +27,8 @@ function Launcher(props: { keys: string; received: string[] }) {
   useEffect(() => {
     const claim = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (!props.keys.toLowerCase().split("").includes(event.key.toLowerCase())) return;
+      const key = surfaceShortcutKey(event);
+      if (key === null || !props.keys.toLowerCase().includes(key)) return;
       event.preventDefault();
       props.received.push(event.key);
     };
@@ -93,4 +96,94 @@ it("still types other letters into the composer while the launcher is open", asy
 
   expect(composerKeys).toEqual(["a"]);
   expect(received).toEqual([]);
+});
+
+it("leaves a non-Latin launcher letter to the launcher by its physical key", async () => {
+  const composerKeys: string[] = [];
+  const received: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(<Chat composerKeys={composerKeys} launcher={{ keys: "BT", received }} />);
+
+  // Playwright cannot press a key its US layout lacks, so send what a Ukrainian T key sends.
+  const event = new KeyboardEvent("keydown", {
+    key: "\u0435",
+    code: "KeyT",
+    bubbles: true,
+    cancelable: true,
+  });
+  (document.activeElement ?? document.body).dispatchEvent(event);
+
+  expect(composerKeys).toEqual([]);
+  expect(received).toEqual(["\u0435"]);
+});
+
+it.each([
+  { key: "b", code: "KeyN", composer: [], launcher: ["b"] },
+  { key: "x", code: "KeyB", composer: ["x"], launcher: [] },
+  { key: "è", code: "KeyT", composer: ["è"], launcher: [] },
+])("routes $key on $code by the typed letter", async ({ key, code, composer, launcher }) => {
+  const composerKeys: string[] = [];
+  const received: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(<Chat composerKeys={composerKeys} launcher={{ keys: "BT", received }} />);
+
+  const event = new KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true });
+  (document.activeElement ?? document.body).dispatchEvent(event);
+
+  expect(composerKeys).toEqual(composer);
+  expect(received).toEqual(launcher);
+});
+
+const ctrlShift = (key: string, command: KeybindingCommand) => ({
+  command,
+  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey: true, altKey: false, modKey: false },
+});
+const sideChatKeybindings: ResolvedKeybindingsConfig = [
+  ctrlShift("m", "modelPicker.toggle"),
+  ctrlShift("x", "thread.stop"),
+];
+
+// A side chat in the main chat's panel: no window listeners, only its composer's own chords.
+function SideChat(props: { toggles: string[]; stops: string[] }) {
+  const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
+  useChatShortcuts({
+    enabled: false,
+    embedded: true,
+    composerElement,
+    keybindings: sideChatKeybindings,
+    scriptKeybindings: [],
+    getShortcutContext: () => shortcutContext,
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        toggleModelPicker: () => props.toggles.push("model"),
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { "thread.stop": () => void props.stops.push("stop") },
+    fallback: () => undefined,
+  });
+  return (
+    <>
+      <div ref={setComposerElement}>
+        <textarea aria-label="Side chat composer" />
+      </div>
+      <textarea aria-label="Main composer" />
+    </>
+  );
+}
+
+it("runs a side chat's composer chords only from its composer, and never thread commands", async () => {
+  const toggles: string[] = [];
+  const stops: string[] = [];
+  await using screen = await render(<SideChat toggles={toggles} stops={stops} />, options);
+
+  await userEvent.click(screen.getByLabelText("Side chat composer"));
+  await userEvent.keyboard("{Control>}{Shift>}MX{/Shift}{/Control}");
+  await userEvent.click(screen.getByLabelText("Main composer"));
+  await userEvent.keyboard("{Control>}{Shift>}M{/Shift}{/Control}");
+
+  expect(toggles).toEqual(["model"]);
+  expect(stops).toEqual([]);
 });

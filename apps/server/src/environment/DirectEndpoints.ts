@@ -14,17 +14,21 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
-import { isPrivateNetworkHost, isTailnetHost } from "@t3tools/shared/hostClassification";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
-import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "../startupAccess.ts";
+import {
+  formatHostForUrl,
+  isLoopbackHost,
+  isPrivateNetworkAddress,
+  isWildcardHost,
+  VIRTUAL_INTERFACE,
+} from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
-/**
- * Stays under the config read's own discovery timeout, so a slow `tailscale`
- * CLI drops only the tailnet name and never the LAN addresses.
- */
+// Stay below the config discovery timeout so slow Tailscale drops only the tailnet name.
 const TAILSCALE_ENDPOINT_TIMEOUT = Duration.seconds(3);
 
 export class DirectEndpoints extends Context.Service<
@@ -34,32 +38,11 @@ export class DirectEndpoints extends Context.Service<
   }
 >()("t3/environment/DirectEndpoints") {}
 
-/**
- * These routes are plain HTTP and carry the client's credential, so a public
- * address would send it across the internet unencrypted, and a name
- * (`server.local`) can resolve to a different machine on each client's network.
- */
+// Credentials travel over HTTP; public IPs leak them and hostnames can resolve differently per client.
 const isAdvertisableAddress = (address: string): boolean =>
-  NodeNet.isIPv4(address) &&
-  !address.startsWith("127.") &&
-  !address.startsWith("169.254.") &&
-  isPrivateNetworkHost(address);
+  NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
 
-/**
- * Container and VM networks (Docker, libvirt, VMware, VirtualBox, Hyper-V, and
- * macOS's `bridge100`+) have private addresses only this machine reaches. A
- * host bridge such as `br0` or Proxmox's `vmbr0` carries the LAN address, so
- * it stays listed.
- */
-const VIRTUAL_INTERFACE =
-  /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge1\d\d)/;
-
-/**
- * Tailscale's own interface: `tailscale0` on Linux, "Tailscale" on Windows.
- * macOS names every tunnel `utunN`, so there it is the one that also carries
- * an address in Tailscale's IPv6 range. Cloudflare WARP and other VPNs assign
- * from the same IPv4 range, so the IPv4 address alone proves nothing.
- */
+// macOS utun names need Tailscale's IPv6 range to identify them; WARP shares its IPv4 range.
 const isTailscaleInterface = (
   name: string,
   entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
@@ -67,10 +50,16 @@ const isTailscaleInterface = (
   /^tailscale/i.test(name) ||
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
+// Windows adapter names are mutable; Linux bridges can inherit these MACs.
+const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
+
 export function resolveBoundEndpoints(input: {
+  readonly platform: NodeJS.Platform;
   readonly host: string | undefined;
   readonly port: number;
   readonly interfaces: NetworkInterfacesMap;
+  /** A cloud VM's private network is its provider's, which no client shares. */
+  readonly onCloudVm?: boolean;
 }): ReadonlyArray<ServerDirectEndpoint> {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
@@ -83,35 +72,73 @@ export function resolveBoundEndpoints(input: {
         .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
         .filter(
           (entry) =>
-            !entry.internal && entry.family === "IPv4" && isAdvertisableAddress(entry.address),
+            !entry.internal &&
+            entry.family === "IPv4" &&
+            isAdvertisableAddress(entry.address) &&
+            !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
     : [input.host!].filter(isAdvertisableAddress);
-  return [...new Set(addresses)].map((address) => ({
-    kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
-    httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
-  }));
+  return [...new Set(addresses)]
+    .filter((address) => !input.onCloudVm || tailscaleAddresses.has(address))
+    .map((address) => ({
+      kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
+      httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
+    }));
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/**
+ * AWS, GCP, Azure, DigitalOcean, Hetzner, Linode, Vultr, and Oracle all serve
+ * instance metadata at this address. A plain TCP connect skips HTTP proxies,
+ * which would otherwise answer for a machine that is not in a cloud.
+ */
+const CLOUD_METADATA_ADDRESS = "169.254.169.254";
+const CLOUD_METADATA_TIMEOUT_MS = 300;
+
+const probeCloudMetadata = Effect.callback<boolean>((resume) => {
+  const socket = NodeNet.connect({
+    host: CLOUD_METADATA_ADDRESS,
+    port: 80,
+    timeout: CLOUD_METADATA_TIMEOUT_MS,
+  });
+  let settled = false;
+  const settle = (found: boolean) => {
+    if (settled) return;
+    settled = true;
+    socket.destroy();
+    resume(Effect.succeed(found));
+  };
+  socket.once("connect", () => settle(true));
+  socket.once("timeout", () => settle(false));
+  socket.once("error", () => settle(false));
+  return Effect.sync(() => socket.destroy());
+});
+
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const platform = yield* HostProcess.Platform;
+  // Only the service default listens on every interface without being asked,
+  // so only it checks once whether it runs in a cloud. The check starts now so
+  // the first client does not wait for its timeout.
+  const onCloudVm = config.privateNetworkOnly
+    ? yield* Effect.cached(probeCloudMetadata)
+    : Effect.succeed(false);
+  yield* Effect.forkDetach(onCloudVm);
 
   const resolve = Effect.gen(function* () {
     const endpoints = [
       ...resolveBoundEndpoints({
+        platform,
         host: config.host,
         port: config.port,
         interfaces: NodeOS.networkInterfaces(),
+        onCloudVm: yield* onCloudVm,
       }),
     ];
-    // Tailscale Serve terminates HTTPS on the tailnet name and forwards to
-    // loopback, so it works even for a loopback-only server. The name is only
-    // listed once it answers as this server: Serve setup can fail without
-    // stopping startup. Anything slower than the probe leaves it out rather
-    // than holding back the addresses already found.
+    // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
       const servedUrl = yield* readTailscaleStatus.pipe(
         Effect.map((status) => status.magicDnsName),
@@ -138,7 +165,11 @@ export const make = Effect.gen(function* () {
     return endpoints;
   });
 
-  return DirectEndpoints.of({ resolve: () => resolve });
+  return DirectEndpoints.of({
+    resolve: Effect.fn("DirectEndpoints.resolve")(function () {
+      return resolve;
+    }),
+  });
 });
 
 export const layer = Layer.effect(DirectEndpoints, make);

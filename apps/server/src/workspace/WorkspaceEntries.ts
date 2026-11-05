@@ -117,6 +117,9 @@ const IGNORED_FILES_LIMIT = 200;
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
 const IGNORE_CHECK_CHUNK_SIZE = 1000;
 
+/** Children classified at once when listing a folder; each symlink costs a realpath and a stat. */
+const SYMLINK_RESOLVE_BATCH_SIZE = 64;
+
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
@@ -145,7 +148,7 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   );
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -318,13 +321,71 @@ export const make = Effect.gen(function* () {
               throw new Error("Directory must be inside the workspace and outside .git.");
             }
             const children = await NodeFSP.readdir(directory, { withFileTypes: true });
+            const isSameOrInside = (parent: string, child: string) => {
+              const relativeChild = path.relative(parent, child);
+              return (
+                relativeChild !== ".." &&
+                !relativeChild.startsWith(`..${path.sep}`) &&
+                !path.isAbsolute(relativeChild)
+              );
+            };
+            // Reject canonical ancestors so "Expand all folders" cannot follow a cycle.
+            let visitedFolders: Promise<ReadonlyArray<string>> | undefined;
+            const loadVisitedFolders = () =>
+              (visitedFolders ??= (async () => {
+                const folders = [root];
+                let current = normalizedCwd;
+                for (const segment of target.relativePath.split("/").filter(Boolean)) {
+                  current = path.join(current, segment);
+                  folders.push(await NodeFSP.realpath(current));
+                }
+                return folders;
+              })());
+            const resolveSymlinkKind = async (
+              name: string,
+            ): Promise<ProjectEntry["kind"] | undefined> => {
+              const resolved = await NodeFSP.realpath(path.join(directory, name)).catch(
+                () => undefined,
+              );
+              if (
+                resolved === undefined ||
+                !isSameOrInside(root, resolved) ||
+                path.relative(root, resolved).split(path.sep).includes(".git")
+              ) {
+                return undefined;
+              }
+              const stat = await NodeFSP.stat(resolved).catch(() => undefined);
+              if (stat?.isFile()) return "file";
+              if (!stat?.isDirectory()) return undefined;
+              const folders = await loadVisitedFolders();
+              return folders.some((folder) => isSameOrInside(resolved, folder))
+                ? undefined
+                : "directory";
+            };
+            // Bound filesystem work for directories such as pnpm node_modules.
+            const kinds: Array<ProjectEntry["kind"] | undefined> = [];
+            for (let offset = 0; offset < children.length; offset += SYMLINK_RESOLVE_BATCH_SIZE) {
+              kinds.push(
+                ...(await Promise.all(
+                  children
+                    .slice(offset, offset + SYMLINK_RESOLVE_BATCH_SIZE)
+                    .map(async (child): Promise<ProjectEntry["kind"] | undefined> => {
+                      if (child.name === ".git") return undefined;
+                      if (child.isDirectory()) return "directory";
+                      if (child.isFile()) return "file";
+                      return child.isSymbolicLink() ? resolveSymlinkKind(child.name) : undefined;
+                    }),
+                )),
+              );
+            }
             return {
-              entries: children.flatMap((child): ProjectEntry[] => {
-                if (child.name === ".git" || (!child.isDirectory() && !child.isFile())) return [];
+              entries: children.flatMap((child, index): ProjectEntry[] => {
+                const kind = kinds[index];
+                if (kind === undefined) return [];
                 return [
                   {
                     path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
-                    kind: child.isDirectory() ? "directory" : "file",
+                    kind,
                   },
                 ];
               }),
@@ -334,8 +395,7 @@ export const make = Effect.gen(function* () {
           },
           catch: toError,
         });
-        // Use stdin so large directories cannot exceed the command-line argument limit.
-        // Ignore classification is optional in non-git workspaces or when git is unavailable.
+        // stdin avoids argument limits; ignore classification is optional without git/repositories.
         const checkIgnore = (paths: ReadonlyArray<string>) =>
           vcsProcess
             .run({
@@ -349,13 +409,8 @@ export const make = Effect.gen(function* () {
               maxOutputBytes: 16 * 1024 * 1024,
             })
             .pipe(Effect.orElseSucceed(() => undefined));
-        // Git consults the index for every path it classifies, which costs hundreds of
-        // milliseconds for a `node_modules`-sized folder. Asking about the folder itself answers
-        // for every child: `check-ignore` exits 0 only when the folder is ignored and nothing
-        // under it is tracked, and an ignored folder hides all of its children. Git reads paths as
-        // pathspecs, so a folder whose path has magic (`:foo`) or glob (`[id]`) characters, or
-        // one reached through a symlink, can get a different answer per child and still asks git
-        // about each.
+        // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
+        // Symlinks and pathspec magic still need per-child checks.
         if (
           entries.length > IGNORE_CHECK_CHUNK_SIZE &&
           target.relativePath !== "" &&

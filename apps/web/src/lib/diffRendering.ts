@@ -1,16 +1,18 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
-const DIFF_THEME_NAMES = {
-  light: "pierre-light",
+// Light mode uses a darker pierre-light so syntax stays readable on every code surface.
+export const DIFF_THEME_NAMES = {
+  light: READABLE_LIGHT_THEME_NAME,
   dark: "pierre-dark",
 } as const;
 
 export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
 
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+  return DIFF_THEME_NAMES[theme];
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
@@ -32,14 +34,9 @@ export function fnv1a32(
 }
 
 function buildPatchCacheKey(patch: string, scope = "diff-panel"): string {
-  const normalizedPatch = patch.trim();
-  const primary = fnv1a32(normalizedPatch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(
-    normalizedPatch,
-    SECONDARY_HASH_SEED,
-    SECONDARY_HASH_MULTIPLIER,
-  ).toString(36);
-  return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+  const primary = fnv1a32(patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
+  const secondary = fnv1a32(patch, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
+  return `${scope}:${patch.length}:${primary}:${secondary}`;
 }
 
 export type RenderablePatch =
@@ -75,12 +72,7 @@ export function getDiffLineStat(files: ReadonlyArray<FileDiffMetadata>): DiffLin
 
 interface RenderablePatchOptions {
   ignoreWhitespace?: boolean;
-  /**
-   * Pierre's partial-patch parser keeps hunk render starts in source-file
-   * coordinates. Its virtualizer iterates partial patches as compact rows, so
-   * review diffs need compact render starts while retaining collapsedBefore
-   * for the "N unmodified lines" separator.
-   */
+  /** Compact Pierre source offsets for partial-patch rows; retain collapsedBefore for separators. */
   compactPartialHunkOffsets?: boolean;
 }
 
@@ -167,15 +159,10 @@ export function getRenderablePatch(
   cacheScope = "diff-panel",
   options: RenderablePatchOptions = {},
 ): RenderablePatch | null {
-  if (!patch) return null;
-  const normalizedPatch = patch.trim();
-  if (normalizedPatch.length === 0) return null;
+  if (!patch?.trim()) return null;
 
   try {
-    const parsedPatches = parsePatchFiles(
-      normalizedPatch,
-      buildPatchCacheKey(normalizedPatch, cacheScope),
-    );
+    const parsedPatches = parsePatchFiles(patch, buildPatchCacheKey(patch, cacheScope));
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
@@ -187,22 +174,19 @@ export function getRenderablePatch(
 
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Unsupported diff format. Showing raw patch.",
     };
   } catch {
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Failed to parse patch. Showing raw patch.",
     };
   }
 }
 
-/**
- * The file's own name. Git quotes and escapes a name holding a tab, a newline, a quote or a
- * backslash, and the parser decodes it, so this is the name the host knows the file by.
- */
+/** Uses the parser-decoded filename, including Git's quoted and escaped names. */
 export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   return fileDiff.name ?? fileDiff.prevName ?? "";
 }
@@ -211,10 +195,7 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
   return fileDiff.prevName ?? fileDiff.name ?? "";
 }
 
-/**
- * A type change (regular file to symlink) arrives as a deletion and an addition
- * of the same path, so the change type is part of the identity.
- */
+/** Includes change type to distinguish deletion/addition pairs for file-to-symlink changes. */
 export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
   return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}\u0000${fileDiff.type}`;
 }
@@ -232,10 +213,7 @@ function hashFileDiffPart(hash: number, value: string | number | boolean | undef
   return fnv1a32(serialized, withLength);
 }
 
-/**
- * Pierre's cache key includes the whole patch, so using it here would repaint
- * every file when one changes.
- */
+// Pierre's whole-patch cache key would repaint every file when one changes.
 export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number {
   let hash = FNV_OFFSET_BASIS_32;
   const append = (value: string | number | boolean | undefined) => {
@@ -286,21 +264,6 @@ export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number 
   return hash;
 }
 
-export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
-  switch (fileDiff.type) {
-    case "new":
-      return "text-[var(--diffs-addition-base)]";
-    case "deleted":
-      return "text-[var(--diffs-deletion-base)]";
-    case "change":
-    case "rename-pure":
-    case "rename-changed":
-      return "text-[var(--diffs-modified-base)]";
-    default:
-      return "text-muted-foreground/80";
-  }
-}
-
 export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-diffs-header],
 [data-diff],
@@ -316,7 +279,7 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   --diffs-token-dark-bg: transparent;
 
   /* Gutter, context, and row tints all derive from the code surface the diff
-     body sits on — mixing from the canvas leaves the gutter looking unthemed
+     body sits on. Mixing from the canvas leaves the gutter looking unthemed
      when a palette separates the two. */
   --diffs-bg-context-override: color-mix(in srgb, var(--code-background) 97%, var(--code-foreground));
   --diffs-bg-hover-override: color-mix(in srgb, var(--code-background) 94%, var(--code-foreground));
@@ -363,5 +326,25 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 
   background-color: var(--diffs-bg) !important;
   color: var(--code-foreground) !important;
+}
+
+/* The library's change-icon colors are tuned for dark canvases; light mode takes the app's darker tokens. */
+[data-change-icon="new"] {
+  color: var(
+    --diff-added-icon,
+    light-dark(var(--diff-addition-foreground), var(--diffs-addition-base))
+  ) !important;
+}
+[data-change-icon="deleted"] {
+  color: light-dark(var(--diff-deletion-foreground), var(--diffs-deletion-base)) !important;
+}
+/* The page sets --diff-modified-icon to a muted T3 blue, so the common case stays quiet. */
+[data-change-icon="change"],
+[data-change-icon="rename-pure"],
+[data-change-icon="rename-changed"] {
+  color: var(
+    --diff-modified-icon,
+    light-dark(var(--info-foreground), var(--diffs-modified-base))
+  ) !important;
 }
 `;

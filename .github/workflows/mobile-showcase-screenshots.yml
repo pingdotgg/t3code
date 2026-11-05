@@ -43,7 +43,7 @@ env:
 
 jobs:
   ios:
-    name: iPhone 6.9, iPhone 6.5, and iPad 13
+    name: iPhone, iPhone Duo, and iPad 13
     if: inputs.platform == 'all' || inputs.platform == 'ios'
     runs-on: blacksmith-12vcpu-macos-26
     # Capturing every palette multiplies the device matrix by six, and only the
@@ -86,6 +86,9 @@ jobs:
           if brew commands | grep -qx trust; then brew trust --formula cameroncooke/axe/axe; fi
           brew install cameroncooke/axe/axe
           axe --version
+
+      - name: Install foldable simulator controls
+        run: npm install --global agent-device@0.21.25
 
       - name: Capture iOS showcase
         run: pnpm screenshots:mobile --platform ios --appearance "${{ inputs.appearance }}" --theme "${{ inputs.theme }}"

@@ -2,6 +2,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -14,6 +16,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  applyShellEnvironment,
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
@@ -34,6 +37,8 @@ import {
   type WindowsShellEnvironmentReader,
   XcodeGitLocation,
 } from "./shell.ts";
+
+const decodeDesktopHostMessage = Schema.decodeUnknownSync(DesktopHostTelemetryMessage);
 
 const nativeProbe = vi.hoisted(() => ({
   execFile: vi.fn<typeof import("node:child_process").execFile>(),
@@ -130,6 +135,13 @@ describe("readEnvironmentFromLoginShell", () => {
       SSH_AUTH_SOCK: "/tmp/secretive.sock",
     });
     expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile).toHaveBeenCalledWith("/bin/zsh", expect.any(Array), {
+      encoding: "utf8",
+      timeout: 5000,
+      killSignal: "SIGKILL",
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
   });
 
   it("omits environment variables that are missing or empty", () => {
@@ -455,9 +467,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         PATHEXT: ".COM;.EXE",
       });
 
-      // Windows 10+ can mark a directory case-sensitive, so the two spellings
-      // are not provably one directory and skipping the second could hide a
-      // command that is really there.
+      // Windows PATH directories can be case-sensitive; preserve both spellings.
       expect(probed).toHaveLength(8);
     }),
   );
@@ -556,8 +566,7 @@ describe("preferGitForWindowsBinary", () => {
   });
 
   it("keeps the launcher when MSYSTEM is set", () => {
-    // The real git.exe only adds its own folders to PATH when MSYSTEM is unset;
-    // without them a `#!/bin/sh` hook cannot start.
+    // git.exe adds hook dependencies to PATH only when MSYSTEM is unset.
     expect(
       preferGitForWindowsBinary(
         "C:\\Program Files\\Git\\cmd\\git.exe",
@@ -625,8 +634,7 @@ describe("npmShimExecutable", () => {
   });
 
   it("keeps a shim CMD would read differently", () => {
-    // CMD keeps trailing characters in an unquoted `SET` value, so these point
-    // `dp0`, and with it the executable, somewhere else.
+    // CMD preserves trailing SET whitespace, changing the executable path.
     for (const suffix of ["\u00a0", "\t", " "]) {
       const altered = NPM_OPENCODE_SHIM.replace("SET dp0=%~dp0", `SET dp0=%~dp0${suffix}`);
       expect(
@@ -1047,5 +1055,48 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
       });
       expect(commandAvailable).toHaveBeenCalledTimes(1);
     }),
+  );
+});
+
+describe("desktop shell environment updates", () => {
+  it.each(["win32", "linux", "darwin"] as const)(
+    "applies shell updates with %s PATH semantics",
+    (platform) => {
+      const message = decodeDesktopHostMessage({
+        version: 1,
+        type: "shellEnvironment",
+        discovered: true,
+        platform,
+        environment: {
+          PATH: "C:\\fresh",
+          FNM_DIR: null,
+          __MISE_DIFF: null,
+          SSH_AUTH_SOCK: "/current.sock",
+          NODE_OPTIONS: "--bad",
+        },
+      });
+      expect(message.type).toBe("shellEnvironment");
+      if (message.type !== "shellEnvironment") throw new Error("Expected shell environment update");
+      const env: NodeJS.ProcessEnv = {
+        Path: "C:\\stale",
+        FNM_DIR: "stale",
+        __MISE_DIFF: "stale",
+        UNRELATED: "keep",
+      };
+      applyShellEnvironment(env, message.environment, platform);
+      expect(env).toEqual({
+        PATH: "C:\\fresh",
+        ...(platform === "win32" ? {} : { Path: "C:\\stale" }),
+        SSH_AUTH_SOCK: "/current.sock",
+        UNRELATED: "keep",
+      });
+      env.Path = "C:\\stale";
+      env.path = "C:\\other";
+      applyShellEnvironment(env, { PATH: null, SSH_AUTH_SOCK: null }, platform);
+      expect(env).toEqual({
+        ...(platform === "win32" ? {} : { Path: "C:\\stale", path: "C:\\other" }),
+        UNRELATED: "keep",
+      });
+    },
   );
 });

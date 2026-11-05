@@ -28,10 +28,7 @@ export interface LazyVoiceRecorder<TRecorderState> extends VoiceRecorder {
   release(): void;
 }
 
-/**
- * Construction blocks the JS thread for tens of milliseconds on a cold
- * composer, and most composer mounts never record.
- */
+/** Construct lazily: cold startup blocks JS for tens of milliseconds and most composers never record. */
 export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
   readonly create: () => NativeVoiceRecorder<TStatus, TRecorderState>;
   readonly onStatus: (status: TStatus) => void;

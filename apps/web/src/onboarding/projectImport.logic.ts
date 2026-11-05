@@ -4,10 +4,7 @@ import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_SELECTION_MIN_THREADS = 3;
 
-/**
- * Servers that predate the git scan omit `git`; their candidates are treated as repositories so old
- * computers still get a useful default selection.
- */
+/** Treat candidates missing git as repositories for servers predating git scans. */
 export function partitionOnboardingProjects<T extends AgentSessionProjectCandidate>(
   candidates: ReadonlyArray<T>,
   now = Date.now(),

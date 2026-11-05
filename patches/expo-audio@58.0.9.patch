@@ -23,3 +23,107 @@ index 198fe6d..5b39611 100644
        "url": recorder.url.absoluteString
      ])
    }
+diff --git a/ios/AudioModule.swift b/ios/AudioModule.swift
+--- a/ios/AudioModule.swift
++++ b/ios/AudioModule.swift
+@@ -6,6 +6,7 @@
+
+   private let sessionQueue = DispatchQueue(label: "expo.modules.audio.session", qos: .userInitiated)
+   private var sessionIsActive = false
++  private var hasAudioSessionOwner = false
+   private var audioSessionActivityKeepers = Set<String>()
+   private let audioEnabled = OSAllocatedUnfairLock(initialState: true)
+
+@@ -41,6 +42,16 @@
+       try setIsAudioActive(isActive)
+     }
+
++    // Video shares AVAudioSession but is absent from this module's registry.
++    Function("setAudioSessionOwner") { (owned: Bool) in
++      self.sessionQueue.sync {
++        self.hasAudioSessionOwner = owned
++        if !owned {
++          self.deactivateSession()
++        }
++      }
++    }
++
+     AsyncFunction("requestRecordingPermissionsAsync") { (promise: Promise) in
+       #if os(iOS)
+       appContext?.permissions?.askForPermission(
+@@ -259,9 +259,9 @@
+         }
+       }
+
+-      Function("pause") { player in
++      Function("pause") { (player: AudioPlayer, deactivateSession: Bool?) in
+         player.ref.pause()
+-        if !player.keepAudioSessionActive {
++        if deactivateSession != false && !player.keepAudioSessionActive {
+           self.deactivateSession()
+         }
+       }
+@@ -957,6 +967,7 @@
+     sessionQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+       guard let self,
+         self.sessionIsActive,
++        !self.hasAudioSessionOwner,
+         self.audioSessionActivityKeepers.isEmpty,
+         !self.isSessionInUse else {
+         return
+diff --git a/src/AudioModule.types.ts b/src/AudioModule.types.ts
+--- a/src/AudioModule.types.ts
++++ b/src/AudioModule.types.ts
+@@ -27,6 +27,8 @@
+  */
+ export declare class NativeAudioModule extends NativeModule {
+   setIsAudioActiveAsync(active: boolean): Promise<void>;
++  /** iOS only: protect the shared session from delayed expo-audio deactivation. */
++  setAudioSessionOwner?(owned: boolean): void;
+   setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
+   requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
+   requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
+@@ -175,8 +175,9 @@
+
+   /**
+    * Pauses the player.
++   * @param deactivateSession On iOS, pass false when handing the shared session to another player.
+    */
+-  pause(): void;
++  pause(deactivateSession?: boolean): void;
+
+   /**
+    * Replaces the current audio source with a new one.
+diff --git a/build/AudioModule.types.d.ts b/build/AudioModule.types.d.ts
+--- a/build/AudioModule.types.d.ts
++++ b/build/AudioModule.types.d.ts
+@@ -6,6 +6,8 @@
+  */
+ export declare class NativeAudioModule extends NativeModule {
+     setIsAudioActiveAsync(active: boolean): Promise<void>;
++    /** iOS only: protect the shared session from delayed expo-audio deactivation. */
++    setAudioSessionOwner?(owned: boolean): void;
+     setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
+     requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
+     requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
+@@ -135,8 +135,9 @@
+     play(): void;
+     /**
+      * Pauses the player.
++     * @param deactivateSession On iOS, pass false when handing the shared session to another player.
+      */
+-    pause(): void;
++    pause(deactivateSession?: boolean): void;
+     /**
+      * Replaces the current audio source with a new one.
+      */
+diff --git a/android/src/main/java/expo/modules/audio/AudioModule.kt b/android/src/main/java/expo/modules/audio/AudioModule.kt
+--- a/android/src/main/java/expo/modules/audio/AudioModule.kt
++++ b/android/src/main/java/expo/modules/audio/AudioModule.kt
+@@ -678,5 +678,5 @@
+       }
+
+-      Function("pause") { player: AudioPlayer ->
++      Function("pause") { player: AudioPlayer, /* deactivateSession - iOS only */ _: Boolean? ->
+         runOnMain {
+           player.isPaused = false

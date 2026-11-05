@@ -3,7 +3,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 
@@ -13,7 +14,7 @@ import { relayDeliveryAttempts } from "../persistence/schema.ts";
 export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedError<DeliveryAttemptRecordPersistenceError>()(
   "DeliveryAttemptRecordPersistenceError",
   {
-    operation: Schema.Literals(["record", "claim-source-job", "complete-source-job"]),
+    operation: Schema.Literals(["claim-source-job", "complete-source-job", "prune-expired"]),
     sourceJobId: Schema.NullOr(Schema.String),
     userId: Schema.NullOr(Schema.String),
     environmentId: Schema.NullOr(Schema.String),
@@ -55,19 +56,22 @@ export type DeliverySourceJobClaimResult = "claimed" | "completed" | "in_flight"
 export class DeliveryAttempts extends Context.Service<
   DeliveryAttempts,
   {
-    readonly record: (
-      input: DeliveryAttemptInput,
-    ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
     readonly claimSourceJob: (
       input: DeliveryAttemptInput & { readonly sourceJobId: string },
     ) => Effect.Effect<DeliverySourceJobClaimResult, DeliveryAttemptRecordPersistenceError>;
     readonly completeSourceJob: (
       input: DeliveryAttemptCompletionInput,
     ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
+    /** Delete attempts untouched for the retention period; returns how many were removed. */
+    readonly pruneExpired: Effect.Effect<number, DeliveryAttemptRecordPersistenceError>;
   }
 >()("t3code-relay/agentActivity/DeliveryAttempts") {}
 
 const SOURCE_JOB_CLAIM_LEASE_MINUTES = 10;
+export const DELIVERY_ATTEMPT_RETENTION_DAYS = 7;
+export const DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE = 5_000;
+// Caps each cron run so draining the pre-retention backlog cannot monopolize the database.
+export const DELIVERY_ATTEMPT_PRUNE_MAX_BATCHES = 4;
 
 function insertValues(
   input: DeliveryAttemptInput,
@@ -91,7 +95,7 @@ function insertValues(
   };
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
   const crypto = yield* Crypto.Crypto;
 
@@ -108,34 +112,6 @@ export const make = Effect.gen(function* () {
   };
 
   return DeliveryAttempts.of({
-    record: Effect.fn("relay.delivery_attempts.record")(function* (input) {
-      yield* Effect.annotateCurrentSpan({
-        "relay.delivery.kind": input.kind,
-        ...(input.sourceJobId ? { "relay.delivery.job_id": input.sourceJobId } : {}),
-        ...(input.deviceId ? { "relay.mobile.device_id": input.deviceId } : {}),
-        ...(input.environmentId ? { "relay.environment_id": input.environmentId } : {}),
-        ...(input.threadId ? { "relay.thread_id": input.threadId } : {}),
-      });
-      yield* Effect.gen(function* () {
-        const id = yield* crypto.randomUUIDv4();
-        const createdAt = DateTime.formatIso(yield* DateTime.now);
-        yield* db.insert(relayDeliveryAttempts).values(insertValues(input, id, createdAt));
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new DeliveryAttemptRecordPersistenceError({
-              operation: "record",
-              sourceJobId: input.sourceJobId ?? null,
-              userId: input.userId,
-              environmentId: input.environmentId,
-              threadId: input.threadId,
-              deviceId: input.deviceId,
-              kind: input.kind,
-              cause,
-            }),
-        ),
-      );
-    }),
     claimSourceJob: Effect.fn("relay.delivery_attempts.claim_source_job")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.delivery.kind": input.kind,
@@ -246,6 +222,48 @@ export const make = Effect.gen(function* () {
           ),
         );
     }),
+    pruneExpired: Effect.gen(function* () {
+      const before = DateTime.formatIso(
+        DateTime.subtract(yield* DateTime.now, { days: DELIVERY_ATTEMPT_RETENTION_DAYS }),
+      );
+      yield* Effect.annotateCurrentSpan({ "relay.delivery_attempts_prune.before": before });
+      let deleted = 0;
+      for (let batch = 0; batch < DELIVERY_ATTEMPT_PRUNE_MAX_BATCHES; batch += 1) {
+        const rows = yield* db
+          .delete(relayDeliveryAttempts)
+          .where(
+            inArray(
+              relayDeliveryAttempts.id,
+              // The Worker's db is a proxy whose builders render as nothing inside another query.
+              new QueryBuilder()
+                .select({ id: relayDeliveryAttempts.id })
+                .from(relayDeliveryAttempts)
+                .where(lt(relayDeliveryAttempts.createdAt, before))
+                .limit(DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE),
+            ),
+          )
+          .returning({ id: relayDeliveryAttempts.id });
+        deleted += rows.length;
+        if (rows.length < DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE) break;
+      }
+      yield* Effect.annotateCurrentSpan({ "relay.delivery_attempts_prune.deleted": deleted });
+      return deleted;
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DeliveryAttemptRecordPersistenceError({
+            operation: "prune-expired",
+            sourceJobId: null,
+            userId: null,
+            environmentId: null,
+            threadId: null,
+            deviceId: null,
+            kind: null,
+            cause,
+          }),
+      ),
+      Effect.withSpan("relay.delivery_attempts.prune_expired"),
+    ),
   });
 });
 

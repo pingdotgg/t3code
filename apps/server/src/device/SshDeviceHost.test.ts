@@ -26,6 +26,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    const releases: Array<string | undefined> = [];
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -118,7 +119,12 @@ it.effect("preserves installed status after probes and cleans failed agent activ
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+          Effect.sync(() => {
+            if (!request.url.endsWith("/rpc"))
+              return HttpClientResponse.fromWeb(request, new Response("ok"));
+            releases.push(request.headers.authorization);
+            return HttpClientResponse.fromWeb(request, Response.json({ result: { ok: true } }));
+          }),
         ),
       ),
     );
@@ -156,6 +162,10 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     yield* host.ensureAgentReady(() => Effect.void);
     yield* host.platformAvailability("ios");
     expect((yield* host.summary).agentDeviceInstalled).toBe(true);
+    // Close releases agent sessions through the forwarded daemon.
+    const agentReady = yield* host.current;
+    yield* agentReady!.releaseAgentSession!("t3-session", "device");
+    expect(releases).toEqual(["Bearer fixture"]);
     yield* host.stopAgent;
     expect(forwards).toBe(1);
     const multiplexingOff = ["ControlMaster=no", "ControlPath=none", "ControlPersist=no"];
@@ -181,5 +191,120 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     }
     yield* host.stop;
     expect(forwards).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("lists Android devices without probing the host again once it reports Android", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const modes: string[] = [];
+    let androidInstalled = false;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+        const forwarding = command.args.includes("-L");
+        let output = "";
+        if (!forwarding) {
+          const stdin = command.options.stdin;
+          const script =
+            stdin && typeof stdin === "object" && "stream" in stdin && Stream.isStream(stdin.stream)
+              ? yield* stdin.stream.pipe(
+                  Stream.decodeText(),
+                  Stream.runFold(
+                    () => "",
+                    (a, b) => a + b,
+                  ),
+                )
+              : "";
+          const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
+          modes.push(mode);
+          output =
+            mode === ""
+              ? "Pixel_8\n"
+              : JSON.stringify({
+                  nodePath: "/node",
+                  platforms: [
+                    { platform: "ios", available: true },
+                    { platform: "android", available: androidInstalled },
+                  ],
+                  hubPort: 1234,
+                  helpers: { serveSimAxSettings: null, serveSimCli: null },
+                });
+        }
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.make(new TextEncoder().encode(output)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(forwarding),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        });
+      }),
+    );
+    const host = yield* SshDeviceHost.make({
+      kind: "ssh",
+      id: "test",
+      label: "Test",
+      target: "test.example",
+    }).pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                request.url.endsWith("/api/devices")
+                  ? JSON.stringify({ simulators: [], emulators: [] })
+                  : "ok",
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    const ready = yield* host.ensureReady(() => Effect.void);
+    const androidNames = ready.devices.list.pipe(
+      Effect.map((list) =>
+        list.devices.filter((device) => device.platform === "android").map((device) => device.name),
+      ),
+    );
+
+    modes.splice(0);
+
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+
+    // The SDK appears after connecting, so the next listing still probes the host.
+    androidInstalled = true;
+    expect(yield* androidNames).toEqual(["Pixel_8"]);
+    expect(modes.splice(0)).toEqual(["probe", ""]);
+
+    // Android is now known to be available, so listing only runs `emulator -list-avds`.
+    expect(yield* androidNames).toEqual(["Pixel_8"]);
+    expect(modes.splice(0)).toEqual([""]);
+
+    androidInstalled = false;
+    expect((yield* host.platformAvailability("android")).available).toBe(false);
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+
+    androidInstalled = true;
+    yield* host.inspect;
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual(["Pixel_8"]);
+    expect(modes.splice(0)).toEqual([""]);
+    yield* host.stop;
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

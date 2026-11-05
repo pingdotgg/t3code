@@ -20,8 +20,7 @@ const toFailure = (error: { readonly _tag: string; readonly message: string }) =
   });
 
 const handlers = {
-  // The headless browser runs on the host and can open local files, so only
-  // agents T3 launched, which already work on this machine, get it.
+  // Local-file access limits this host browser to T3-launched agents.
   html_preview: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const htmlRender = yield* HtmlRender.HtmlRender;

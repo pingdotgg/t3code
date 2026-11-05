@@ -1,8 +1,10 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { dual } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as Headers from "effect/http/Headers";
@@ -10,14 +12,15 @@ import { GraphQLClientError, GraphQLMiddleware, GraphQLProtocol } from "effect/g
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 
+import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+/** Added to the answer, never sent: names the credential an errored answer was given to. */
+const CREDENTIAL_SOURCE_HEADER = "x-t3code-credential-source";
+const isCredentialSource = Schema.is(GitHubCredentials.GitHubCredentialSource);
 
-/**
- * The GitHub host and operation a generated GraphQL call is sent as. One client serves every host,
- * so each call names its own.
- */
+/** One client serves all hosts; each call must supply its target. */
 export class GitHubGraphQlTarget extends Context.Service<
   GitHubGraphQlTarget,
   {
@@ -30,7 +33,7 @@ export class GitHubGraphQlTarget extends Context.Service<
   }
 >()("@t3tools/source-control-github/server/gitHubGraphQlClient/GitHubGraphQlTarget") {}
 
-/** A stable short id for a GraphQL document, so traces group by query without its text. */
+// Group traces by query without exposing query text.
 function queryHash(query: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < query.length; index++) {
@@ -40,21 +43,12 @@ function queryHash(query: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-/**
- * Whether GitHub's `errors` all say the thing asked for does not exist, or that the credential
- * cannot see it. A batch reports that for one pull request alone.
- */
 export const isNotFoundOnly = (error: unknown): boolean =>
   GraphQLClientError.isGraphQLClientError(error) &&
   error.reason._tag === "ResponseError" &&
   error.reason.errors.every((graphQlError) => graphQlError["type"] === "NOT_FOUND");
 
-/**
- * GitHub's auth and rate limits around a generated GraphQL call, through `GitHubRequestPolicy`:
- * the same credential, request slots, quota and pause as REST. It fails with the policy's
- * errors, which every GitHub caller already maps. GraphQL `errors` that are not a rate limit are
- * the client's: a batch settles them per pull request, and `call` maps the rest.
- */
+/** Share REST's credentials/slots/quota/pause; leave non-rate-limit errors to each lookup. */
 export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
   GitHubGraphQlAuth,
   { requires: GitHubGraphQlTarget; error: GitHubRequestPolicy.GitHubApiError }
@@ -66,7 +60,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
       return GitHubGraphQlAuth.of({
         execute: Effect.fn("GitHubGraphQlAuth.execute")(function* ({ request, next }) {
           const target = yield* GitHubGraphQlTarget;
-          const host = GitHubRequestPolicy.normalizeHost(target.host);
+          const host = normalizeHost(target.host);
           yield* Effect.annotateCurrentSpan({
             "github.kind": "graphql",
             "github.graphql.query_hash": queryHash(request.query),
@@ -78,7 +72,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
               resource: "graphql",
               allowReserve: target.allowReserve ?? (yield* SourceControlRateLimit.Interactive),
             },
-            (headers) =>
+            (headers, source) =>
               next({ ...request, headers: Headers.setAll(request.headers, headers) }).pipe(
                 Effect.map((answer) => {
                   const status = answer.status;
@@ -88,9 +82,25 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     headers: responseHeaders,
                     ...(answer.errors === undefined ? {} : { graphqlErrors: answer.errors }),
                   });
+                  const withheld = (answer.errors ?? []).some(
+                    (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
+                  );
                   return rateLimited
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
-                    : { _tag: "Ok" as const, value: answer, status, headers: responseHeaders };
+                    : {
+                        _tag: "Ok" as const,
+                        // The source is local; never trust one GitHub's answer carries.
+                        value: {
+                          ...answer,
+                          headers:
+                            source === undefined
+                              ? Headers.remove(responseHeaders, CREDENTIAL_SOURCE_HEADER)
+                              : Headers.set(responseHeaders, CREDENTIAL_SOURCE_HEADER, source),
+                        },
+                        withheld,
+                        status,
+                        headers: responseHeaders,
+                      };
                 }),
                 Effect.catchIf(GraphQLClientError.isGraphQLClientError, (error) =>
                   refused(error, { host, operation: target.operation }),
@@ -115,7 +125,7 @@ const refused = Effect.fn("gitHubGraphQlClient.refused")(function* (
 ) {
   const reason = error.reason;
   if (reason._tag !== "TransportError" && reason._tag !== "ResponseError") {
-    return yield* Effect.fail(error);
+    return yield* error;
   }
   const status = reason.status;
   if (reason._tag === "TransportError" && status === undefined) {
@@ -182,12 +192,7 @@ const capResponse = Effect.fn("gitHubGraphQlClient.capResponse")(function* (
   );
 });
 
-/**
- * The HTTP transport, sending each request to its target host's endpoint. Resolvers batch by this
- * URL, so lookups for different hosts never share a request. `GitHubGraphQlAuth` requires the
- * target, so every call has one. The middleware's span is the request's: the client's own would add
- * `url.full`, which can carry SHAs and branch names, so it is off, as for REST.
- */
+// Endpoint URLs isolate hosts. Disable client tracing to protect SHAs and branches in url.full.
 const layerProtocol = GraphQLProtocol.layerHttp({
   url: ({ context }) =>
     GitHubRequestPolicy.gitHubApiUrls(Context.getUnsafe(context, GitHubGraphQlTarget).host).graphql,
@@ -207,17 +212,9 @@ const layerProtocol = GraphQLProtocol.layerHttp({
   ),
 );
 
-/**
- * What a client built over `.middleware(GitHubGraphQlAuth)` needs beyond `GitHubRequestPolicy`
- * and the HTTP client.
- */
 export const layer = Layer.merge(GitHubGraphQlAuth.layer, layerProtocol);
 
-/**
- * What decides which lookups to one host may share a batched request: the credential and
- * rate-limit scope it will be sent under. Read from the context the lookup was made in. Resolvers
- * already keep hosts apart, since they batch by the transport's URL too.
- */
+/** Isolate credentials/rate-limit scopes; transport URLs already separate hosts. */
 export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
   JSON.stringify([
     Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null)
@@ -225,11 +222,6 @@ export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
     Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
   ]);
 
-/**
- * GitHub's `errors` on an answer, as the policy's errors: not found when every error says so,
- * otherwise a response error carrying GitHub's messages. Any other client error (an answer that
- * does not decode) is returned as it is.
- */
 const fromClientError = (
   target: { readonly host: string; readonly operation: string },
   error: GraphQLClientError.GraphQLClientError,
@@ -240,11 +232,18 @@ const fromClientError = (
   const reason = error.reason;
   if (reason._tag !== "ResponseError") return error;
   const context = {
-    host: GitHubRequestPolicy.normalizeHost(target.host),
+    host: normalizeHost(target.host),
     operation: target.operation,
   };
+  const credential = Option.filter(
+    Headers.get(reason.headers ?? Headers.empty, CREDENTIAL_SOURCE_HEADER),
+    isCredentialSource,
+  );
   return isNotFoundOnly(error)
-    ? new GitHubRequestPolicy.GitHubApiNotFoundError(context)
+    ? new GitHubRequestPolicy.GitHubApiNotFoundError({
+        ...context,
+        ...(Option.isSome(credential) ? { credential: credential.value } : {}),
+      })
     : new GitHubRequestPolicy.GitHubApiResponseError({
         ...context,
         status: reason.status ?? 200,
@@ -252,12 +251,7 @@ const fromClientError = (
       });
 };
 
-/**
- * Runs one generated GraphQL call (or several) against `target`, failing GitHub's `errors` as
- * `GitHubApiNotFoundError` or `GitHubApiResponseError`. What remains a `GraphQLClientError` is an
- * answer that did not decode, which the caller reports as its own read error. The middleware's
- * errors pass through.
- */
+/** Map response errors to policy errors; callers map decode errors to read errors. */
 export const call: {
   (
     target: GitHubGraphQlTarget["Service"],
@@ -278,7 +272,6 @@ export const call: {
   >;
 } = dual(2, <A, E, R>(effect: Effect.Effect<A, E, R>, target: GitHubGraphQlTarget["Service"]) =>
   effect.pipe(
-    // A `GraphQLClientError` left unmapped is one `E` already holds.
     Effect.mapError((error) =>
       GraphQLClientError.isGraphQLClientError(error)
         ? (fromClientError(target, error) as

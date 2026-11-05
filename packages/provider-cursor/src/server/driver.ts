@@ -167,7 +167,6 @@ export const CursorDriver: ProviderDriver<
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
-      settings: effectiveConfig,
       environment: processEnv,
       getModels: () => catalogModels,
     }).pipe(
@@ -225,25 +224,27 @@ export const CursorDriver: ProviderDriver<
           },
           auth.usesApiKey ? "api-key" : "browser",
         ).pipe(
-          Effect.flatMap((snapshot) =>
-            effectiveConfig.enabled &&
-            snapshot.installed &&
-            snapshot.auth.status === "authenticated"
-              ? host.settings.get.pipe(
-                  Effect.flatMap((settings) =>
-                    readCursorUsageLimits(
-                      effectiveConfig,
-                      { ...processEnv, CURSOR_API_KEY: apiKey },
-                      settings.cursorKeychainUsageEnabled,
-                    ),
+          Effect.filterOrElse(
+            (snapshot) =>
+              !(
+                effectiveConfig.enabled &&
+                snapshot.installed &&
+                snapshot.auth.status === "authenticated"
+              ),
+            (snapshot) =>
+              host.settings.get.pipe(
+                Effect.flatMap((settings) =>
+                  readCursorUsageLimits(
+                    effectiveConfig,
+                    { ...processEnv, CURSOR_API_KEY: apiKey },
+                    settings.cursorKeychainUsageEnabled,
                   ),
-                  Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-                )
-              : Effect.succeed(snapshot),
+                ),
+                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+              ),
           ),
         ),
       ),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(CursorKeychain.CursorKeychain, keychain),
@@ -257,6 +258,7 @@ export const CursorDriver: ProviderDriver<
         }),
       ),
       Effect.provide(CursorSdkCatalog.layer),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);

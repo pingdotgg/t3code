@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Mock native realpath to exercise macOS case correction on every platform.
+import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The Muse SDK spawns with Node's child_process, so the launch test quotes arguments the same way.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -9,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { afterEach, describe, expect, vi } from "vite-plus/test";
+import { afterEach, describe, expect, onTestFinished, vi } from "vite-plus/test";
 import {
   createMuseSdkHost,
   createMuseSdkHostEffect,
@@ -20,6 +22,8 @@ import {
   museWorkspaceRoot,
   type MuseSdkHost,
 } from "./sdk.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 vi.mock("@muse-code/sdk", () => ({ spawnMspConnection: vi.fn() }));
 
@@ -135,6 +139,85 @@ describe("Muse SDK host", () => {
     },
   );
 
+  it.effect(
+    "observes native host exit while the SDK still waits for a detached stdout holder",
+    () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        yield* Effect.promise(async () => {
+          const sdk = await vi.importActual<typeof import("@muse-code/sdk")>("@muse-code/sdk");
+          const processExited = pending<{ code: number | null; signal: NodeJS.Signals | null }>();
+          const holderSource = `process.send("ready", () => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+      });`;
+          const fixture = `
+        const { spawn } = require("node:child_process");
+        require("node:readline").createInterface({ input: process.stdin }).on("line", async line => {
+          const frame = JSON.parse(line);
+          if (!("id" in frame)) return;
+          let result = { schema: { version: 1, fingerprint: "t3-native-fixture" }, grantedCapabilities: [] };
+          if (frame.method === "fixture/exit") {
+            const holder = spawn(process.execPath, ["-e", ${JSON.stringify(holderSource)}], {
+              detached: true, stdio: ["ignore", 1, 2, "ipc"]
+            });
+            await new Promise(resolve => holder.once("message", resolve));
+            result = { pid: holder.pid };
+          }
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }) + "\\n",
+            () => { if (frame.method === "fixture/exit") process.exit(7); });
+        });
+      `;
+          let holderPid: number | undefined;
+          let host: MuseSdkHost | undefined;
+          const reap = () => {
+            if (holderPid !== undefined) {
+              try {
+                process.kill(holderPid, "SIGKILL");
+              } catch {
+                /* Already reaped. */
+              }
+              holderPid = undefined;
+            }
+          };
+          onTestFinished(async () => {
+            reap();
+            await host?.close();
+          });
+          try {
+            host = await createMuseSdkHost(
+              {
+                binaryPath: process.execPath,
+                launch: { command: process.execPath, args: ["-e", fixture] },
+                onProcessExit: processExited.resolve,
+              },
+              sdk.spawnMspConnection,
+            );
+            let sdkExited = false;
+            let connectionClosed = false;
+            void host.exited.then(() => {
+              sdkExited = true;
+            });
+            void host.connection.closed.then(() => {
+              connectionClosed = true;
+            });
+            const response = await host.connection.request("fixture/exit", {});
+            expect(response).toMatchObject({ pid: expect.any(Number) });
+            holderPid = Number((response as { pid: number }).pid);
+            expect(await processExited.promise).toEqual({ code: 7, signal: null });
+            expect(sdkExited).toBe(false);
+            expect(connectionClosed).toBe(false);
+            reap();
+            expect(await host.exited).toEqual({ code: 7, signal: null });
+            await host.close();
+            expect(connectionClosed).toBe(true);
+          } finally {
+            reap();
+            await host?.close();
+          }
+        });
+      }),
+  );
+
   it.effect("closes a fulfilled host when interruption wins before acquisition is delivered", () =>
     Effect.gen(function* () {
       const started = pending<void>();
@@ -219,7 +302,6 @@ describe("Muse launch", () => {
       );
       yield* fs.makeDirectory(folder);
       const launcher = path.join(folder, "muse.cmd");
-      // Records its arguments next to itself; reaching the file at all proves cmd found it.
       yield* fs.writeFileString(launcher, '@echo off\r\necho %*>"%~dp0args.txt"\r\n');
       const launch = yield* museLaunch(launcher);
       const run = NodeChildProcess.spawnSync(launch.command, [...launch.args, "serve", "--x"], {
@@ -233,13 +315,54 @@ describe("Muse launch", () => {
 });
 
 describe("Muse workspace root", () => {
+  it.effect("uses native canonical case off Windows", () =>
+    Effect.gen(function* () {
+      using _realpath = vi.spyOn(NodeFSP, "realpath").mockResolvedValue("/workspace/eevee");
+      expect(yield* museWorkspaceRoot("/workspace/EEVEE")).toBe("/workspace/eevee");
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin")),
+  );
+
   it("writes Windows paths in their verbatim form", () => {
     expect(museVerbatimPath("C:\\Users\\Person\\repo")).toBe("\\\\?\\C:\\Users\\Person\\repo");
     expect(museVerbatimPath("\\\\server\\share\\repo")).toBe("\\\\?\\UNC\\server\\share\\repo");
     expect(museVerbatimPath("\\\\?\\C:\\repo")).toBe("\\\\?\\C:\\repo");
   });
 
-  // FileSystem.realPath keeps the case it is given; Muse rejects a root whose case differs from the disk's.
+  it.effect("keeps a root it cannot resolve off Windows", () =>
+    Effect.gen(function* () {
+      expect(yield* museWorkspaceRoot("/workspace/repo")).toBe("/workspace/repo");
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("keeps a Windows root it cannot resolve, in verbatim form", () =>
+    Effect.gen(function* () {
+      expect(yield* museWorkspaceRoot("C:\\definitely-missing\\repo")).toBe(
+        "\\\\?\\C:\\definitely-missing\\repo",
+      );
+      expect(yield* museWorkspaceRoot("C:/definitely-missing/repo")).toBe(
+        "\\\\?\\C:\\definitely-missing\\repo",
+      );
+      expect(yield* museWorkspaceRoot("//server/share/missing")).toBe(
+        "\\\\?\\UNC\\server\\share\\missing",
+      );
+    }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+  );
+
+  // FileSystem.realPath keeps the case it is given; Muse rejects a root whose case
+  // differs from the disk's, and APFS is case-insensitive just like NTFS.
+  it.effect("fixes the case of a macOS root natively", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) !== "darwin") return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const created = yield* fs.makeTempDirectoryScoped({ prefix: "MuseRoot-" });
+      // Only a case-insensitive volume resolves the miscased path; skip on a case-sensitive one.
+      if (!(yield* fs.exists(created.toUpperCase()))) return;
+      const root = yield* museWorkspaceRoot(created.toUpperCase());
+      expect(path.basename(root)).toBe(path.basename(created));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("fixes the case of a Windows root natively", () =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) !== "win32") return;

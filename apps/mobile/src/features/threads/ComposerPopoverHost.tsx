@@ -1,5 +1,5 @@
 import type { ReactNode, RefObject } from "react";
-import { createContext, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useRef, useState } from "react";
 import { View, type ViewInstance } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
 
@@ -16,11 +16,7 @@ export function useComposerPopoverHost() {
   return useContext(ComposerPopoverHostContext);
 }
 
-/**
- * Mount it inside the composer's KeyboardStickyView: popovers placed here move with the composer and sit inside a parent that
- * covers them, so Android delivers their scroll gestures. Pass `hidden` whenever the composer itself is hidden: popovers live
- * outside the composer's subtree, so they don't hide with it.
- */
+/** Mount inside KeyboardStickyView for Android gestures. Hide explicitly because portal content outlives its subtree. */
 export function ComposerPopoverHost(props: {
   readonly hidden: boolean;
   readonly popoverHeight: SharedValue<number>;
@@ -29,10 +25,7 @@ export function ComposerPopoverHost(props: {
   const hostRef = useRef<ViewInstance>(null);
   const [content, setContent] = useState<ReactNode>(null);
   const [layoutVersion, setLayoutVersion] = useState(0);
-  const value = useMemo(
-    () => ({ hostRef, setContent, layoutVersion, popoverHeight: props.popoverHeight }),
-    [layoutVersion, props.popoverHeight],
-  );
+  const value = { hostRef, setContent, layoutVersion, popoverHeight: props.popoverHeight };
 
   return (
     <ComposerPopoverHostContext.Provider value={value}>

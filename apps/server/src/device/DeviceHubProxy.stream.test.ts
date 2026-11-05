@@ -1,9 +1,12 @@
 import { expect, it } from "@effect/vitest";
 import { NodeWS } from "@effect/platform-node/NodeSocket";
+import * as NodeNet from "node:net";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { HttpRouter, HttpServer } from "effect/http";
+import * as Socket from "effect/socket/Socket";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   AuthOrchestrationOperateScope,
@@ -85,5 +88,36 @@ it.effect("preserves binary input and admission frames through the real socket p
     });
     yield* Effect.promise(() => received.promise);
     expect(frames).toEqual([[0x83], [0x03, 1], [0x03, 2]]);
+  }),
+);
+
+it.live("closes an upstream socket that is still connecting without an unhandled error", () =>
+  Effect.gen(function* () {
+    const dialed = Promise.withResolvers<NodeNet.Socket>();
+    // Accepts the connection and never answers the WebSocket handshake.
+    const hub = yield* Effect.acquireRelease(
+      Effect.promise(
+        () =>
+          new Promise<NodeNet.Server>((resolve) => {
+            const server = NodeNet.createServer((socket) => dialed.resolve(socket));
+            server.listen(0, "127.0.0.1", () => resolve(server));
+          }),
+      ),
+      (server) =>
+        Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+    const address = hub.address();
+    if (typeof address !== "object" || !address) throw new Error("Missing hub port");
+    // Handshake headers, as Simlock's routes send, select the `ws` package over the global WebSocket.
+    const upstream = yield* Socket.makeWebSocket(`ws://127.0.0.1:${address.port}`, {
+      headers: { authorization: "Bearer test" },
+    }).pipe(Effect.provide(DeviceHubProxy.upstreamWebSocketConstructor));
+    const reading = yield* Effect.forkChild(
+      Effect.scoped(Effect.flatMap(upstream.reader, ({ pull }) => pull)),
+    );
+    const connection = yield* Effect.promise(() => dialed.promise);
+    const abandoned = new Promise<void>((resolve) => connection.once("close", () => resolve()));
+    yield* Fiber.interrupt(reading);
+    yield* Effect.promise(() => abandoned);
   }),
 );

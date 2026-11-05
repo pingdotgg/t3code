@@ -21,11 +21,11 @@ import * as Persistable from "effect/persistence/Persistable";
 import * as PersistedCache from "effect/persistence/PersistedCache";
 import * as Persistence from "effect/persistence/Persistence";
 import * as ServerConfig from "../config.ts";
+import { detachStackFrame } from "../git/detachStackFrame.ts";
 import { forkParked } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;
-// Persistence prefixes every entry key with the store id, so each entry file
-// name starts with it. The scope `revisions` file does not.
+// Entry filenames have the store-id prefix; the scope revisions file does not.
 const STORE_ID = "pr-v2";
 const ENTRY_FILE_NAME = new RegExp(`^${STORE_ID}[0-9a-f]{64}$`);
 /**
@@ -88,9 +88,17 @@ export const make = Effect.gen(function* () {
     crypto.digest("SHA-256", new TextEncoder().encode(key)).pipe(Effect.map(Hex.encode));
   const revisions = yield* Cache.makeWith(
     () =>
-      backing
-        .get("revisions")
-        .pipe(Effect.flatMap((raw) => Schema.decodeEffect(revisionCodec)(raw ?? "{}"))),
+      backing.get("revisions").pipe(
+        Effect.flatMap((raw) => Schema.decodeEffect(revisionCodec)(raw ?? "{}")),
+        Effect.catchTags({
+          SchemaError: Effect.fn("PullRequestReadCache.recoverRevisions")(function* () {
+            // Without scope revisions, persisted PR entries cannot be trusted.
+            yield* backing.clear;
+            yield* Effect.logWarning("PR cache reset after invalid scope revisions");
+            return yield* Schema.decodeEffect(revisionCodec)("{}");
+          }),
+        }),
+      ),
     {
       capacity: 1,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
@@ -125,6 +133,8 @@ export const make = Effect.gen(function* () {
     }),
     { capacity: CONCURRENT_READS, timeToLive: () => Duration.zero },
   );
+  // A cache entry keeps the fiber that filled it, whose lazy stack frames would keep the caller's
+  // data (e.g. a whole sync sweep) alive until eviction.
   return PullRequestReadCache.of({
     get: Effect.fn("PullRequestReadCache.get")(function* (key, lookup, scopes = []) {
       if (!enabled) return yield* lookup;
@@ -152,7 +162,7 @@ export const make = Effect.gen(function* () {
         }),
         lock.withPermits(1),
       );
-    }),
+    }, detachStackFrame),
     invalidate: Effect.fn("PullRequestReadCache.invalidate")(
       function* (scope) {
         const now = clock.currentTimeMillisUnsafe();
@@ -171,6 +181,7 @@ export const make = Effect.gen(function* () {
       }),
       Effect.uninterruptible,
       lock.withPermits(CONCURRENT_READS),
+      detachStackFrame,
     ),
   });
 });

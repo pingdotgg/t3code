@@ -1,21 +1,10 @@
 import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  PreviewAutomationHost,
-  PreviewAutomationOpenInput,
-  PreviewAutomationStatus,
-} from "./previewAutomation.ts";
+import { PreviewAutomationHost, PreviewAutomationStatus } from "./previewAutomation.ts";
 
-const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
-
-describe("PreviewAutomationOpenInput", () => {
-  it("retains the legacy show visibility alias", () => {
-    expect(decodeOpenInput({ show: false })).toEqual({ show: false });
-  });
-});
 
 describe("PreviewAutomationHost", () => {
   it("accepts legacy hosts and current operation advertisements", () => {

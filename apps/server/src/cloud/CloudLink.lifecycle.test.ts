@@ -43,6 +43,7 @@ import { consumeCloudReplayGuards } from "./CloudLink.ts";
 import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
@@ -158,12 +159,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
     (harness: ReleaseHarness) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.provide(CloudLink.layer),
+        Effect.provide(CloudLink.layer.pipe(Layer.provide(ManagedPolicy.layerTest()))),
         Effect.provideService(
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({
             check: Effect.die("unused"),
-            latest: Effect.succeed(Option.none()),
+            latest: Effect.succeedNone,
           }),
         ),
         Effect.provideService(HttpServer.HttpServer, {
@@ -923,8 +924,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  // A proof signed with a skewed boot clock is rejected as expired. The next
-  // attempt mints a new proof, so startup reconcile must keep retrying it.
   it.effect("retries a relay link proof rejected as expired", () => {
     const { store } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],

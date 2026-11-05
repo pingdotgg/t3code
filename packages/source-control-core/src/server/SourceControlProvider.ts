@@ -38,6 +38,19 @@ export interface SourceControlRefSelector {
 
 const MAX_ERROR_TRANSPORT_VALUE_LENGTH = 256;
 
+/**
+ * The fixed product text a provider failure carries for the user, if it has one. Any other
+ * detail may be upstream response text, so callers show a generic message instead.
+ */
+export function userFacingSourceControlDetail(cause: unknown): string | undefined {
+  return typeof cause === "object" &&
+    cause !== null &&
+    "userFacingDetail" in cause &&
+    typeof cause.userFacingDetail === "string"
+    ? cause.userFacingDetail
+    : undefined;
+}
+
 export function transportSafeSourceControlErrorValue(value: string): string {
   let printable = "";
   for (const character of value) {
@@ -104,10 +117,7 @@ export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
-    /**
-     * The caller checks the owner against what comes back, so a host that cannot search
-     * `owner:branch` can drop those selectors without losing anything.
-     */
+    /** The caller verifies owners, so hosts may drop unsupported `owner:branch` selectors. */
     readonly headBranchProbe?: (input: {
       readonly headSelectors: ReadonlyArray<string>;
       readonly state: "open" | "all";
@@ -116,10 +126,7 @@ export class SourceControlProvider extends Context.Service<
       readonly cwd: string;
       readonly treeish: string;
     }) => Effect.Effect<Option.Option<string>>;
-    /**
-     * The repository's `owner/name` from a remote URL, for a host whose remote paths can carry
-     * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
-     */
+    /** Strip installation mounts from remote paths; absent means use the whole path. */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
     readonly refineRepositoryIdentity?: (input: {
       readonly identity: RepositoryIdentity;
@@ -128,7 +135,39 @@ export class SourceControlProvider extends Context.Service<
         readonly context: SourceControlProviderContext;
       }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
     }) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+    /**
+     * The web host serving a remote, for a host whose remote URL may not name it (an SSH alias
+     * for one of several servers). It answers for the context's `requestedHost` when the caller
+     * narrows to one. Absent, or null, means the remote's own host is the web host.
+     */
+    readonly resolveRemoteWebHost?: (input: {
+      readonly cwd: string;
+      readonly context: SourceControlProviderContext;
+      readonly resolveContext: (input: {
+        readonly cwd: string;
+        readonly context: SourceControlProviderContext;
+      }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
+    }) => Effect.Effect<string | null, SourceControlProviderError>;
     readonly resolveLink?: ResolveSourceControlLink;
+    /**
+     * Whether `createChangeRequest` from `cwd` targets `repository`, the `owner/name` of the
+     * context's remote, for a host whose tools let configuration outside the remotes name another
+     * repository. Absent means it does.
+     */
+    readonly createsChangeRequestsIn?: (input: {
+      readonly cwd: string;
+      readonly context: SourceControlProviderContext;
+      readonly repository: string | null;
+    }) => Effect.Effect<boolean>;
+    /**
+     * Told when T3 records `baseBranch`, a branch name on the host, as the base `branch` was cut
+     * from, for a host whose own tools keep that in git config of their own.
+     */
+    readonly recordBranchBase?: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly baseBranch: string;
+    }) => Effect.Effect<void>;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
@@ -156,6 +195,8 @@ export class SourceControlProvider extends Context.Service<
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
       readonly repository: string;
+      /** The host the repository is on. Without it, the checkout's host. */
+      readonly host?: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
     readonly createRepository: (input: {
       readonly cwd: string;

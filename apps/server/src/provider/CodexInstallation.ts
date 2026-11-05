@@ -1,5 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ServerProviderCompatibilityAdvisory,
+} from "@t3tools/contracts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -125,6 +129,9 @@ interface CodexInstallationService {
   readonly managedDirectory: string;
   readonly resolve: () => Effect.Effect<CodexExecutable, CodexInstallationError>;
   readonly acquire: () => Effect.Effect<CodexExecutable, CodexInstallationError, Scope.Scope>;
+  readonly compatibility: (
+    version: string,
+  ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
   readonly start: Effect.Effect<ProviderInstallState, CodexInstallationError>;
   readonly cancel: (
     operationId: string,
@@ -202,7 +209,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         "resolve",
         "The managed Codex installation record is invalid. Reinstall Codex.",
       );
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(
+    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(
       yield* fs.readFileString(file),
     );
   });
@@ -539,6 +546,14 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         ),
         Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
         Effect.timeout("45 minutes"),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            installationError(
+              "download",
+              "The Codex download timed out. Retry installation.",
+              cause,
+            ),
+        }),
       );
       if (downloadedBytes !== release.archiveBytes || hash.digest("hex") !== release.sha256)
         return yield* installationError(
@@ -597,8 +612,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
         { flag: "wx", mode: 0o600 },
       );
-      // On Windows, Defender and kernel process rundown can briefly hold the
-      // verified codex.exe handle open right after `--version` exits.
+      // Windows Defender or process rundown may retain codex.exe handles briefly after --version exits.
       const renameRuntime = fs.rename(runtime, destination);
       yield* platform === "win32"
         ? renameRuntime.pipe(Effect.retry({ times: 10, schedule: Schedule.spaced("100 millis") }))
@@ -606,6 +620,20 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       yield* activate();
     },
     Effect.scoped,
+    Effect.catchTags({
+      HttpClientError: (cause) => {
+        const httpStatus =
+          cause.reason._tag === "StatusCodeError" ? cause.reason.response.status : undefined;
+        return new CodexInstallationError({
+          operation: "download",
+          detail:
+            httpStatus === undefined
+              ? "The Codex download was interrupted. Check your internet connection, then retry installation."
+              : `The Codex download server returned HTTP ${httpStatus}. Try again later.`,
+          cause,
+        });
+      },
+    }),
     Effect.mapError(
       wrapFailure(
         "install",
@@ -741,9 +769,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   );
 
   yield* Effect.gen(function* () {
-    // Two servers can share a home, and writes below a staging directory do not
-    // refresh its mtime, so only directories far older than any real install
-    // (download is capped at 45 minutes) are treated as abandoned.
+    // Shared-home installs do not refresh parent mtimes; remove only staging directories far older than the 45-minute download cap.
     let canRemove = false;
     if (yield* fs.exists(managedDirectory)) {
       const entries = yield* fs
@@ -762,8 +788,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         if (now - modifiedAt < STAGING_STALE_AFTER_MS) continue;
         yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
       }
-      // The empty root itself stays: deleting it could race another server
-      // creating a staging directory inside. An unreadable root stays removable.
+      // Keep the empty root to avoid racing new staging directories; unreadable roots remain removable.
       const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);
       canRemove = Option.isNone(remaining) || remaining.value.length > 0;
     }
@@ -800,6 +825,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     managedDirectory,
     resolve,
     acquire,
+    compatibility,
     start,
     cancel,
     state: SubscriptionRef.get(state),

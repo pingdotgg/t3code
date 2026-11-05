@@ -49,7 +49,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
-    "@cursor/sdk": "1.0.35",
+    "@cursor/sdk": "1.0.38",
     "@napi-rs/keyring": "^1.3.0",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",

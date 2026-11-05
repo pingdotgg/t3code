@@ -1,12 +1,12 @@
 import {
   authScopeRequiredResponse,
-  AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
+  EnvironmentHttpForbiddenError,
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
@@ -25,7 +25,6 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -166,7 +165,7 @@ export const authenticateMediaRequest =
   Effect.fnUntraced(function* (requiredScope: AuthEnvironmentScope) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "media").pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           if (EnvironmentAuth.isServerAuthCredentialError(error)) {
@@ -427,6 +426,20 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "webSocketTicketFor",
+        Effect.fn("environment.auth.webSocketTicketFor")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* EnvironmentAuthenticatedPrincipal;
+            yield* appendCredentialResponseHeaders;
+            return yield* serverAuth.issueWebSocketTicket(session, { use: args.params.use });
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("websocket_ticket_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "pairingCredential",
         Effect.fn("environment.auth.pairingCredential")(
           function* (args) {
@@ -449,19 +462,10 @@ export const layer = HttpApiBuilder.group(
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),
           ),
-        ),
-      )
-      .handle(
-        "pairingLinks",
-        Effect.fn("environment.auth.pairingLinks")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            yield* requireEnvironmentScope(AuthAccessReadScope);
-            return yield* serverAuth.listPairingLinks();
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_links_load_failed", error),
-          ),
+          Effect.catchTags({
+            ManagedPolicyRefusedError: (error) =>
+              Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+          }),
         ),
       )
       .handle(
@@ -475,19 +479,6 @@ export const layer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_link_revoke_failed", error),
-          ),
-        ),
-      )
-      .handle(
-        "clients",
-        Effect.fn("environment.auth.clients")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* requireEnvironmentScope(AuthAccessReadScope);
-            return yield* serverAuth.listClientSessions(session.sessionId);
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_sessions_load_failed", error),
           ),
         ),
       )

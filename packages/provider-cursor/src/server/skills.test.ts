@@ -19,7 +19,7 @@ const runNode = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
 
 describe("Cursor skills", () => {
-  it("discovers recursive project skills with project precedence", async () =>
+  it("discovers project, user, then built-in skills by precedence", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -66,6 +66,10 @@ describe("Cursor skills", () => {
           "oversized",
           "x".repeat(1_000_001),
         );
+        const builtinRoot = path.join(userHome, ".cursor", "skills-cursor");
+        yield* writeSkill(builtinRoot, "loop", "---\ndescription: builtin loop\n---\n");
+        yield* writeSkill(builtinRoot, "review", "---\ndescription: builtin review\n---\n");
+        yield* writeSkill(builtinRoot, "ide-only", "---\nmetadata:\n  surfaces:\n    - ide\n---\n");
         yield* fileSystem.makeDirectory(path.join(userHome, ".codex"), { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(userHome, ".codex", "skills"),
@@ -80,6 +84,13 @@ describe("Cursor skills", () => {
             scope: "project",
             enabled: true,
             userInvocable: false,
+          },
+          {
+            name: "loop",
+            description: "builtin loop",
+            path: path.join(builtinRoot, "loop", "SKILL.md"),
+            scope: "system",
+            enabled: true,
           },
           {
             name: "oversized",

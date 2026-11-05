@@ -22,17 +22,9 @@ private enum GhosttyRuntime {
   }
 }
 
-/// Encodes hardware-keyboard combos that UITextField never surfaces through its
-/// text-editing delegate (control combos, Escape, Tab, arrow keys) into the byte
-/// sequences a terminal expects.
-///
-/// Capture uses UIKeyCommand with `wantsPriorityOverSystemBehavior` rather than
-/// `pressesBegan`: while a text field is first responder, iPadOS routes hardware key
-/// events through the text-input system, which can consume presses before they reach
-/// responder press callbacks. Registered key commands are matched deterministically
-/// before that happens.
+/// While a text field is first responder, iPadOS may consume presses before pressesBegan.
+/// Priority UIKeyCommands capture terminal shortcuts before the text-input system handles them.
 private enum TerminalHardwareKeyEncoder {
-  /// Characters that produce a control byte when combined with Ctrl.
   private static let controlInputs = "abcdefghijklmnopqrstuvwxyz@[\\]^_-? "
 
   static func makeKeyCommands(action: Selector) -> [UIKeyCommand] {
@@ -97,7 +89,6 @@ private enum TerminalHardwareKeyEncoder {
   private static func controlSequence(for scalar: Unicode.Scalar) -> String? {
     switch scalar {
     case "a"..."z":
-      // Ctrl+A..Z -> 0x01..0x1A (Ctrl+C = ETX, Ctrl+Z = SUB, ...).
       return UnicodeScalar(scalar.value - 96).map(String.init)
     case " ", "@":
       return "\u{00}"
@@ -205,6 +196,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
   private var lastAppliedBuffer = ""
+  private var streamedOutput: TerminalOutputBuffer?
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
@@ -251,9 +243,23 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  // Expo sets a batch's props in no fixed order, so the buffer waits for the whole batch:
+  // output fed before the same batch's sharedGrid lands would be drawn, and clipped, at the
+  // previous grid.
   var initialBuffer: String = "" {
     didSet {
-      applyRemoteBuffer(initialBuffer)
+      hasPendingBuffer = true
+    }
+  }
+  private var hasPendingBuffer = false
+
+  // The PTY grid shared by every attached client, or empty before the server reports one.
+  // The surface draws this grid so its wrapping and cursor match the PTY; the view's own
+  // fit still goes out through onResize.
+  var sharedGrid: [Int] = [] {
+    didSet {
+      guard oldValue != sharedGrid else { return }
+      resizeSurface()
     }
   }
 
@@ -535,7 +541,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     ghostty_surface_set_color_scheme(createdSurface, appearance.ghosttyColorScheme)
     setupWriteCallback()
     resizeSurface()
-    feedBuffer(initialBuffer)
+    if let streamedOutput {
+      feedData(streamedOutput.data)
+    } else if !hasPendingBuffer {
+      feedBuffer(initialBuffer)
+    }
   }
 
   private func resetSurface() {
@@ -563,9 +573,23 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
     surface = nil
     app = nil
+    // Ghostty adds its IOSurface layer to the viewport on iOS but never removes it on
+    // free, leaving the last frame on screen under the next surface's layer. The
+    // viewport has no subviews, so every sublayer belongs to a freed surface.
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    terminalViewport.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
+    CATransaction.commit()
+  }
+
+  func applyPendingBuffer() {
+    guard hasPendingBuffer else { return }
+    hasPendingBuffer = false
+    applyRemoteBuffer(initialBuffer)
   }
 
   private func applyRemoteBuffer(_ buffer: String) {
+    guard streamedOutput == nil else { return }
     guard surface != nil else {
       createSurfaceIfPossible()
       return
@@ -586,6 +610,20 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
     resetSurface()
     createSurfaceIfPossible()
+  }
+
+  func writeOutput(_ data: String, reset: Bool) {
+    let output = streamedOutput ?? TerminalOutputBuffer()
+    let bytes = Data(data.utf8)
+    output.write(bytes, reset: reset)
+    streamedOutput = output
+    if reset {
+      refreshSurface()
+    } else if surface == nil {
+      createSurfaceIfPossible()
+    } else {
+      feedData(bytes)
+    }
   }
 
   private func feedBuffer(_ buffer: String) {
@@ -636,10 +674,25 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     terminalViewport.contentScaleFactor = scale
     ghostty_surface_set_content_scale(surface, Double(scale), Double(scale))
     ghostty_surface_set_size(surface, width, height)
+    let fitted = ghostty_surface_size(surface)
+    let fittedCols = max(1, Int(fitted.columns))
+    let fittedRows = max(1, Int(fitted.rows))
+    // Trimming whole cells keeps ghostty's padding, and the surface can only shrink
+    // within the view, so a stale larger grid falls back to the fitted one.
+    var surfaceWidth = width
+    var surfaceHeight = height
+    if sharedGrid.count == 2, sharedGrid[0] > 0, sharedGrid[1] > 0 {
+      surfaceWidth -= UInt32(max(fittedCols - sharedGrid[0], 0)) * fitted.cell_width_px
+      surfaceHeight -= UInt32(max(fittedRows - sharedGrid[1], 0)) * fitted.cell_height_px
+      if surfaceWidth != width || surfaceHeight != height {
+        ghostty_surface_set_size(surface, surfaceWidth, surfaceHeight)
+      }
+    }
     ghostty_surface_set_occlusion(surface, window != nil)
-    configureIOSurfaceLayers()
+    configureIOSurfaceLayers(
+      size: CGSize(width: CGFloat(surfaceWidth) / scale, height: CGFloat(surfaceHeight) / scale))
     redrawSurface()
-    emitGhosttyResize()
+    emitResize(cols: fittedCols, rows: fittedRows)
   }
 
   private func redrawSurface() {
@@ -647,19 +700,6 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     ghostty_surface_refresh(surface)
     ghostty_surface_draw(surface)
     markIOSurfaceLayersForDisplay()
-    emitGhosttyResize()
-  }
-
-  private func emitGhosttyResize() {
-    guard let surface else {
-      emitEstimatedResize()
-      return
-    }
-
-    let size = ghostty_surface_size(surface)
-    let cols = max(1, Int(size.columns))
-    let rows = max(1, Int(size.rows))
-    emitResize(cols: cols, rows: rows)
   }
 
   private func emitEstimatedResize() {
@@ -710,8 +750,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     ghostty_app_keyboard_changed(app)
   }
 
-  private func configureIOSurfaceLayers() {
-    let targetBounds = CGRect(origin: .zero, size: terminalViewport.bounds.size)
+  private func configureIOSurfaceLayers(size: CGSize) {
+    let targetBounds = CGRect(origin: .zero, size: size)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     terminalViewport.layer.sublayers?.forEach { sublayer in

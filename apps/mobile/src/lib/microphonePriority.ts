@@ -1,8 +1,5 @@
-/**
- * iOS lists only connected inputs, and only while a recording session is set up, so a device
- * cannot be listed before then.
- */
-export const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
+/** iOS lists connected inputs only after recording-session setup. */
+const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
 
 export type MicrophoneKind = (typeof MICROPHONE_KINDS)[number];
 

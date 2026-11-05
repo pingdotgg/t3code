@@ -103,8 +103,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         );
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
-      // An unversioned command (a path override) can change in place, so only
-      // registry versions reuse earlier discovery.
+      // Path overrides can change in place; cache discovery only for registry versions.
       if (inspected.version !== null && knownMethods?.version === inspected.version)
         return knownMethods.methods;
       const resolved = yield* resolve;
@@ -143,14 +142,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         .runBackgroundProbe(agentKey, discoverMethods)
         .pipe(
           Effect.flatMap((result) =>
-            Option.isSome(result)
-              ? Effect.succeed(result.value)
-              : Effect.fail(
-                  failure(
-                    "methods",
-                    "Sign-in discovery was interrupted by an active provider session. Try again.",
-                  ),
-                ),
+            Effect.fromOption(result, () =>
+              failure(
+                "methods",
+                "Sign-in discovery was interrupted by an active provider session. Try again.",
+              ),
+            ),
           ),
         )
     : discoverMethods;
@@ -351,8 +348,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   ).pipe(Effect.andThen(options.onChanged(false)));
   return yield* ProviderAuthFlow.make({
     instanceId: options.instanceId,
-    // ACP doesn't advertise its credential scope. Conservatively treat all
-    // instances of the same agent on this environment as sharing credentials.
+    // ACP omits credential scope; assume an agent's instances share credentials in this environment.
     credentialBinding: { owner: "provider", key: `acp:${agentKey}` },
     methods,
     ...(options.settings.authMethodId ? { defaultMethodId: options.settings.authMethodId } : {}),

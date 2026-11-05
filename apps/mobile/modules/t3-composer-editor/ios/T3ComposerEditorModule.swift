@@ -36,8 +36,6 @@ enum T3ComposerClipboard {
   }
 }
 
-// Expo Modules 2.0: the clipboard function is a @JS member; the view stays in
-// definition() until the 2.0 view API lands.
 @ExpoModule("T3ComposerEditor")
 public class T3ComposerEditorModule: Module {
   // UIPasteboard is main-thread only, so the member is main-actor isolated.

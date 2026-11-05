@@ -94,6 +94,7 @@ const makeRepositories = Effect.gen(function* () {
 
 const detail = (workspaceRoot: string, headSha: string): PullRequestDetail =>
   ({
+    provider: "github",
     number: 7,
     title: "Add the feature",
     body: "Adds the feature.",
@@ -385,13 +386,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
       name: "a head no source has",
       reportedHead: () => "e".repeat(40),
       shadow: "none",
-      expected: [
-        "local objects:",
-        "the commit:",
-        "branch feature:",
-        "refs/pull/7/head:",
-        "refs/merge-requests/7/head:",
-      ],
+      expected: ["local objects:", "the commit:", "branch feature:", "refs/pull/7/head:"],
     },
   ])("refuses to write a guide for $name", ({ reportedHead, shadow, expected }) =>
     Effect.scoped(
@@ -415,6 +410,8 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         assert.strictEqual(result.run?._tag, "Failed");
         const detail = result.run?._tag === "Failed" ? result.run.detail : "";
         for (const part of expected) assert.include(detail, part);
+        // Only the host's own head ref is tried.
+        assert.notInclude(detail, "refs/merge-requests/");
         assert.deepStrictEqual(run.observed, []);
         assert.isFalse(run.fetchedRefs.some((ref) => ref.startsWith("-")));
         const fs = yield* FileSystem.FileSystem;
@@ -465,6 +462,51 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         const result = yield* service.get(reference);
         assert.strictEqual(result.guide?.headSha, repositories.headSha);
         assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+      }),
+    ),
+  );
+
+  it.effect("keeps excerpts of source lines a configured diff driver would convert away", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          `${repositories.workspace}/.git/info/attributes`,
+          "feature.txt diff=blank\n",
+        );
+        yield* git(repositories.workspace, ["config", "diff.blank.textconv", "true"]);
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            generate: () =>
+              Effect.succeed({
+                stops: [
+                  {
+                    title: "The feature",
+                    summary: "The change.",
+                    attention: null,
+                    excerpts: [{ path: "feature.txt", side: "new", start: 1, end: 3, caption: "" }],
+                    files: [],
+                    notes: [],
+                    questions: [],
+                  },
+                ],
+              }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate(reference);
+        yield* Deferred.await(stored);
+        const result = yield* service.get(reference);
+        assert.deepStrictEqual(result.guide?.stops[0]?.excerpts, [
+          { path: "feature.txt", side: "new", start: 1, end: 3, caption: "" },
+        ]);
       }),
     ),
   );

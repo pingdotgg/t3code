@@ -64,7 +64,6 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
-  readonly advertiseServerResolvedCommandContext?: boolean;
   readonly advertiseThreadStop?: boolean;
 }) {
   const client = {
@@ -114,15 +113,13 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
         capabilities: {
           repositoryIdentity: true,
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
-          ...(input.advertiseServerResolvedCommandContext === false
-            ? {}
-            : { serverResolvedCommandContext: true }),
         },
       },
     } as never),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
   return EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -299,71 +296,6 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("retains projection-shaped delivery for servers without command context support", () =>
-    Effect.gen(function* () {
-      const activeRunId = RunId.make("legacy-active-run");
-      const projection: OrchestrationV2ThreadProjection = {
-        ...v2Projection,
-        runs: [
-          {
-            id: activeRunId,
-            threadId: v2ThreadId,
-            ordinal: 1,
-            providerInstanceId: v2Projection.thread.providerInstanceId,
-            modelSelection: v2Projection.thread.modelSelection,
-            providerThreadId: null,
-            userMessageId: MessageId.make("legacy-active-message"),
-            rootNodeId: null,
-            activeAttemptId: null,
-            status: "running",
-            requestedAt: v2Now,
-            startedAt: v2Now,
-            completedAt: null,
-            checkpointId: null,
-            contextHandoffId: null,
-          },
-        ],
-      };
-      const commands: OrchestrationV2Command[] = [];
-      const projectionRequests: ThreadId[] = [];
-      const supervisor = yield* makeSupervisor({
-        commands,
-        projects: [],
-        projection,
-        projectionRequests,
-        advertiseServerResolvedCommandContext: false,
-      });
-
-      for (const [mode, expectedMode] of [
-        ["auto", { type: "queue_after_active" }],
-        ["queue", { type: "queue_after_active" }],
-        ["steer", { type: "steer_active", targetRunId: activeRunId }],
-        ["restart", { type: "restart_active", targetRunId: activeRunId }],
-      ] as const) {
-        yield* startThreadTurn({
-          commandId: CommandId.make(`legacy-command-${mode}`),
-          threadId: v2ThreadId,
-          message: {
-            messageId: MessageId.make(`legacy-message-${mode}`),
-            role: "user",
-            text: mode,
-            attachments: [],
-          },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          dispatchMode: mode,
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-        expect(commands.at(-1)).toMatchObject({
-          type: "message.dispatch",
-          dispatchMode: expectedMode,
-        });
-        expect(commands.at(-1)).not.toHaveProperty("deliveryIntent");
-      }
-      expect(projectionRequests).toEqual([v2ThreadId, v2ThreadId, v2ThreadId, v2ThreadId]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
   it.effect("Stop with no run left ends the thread's pull request watches", () =>
     Effect.gen(function* () {
       const link = {
@@ -487,69 +419,6 @@ describe("V2 environment commands", () => {
               ],
         );
       }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("validates identified checkpoints locally for older servers", () =>
-    Effect.gen(function* () {
-      const checkpointId = CheckpointId.make("legacy-checkpoint");
-      const scopeId = CheckpointScopeId.make("legacy-checkpoint-scope");
-      for (const status of ["ready", "missing", "error", "stale", null] as const) {
-        const commands: OrchestrationV2Command[] = [];
-        const projectionRequests: ThreadId[] = [];
-        const supervisor = yield* makeSupervisor({
-          commands,
-          projects: [],
-          projectionRequests,
-          advertiseServerResolvedCommandContext: false,
-          projection: {
-            ...v2Projection,
-            checkpoints:
-              status === null
-                ? []
-                : [
-                    {
-                      id: checkpointId,
-                      threadId: v2ThreadId,
-                      scopeId,
-                      runId: null,
-                      nodeId: NodeId.make("legacy-checkpoint-node"),
-                      parentCheckpointId: null,
-                      ordinalWithinScope: 0,
-                      appRunOrdinal: null,
-                      ref: CheckpointRef.make("refs/t3/legacy-checkpoint"),
-                      status,
-                      files: [],
-                      capturedAt: v2Now,
-                    },
-                  ],
-          },
-        });
-        const rollback = revertThreadCheckpoint({
-          commandId: CommandId.make(`legacy-rollback-${status}`),
-          threadId: v2ThreadId,
-          checkpointId,
-          scopeId,
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-        if (status === "ready") {
-          yield* rollback;
-          expect(commands).toEqual([
-            {
-              type: "checkpoint.rollback",
-              commandId: "legacy-rollback-ready",
-              threadId: v2ThreadId,
-              checkpointId,
-              scopeId,
-            },
-          ]);
-        } else {
-          const error = yield* rollback.pipe(Effect.flip);
-          expect(error._tag).toBe("OrchestrationV2CheckpointUnavailableError");
-          expect(commands).toEqual([]);
-        }
-        expect(projectionRequests).toEqual([v2ThreadId]);
-      }
-    }).pipe(Effect.provide(layerTestCrypto)),
   );
 
   it.effect(

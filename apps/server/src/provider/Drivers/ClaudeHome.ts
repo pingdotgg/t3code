@@ -1,11 +1,14 @@
-import type { ClaudeSettings } from "@t3tools/contracts";
+import type { ClaudeSettings, ProviderInstanceEnvironment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+
+import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -37,21 +40,32 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   return {
     ...resolvedBaseEnv,
-    // Overriding HOME also relocates the macOS login keychain lookup
-    // ($HOME/Library/Keychains), so the spawned CLI can't find its stored
-    // OAuth credentials and reports "Not logged in". CLAUDE_CONFIG_DIR points
-    // Claude Code at its config dir directly while leaving HOME (and the
-    // keychain) intact.
+    // Changing HOME hides macOS Keychain credentials; use CLAUDE_CONFIG_DIR to keep login access.
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
 });
 
 /**
- * While it exists Claude refuses `--strict-mcp-config` and exits before
- * initializing, but it already ignores user, project and `--mcp-config` servers
- * on its own, so callers that pass the flag for isolation can drop it. Paths
- * match the ones Claude Code checks.
+ * Base env for the Claude processes T3 Code runs, before `makeClaudeEnvironment`.
+ * Claude Code reads its entrypoint from the process env, not its settings `env`, so T3 Code applies that override itself.
  */
+export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  instanceEnvironment: ProviderInstanceEnvironment | undefined,
+  hostEnvironment: NodeJS.ProcessEnv,
+) {
+  const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, {
+    ...hostEnvironment,
+    CLAUDE_CODE_ENTRYPOINT: "t3-code",
+  });
+  const settingsEntrypoint = (yield* readClaudeSettingsEnv(config, undefined, environment))
+    .CLAUDE_CODE_ENTRYPOINT;
+  return settingsEntrypoint
+    ? { ...environment, CLAUDE_CODE_ENTRYPOINT: settingsEntrypoint }
+    : environment;
+});
+
+/** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
@@ -85,10 +99,7 @@ export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesC
   },
 );
 
-/**
- * Describe the spawned CLI's environment separately from the login command so
- * paths remain literal on every shell, including relative inherited values.
- */
+/** Separate spawn env from login commands to preserve literal paths, including relative inherited values. */
 export const claudeSignedOutMessage = (input: {
   readonly configDir: string | undefined;
   readonly cwd: string;

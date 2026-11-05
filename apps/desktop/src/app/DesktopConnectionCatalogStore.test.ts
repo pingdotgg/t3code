@@ -100,7 +100,7 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
-  it.effect("persists, reads, and clears an encrypted connection catalog", () =>
+  it.effect("persists and reads an encrypted connection catalog", () =>
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
@@ -108,9 +108,6 @@ describe("DesktopConnectionCatalogStore", () => {
 
         assert.isTrue(yield* store.set(catalog));
         assert.deepStrictEqual(yield* store.get, Option.some(catalog));
-
-        yield* store.clear;
-        assert.deepStrictEqual(yield* store.get, Option.none());
       }),
     ),
   );

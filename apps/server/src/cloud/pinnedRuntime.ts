@@ -29,8 +29,7 @@ const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
 const PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT = Duration.minutes(1);
 const PINNED_RUNTIME_ARCHIVE_FILE = "t3-runtime-archive";
-// Boot-service setup and remote update can construct separate layers. Serialize
-// the complete install transaction across every caller in this process.
+// Separate layers share one install lock across this process.
 const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
 
 export interface PinnedRuntimePaths {
@@ -97,11 +96,7 @@ export type PinnedRuntimeProgress =
   | { readonly stage: "download"; readonly received: number; readonly total: number | undefined }
   | { readonly stage: "verify" | "extract" | "validate" | "cached" };
 
-/**
- * The sentinel is written only after extraction and validation succeed; checking the entry file
- * alone is not enough, since tar writes the executable before the last native package and a
- * killed install leaves a plausible-looking but broken tree behind.
- */
+/** Tar writes the executable before native packages; only a validated install gets a sentinel. */
 
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
@@ -230,8 +225,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     );
   input.onProgress?.({ stage: "extract" });
   const extractStep = "extracting the t3 release archive";
-  // The archive wraps everything in one directory named after its stem;
-  // strip it so the executable lands at <versionDir>/t3.
+  // Strip the archive's stem directory so the executable lands at <versionDir>/t3.
   yield* input.runner
     .run({
       command: cliArchiveTarCommand(input.platform, process.env),
@@ -383,6 +377,13 @@ const PINNED_RUNTIME_PRUNE_GRACE = Duration.hours(1);
  */
 const PINNED_RUNTIME_LAUNCHERS_FILE = "launchers";
 
+/**
+ * Starts on a fresh line whatever the file ends with when the append lands: another process's
+ * append may have been cut short since this one read the file. Readers skip the blank lines.
+ */
+const launcherRecords = (launchers: ReadonlyArray<string>) =>
+  `\n${launchers.map((launcher) => `${launcher}\n`).join("")}`;
+
 export function launcherOwnsVersionsDir(
   path: Path.Path,
   versionsDir: string,
@@ -391,6 +392,27 @@ export function launcherOwnsVersionsDir(
   const relative = path.relative(versionsDir, path.resolve(candidate));
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
+
+/**
+ * `t3 update` repoints the launcher it was started through, which may be on neither PATH nor the
+ * default bin dir. Unrecorded, the next prune would remove the runtime it now points at.
+ */
+export const recordPinnedRuntimeLauncher = Effect.fn("cloud.pinned_runtime.record_launcher")(
+  function* (input: { readonly baseDir: string; readonly launcher: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const launchersFile = path.join(
+      input.baseDir,
+      PINNED_RUNTIME_DIR,
+      PINNED_RUNTIME_LAUNCHERS_FILE,
+    );
+    // Prune may run in another process, such as the service, whose working directory differs.
+    const launcher = path.resolve(input.launcher);
+    const recorded = yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => ""));
+    if (recorded.split(/\r?\n/).includes(launcher)) return;
+    yield* fs.writeFileString(launchersFile, launcherRecords([launcher]), { flag: "a" });
+  },
+);
 
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
@@ -443,9 +465,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   }
   if (unrecorded.length > 0) {
     yield* fs
-      .writeFileString(launchersFile, unrecorded.map((launcher) => `${launcher}\n`).join(""), {
-        flag: "a",
-      })
+      .writeFileString(launchersFile, launcherRecords(unrecorded), { flag: "a" })
       .pipe(Effect.ignore);
   }
   return targets;
@@ -598,12 +618,9 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
 });
 
 /**
- * Every update publishes a new immutable runtime, so without pruning they pile up. Removes
- * completed runtimes nothing can start again and keeps: the caller's versions, everything the
- * service state references (active, rollback, pending), and runtimes that a running process
- * executes, a `t3` launcher points at, or `references` (such as the service unit) name, plus
- * anything published within the last hour. Staging directories, symlinks, and unexpected entries
- * are never touched. Returns the versions removed.
+ * Keep runtimes named by callers, service state, running processes, launchers, or references,
+ * and anything published within an hour. Only prune completed runtimes; leave staging
+ * directories, symlinks, and unexpected entries untouched.
  */
 export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {
   readonly baseDir: string;

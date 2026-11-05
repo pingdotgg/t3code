@@ -59,6 +59,9 @@ jobs:
   # file, docs included. The `Check` job at the end of this file passes only
   # when every other job passes or was skipped by `changes`.
   lint:
+    permissions:
+      contents: read
+      id-token: write
     name: Lint
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
@@ -82,6 +85,8 @@ jobs:
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
@@ -108,6 +113,9 @@ jobs:
         run: vp check
 
   build:
+    permissions:
+      contents: read
+      id-token: write
     name: Build and Typecheck
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.build != 'false' || needs.changes.outputs.typecheck != 'false') }}
@@ -139,6 +147,8 @@ jobs:
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
@@ -197,6 +207,9 @@ jobs:
   # dependency layers. The concurrency limit stays at the default 4 so peak load
   # per runner is unchanged.
   test:
+    permissions:
+      contents: read
+      id-token: write
     name: Test
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test != 'false' }}
@@ -211,16 +224,6 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
-
-      # Blacksmith boots GitHub's Ubuntu runner image (gcc is usually present),
-      # but ACP process-tree live tests compile a small pthread fixture with `cc`
-      # and soft-skip when it is missing. Install build-essential so that path
-      # always runs in CI instead of silently no-oping.
-      - name: Install C toolchain for process-tree fixtures
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential
-          command -v cc
 
       - uses: ./.github/actions/setup-apt-mirrors
 
@@ -237,6 +240,8 @@ jobs:
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
@@ -278,6 +283,9 @@ jobs:
   # started last and ran alone for about 40s after everything else finished.
   # release.yml mirrors this test, test_web, and test_server split.
   test_web:
+    permissions:
+      contents: read
+      id-token: write
     name: Test Web
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test_web != 'false' }}
@@ -295,6 +303,8 @@ jobs:
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       # The browser project runs React tests in headless Chromium. Same cache key as
       # test_server, so both jobs share one downloaded browser.
@@ -324,6 +334,12 @@ jobs:
       - name: Test
         run: vp run --filter @t3tools/web test
 
+      # Browser tests run source modules; this boots the production chunk graph.
+      - name: Boot the built web client
+        run: |
+          vp run --filter @t3tools/web build
+          node apps/web/scripts/verify-built-boot.ts
+
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
@@ -333,9 +349,14 @@ jobs:
   # The shards are the longest jobs, so they gate themselves instead of waiting
   # ~15s for `changes`: a shard the change cannot affect stops after checkout.
   test_server:
+    permissions:
+      contents: read
+      id-token: write
     name: Test Server ${{ matrix.shard }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
+    # Shards take 2-5 minutes. When the shared task cache throttles reads, each
+    # failed fetch stalls vp for 15-90s, which pushed shards past 10 minutes.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -359,6 +380,8 @@ jobs:
       - name: Setup Vite+
         if: steps.changes.outputs.test_server != 'false'
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
@@ -395,7 +418,18 @@ jobs:
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: >-
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
+          --verify-hits 1 --report "${{ runner.temp }}/test-cache-${{ matrix.shard }}.json" apps/server
+
+      - name: Upload test cache measurements
+        if: always() && steps.changes.outputs.test_server != 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-cache-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-cache-${{ matrix.shard }}.json
+          if-no-files-found: error
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
       # produces these files. Gating the upload on their presence keeps a
@@ -495,6 +529,9 @@ jobs:
         run: vp run lint:mobile
 
   release_smoke:
+    permissions:
+      contents: read
+      id-token: write
     name: Release Smoke
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.release_smoke != 'false' }}
@@ -512,6 +549,8 @@ jobs:
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
