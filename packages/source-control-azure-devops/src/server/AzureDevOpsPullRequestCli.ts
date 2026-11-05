@@ -443,7 +443,7 @@ export const make = Effect.gen(function* () {
     return true;
   };
 
-  const runRead = (
+  const runRead = Effect.fn("AzureDevOpsPullRequestCli.runRead")(function* (
     input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -452,9 +452,9 @@ export const make = Effect.gen(function* () {
     record: ActivityRecord,
     read: ActivityRead,
     restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
-  ) => {
+  ) {
     let startedAt: number | null = null;
-    return restore(
+    return yield* restore(
       Effect.gen(function* () {
         startedAt = yield* Clock.currentTimeMillis;
         const threads = yield* invoke({
@@ -479,21 +479,21 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.andThen(Deferred.done(read.done, exit))),
       ),
     );
-  };
+  });
 
   /**
    * Concurrent readers of one pull request share a single process. A null revision asks for
    * the conversation itself, which runs at once instead of waiting behind background reads.
    */
-  const readThreads = (
+  const readThreads = Effect.fn("AzureDevOpsPullRequestCli.readThreads")(function (
     input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     },
     revision: string | null,
-  ): Effect.Effect<AzureDevOpsThreads, AzureDevOpsPullRequestCliError> =>
-    Effect.uninterruptibleMask((restore) =>
+  ): Effect.Effect<AzureDevOpsThreads, AzureDevOpsPullRequestCliError> {
+    return Effect.uninterruptibleMask((restore) =>
       Effect.suspend(() => {
         const record = activityRecord(activityKey(input));
         const again = () => readThreads(input, revision);
@@ -537,6 +537,7 @@ export const make = Effect.gen(function* () {
         );
       }),
     );
+  });
 
   /** Decoding can shorten a non-final page; advance by raw rows. */
   const listPullRequestPage = (input: {

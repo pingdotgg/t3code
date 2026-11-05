@@ -133,142 +133,138 @@ const driverServices = AzureDevOpsPullRequestCli.layer.pipe(
   ),
 );
 
-it.effect("dates an old pull request by its latest push or comment, the same on every reader", () =>
-  Effect.gen(function* () {
-    const pushedAt = "2026-07-10T12:00:00+02:00";
-    const thread = (id: number, at: string, content: string, commentType = "text") => ({
-      id,
-      publishedDate: at,
-      lastUpdatedDate: at,
-      comments: [{ id: 1, content, commentType, publishedDate: at, lastUpdatedDate: at }],
-    });
-    const refUpdate = (at: string) =>
-      thread(1, at, "The reference refs/heads/feat/page was updated.", "system");
-    const comment = (at: string) => thread(2, at, "Looks good.");
-    let shown = {
-      ...pullRequestRow,
-      creationDate: "2026-06-01T00:00:00Z",
-      lastMergeSourceCommit: { commitId: "a".repeat(40) },
-    };
-    let threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T10:30:00.1234567Z")] });
-    let threadsAsked = yield* Deferred.make<void>();
-    let threadsAnswer = yield* Deferred.make<void>();
-    mockedRun.mockImplementation(({ args }) => {
-      if (args.includes("pullRequestThreads")) {
-        return Deferred.succeed(threadsAsked, undefined).pipe(
-          Effect.andThen(Deferred.await(threadsAnswer)),
-          Effect.as(output(threads)),
-        );
-      }
-      if (args.includes("pullRequestIterations")) {
-        const pushed = { ...oneIteration.value[0], createdDate: pushedAt, updatedDate: pushedAt };
-        return Effect.succeed(output(json({ value: [pushed] })));
-      }
-      if (args.includes("pullRequestIterationChanges")) {
-        return Effect.succeed(output(json({ changeEntries: [] })));
-      }
-      return Effect.succeed(output(JSON.stringify(args.includes("list") ? [shown] : shown)));
-    });
-    const threadReads = () =>
-      mockedRun.mock.calls.filter(([call]) => call.args.includes("pullRequestThreads")).length;
-
-    const provider = yield* AzureDevOpsPullRequestProvider.make;
-    const sourceControl = yield* AzureDevOpsSourceControlProvider.make;
-    const input = { cwd: "/w", repository: "platform/web", host: "dev.azure.com", number: 42 };
-    const summary = provider.getChangeRequestSummary!(input).pipe(
-      Effect.map((read) => read.updatedAt),
-    );
-    const reading = yield* Effect.forkChild(
-      Effect.all(
-        {
-          listed: provider
-            .listChangeRequests({
-              ...input,
-              state: "open",
-              involvement: "all",
-              viewer: "bilal@acme.dev",
-              limit: 10,
-            })
-            .pipe(Effect.map((page) => page.items.map((item) => item.updatedAt))),
-          summary,
-          detail: provider.getChangeRequest(input).pipe(Effect.map((read) => read.updatedAt)),
-          branch: sourceControl
-            .getChangeRequest({ cwd: "/w", reference: "42" })
-            .pipe(Effect.map((read) => Option.map(read.updatedAt, DateTime.formatIso))),
-        },
-        { concurrency: "unbounded" },
-      ),
-    );
-    yield* Effect.raceFirst(Deferred.await(threadsAsked), Fiber.await(reading));
-    yield* Deferred.succeed(threadsAnswer, undefined);
-
-    const edited = "2026-07-10T10:30:00.123Z";
-    expect(yield* Fiber.join(reading)).toEqual({
-      listed: [edited],
-      summary: edited,
-      detail: edited,
-      branch: Option.some(edited),
-    });
-    expect(threadReads()).toBe(1);
-    // Asking for the conversation itself always reads it, and the read dates the row as well.
-    const activity = yield* provider.getChangeRequestActivity(input);
-    expect(activity.comments.map((entry) => entry.body)).toEqual(["Looks good."]);
-    expect(threadReads()).toBe(2);
-
-    threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T11:00:00Z")] });
-    expect(yield* summary).toBe(edited);
-    yield* TestClock.adjust("61 seconds");
-    expect(yield* summary).toBe("2026-07-10T11:00:00.000Z");
-    expect(threadReads()).toBe(3);
-
-    shown = { ...shown, lastMergeSourceCommit: { commitId: "c".repeat(40) } };
-    threads = json({ value: [refUpdate("2026-07-10T11:05:00Z"), comment("2026-07-10T11:00:00Z")] });
-    const branchLookup = (state: "open" | "all") =>
-      sourceControl
-        .listChangeRequests({ cwd: "/w", headSelector: "feat/page", state, limit: 1 })
-        .pipe(
-          Effect.map((rows) => rows.map((row) => Option.map(row.updatedAt, DateTime.formatIso))),
-        );
-    // Asking whether the branch has an open pull request needs no date.
-    yield* branchLookup("open");
-    expect(threadReads()).toBe(3);
-    expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
-    expect(threadReads()).toBe(4);
-    expect(yield* branchLookup("all")).toEqual([Option.some("2026-07-10T11:05:00.000Z")]);
-
-    threads = "not json";
-    yield* TestClock.adjust("61 seconds");
-    expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
-    expect(threadReads()).toBe(5);
-
-    // A push seen while an older read is out is not answered by that read.
-    const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-    const datedAt = (revision: string) =>
-      pullRequests.activityAt({
-        cwd: "/w",
-        pullRequest: {
-          number: 42,
-          location: { project: "platform", repository: "web" },
-          state: "open",
-          revision,
-          updatedAt: null,
-        },
-        maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+it.effect(
+  "dates an old pull request by its latest activity and shares reads across providers",
+  () =>
+    Effect.gen(function* () {
+      const pushedAt = "2026-07-10T12:00:00+02:00";
+      const thread = (id: number, at: string, content: string, commentType = "text") => ({
+        id,
+        publishedDate: at,
+        lastUpdatedDate: at,
+        comments: [{ id: 1, content, commentType, publishedDate: at, lastUpdatedDate: at }],
       });
-    threadsAsked = yield* Deferred.make<void>();
-    threadsAnswer = yield* Deferred.make<void>();
-    threads = json({ value: [refUpdate("2026-07-10T11:05:00Z"), comment("2026-07-10T11:10:00Z")] });
-    const beforePush = yield* Effect.forkChild(datedAt("before push"));
-    yield* Deferred.await(threadsAsked);
-    threads = json({ value: [refUpdate("2026-07-10T11:20:00Z"), comment("2026-07-10T11:10:00Z")] });
-    const afterPush = yield* Effect.forkChild(datedAt("after push"), { startImmediately: true });
-    yield* Deferred.succeed(threadsAnswer, undefined);
-    yield* Fiber.join(beforePush);
-    expect(yield* Fiber.join(afterPush)).toBe("2026-07-10T11:20:00.000Z");
-    expect(threadReads()).toBe(7);
-    expect(yield* datedAt("after push")).toBe("2026-07-10T11:20:00.000Z");
-    expect(threadReads()).toBe(7);
-  }).pipe(Effect.provide(driverServices)),
+      const refUpdate = (at: string) =>
+        thread(1, at, "The reference refs/heads/feat/page was updated.", "system");
+      const comment = (at: string) => thread(2, at, "Looks good.");
+      let shown = {
+        ...pullRequestRow,
+        creationDate: "2026-06-01T00:00:00Z",
+        lastMergeSourceCommit: { commitId: "a".repeat(40) },
+      };
+      let threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T10:30:00.1234567Z")] });
+      let threadsAsked = yield* Deferred.make<void>();
+      let threadsAnswer = yield* Deferred.make<void>();
+      mockedRun.mockImplementation(({ args }) => {
+        if (args.includes("pullRequestThreads")) {
+          return Deferred.succeed(threadsAsked, undefined).pipe(
+            Effect.andThen(Deferred.await(threadsAnswer)),
+            Effect.as(output(threads)),
+          );
+        }
+        if (args.includes("pullRequestIterations")) {
+          const pushed = { ...oneIteration.value[0], createdDate: pushedAt, updatedDate: pushedAt };
+          return Effect.succeed(output(json({ value: [pushed] })));
+        }
+        if (args.includes("pullRequestIterationChanges")) {
+          return Effect.succeed(output(json({ changeEntries: [] })));
+        }
+        return Effect.succeed(output(JSON.stringify(args.includes("list") ? [shown] : shown)));
+      });
+      const threadReads = () =>
+        mockedRun.mock.calls.filter(([call]) => call.args.includes("pullRequestThreads")).length;
+
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      const sourceControl = yield* AzureDevOpsSourceControlProvider.make;
+      const input = { cwd: "/w", repository: "platform/web", host: "dev.azure.com", number: 42 };
+      const summary = provider.getChangeRequestSummary!(input).pipe(
+        Effect.map((read) => read.updatedAt),
+      );
+      const reading = yield* Effect.forkChild(
+        Effect.all(
+          {
+            summary,
+            branch: sourceControl
+              .getChangeRequest({ cwd: "/w", reference: "42" })
+              .pipe(Effect.map((read) => Option.map(read.updatedAt, DateTime.formatIso))),
+          },
+          { concurrency: "unbounded" },
+        ),
+      );
+      yield* Effect.raceFirst(Deferred.await(threadsAsked), Fiber.await(reading));
+      yield* Deferred.succeed(threadsAnswer, undefined);
+
+      const edited = "2026-07-10T10:30:00.123Z";
+      expect(yield* Fiber.join(reading)).toEqual({
+        summary: edited,
+        branch: Option.some(edited),
+      });
+      expect(threadReads()).toBe(1);
+      // Asking for the conversation itself always reads it, and the read dates the row as well.
+      const activity = yield* provider.getChangeRequestActivity(input);
+      expect(activity.comments.map((entry) => entry.body)).toEqual(["Looks good."]);
+      expect(threadReads()).toBe(2);
+
+      threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T11:00:00Z")] });
+      expect(yield* summary).toBe(edited);
+      yield* TestClock.adjust("61 seconds");
+      expect(yield* summary).toBe("2026-07-10T11:00:00.000Z");
+      expect(threadReads()).toBe(3);
+
+      shown = { ...shown, lastMergeSourceCommit: { commitId: "c".repeat(40) } };
+      threads = json({
+        value: [refUpdate("2026-07-10T11:05:00Z"), comment("2026-07-10T11:00:00Z")],
+      });
+      const branchLookup = (state: "open" | "all") =>
+        sourceControl
+          .listChangeRequests({ cwd: "/w", headSelector: "feat/page", state, limit: 1 })
+          .pipe(
+            Effect.map((rows) => rows.map((row) => Option.map(row.updatedAt, DateTime.formatIso))),
+          );
+      // Asking whether the branch has an open pull request needs no date.
+      yield* branchLookup("open");
+      expect(threadReads()).toBe(3);
+      expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
+      expect(threadReads()).toBe(4);
+      expect(yield* branchLookup("all")).toEqual([Option.some("2026-07-10T11:05:00.000Z")]);
+
+      threads = "not json";
+      yield* TestClock.adjust("61 seconds");
+      expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
+      expect(threadReads()).toBe(5);
+
+      // A push seen while an older read is out is not answered by that read.
+      const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const datedAt = (revision: string) =>
+        pullRequests.activityAt({
+          cwd: "/w",
+          pullRequest: {
+            number: 42,
+            location: { project: "platform", repository: "web" },
+            state: "open",
+            revision,
+            updatedAt: null,
+          },
+          maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+        });
+      threadsAsked = yield* Deferred.make<void>();
+      threadsAnswer = yield* Deferred.make<void>();
+      threads = json({
+        value: [refUpdate("2026-07-10T11:05:00Z"), comment("2026-07-10T11:10:00Z")],
+      });
+      const beforePush = yield* Effect.forkChild(datedAt("before push"));
+      yield* Deferred.await(threadsAsked);
+      threads = json({
+        value: [refUpdate("2026-07-10T11:20:00Z"), comment("2026-07-10T11:10:00Z")],
+      });
+      const afterPush = yield* Effect.forkChild(datedAt("after push"), { startImmediately: true });
+      yield* Deferred.succeed(threadsAnswer, undefined);
+      yield* Fiber.join(beforePush);
+      expect(yield* Fiber.join(afterPush)).toBe("2026-07-10T11:20:00.000Z");
+      expect(threadReads()).toBe(7);
+      expect(yield* datedAt("after push")).toBe("2026-07-10T11:20:00.000Z");
+      expect(threadReads()).toBe(7);
+    }).pipe(Effect.provide(driverServices)),
 );
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
