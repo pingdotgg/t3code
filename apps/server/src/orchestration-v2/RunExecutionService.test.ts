@@ -3123,8 +3123,35 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect.each(["completed", "failed"] as const)(
+  "schedules a %s model evaluation on its appropriate terminal path",
+  (status) =>
+    Effect.gen(function* () {
+      const { committedEffects } = yield* captureRootRunTermination({
+        key: `model-evaluation-${status}`,
+        enableModelEvaluations: true,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) => Stream.make(rootTerminalEvent(ids, status)),
+      });
+      const types = committedEffects.map((effect) => effect.request.type);
+      if (status === "failed") {
+        assert.include(types, "model-evaluation.generate");
+        assert.notInclude(types, "checkpoint.capture");
+        assert.equal(
+          committedEffects.find((effect) => effect.request.type === "model-evaluation.generate")
+            ?.request.type,
+          "model-evaluation.generate",
+        );
+      } else {
+        assert.include(types, "checkpoint.capture");
+        assert.notInclude(types, "model-evaluation.generate");
+      }
+    }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
+  readonly enableModelEvaluations?: boolean;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
@@ -3230,7 +3257,9 @@ function captureRootRunTermination(input: {
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
             ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
           }),
-          ServerSettings.layerTest(),
+          ServerSettings.layerTest({
+            enableModelEvaluations: input.enableModelEvaluations ?? false,
+          }),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
             refresh: () => Effect.void,
             refreshAfterTurn: () =>

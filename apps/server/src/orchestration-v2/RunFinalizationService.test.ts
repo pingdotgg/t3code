@@ -7,12 +7,15 @@ import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  MessageId,
   ProjectId,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -21,6 +24,7 @@ import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CodeIntelligence from "../project/knowledge/CodeIntelligence.ts";
+import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
@@ -72,48 +76,85 @@ it.effect("coalesces completed turns without starving later project refreshes", 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
-  const threadId = ThreadId.make("thread_refresh_failure");
-  const runId = RunId.make("run_refresh_failure");
-  const scopeId = CheckpointScopeId.make("scope_refresh_failure");
-  const captured: string[] = [];
-  const layer = RunFinalization.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
-          execute: () =>
-            Effect.sync(() => {
-              captured.push("checkpoint");
-            }),
-        }),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getCheckpointContext: () =>
-            Effect.succeed({
-              runs: [],
-              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
-              checkpoints: [],
-            }),
-        }),
-        Layer.succeed(RunFinalization.RunFinalizationObserver, {
-          refresh: () =>
-            Effect.gen(function* () {
-              captured.push("refresh");
-              return yield* new RunFinalization.RunFinalizationRefreshError({
-                cwd: "/repo",
-                cause: new Error("Git command timed out"),
-              });
-            }),
-          refreshAfterTurn: () => Effect.void,
-        }),
+it.effect.each(["workspace refresh", "evaluation enqueue"] as const)(
+  "preserves completed checkpoint finalization when %s fails",
+  (failure) => {
+    const threadId = ThreadId.make("thread_refresh_failure");
+    const runId = RunId.make("run_refresh_failure");
+    const scopeId = CheckpointScopeId.make("scope_refresh_failure");
+    const captured: string[] = [];
+    const layer = RunFinalization.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
+            execute: () =>
+              Effect.sync(() => {
+                captured.push("checkpoint");
+              }),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getCheckpointContext: () =>
+              Effect.succeed({
+                runs: [
+                  {
+                    id: runId,
+                    threadId,
+                    ordinal: 1,
+                    providerInstanceId: ProviderInstanceId.make("codex"),
+                    modelSelection: {
+                      instanceId: ProviderInstanceId.make("codex"),
+                      model: "chosen-model",
+                    },
+                    providerThreadId: null,
+                    userMessageId: MessageId.make("request"),
+                    rootNodeId: null,
+                    activeAttemptId: null,
+                    status: "completed",
+                    requestedAt: DateTime.makeUnsafe(0),
+                    startedAt: DateTime.makeUnsafe(0),
+                    completedAt: DateTime.makeUnsafe(0),
+                    checkpointId: null,
+                    contextHandoffId: null,
+                  },
+                ],
+                checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
+                checkpoints: [],
+              }),
+          }),
+          Layer.succeed(RunFinalization.RunFinalizationObserver, {
+            refresh: () =>
+              Effect.gen(function* () {
+                captured.push("refresh");
+                if (failure === "workspace refresh")
+                  return yield* new RunFinalization.RunFinalizationRefreshError({
+                    cwd: "/repo",
+                    cause: new Error("Git command timed out"),
+                  });
+              }),
+            refreshAfterTurn: () => Effect.void,
+          }),
+          Layer.mock(ModelEvaluations.ModelEvaluations)({
+            enqueueRun: (request) =>
+              Effect.gen(function* () {
+                assert.deepEqual(request, { threadId, runId, runOutcome: "completed" });
+                captured.push("evaluation");
+                if (failure === "evaluation enqueue")
+                  return yield* new ModelEvaluations.ModelEvaluationPassError({
+                    runId,
+                    cause: new Error("Could not enqueue evaluation"),
+                  });
+              }),
+          }),
+        ),
       ),
-    ),
-  );
-  return Effect.gen(function* () {
-    const service = yield* RunFinalization.RunFinalizationService;
-    yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(captured, ["checkpoint", "refresh"]);
-  }).pipe(Effect.provide(layer));
-});
+    );
+    return Effect.gen(function* () {
+      const service = yield* RunFinalization.RunFinalizationService;
+      yield* service.finalize({ threadId, runId, scopeId });
+      assert.deepEqual(captured, ["checkpoint", "evaluation", "refresh"]);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect.each(
   (
@@ -221,6 +262,7 @@ it.effect("finalizes a run without waiting for the code index refresh its checkp
             Layer.provideMerge(CodeIntelligence.layer),
             Layer.provide(
               Layer.mergeAll(
+                Layer.mock(ModelEvaluations.ModelEvaluations)({}),
                 Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
                   execute: () => Effect.void,
                 }),

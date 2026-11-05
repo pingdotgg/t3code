@@ -305,6 +305,51 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("isolates blind evaluation without disabling subscription authentication", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            outcome: "insufficient_evidence",
+            taskCategory: "other",
+            confidence: "low",
+            scores: {
+              taskCompletion: null,
+              correctness: null,
+              instructionFollowing: null,
+              verification: null,
+            },
+            rationale: { text: "No verifiable outcome.", citations: ["E1"] },
+            strengths: [],
+            weaknesses: [],
+            promptAdvice: [],
+          },
+        }),
+        cwdMustNotBe: process.cwd(),
+        argsMustContain: "--safe-mode --disallowedTools * --setting-sources",
+        argsMustNotContain: "--bare",
+      },
+      (textGeneration) =>
+        textGeneration.generateModelEvaluation({
+          cwd: process.cwd(),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+          },
+          packet: {
+            scope: "turn",
+            runOutcome: "completed",
+            request: { ref: "U1", text: "Repair the issue." },
+            context: [],
+            evidence: [{ ref: "E1", kind: "assistant", text: "It is fixed." }],
+            truncated: false,
+            omittedItems: 0,
+            missingArtifacts: false,
+          },
+        }),
+    ),
+  );
+
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

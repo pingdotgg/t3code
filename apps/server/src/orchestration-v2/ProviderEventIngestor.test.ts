@@ -259,6 +259,7 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           generateCommitMessage: () => Effect.die("unused"),
           generatePrContent: () => Effect.die("unused"),
           generateThreadTitle: () => Effect.die("unused"),
+          generateModelEvaluation: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
           generateKnowledgeCandidates: () => Effect.die("unused"),
           generateConversationSummary: () => Effect.die("unused"),

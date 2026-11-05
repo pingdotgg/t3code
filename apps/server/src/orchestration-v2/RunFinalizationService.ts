@@ -10,6 +10,7 @@ import * as CodeIntelligence from "../project/knowledge/CodeIntelligence.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -55,6 +56,7 @@ const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
+  const modelEvaluations = yield* ModelEvaluations.ModelEvaluations;
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
     "RunFinalizationService.finalize",
@@ -74,6 +76,23 @@ const make = Effect.gen(function* () {
         ),
       );
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
+    const run = projection.runs.find((candidate) => candidate.id === input.runId);
+    if (
+      run !== undefined &&
+      (run.status === "completed" || run.status === "interrupted" || run.status === "cancelled")
+    ) {
+      yield* modelEvaluations
+        .enqueueRun({ threadId: input.threadId, runId: input.runId, runOutcome: run.status })
+        .pipe(
+          Effect.catchTags({
+            ModelEvaluationPassError: (cause) =>
+              Effect.logWarning("Failed to schedule model evaluation after checkpoint capture", {
+                ...input,
+                cause,
+              }),
+          }),
+        );
+    }
     if (cwd !== undefined) {
       // Retrying a display refresh after the checkpoint is durable blocks the next turn.
       yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(

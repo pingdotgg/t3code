@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ModelEvaluationVerdict, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { decodeJsonReply, fromRunner, type Operation } from "./textGenerationOperations.ts";
@@ -45,5 +45,101 @@ it.effect("keeps structured intelligence available without allowing checkout inv
     expect(runtime.supportedOperations).toContain("generateConversationSummary");
     expect(runtime.supportedOperations).toContain("generateKnowledgeCandidates");
     expect(runtime.supportedOperations).not.toContain("generateReviewGuide");
+    expect(runtime.supportedOperations).not.toContain("generateModelEvaluation");
+    const evaluationError = yield* runtime
+      .generateModelEvaluation({
+        cwd: "/project",
+        modelSelection,
+        packet: {
+          scope: "turn",
+          runOutcome: "completed",
+          request: { ref: "U1", text: "Explain the fix." },
+          context: [],
+          evidence: [{ ref: "E1", kind: "assistant", text: "Here is the explanation." }],
+          truncated: false,
+          omittedItems: 0,
+          missingArtifacts: false,
+        },
+      })
+      .pipe(Effect.flip);
+    expect(evaluationError.operation).toBe("generateModelEvaluation");
+    expect(calls).toEqual(["generateConversationSummary"]);
+  }),
+);
+
+it.effect("rejects a judge response whose evidence reference is not in the blind packet", () =>
+  Effect.gen(function* () {
+    const runtime = fromRunner(
+      "IsolatedFixture",
+      (request) =>
+        decodeJsonReply(
+          request,
+          "Fixture",
+          JSON.stringify({
+            outcome: "scored",
+            taskCategory: "other",
+            confidence: "medium",
+            scores: {
+              taskCompletion: 4,
+              correctness: null,
+              instructionFollowing: 4,
+              verification: null,
+            },
+            rationale: { text: "Invented verification", citations: ["E2"] },
+            strengths: [],
+            weaknesses: [],
+            promptAdvice: [],
+          }),
+        ),
+      { supportsInvestigation: false, supportsBlindEvaluation: true },
+    );
+    const error = yield* runtime
+      .generateModelEvaluation({
+        cwd: "/isolated",
+        modelSelection,
+        packet: {
+          scope: "turn",
+          runOutcome: "completed",
+          request: { ref: "U1", text: "Explain the fix." },
+          context: [],
+          evidence: [{ ref: "E1", kind: "assistant", text: "Here is the explanation." }],
+          truncated: false,
+          omittedItems: 0,
+          missingArtifacts: false,
+        },
+      })
+      .pipe(Effect.flip);
+    expect(error.detail).toContain("unsupported citations");
+  }),
+);
+
+it.effect("rejects extra evaluator output fields before a decoder can discard them", () =>
+  Effect.gen(function* () {
+    const verdict = {
+      outcome: "insufficient_evidence",
+      taskCategory: "other",
+      confidence: "low",
+      scores: {
+        taskCompletion: null,
+        correctness: null,
+        instructionFollowing: null,
+        verification: null,
+      },
+      rationale: { text: "No verifiable outcome.", citations: ["E1"] },
+      strengths: [],
+      weaknesses: [],
+      promptAdvice: [],
+    };
+    for (const output of [
+      { ...verdict, model: "Invented attribution" },
+      { ...verdict, scores: { ...verdict.scores, overallRanking: 1 } },
+    ]) {
+      const error = yield* decodeJsonReply(
+        { operation: "generateModelEvaluation", outputSchema: ModelEvaluationVerdict },
+        "Fixture",
+        JSON.stringify(output),
+      ).pipe(Effect.flip);
+      expect(error.detail).toContain("invalid structured output");
+    }
   }),
 );

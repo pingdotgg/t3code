@@ -41,6 +41,7 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ModelEvaluationGuidance } from "./modelEvaluation.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
@@ -628,6 +629,17 @@ export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
 export type OrchestratorMcpEnvironmentLinksResult =
   typeof OrchestratorMcpEnvironmentLinksResult.Type;
 
+export const OrchestratorMcpModelGuidance = Schema.Struct({
+  ...ModelEvaluationGuidance.fields,
+  routingProviderInstanceId: Schema.optional(
+    ProviderInstanceId.annotate({
+      description:
+        "Advertised pool route for this observed member. modelSelection identifies the actual evaluated member; its scores do not describe the whole pool.",
+    }),
+  ),
+});
+export type OrchestratorMcpModelGuidance = typeof OrchestratorMcpModelGuidance.Type;
+
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   parentThreadId: Schema.NullOr(ThreadId),
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
@@ -636,6 +648,10 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  modelGuidance: Schema.optional(
+    Schema.Array(OrchestratorMcpModelGuidance).check(Schema.isMaxLength(8)),
+  ),
+  modelGuidanceUsage: Schema.optional(Schema.String),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

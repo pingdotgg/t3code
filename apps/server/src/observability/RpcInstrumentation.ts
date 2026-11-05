@@ -16,6 +16,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.conversationSummariesList]: "conversationSummaries",
   [WS_METHODS.conversationSummariesDescribe]: "conversationSummaries",
   [WS_METHODS.conversationSummariesExpand]: "conversationSummaries",
+  [WS_METHODS.modelEvaluationsList]: "modelEvaluations",
+  [WS_METHODS.modelEvaluationsClear]: "modelEvaluations",
   [WS_METHODS.externalHistoryQuery]: "externalHistory",
   [WS_METHODS.projectReadLoomWindow]: "projectLoom",
   [WS_METHODS.projectKnowledgeList]: "projectKnowledge",

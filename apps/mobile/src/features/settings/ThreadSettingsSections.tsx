@@ -24,6 +24,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { ModelEvaluationSettings } from "./ModelEvaluationSettings";
 import {
   managedSettingReason,
   resolveMobileSettingsTargets,
@@ -42,6 +43,7 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <ModelEvaluationSettings />
         <ThreadSplitSettingsSection />
         <BetaSettingsSection />
         <LegacySettingsSection />

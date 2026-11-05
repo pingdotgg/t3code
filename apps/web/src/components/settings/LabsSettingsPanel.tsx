@@ -14,11 +14,13 @@ import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { ModelEvaluationSettings } from "./ModelEvaluationSettings";
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
 export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
+      <ModelEvaluationSettings />
       <SettingsSection id="beta" title="Beta">
         <ThreadSplitSuggestionsRow />
         <BoringSidebarRow />

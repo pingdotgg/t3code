@@ -4,12 +4,13 @@ An eval runs a real model against T3 Code's real text or code and scores what th
 
 Write or run an eval when a change affects what a model sees or does: agent instructions, MCP tool descriptions and schemas, tool results, generated titles, or the guidance an agent gets for a feature such as Device Manager.
 
-| Eval                            | Measures                                                                                             |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [mcp-tool-use](mcp-tool-use/)   | Whether agents use T3's MCP tools correctly, including device routing and recovery, in fake threads. |
-| [thread-titles](thread-titles/) | Whether generated thread titles name the right subject.                                              |
-| [thread-split](thread-split/)   | Offline local-model evaluation of whether a message can start an independent thread.                 |
-| [test-signal](test-signal/)     | Whether a cheap model running the test-signal check flags low-signal tests.                          |
+| Eval                                    | Measures                                                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| [mcp-tool-use](mcp-tool-use/)           | Whether agents use T3's MCP tools correctly, including device routing and recovery, in fake threads.                                       |
+| [thread-titles](thread-titles/)         | Whether generated thread titles name the right subject.                                                                                    |
+| [thread-split](thread-split/)           | Offline local-model evaluation of whether a message can start an independent thread.                                                       |
+| [model-evaluations](model-evaluations/) | Whether blind judges use outcome evidence, respect task scope, ignore injected scoring instructions, and abstain when evidence is missing. |
+| [test-signal](test-signal/)             | Whether a cheap model running the test-signal check flags low-signal tests.                                                                |
 
 ## Run an eval
 

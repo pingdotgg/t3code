@@ -472,6 +472,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta folders project tree legacy old classic sidebar"],
   },
   {
+    id: "blind-model-evaluations",
+    title: "Blind model evaluations",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["judge score task outcome orchestration learning strengths weaknesses guidance"],
+  },
+  {
+    id: "model-evaluation-judge",
+    title: "Judge model",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["blind evaluation evaluate scorer assessor model provider"],
+  },
+  {
     id: "boring-sidebar-multiline",
     title: "Two-line folder rows",
     to: "/settings/labs",

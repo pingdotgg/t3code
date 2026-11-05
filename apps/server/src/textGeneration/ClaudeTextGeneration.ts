@@ -196,7 +196,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       noSessionPersistence: boolean,
     ) {
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" || operation === "generateModelEvaluation"
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -230,6 +230,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               ]
             : ["--tools", ""]),
           "--disable-slash-commands",
+          // Safe mode isolates customizations while retaining subscription authentication.
+          ...(operation === "generateModelEvaluation"
+            ? ["--safe-mode", "--disallowedTools", "*", "--setting-sources", ""]
+            : []),
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.
           ...(managedMcpConfig ? [] : ["--strict-mcp-config"]),
@@ -325,7 +329,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ? output
       : output.findLast((message) => message.type === "result");
 
-    const decodeOutput = Schema.decodeEffect(outputSchemaJson);
+    const decodeOutput = Schema.decodeEffect(
+      outputSchemaJson,
+      operation === "generateModelEvaluation" ? { onExcessProperty: "error" } : undefined,
+    );
     return yield* decodeOutput(envelope?.structured_output).pipe(
       Effect.catchTags({
         SchemaError: (cause) =>
@@ -342,5 +349,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
   return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson, {
     supportsInvestigation: true,
+    supportsBlindEvaluation: true,
   });
 });

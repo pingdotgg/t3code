@@ -1,7 +1,9 @@
 import type {
   BranchNamingOptions,
+  BlindModelEvaluationPacket,
   ChatAttachment,
   ModelSelection,
+  ModelEvaluationVerdict,
   PullRequestReviewGuide,
   TextGenerationError,
   TextGenerationOperation,
@@ -139,6 +141,12 @@ export interface ConversationSummaryGenerationResult {
 }
 
 export interface ProviderTextGeneration {
+  readonly generateModelEvaluation: (input: {
+    readonly cwd: string;
+    readonly modelSelection: ModelSelection;
+    readonly packet: BlindModelEvaluationPacket;
+  }) => Effect.Effect<ModelEvaluationVerdict, TextGenerationError>;
+
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;

@@ -377,6 +377,8 @@ export const ClaudeDriver: ProviderDriver<
             protect("generateBranchName", nativeGeneration.generateBranchName(input)),
           generateThreadTitle: (input) =>
             protect("generateThreadTitle", nativeGeneration.generateThreadTitle(input)),
+          generateModelEvaluation: (input) =>
+            protect("generateModelEvaluation", nativeGeneration.generateModelEvaluation(input)),
           generateReviewGuide: (input) =>
             protect("generateReviewGuide", nativeGeneration.generateReviewGuide(input)),
           generateKnowledgeCandidates: (input) =>

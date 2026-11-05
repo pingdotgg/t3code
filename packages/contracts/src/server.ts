@@ -214,6 +214,7 @@ export const TextGenerationOperation = Schema.Literals([
   "generateReviewGuide",
   "generateKnowledgeCandidates",
   "generateConversationSummary",
+  "generateModelEvaluation",
 ]);
 export type TextGenerationOperation = typeof TextGenerationOperation.Type;
 

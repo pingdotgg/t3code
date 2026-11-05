@@ -11,6 +11,7 @@ import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/s
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import type { ProviderTextGeneration, ProviderTextGenerationRuntime } from "./textGeneration.ts";
+import { buildModelEvaluationPrompt, validateModelEvaluationVerdict } from "./modelEvaluation.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -56,7 +57,10 @@ export const decodeJsonReply = <S extends Schema.Top>(
   provider: string,
   text: string,
 ) => {
-  const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(request.outputSchema));
+  const decodeOutput = Schema.decodeEffect(
+    Schema.fromJsonString(request.outputSchema),
+    request.operation === "generateModelEvaluation" ? { onExcessProperty: "error" } : undefined,
+  );
   return decodeOutput(extractJsonObject(text)).pipe(
     Effect.mapError(
       (cause) =>
@@ -72,8 +76,35 @@ export const decodeJsonReply = <S extends Schema.Top>(
 export function fromRunner(
   name: string,
   run: Runner,
-  options: { readonly supportsInvestigation: boolean } = { supportsInvestigation: false },
+  options: {
+    readonly supportsInvestigation: boolean;
+    readonly supportsBlindEvaluation?: boolean;
+  } = { supportsInvestigation: false },
 ): ProviderTextGenerationRuntime {
+  const generateModelEvaluation: ProviderTextGeneration["generateModelEvaluation"] = Effect.fn(
+    `${name}.generateModelEvaluation`,
+  )(function* (input) {
+    if (options.supportsBlindEvaluation !== true) {
+      return yield* new TextGenerationError({
+        operation: "generateModelEvaluation",
+        detail:
+          "This provider cannot isolate a blind evaluator from tools and workspace instructions. Choose a supported evaluator.",
+      });
+    }
+    const verdict = yield* run({
+      operation: "generateModelEvaluation",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildModelEvaluationPrompt(input.packet),
+    });
+    if (!validateModelEvaluationVerdict(verdict, input.packet)) {
+      return yield* new TextGenerationError({
+        operation: "generateModelEvaluation",
+        detail: "The evaluator returned unsupported citations or an inconsistent verdict.",
+      });
+    }
+    return verdict;
+  });
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
   )(function* (input) {
@@ -196,7 +227,9 @@ export function fromRunner(
 
   return {
     supportedOperations: TextGenerationOperation.literals.filter(
-      (operation) => operation !== "generateReviewGuide" || options.supportsInvestigation,
+      (operation) =>
+        (operation !== "generateReviewGuide" || options.supportsInvestigation) &&
+        (operation !== "generateModelEvaluation" || options.supportsBlindEvaluation === true),
     ),
     generateCommitMessage,
     generatePrContent,
@@ -205,5 +238,6 @@ export function fromRunner(
     generateReviewGuide,
     generateKnowledgeCandidates,
     generateConversationSummary,
+    generateModelEvaluation,
   } satisfies ProviderTextGenerationRuntime;
 }

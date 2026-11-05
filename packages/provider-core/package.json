@@ -91,6 +91,10 @@
       "types": "./src/server/ModelCatalog.ts",
       "import": "./src/server/ModelCatalog.ts"
     },
+    "./server/modelEvaluation": {
+      "types": "./src/server/modelEvaluation.ts",
+      "import": "./src/server/modelEvaluation.ts"
+    },
     "./server/nativeProtocolLogging": {
       "types": "./src/server/nativeProtocolLogging.ts",
       "import": "./src/server/nativeProtocolLogging.ts"

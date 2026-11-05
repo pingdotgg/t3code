@@ -137,6 +137,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     runId: RunId,
     pass: Schema.optional(NonNegativeInt),
   }),
+  Schema.Struct({
+    type: Schema.Literal("model-evaluation.generate"),
+    runId: RunId,
+    runOutcome: Schema.Literals(["completed", "failed", "interrupted", "cancelled"]),
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -154,6 +159,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "project-knowledge.extract",
   "project-knowledge.scrub-deliveries",
   "conversation-summary.generate",
+  "model-evaluation.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 /**
@@ -165,6 +171,7 @@ const SIDE_LANE_EFFECT_TYPES = [
   "project-knowledge.extract",
   "project-knowledge.scrub-deliveries",
   "conversation-summary.generate",
+  "model-evaluation.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 // Short, user-visible titles retain their side-lane ordering but share turn capacity,
@@ -173,6 +180,7 @@ const MAINTENANCE_EFFECT_TYPES = [
   "project-knowledge.extract",
   "project-knowledge.scrub-deliveries",
   "conversation-summary.generate",
+  "model-evaluation.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [

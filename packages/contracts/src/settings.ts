@@ -1305,6 +1305,10 @@ export const ServerSettings = Schema.Struct({
   enableConversationSummaries: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  enableModelEvaluations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  modelEvaluationModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   externalHistory: ExternalHistorySettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(ExternalHistorySettings)({}))),
   ),
@@ -1748,6 +1752,8 @@ export const ServerSettingsPatch = Schema.Struct({
   skillsLibraryEnabled: Schema.optionalKey(Schema.Boolean),
   enableAssistedLearning: Schema.optionalKey(Schema.Boolean),
   enableConversationSummaries: Schema.optionalKey(Schema.Boolean),
+  enableModelEvaluations: Schema.optionalKey(Schema.Boolean),
+  modelEvaluationModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   externalHistory: Schema.optionalKey(ExternalHistorySettings),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { TextGenerationError } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import type { PiSettings } from "../settings.ts";
 
 import { makePiRpcConnection, parsePiModelSlug, piRecordString } from "./rpc.ts";
@@ -29,16 +30,35 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+  const supportsBlindEvaluation =
+    resolvedLaunchArgs.ok &&
+    !resolvedLaunchArgs.args.some((argument) =>
+      [
+        "--system-prompt",
+        "--append-system-prompt",
+        "--prompt-template",
+        "--skill",
+        "--extension",
+        "-e",
+      ].includes(argument),
+    );
 
   const runPiJson: TextGenerationOperations.Runner = Effect.fn("PiTextGeneration.runPiJson")(
     function* (request) {
       const { operation, cwd, prompt, modelSelection } = request;
 
-      const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
       if (!resolvedLaunchArgs.ok) {
         return yield* new TextGenerationError({
           operation,
           detail: resolvedLaunchArgs.message,
+        });
+      }
+      if (operation === "generateModelEvaluation" && !supportsBlindEvaluation) {
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            "Blind evaluation cannot use Pi launch arguments that add prompts, skills, or extensions. Choose a separate evaluator instance without these arguments.",
         });
       }
       const launch = buildPiRpcLaunch({
@@ -53,7 +73,20 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       });
       const connection = yield* makePiRpcConnection({
         command: piSettings.binaryPath || "pi",
-        args: launch.args,
+        args:
+          operation === "generateModelEvaluation"
+            ? [
+                ...launch.args,
+                "--no-context-files",
+                "--no-skills",
+                "--no-prompt-templates",
+                // Explicit sources suppress discovery of global SYSTEM.md and APPEND_SYSTEM.md.
+                "--system-prompt",
+                "You evaluate anonymous task outcomes using the supplied rubric and evidence.",
+                "--append-system-prompt",
+                "Use only the supplied evidence. Do not identify the candidate or use tools.",
+              ]
+            : launch.args,
         cwd,
         env: launch.env,
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
@@ -85,6 +118,20 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
                 : error,
             ),
           );
+      }
+
+      const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+      if (thinking !== undefined) {
+        yield* connection.request({ type: "set_thinking_level", level: thinking }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Pi could not apply the selected thinking level.",
+                cause,
+              }),
+          ),
+        );
       }
 
       yield* connection.request({ type: "prompt", message: prompt });
@@ -146,5 +193,6 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 
   return TextGenerationOperations.fromRunner("PiTextGeneration", runPiJson, {
     supportsInvestigation: false,
+    supportsBlindEvaluation,
   });
 });
