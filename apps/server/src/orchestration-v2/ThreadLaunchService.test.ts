@@ -1078,6 +1078,7 @@ it.effect.each(["stable", "upstream/release"])(
         git: {
           resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
           hasRefNamed: () => Effect.succeed(false),
+          listLocalBranchNames: () => git.listLocalBranchNames(cwd),
         },
         fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
         createWorktree: (input, options) =>
@@ -2445,6 +2446,8 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
     yield* command(["commit", "--allow-empty", "-m", "initial"]);
     yield* command(["branch", "feature/idle"]);
     yield* command(["branch", temporaryBranch]);
+    // Resolves as `refs/heads/feature/tagged` although no such branch exists.
+    yield* command(["tag", "refs/heads/feature/tagged"]);
     yield* command(["worktree", "add", "-b", "feature/taken", `${directory}/taken`]);
     const harness = makeHarness({
       hasCommit: ({ refName }) =>
@@ -2488,7 +2491,14 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
       });
       assert.deepEqual(
         yield* Effect.forEach(
-          ["feature/idle", "feature/taken", "main", "feature/fresh", temporaryBranch],
+          [
+            "feature/idle",
+            "feature/taken",
+            "main",
+            "feature/fresh",
+            temporaryBranch,
+            "feature/tagged",
+          ],
           (branch) => check(branch),
         ),
         [
@@ -2497,6 +2507,7 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
           refused("main"),
           { branch: "feature/fresh", outcome: "accepted" },
           refused(temporaryBranch),
+          { branch: "feature/tagged", outcome: "accepted" },
         ],
       );
       assert.deepEqual(yield* check("feature/taken", ":/initial"), refused("feature/taken"));

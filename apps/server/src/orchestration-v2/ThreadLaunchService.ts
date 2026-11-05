@@ -286,7 +286,7 @@ const make = Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
       if (project === undefined) return undefined;
       const cwd = project.workspaceRoot;
-      if (branch !== undefined && (yield* git.hasCommit({ cwd, refName: `refs/heads/${branch}` })))
+      if (branch !== undefined && (yield* git.listLocalBranchNames(cwd)).includes(branch))
         return new ThreadLaunchBranchExistsError({
           projectId: project.id,
           projectTitle: project.title,
