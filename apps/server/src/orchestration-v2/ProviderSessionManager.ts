@@ -2411,7 +2411,7 @@ export const layerWithOptions = (
                 reason: "idle_timeout",
                 detail: input.detail ?? "Delegated task finished.",
                 onlyIfIdleGeneration: generations.get(entry)!,
-              });
+              }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
             }
           },
         ),
