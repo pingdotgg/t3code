@@ -1402,6 +1402,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.easEditor.sourceEnv": "服务器上的 EXPO_TOKEN",
   "settings.code.easEditor.sourceLogin": "服务器的 eas 登录",
   "settings.code.easEditor.problemIdle": "空闲分钟数必须小于会话分钟数。",
+  "settings.code.easEditor.problemToken": "请输入有效的密钥引用。",
   "settings.code.easEditor.problemGeneral": "请为主机设置标签，并让限制值保持在所示范围内。",
   "settings.code.easEditor.addTitle": "添加 EAS 主机",
   "settings.code.easEditor.editTitle": "编辑 EAS 主机",
