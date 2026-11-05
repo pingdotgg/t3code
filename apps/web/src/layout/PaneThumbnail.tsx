@@ -281,6 +281,7 @@ function PaneThumbnailHeader({
         leadingEdge,
         trailingEdge,
         reserveNativeControlsInset: true,
+        windowDrag: !hidden,
       })}
     >
       {tab.content.kind === "chat" ? (
