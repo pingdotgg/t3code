@@ -352,7 +352,10 @@ export function UsagePage() {
     return refreshLimits();
   });
   useLiveRefresh(() => autoRefreshLimits(), {
-    enabled: showingLimits && connectedLimitsEnvironments !== "",
+    enabled:
+      showingLimits &&
+      connectedLimitsEnvironments !== "" &&
+      PROVIDER_ORDER.some((provider) => !hiddenProviders.has(provider)),
     key: `usage-page:${connectedLimitsEnvironments}:${[...hiddenProviders].sort().join(",")}`,
     refreshOnShow: true,
     refreshWhileIdle: true,

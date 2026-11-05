@@ -1,5 +1,6 @@
 import {
   UsagePolling,
+  UsageAccountReset,
   makeUnavailableUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -147,6 +148,7 @@ export const CursorDriver: ProviderDriver<
       credentialBinding: credentials.binding,
       onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
         snapshot.refresh.pipe(
+          Effect.provideService(UsageAccountReset, true),
           Effect.flatMap((provider) =>
             !signedIn || provider.auth.status === "authenticated"
               ? Effect.void

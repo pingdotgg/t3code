@@ -1,3 +1,5 @@
+import { useRouterState } from "@tanstack/react-router";
+import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentPresentations } from "../state/presentation";
 import type { EnvironmentId, ProviderInstanceId, ProviderDriverKind } from "@t3tools/contracts";
@@ -13,6 +15,9 @@ export function useUsageLimitsRefresh(
 ) {
   const presentation = useAtomValue(environmentPresentations.presentationAtom(environmentId));
   const connected = presentation?.connection.phase === "connected";
+  const chatVisible = useRouterState({
+    select: (state) => !isAppModalPage(state.location.pathname),
+  });
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
   useLiveRefresh(
     () => {
@@ -23,7 +28,7 @@ export function useUsageLimitsRefresh(
       });
     },
     {
-      enabled: enabled && connected && instanceId !== null,
+      enabled: enabled && connected && chatVisible && instanceId !== null,
       key: `usage:${environmentId}:${instanceId}:${driver ?? ""}`,
       refreshOnShow: true,
       refreshWhileIdle: true,
