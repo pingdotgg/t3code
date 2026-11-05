@@ -6,6 +6,7 @@ import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
@@ -98,10 +99,11 @@ class LivePcmCaptureTest {
     }
   }
 
-  @Test fun rejectsPrematureRecognitionAndUnreadCapturedAudio() = runTest {
-    for (early in listOf(true, false)) {
+  @Test fun rejectsIncompleteRecognitionAndUnreadCapturedAudio() = runTest {
+    for (failure in listOf("early", "unread", "timeout")) {
+      val early = failure == "early"
       val source = Source()
-      val output = Output().apply { unread = !early }
+      val output = Output().apply { unread = failure == "unread" }
       val file = File.createTempFile("live-capture-test-", ".pcm")
       val capture = LivePcmCapture(source, file, output, testScheduler.timeSource)
       try {
@@ -112,6 +114,7 @@ class LivePcmCaptureTest {
             livePcmResponses(capture, output) {
               flow {
                 if (!early) output.ended.await()
+                if (failure == "timeout") awaitCancellation()
                 emit(SpeechRecognizerResponse.FinalTextResponse("Incomplete.", emptyList()))
                 emit(SpeechRecognizerResponse.CompletedResponse)
               }

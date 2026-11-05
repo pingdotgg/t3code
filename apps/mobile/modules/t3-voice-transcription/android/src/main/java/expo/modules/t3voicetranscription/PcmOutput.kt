@@ -94,6 +94,12 @@ internal fun livePcmResponses(
       capture.awaitFinished()
       output.verifyConsumed()
     }
+  } catch (e: TimeoutCancellationException) {
+    throw VoiceTranscriptionException(
+      "incomplete-audio",
+      "Speech recognition did not finish the complete recording. No transcript was added. Retry dictation.",
+      e
+    )
   } finally {
     capture.cancel()
   }
