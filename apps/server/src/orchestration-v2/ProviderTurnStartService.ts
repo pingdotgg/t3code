@@ -296,8 +296,7 @@ export const layer: Layer.Layer<
                 const request = turnItems.find((item) => item.type === "run_interrupt_request");
                 return request?.type === "run_interrupt_request" ? request.message : undefined;
               }),
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-              Effect.catchCause(() => Effect.succeed(undefined)),
+              Effect.catchCause(() => Effect.undefined),
             ),
       };
     };
