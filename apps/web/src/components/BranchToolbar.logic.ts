@@ -83,18 +83,20 @@ const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
 
 export type ContextStripCompaction = "none" | "labels" | "branch";
 
+export function readContextStripCompaction(value: string | undefined): ContextStripCompaction {
+  return value === "labels" || value === "branch" ? value : "none";
+}
+
 export function resolveContextStripCompaction(input: {
   current: ContextStripCompaction;
   neededWidth: number;
+  labelsNeededWidth: number;
   availableWidth: number;
-  labelsSavedWidth: number;
 }): ContextStripCompaction {
   const fits = (width: number, expanding: boolean) =>
     width <= input.availableWidth - (expanding ? CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX : 0);
   if (fits(input.neededWidth, input.current !== "none")) return "none";
-  if (fits(input.neededWidth - input.labelsSavedWidth, input.current === "branch")) {
-    return "labels";
-  }
+  if (fits(input.labelsNeededWidth, input.current === "branch")) return "labels";
   return "branch";
 }
 
