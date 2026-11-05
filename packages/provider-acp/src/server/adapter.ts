@@ -1315,10 +1315,11 @@ function stringEnum(schema: Record<string, unknown> | undefined): ReadonlyArray<
 }
 
 function enumOptions(values: ReadonlyArray<string>) {
-  const trimmed = values.map((value) => value.trim());
-  return values.map((value, index) => {
-    const plain = trimmed[index]!;
-    const unique = plain !== "" && trimmed.indexOf(plain) === trimmed.lastIndexOf(plain);
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value.trim(), (counts.get(value.trim()) ?? 0) + 1);
+  return values.map((value) => {
+    const plain = value.trim();
+    const unique = plain !== "" && counts.get(plain) === 1;
     const label = unique ? plain : JSON.stringify(value);
     return { label, description: label, ...(label === value ? {} : { value }) };
   });
