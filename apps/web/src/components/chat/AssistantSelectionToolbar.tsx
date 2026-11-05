@@ -4,6 +4,10 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import {
+  formatAssistantCitationHref,
+  parseAssistantCitationHref,
+} from "@t3tools/shared/assistantCitations";
 import { QuoteIcon } from "lucide-react";
 import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -111,6 +115,19 @@ export function AssistantSelectionToolbar({
         clear();
         return;
       }
+      const citation = {
+        version: 1,
+        ...threadRef,
+        messageId: MessageId.make(messageId),
+        ...captured.selector,
+      } satisfies AssistantCitation;
+      if (
+        citation.text.length <= ASSISTANT_CITATION_MAX_TEXT_LENGTH &&
+        !parseAssistantCitationHref(formatAssistantCitationHref(citation))
+      ) {
+        clear();
+        return;
+      }
       const rects = captured.range.getClientRects();
       const pointerOnText =
         pointer !== null &&
@@ -123,12 +140,7 @@ export function AssistantSelectionToolbar({
         );
       setSelection({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
-        citation: {
-          version: 1,
-          ...threadRef,
-          messageId: MessageId.make(messageId),
-          ...captured.selector,
-        },
+        citation,
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.item(rects.length - 1) ?? rect,

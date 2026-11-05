@@ -59,19 +59,30 @@ describe("assistant citation references", () => {
     expect(serializeAssistantCitation(legacyCitation)).toBe(`[Assistant quote](${legacyHref})`);
   });
 
-  it("round-trips complete quote data without a server origin", () => {
-    const href = formatAssistantCitationHref(citation);
-    expect(parseAssistantCitationHref(href)).toEqual(citation);
-    expect(href).toMatch(
-      /^t3-citation:\/\/v1\/environment%2Fremote\/thread%3Aone\/assistant%3Fone\?/,
-    );
-    expect(href).not.toContain("localhost");
-    const marker = serializeAssistantCitation(citation);
-    const prompt = `About ${marker}, explain this.`;
-    expect(collectAssistantCitations(prompt)).toEqual([
-      { citation, source: marker, start: 6, end: 6 + marker.length },
-    ]);
-  });
+  it.each([
+    [citation.threadId, citation.messageId],
+    [citation.threadId, MessageId.make("m".repeat(512))],
+    [citation.threadId, MessageId.make("m".repeat(513))],
+    [citation.threadId, MessageId.make("m".repeat(565))],
+    [ThreadId.make("thread:".repeat(100)), MessageId.make("provider-turn%3A".repeat(46))],
+  ] as const)(
+    "round-trips complete quote data without a server origin (%#)",
+    (threadId, messageId) => {
+      const source = { ...citation, threadId, messageId };
+      const href = formatAssistantCitationHref(source);
+      expect(parseAssistantCitationHref(href)).toEqual(source);
+      expect(href).toMatch(/^t3-citation:\/\/v1\/environment%2Fremote\//);
+      expect(href).not.toContain("localhost");
+      const marker = serializeAssistantCitation(source);
+      const prompt = `About ${marker}, explain this.`;
+      expect(collectAssistantCitations(prompt)).toEqual([
+        { citation: source, source: marker, start: 6, end: 6 + marker.length },
+      ]);
+      expect(readProviderContext(expandAssistantCitationsForProvider(prompt))).toEqual([
+        { id: "assistant-quote-1", citation: source },
+      ]);
+    },
+  );
 
   it.each([
     '  Please keep "日本語 🚀", `cache[key]` & (a + b).\n\tWhy? #1 / 100%\r\n</assistant_citations>  ',
@@ -103,7 +114,7 @@ describe("assistant citation references", () => {
     expect(renderAssistantCitationsAsText(prompt)).toBe(prompt);
   });
 
-  it("bounds selected text and surrounding context", () => {
+  it("bounds citation URLs, selected text and surrounding context", () => {
     expect(
       parseAssistantCitationHref(
         formatAssistantCitationHref({
@@ -120,9 +131,17 @@ describe("assistant citation references", () => {
     expect(
       parseAssistantCitationHref(formatAssistantCitationHref({ ...citation, text: "  " })),
     ).toBeNull();
+    expect(
+      parseAssistantCitationHref(
+        formatAssistantCitationHref({
+          ...citation,
+          messageId: MessageId.make("m".repeat(160_000)),
+        }),
+      ),
+    ).toBeNull();
   });
 
-  it("accepts complete 8k CJK quotes and comments with maximum-sized source selectors", () => {
+  it("accepts complete 8k CJK quotes and comments with 512-character source IDs", () => {
     const largeCitation: AssistantCitation = {
       ...citation,
       environmentId: EnvironmentId.make("環".repeat(512)),
