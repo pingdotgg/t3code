@@ -55,6 +55,81 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
+  it("marks a later model option as selecting the model", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "provider",
+          name: "Provider",
+          category: "model",
+          type: "select",
+          currentValue: "cline-pass",
+          options: [{ value: "cline-pass", name: "ClinePass" }],
+        },
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "cline-pass/mimo-v2.6-flash",
+          options: [{ value: "cline-pass/mimo-v2.6-flash", name: "MiMo v2.6 Flash" }],
+        },
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "act",
+          options: [{ value: "act", name: "Act" }],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors).toEqual([
+      {
+        id: "model",
+        label: "Model",
+        type: "select",
+        selectsModel: true,
+        options: [{ id: "cline-pass/mimo-v2.6-flash", label: "MiMo v2.6 Flash" }],
+        currentValue: "cline-pass/mimo-v2.6-flash",
+      },
+      {
+        id: "mode",
+        label: "Mode",
+        type: "select",
+        options: [{ id: "act", label: "Act" }],
+        currentValue: "act",
+      },
+    ]);
+  });
+
+  it("maps boolean session options", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "fast_mode",
+          name: "Fast mode",
+          description: "Use lower-latency inference.",
+          type: "boolean",
+          currentValue: true,
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors).toEqual([
+      {
+        id: "fast_mode",
+        label: "Fast mode",
+        description: "Use lower-latency inference.",
+        type: "boolean",
+        currentValue: true,
+      },
+    ]);
+  });
+
   it("flattens grouped select choices and drops empty or duplicate values", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [

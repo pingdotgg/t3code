@@ -144,6 +144,66 @@ describe("mobile model options", () => {
     expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
 
+  it("keeps saved options for a model whose options no session has described", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_cline");
+    const configWithPassCapabilities = (capabilities: unknown) =>
+      ({
+        providers: [
+          {
+            instanceId,
+            driver: "acpRegistry",
+            displayName: "Cline",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            models: [{ slug: "cline-pass", name: "ClinePass", isCustom: false, capabilities }],
+          },
+        ],
+      }) as unknown as ServerConfig;
+    const saved: ModelSelection = {
+      instanceId,
+      model: "cline-pass",
+      options: [
+        { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+        { id: "auto_approve", value: false },
+      ],
+    };
+
+    const [unknown] = buildModelOptions(configWithPassCapabilities(null), saved, undefined, null);
+    expect(unknown?.selection).toEqual(saved);
+
+    // A model observed without options has nothing to keep.
+    const [described] = buildModelOptions(
+      configWithPassCapabilities({ optionDescriptors: [] }),
+      saved,
+      undefined,
+      null,
+    );
+    expect(described?.selection).toEqual({ instanceId, model: "cline-pass" });
+
+    // A saved model the described catalog no longer lists stays as saved, so
+    // the session rejects it instead of running the catalog's current model.
+    const [dropped] = buildModelOptions(
+      configWithPassCapabilities({
+        optionDescriptors: [
+          {
+            id: "model",
+            label: "Model",
+            type: "select",
+            selectsModel: true,
+            options: [{ id: "cline-pass/mimo-v2.6-flash", label: "MiMo v2.6 Flash" }],
+            currentValue: "cline-pass/mimo-v2.6-flash",
+          },
+          { id: "auto_approve", label: "Auto-approve tools", type: "boolean" },
+        ],
+      }),
+      saved,
+      undefined,
+      null,
+    );
+    expect(dropped?.selection).toEqual(saved);
+  });
+
   it("limits existing threads to their provider while new tasks keep every provider", () => {
     const providers = ["codex", "claudeAgent"].map((instanceId) => ({
       instanceId,

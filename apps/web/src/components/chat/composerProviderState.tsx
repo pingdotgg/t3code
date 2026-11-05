@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/model";
 
 import type { DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import { getListedModelCapabilities, getProviderModelCapabilities } from "../../providerModels";
 import {
   getReasoningTraitStep,
   type PromptUltrathink,
@@ -116,6 +116,22 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
           preservedOptions && preservedOptions.length > 0 ? preservedOptions : undefined,
       };
     }
+  }
+  // ACP validates saved choices against its live catalog; agent=plan may select a model.
+  if (getListedModelCapabilities(models, model, provider) === null) {
+    const preservedOptions = modelOptions?.filter(
+      (option) =>
+        provider === "acpRegistry" ||
+        planModeEnabled ||
+        option.id !== "agent" ||
+        option.value !== "plan",
+    );
+    return {
+      provider,
+      promptEffort: null,
+      modelOptionsForDispatch:
+        preservedOptions && preservedOptions.length > 0 ? preservedOptions : undefined,
+    };
   }
   const { caps, selections } = resolveComposerOptionSelections(
     models,

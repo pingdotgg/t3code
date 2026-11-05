@@ -2,6 +2,7 @@ import {
   type DraftId,
   deriveEffectiveComposerModelState,
   useComposerDraftModelState,
+  useComposerDraftStore,
 } from "../../composerDraftStore";
 import {
   type ModelSelection,
@@ -65,6 +66,9 @@ export function useComposerProviderModel(
     selection.selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const selectedProvider: ProviderDriverKind =
     selection.selectedProviderEntry?.driverKind ?? selection.requestedDriverKind;
+  const rememberedOptionsByModel = useComposerDraftStore(
+    (state) => state.stickyOptionsByModelByProvider[selectedInstanceId],
+  );
   const modelState = deriveEffectiveComposerModelState({
     draft: draftModelState,
     providers: providerStatuses,
@@ -73,6 +77,7 @@ export function useComposerProviderModel(
     requestedInstanceId: selection.requestedInstanceId,
     threadModelSelection,
     projectModelSelection,
+    rememberedOptionsByModel,
     settings,
   });
   const selectedProviderModels = selection.selectedProviderEntry?.models ?? NO_PROVIDER_MODELS;

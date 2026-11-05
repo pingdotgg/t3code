@@ -16,7 +16,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
-  buildProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsAfterChange,
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
@@ -275,7 +275,8 @@ export function getReasoningTraitStep(input: {
   const next = [...ordered.slice(position + 1), ...ordered.slice(0, Math.max(position, 0))].find(
     (option) => choices.includes(option),
   );
-  const change = next && getTraitSelectChange(selected, descriptor, input.prompt, next.id);
+  const change =
+    next && getTraitSelectChange(selected, descriptor, input.prompt, next.id, input.modelOptions);
   return change?.modelOptions ? { prompt: change.prompt, modelOptions: change.modelOptions } : null;
 }
 
@@ -352,17 +353,20 @@ export function useTraitsSelection({
       value: string,
     ) => {
       // Whether a pick applies, and the options it writes, do not depend on the prompt text.
-      const change = getTraitSelectChange(selected, descriptor, "", value);
+      const change = getTraitSelectChange(selected, descriptor, "", value, modelOptions);
       if (!change) return;
       onPromptEdit?.(
-        (prompt) => getTraitSelectChange(selected, descriptor, prompt, value)?.prompt ?? prompt,
+        (prompt) =>
+          getTraitSelectChange(selected, descriptor, prompt, value, modelOptions)?.prompt ?? prompt,
       );
       updateModelOptions(change.modelOptions);
     },
     changeBoolean: (descriptorId: string, value: boolean) => {
       updateModelOptions(
-        buildProviderOptionSelectionsFromDescriptors(
+        buildProviderOptionSelectionsAfterChange(
           replaceDescriptorCurrentValue(selected.descriptors, descriptorId, value),
+          descriptorId,
+          modelOptions,
         ),
       );
     },

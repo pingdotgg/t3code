@@ -7266,15 +7266,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // Under a policy ceiling, a mode the user picks applies only when the flavor can place
           // it under the ceiling; an unknown mode could be the agent's own skip-approval mode.
           const ceiling = runtimePolicy.maxRuntimeMode;
-          const isModeChoice = (id: string) =>
+          const isModeChoice = (id: string, options: typeof configOptions) =>
             id === ACP_SESSION_MODE_OPTION_ID ||
-            configOptions.some(
+            options.some(
               (option) =>
                 option.id === id &&
                 (option.category === "mode" || option.category === "collaboration_mode"),
             );
-          const withinCeiling = (selection: { readonly id: string; readonly value: unknown }) => {
-            if (ceiling === undefined || ceiling === "full-access" || !isModeChoice(selection.id)) {
+          const withinCeiling = (
+            selection: { readonly id: string; readonly value: unknown },
+            options = configOptions,
+          ) => {
+            if (
+              ceiling === undefined ||
+              ceiling === "full-access" ||
+              !isModeChoice(selection.id, options)
+            ) {
               return true;
             }
             const granted =
@@ -7314,30 +7321,51 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
             );
           }
-          for (const selection of configSelections) {
-            if (!availableConfigIds.has(selection.id)) continue;
-            // Advertised values union models; skip per-model rejections instead of failing session open.
-            const option = configOptions.find((candidate) => candidate.id === selection.id);
-            if (
-              option !== undefined &&
-              option.type === "select" &&
-              typeof selection.value === "string"
-            ) {
-              const advertisedValues = option.options.flatMap((entry) =>
-                "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+          // The requested model owns the model picker. A saved option under the
+          // picker's ID (an older descriptor set, or another model's option of
+          // the same ID) must neither replace that model nor fail the open.
+          let pendingSelections = configSelections;
+          while (pendingSelections.length > 0) {
+            const deferredSelections: typeof configSelections = [];
+            for (const selection of pendingSelections) {
+              const liveConfigOptions = yield* runtime.getConfigOptions;
+              const modelOptionId = findModelConfigOption(liveConfigOptions)?.id;
+              const option = liveConfigOptions.find((candidate) => candidate.id === selection.id);
+              if (option === undefined) {
+                deferredSelections.push(selection);
+                continue;
+              }
+              if (selection.id === modelOptionId || !withinCeiling(selection, liveConfigOptions))
+                continue;
+              // Secondary model choices fail on rejection rather than silently using another model.
+              if (option?.category === "model" && option.type === "select") {
+                yield* runtime.setConfigOption(selection.id, selection.value);
+                continue;
+              }
+              // Advertised tuning values union models; skip per-model rejections instead of failing open.
+              if (
+                option !== undefined &&
+                option.type === "select" &&
+                typeof selection.value === "string"
+              ) {
+                const advertisedValues = option.options.flatMap((entry) =>
+                  "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+                );
+                if (!advertisedValues.includes(selection.value)) continue;
+              }
+              yield* runtime.setConfigOption(selection.id, selection.value).pipe(
+                Effect.catchTags({
+                  AcpRequestError: (error) =>
+                    Effect.logWarning("ACP session rejected a configuration option value", {
+                      optionId: selection.id,
+                      value: selection.value,
+                      detail: error.message,
+                    }),
+                }),
               );
-              if (!advertisedValues.includes(selection.value)) continue;
             }
-            yield* runtime.setConfigOption(selection.id, selection.value).pipe(
-              Effect.catchTags({
-                AcpRequestError: (error) =>
-                  Effect.logWarning("ACP session rejected a configuration option value", {
-                    optionId: selection.id,
-                    value: selection.value,
-                    detail: error.message,
-                  }),
-              }),
-            );
+            if (deferredSelections.length === pendingSelections.length) break;
+            pendingSelections = deferredSelections;
           }
           for (const selection of flavor.sessionConfigForPolicy?.(runtimePolicy) ?? []) {
             const option = (yield* runtime.getConfigOptions).find(

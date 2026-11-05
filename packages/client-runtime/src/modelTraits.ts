@@ -2,9 +2,10 @@ import type {
   ModelSelection,
   ProviderDriverKind,
   ProviderOptionDescriptor,
+  ProviderOptionSelection,
 } from "@t3tools/contracts";
 import {
-  buildProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsAfterChange,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   isClaudeUltrathinkPrompt,
@@ -94,6 +95,7 @@ export function getTraitSelectChange(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   prompt: string,
   value: string,
+  savedSelections?: ReadonlyArray<ProviderOptionSelection> | null,
 ) {
   if (!value || descriptor.promptInjectedValues?.includes(value)) return null;
   const isPrimary = descriptor.id === selected.primarySelectDescriptor?.id;
@@ -103,8 +105,10 @@ export function getTraitSelectChange(
       isPrimary && selected.ultrathinkPromptControlled
         ? prompt.replace(/^Ultrathink:\s*/i, "")
         : prompt,
-    modelOptions: buildProviderOptionSelectionsFromDescriptors(
+    modelOptions: buildProviderOptionSelectionsAfterChange(
       replaceDescriptorCurrentValue(selected.descriptors, descriptor.id, value),
+      descriptor.id,
+      savedSelections,
     ),
   };
 }

@@ -138,22 +138,56 @@ describe("getComposerProviderState", () => {
     expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "plan"]));
   });
 
-  it("drops the plan agent from dispatch when legacy plan mode is disabled", () => {
-    const state = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith([
-        selectDescriptor("agent", [
-          { id: "build", label: "Build", isDefault: true },
-          { id: "plan", label: "Plan" },
+  it.each([
+    { selectsModel: false, provider: PROVIDER },
+    { selectsModel: false, provider: ProviderDriverKind.make("acpRegistry") },
+    { selectsModel: true, provider: ProviderDriverKind.make("acpRegistry") },
+  ])(
+    "filters legacy plan choices without filtering model choices ($provider, $selectsModel)",
+    ({ selectsModel, provider }) => {
+      const state = getComposerProviderState({
+        provider,
+        model: MODEL,
+        models: modelWith([
+          {
+            ...selectDescriptor("agent", [
+              ...(selectsModel ? [] : [{ id: "build", label: "Build", isDefault: true }]),
+              { id: "plan", label: "Plan" },
+            ]),
+            selectsModel,
+          },
         ]),
-      ]),
-      modelOptions: selections(["agent", "plan"]),
-      planModeEnabled: false,
-    });
+        modelOptions: selections(["agent", "plan"]),
+        planModeEnabled: false,
+      });
 
-    expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "build"]));
-  });
+      expect(state.modelOptionsForDispatch).toEqual(
+        selections(["agent", selectsModel ? "plan" : "build"]),
+      );
+    },
+  );
+
+  it.each([
+    { planModeEnabled: false, provider: PROVIDER },
+    { planModeEnabled: true, provider: PROVIDER },
+    { planModeEnabled: false, provider: ProviderDriverKind.make("acpRegistry") },
+  ])(
+    "respects plan mode $planModeEnabled for $provider with unknown model capabilities",
+    ({ planModeEnabled, provider }) => {
+      const state = getComposerProviderState({
+        provider,
+        model: MODEL,
+        models: [{ slug: MODEL, name: MODEL, isCustom: false, capabilities: null }],
+        modelOptions: selections(["agent", "plan"], ["effort", "high"]),
+        planModeEnabled,
+      });
+      expect(state.modelOptionsForDispatch).toEqual(
+        planModeEnabled || provider === "acpRegistry"
+          ? selections(["agent", "plan"], ["effort", "high"])
+          : selections(["effort", "high"]),
+      );
+    },
+  );
 
   it("preserves explicit options when the selected model is absent from the catalog", () => {
     const state = getComposerProviderState({

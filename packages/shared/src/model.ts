@@ -147,7 +147,13 @@ function resolveDescriptorChoiceValue(
   ) {
     return descriptor.options.find((option) => option.isDefault)?.id;
   }
-  if (descriptor.options.some((option) => option.id === trimmed)) {
+  // A model choice the list lacks (removed, or past the list's size cap) stays
+  // as saved: the provider accepts or rejects that model. Resolving it here
+  // would run a different model.
+  if (
+    descriptor.selectsModel === true ||
+    descriptor.options.some((option) => option.id === trimmed)
+  ) {
     return trimmed;
   }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
@@ -303,6 +309,23 @@ export function buildProviderOptionSelectionsFromDescriptors(
   }
 
   return nextSelections.length > 0 ? nextSelections : undefined;
+}
+
+/** Preserve secondary model choices only when explicitly picked. */
+export function buildProviderOptionSelectionsAfterChange(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  changedId: string,
+  savedSelections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): Array<ProviderOptionSelection> | undefined {
+  const pickedIds = new Set([changedId, ...(savedSelections ?? []).map(({ id }) => id)]);
+  return buildProviderOptionSelectionsFromDescriptors(
+    descriptors.filter(
+      (descriptor) =>
+        descriptor.type !== "select" ||
+        descriptor.selectsModel !== true ||
+        pickedIds.has(descriptor.id),
+    ),
+  );
 }
 
 export function buildExplicitProviderOptionSelectionsFromDescriptors(
