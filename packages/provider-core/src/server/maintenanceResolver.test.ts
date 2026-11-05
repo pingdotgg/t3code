@@ -1689,9 +1689,9 @@ it("picks the newest stable version published before the release-age cutoff", ()
     "2.3.0-beta.1": "2026-10-01T00:00:00Z",
     "0.0.0-dev-565": "2026-11-04T04:11:56Z",
   };
-  expect(
-    selectReleaseAgeEligibleVersion({ times, nowMs, minimumAgeSeconds: 604_800 }),
-  ).toBe("2.2.0");
+  expect(selectReleaseAgeEligibleVersion({ times, nowMs, minimumAgeSeconds: 604_800 })).toBe(
+    "2.2.0",
+  );
   expect(selectReleaseAgeEligibleVersion({ times, nowMs, minimumAgeSeconds: 0 })).toBe("2.2.5");
   expect(
     selectReleaseAgeEligibleVersion({
