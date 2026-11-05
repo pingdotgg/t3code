@@ -60,6 +60,7 @@ export function useDictationShortcut(input: ShortcutInput) {
   const pressed = useRef<{
     generation: number;
     code: string;
+    modifiers: string[];
     startedAt: number;
     mode: typeof mode;
     starting: Promise<void>;
@@ -72,7 +73,10 @@ export function useDictationShortcut(input: ShortcutInput) {
     shortcutTargets.set(id.current, () => current.current);
     const finish = (event: KeyboardEvent | null) => {
       const press = pressed.current;
-      if (!press || (event && (event.code || event.key) !== press.code)) return;
+      if (!press) return;
+      // macOS may omit the letter keyup while Command is held; modifier release ends the chord too.
+      if (event && (event.code || event.key) !== press.code && !press.modifiers.includes(event.key))
+        return;
       pressed.current = null;
       if (shouldFinishDictationOnRelease(press.mode, performance.now() - press.startedAt)) {
         void press.starting.then(() => {
@@ -123,6 +127,7 @@ export function useDictationShortcut(input: ShortcutInput) {
       pressed.current = {
         generation: generation.current,
         code: event.code || event.key,
+        modifiers: ["Alt", "Control", "Meta", "Shift"].filter((key) => event.getModifierState(key)),
         startedAt: performance.now(),
         mode,
         starting: speech.start(),
