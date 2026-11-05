@@ -1,10 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId, ThreadId, ThreadRepoWorktree } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 
-import * as Dialog from "../../../components/ui/Dialog";
 import { ListRow } from "../../../components/ui/ListRow";
 import { ListSection } from "../../../components/ui/ListSection";
+import { Menu } from "../../../components/ui/Menu";
 import { environmentThreadDetails, threadEnvironment } from "../../../state/threads";
 import { useAtomCommand } from "../../../state/use-atom-command";
 
@@ -28,27 +29,23 @@ export function RepoWorktreesGroup(props: {
   const detach = useAtomCommand(threadEnvironment.detachRepoWorktree, { reportFailure: true });
   if (repoWorktrees.length === 0) return null;
 
-  const showActions = (entry: ThreadRepoWorktree) => {
-    const isSelected = props.selected?.worktreePath === entry.worktreePath;
-    Dialog.alert(`${entry.repository} · ${entry.branch}`, entry.worktreePath, [
-      isSelected
-        ? {
-            text: `Use ${props.workspaceLabel.toLowerCase()} for Git`,
-            onPress: () => props.onSelect(null),
-          }
-        : { text: "Use for Git and changes", onPress: () => props.onSelect(entry.worktreePath) },
-      { text: "Copy path", onPress: () => void Clipboard.setStringAsync(entry.worktreePath) },
-      {
-        text: "Detach from thread",
-        style: "destructive",
-        onPress: () =>
-          void detach({
-            environmentId: props.environmentId,
-            input: { threadId: props.threadId, worktreePath: entry.worktreePath },
-          }),
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
+  const menuActions = (entry: ThreadRepoWorktree): MenuAction[] => [
+    props.selected?.worktreePath === entry.worktreePath
+      ? { id: "use-workspace", title: `Use ${props.workspaceLabel.toLowerCase()} for Git` }
+      : { id: "use-worktree", title: "Use for Git and changes" },
+    { id: "copy-path", title: "Copy path" },
+    { id: "detach", title: "Detach from thread", attributes: { destructive: true } },
+  ];
+  const onMenuAction = (entry: ThreadRepoWorktree, action: string) => {
+    if (action === "use-workspace") props.onSelect(null);
+    else if (action === "use-worktree") props.onSelect(entry.worktreePath);
+    else if (action === "copy-path") void Clipboard.setStringAsync(entry.worktreePath);
+    else if (action === "detach") {
+      void detach({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, worktreePath: entry.worktreePath },
+      });
+    }
   };
 
   return (
@@ -61,17 +58,24 @@ export function RepoWorktreesGroup(props: {
       }Turn diffs and rollback include these. Rollback restores no files while another thread also works in one.`}
     >
       {repoWorktrees.map((entry) => (
-        <ListRow
+        <Menu
           key={entry.worktreePath}
-          icon="folder"
-          label={`${entry.repository} · ${entry.branch}`}
-          description={
-            props.selected?.worktreePath === entry.worktreePath
-              ? `Git and changes above · ${entry.worktreePath}`
-              : entry.worktreePath
-          }
-          onPress={() => showActions(entry)}
-        />
+          title={`${entry.repository} · ${entry.branch}`}
+          actions={menuActions(entry)}
+          onPressAction={({ nativeEvent }) => onMenuAction(entry, nativeEvent.event)}
+        >
+          <ListRow
+            icon="folder"
+            label={`${entry.repository} · ${entry.branch}`}
+            description={
+              props.selected?.worktreePath === entry.worktreePath
+                ? `Git and changes above · ${entry.worktreePath}`
+                : entry.worktreePath
+            }
+            // The menu opens on tap.
+            onPress={() => {}}
+          />
+        </Menu>
       ))}
     </ListSection>
   );
