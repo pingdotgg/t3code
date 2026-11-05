@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 
 import { Kbd } from "../components/ui/kbd";
@@ -34,7 +34,6 @@ const HINT_VISIBLE_MS = 2400;
 const HINT_FADE_MS = 200;
 /** Room between the hint and the composer under it. */
 const HINT_GAP_PX = 12;
-const HINT_EDGE_PX = 16;
 const HINT_BOTTOM_PX = 108;
 
 const FOCUSED_PANE = "[data-layout-pane-focused='true'][data-layout-pane-id]";
@@ -102,62 +101,55 @@ function liftAboveComposer(hint: HTMLDivElement | null) {
 }
 
 /**
- * Centers a hint on the focused pane at the same height on every pane, lifted
- * a gap above its composer stack (banners, request cards and tray included)
- * when that grows taller. Follows the strip while it scrolls to the landed pane.
+ * Puts a hint inside the focused pane, so it rides the pane's own motion,
+ * centered at the same height on every pane and lifted a gap above its
+ * composer stack (banners, request cards and tray included) when that grows taller.
  */
 function useHintPlacement() {
-  const [hint, setHint] = useState<HTMLDivElement | null>(null);
-  const [style, setStyle] = useState<CSSProperties>();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the focused pane and observe viewport changes to position the hint.
+  const focusedTabId = useLayoutStore((state) => selectFocusedTab(state.layout)?.id ?? null);
+  const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
+  const [placement, setPlacement] = useState<{ pane: HTMLElement | null; bottom: number | null }>({
+    pane: null,
+    bottom: null,
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Find the focused pane in the DOM and observe its composer's size.
   useLayoutEffect(() => {
-    const host = hint?.offsetParent;
-    if (!host) return;
+    const pane = focusedTabId
+      ? anchor?.parentElement?.querySelector<HTMLElement>(
+          `[data-layout-tab-id="${CSS.escape(focusedTabId)}"][data-layout-pane-id]`,
+        )
+      : null;
+    const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
     const place = () => {
-      const pane = host.querySelector("[data-layout-pane-focused='true'][data-layout-pane-id]");
-      if (!pane) return;
-      const hostRect = host.getBoundingClientRect();
-      const paneRect = pane.getBoundingClientRect();
-      const composer = pane.querySelector('[data-chat-composer-stack="true"]');
-      const rest = paneRect.bottom - HINT_BOTTOM_PX;
-      const floor = composer
-        ? Math.min(rest, composer.getBoundingClientRect().top - HINT_GAP_PX)
-        : rest;
-      const next = {
-        left: paneRect.left + paneRect.width / 2 - hostRect.left,
-        bottom: hostRect.bottom - floor,
-        maxWidth: paneRect.width - 2 * HINT_EDGE_PX,
-      };
-      setStyle((current) =>
-        current?.left === next.left &&
-        current.bottom === next.bottom &&
-        current.maxWidth === next.maxWidth
+      const lift =
+        pane && composer
+          ? pane.getBoundingClientRect().bottom - composer.getBoundingClientRect().top + HINT_GAP_PX
+          : 0;
+      const bottom = lift > HINT_BOTTOM_PX ? lift : null;
+      setPlacement((current) =>
+        current.pane === (pane ?? null) && current.bottom === bottom
           ? current
-          : next,
+          : { pane: pane ?? null, bottom },
       );
     };
     place();
-    const pane = host.querySelector<HTMLElement>(
-      "[data-layout-pane-focused='true'][data-layout-pane-id]",
-    );
-    const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
-    const stopResize = observeResize(
-      [host, ...(pane ? [pane] : []), ...(composer ? [composer] : [])],
-      place,
-    );
-    // Share the bounded geometry tracker: compositor transforms emit no layout events.
-    const stopMotion = pane
-      ? trackBrowserSurfaceSlot(pane, () => {
-          place();
-          return false;
-        })
-      : () => {};
-    return () => {
-      stopResize();
-      stopMotion();
-    };
-  }, [hint]);
-  return [setHint, style] as const;
+    if (!pane) return;
+    return observeResize([pane, ...(composer ? [composer] : [])], place);
+  }, [anchor, focusedTabId]);
+  return {
+    anchorRef: setAnchor,
+    pane: placement.pane,
+    style: placement.bottom === null ? undefined : { bottom: placement.bottom },
+  };
+}
+
+function placeHint(placement: ReturnType<typeof useHintPlacement>, pill: ReactElement) {
+  return (
+    <>
+      <span ref={placement.anchorRef} hidden />
+      {placement.pane ? createPortal(pill, placement.pane) : pill}
+    </>
+  );
 }
 
 /**
@@ -280,11 +272,11 @@ function WorkspaceHintPill({
       : null;
   const small = hint.kind === "workspace-name";
   const firstBar = Math.max(0, Math.min(hint.index - 2, hint.count - WORKSPACE_BARS));
-  const [placementRef, placement] = useHintPlacement();
-  return (
+  const placement = useHintPlacement();
+  return placeHint(
+    placement,
     <div
-      ref={placementRef}
-      style={placement}
+      style={placement.style}
       role="status"
       aria-live="polite"
       data-layout-hint={hint.kind}
@@ -318,7 +310,7 @@ function WorkspaceHintPill({
           <Kbd>{keys}</Kbd>
         </span>
       ) : null}
-    </div>
+    </div>,
   );
 }
 
@@ -327,11 +319,11 @@ function ColumnHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "colu
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const label = hint.command ? shortcutLabelForCommand(keybindings, hint.command) : null;
   const keys = label?.replace(/(Left|Right|Up|Down)$/, (name) => ARROWS[name] ?? name) ?? null;
-  const [placementRef, placement] = useHintPlacement();
-  return (
+  const placement = useHintPlacement();
+  return placeHint(
+    placement,
     <div
-      ref={placementRef}
-      style={placement}
+      style={placement.style}
       role="status"
       aria-live="polite"
       data-layout-hint="column"
@@ -359,6 +351,6 @@ function ColumnHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "colu
           <Kbd>{keys}</Kbd>
         </span>
       ) : null}
-    </div>
+    </div>,
   );
 }
