@@ -1,4 +1,4 @@
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useRoute } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
@@ -9,6 +9,7 @@ import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
 import { useAdaptiveWorkspaceLayout } from "../../layout/adaptive-workspace-context";
+import { useSettingsPageBack } from "../useSettingsPageBack";
 import {
   ScreenScrollViewBottomInset,
   ScreenScrollViewSurface,
@@ -23,12 +24,12 @@ export function SettingsScreen(
     readonly workspaceRoot?: boolean;
   },
 ) {
-  const navigation = useNavigation();
   const route = useRoute();
   const workspace = useWorkspaceTabs();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
+  const back = useSettingsPageBack();
   const cover = deviceType === "duo-folded";
   // Android opens Settings as a workspace tab; its root page has nothing to go back to.
   const workspaceRoot =
@@ -47,7 +48,7 @@ export function SettingsScreen(
         // iOS screens put their filter menus in native header items themselves.
         menus={Platform.OS === "android" ? props.menus : undefined}
         sheet={Platform.OS === "android" && props.formSheet}
-        onBack={workspaceRoot ? undefined : () => navigation.goBack()}
+        onBack={workspaceRoot ? undefined : back}
         hideBottomBorder={!props.formSheet || Platform.OS === "android"}
         options={props.options}
       />
