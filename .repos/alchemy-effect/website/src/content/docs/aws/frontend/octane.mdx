@@ -1,11 +1,11 @@
 ---
 title: Octane
-description: Deploy an OctaneJS app to AWS with AWS.Website.Octane — SSR on a streaming Lambda Function URL, assets on S3 + CloudFront, and Octane's own Vite dev server under alchemy dev.
+description: Deploy an OctaneJS app to AWS with AWS.Website.Octane — SSR on a Lambda Web Function, assets on S3 + CloudFront, and Octane's own Vite dev server under alchemy dev.
 sidebar:
   order: 14
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
@@ -13,32 +13,20 @@ export const devDeps = "@alchemy.run/frontend-frameworks";
 fullstack app to AWS. Octane wraps Vite, so the resource is
 deliberately thin: it runs your project's own `vite build` — Octane's
 plugin builds the client bundle and the self-contained SSR server
-bundle, and the AWS deploy target's finishing pass wraps its fetch
-handler as a streaming Lambda handler. The server deploys on a Lambda
-Function URL; `dist/client` is served from a private S3 bucket
+bundle, and the deploy target's finishing pass wraps its fetch handler
+in a Node server. The server deploys on a
+[Lambda Web Function](/aws/compute/web-functions); `dist/client` is
+served from a private S3 bucket
 through CloudFront. No CloudFormation, no build command to run.
 
 ## Install
 
 The build integration is not bundled with alchemy. Install
 `@alchemy.run/frontend-frameworks`; the resource loads the package's
-`/octane` and `/octane/aws` exports from your project at deploy time.
+`/octane` and `/octane/node` exports from your project at deploy time.
 It is only used at build time, so a dev dependency is enough:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Configure Octane
 
@@ -57,7 +45,7 @@ export default defineConfig({
 ```
 
 `AWS.Website.Octane` selects hosting and automatically wraps Octane's
-default native Node output as a streaming Lambda handler. The legacy AWS
+default native Node output in a Node server. The legacy AWS
 marker adapter remains optional for existing projects.
 
 ## Declare the Website
@@ -67,7 +55,7 @@ Stack):
 
 ```typescript
 // alchemy.run.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 export const Website = AWS.Website.Octane("Website");
 ```
@@ -109,13 +97,13 @@ export const Website = AWS.Website.Octane("Website", {
 });
 ```
 
-The values are set on the Lambda at deploy time and injected into the
+The values are set on the server at deploy time and injected into the
 dev server's process environment under `alchemy dev`, so server code
 reads the same values in both modes.
 
 ## Read the environment in server code
 
-Octane's server runs in a plain Node Lambda, so middleware and
+Octane's server is a plain Node server, so middleware and
 `ServerRoute` handlers read the environment from `process.env`:
 
 ```typescript
@@ -134,7 +122,22 @@ new ServerRoute({
 Octane's intended setup is asset-first with SSR on miss: exact files
 in `dist/client` serve from S3 via the CloudFront edge router without
 invoking the server, and every miss streams from Octane SSR on the
-Lambda. That is the default — there is nothing to configure.
+server. That is the default — there is nothing to configure.
+
+## Run on a Lambda Function
+
+Web Functions run in a subset of Regions. Elsewhere, set
+`server: "function"`: the app builds with the `/octane/aws` deploy target
+and runs on a Lambda Function behind a streaming Function URL, tuned with
+`memorySize`, `architecture`, and `runtime`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Octane("Website", {
++  server: "function",
++  memorySize: 2048,
+});
+```
 
 ## Local dev
 
