@@ -8193,7 +8193,10 @@ export default function ChatView(props: ChatViewProps) {
       }
       if (fileRestoreFailure !== null) {
         setThreadError(activeThread.id, fileRestoreFailure);
-        setFileRestoreRetry({ turnCount, message: fileRestoreFailure, routeThreadKey });
+        // Trying again restores files, which a rewind that kept them must not do.
+        if (restoreFiles) {
+          setFileRestoreRetry({ turnCount, message: fileRestoreFailure, routeThreadKey });
+        }
       }
     } catch (error) {
       setThreadError(
