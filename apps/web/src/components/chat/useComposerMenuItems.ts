@@ -308,19 +308,21 @@ export function useComposerMenuItems({
         description: command.description ?? command.input?.hint ?? gt("Run provider command"),
       }));
       const query = composerTrigger.query.trim().toLowerCase();
-      const skillItems = filterProviderSystemSkills(slashMenuSkills, showSystemSkills).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: `/skill:${skill.name}`,
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : ""),
-        }),
-      );
+      // Hide system skills before deduplicating, so a hidden one cannot shadow a same-name skill.
+      const skillItems = getProviderSkillsForSlashMenu(
+        filterProviderSystemSkills(selectedProviderSkills, showSystemSkills),
+        showSkillsInSlashMenu,
+      ).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: `/skill:${skill.name}`,
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : ""),
+      }));
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
