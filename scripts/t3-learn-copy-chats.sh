@@ -143,6 +143,10 @@ INSERT OR IGNORE INTO main.orchestration_events ($event_cols) SELECT $event_cols
      OR (aggregate_kind = 'project' AND stream_id IN (SELECT project_id FROM new_projects))
   ORDER BY sequence;
 $inserts
+INSERT OR IGNORE INTO main.orchestration_v2_projection_provider_sessions
+  SELECT * FROM src.orchestration_v2_projection_provider_sessions
+  WHERE provider_session_id IN (SELECT provider_session_id FROM src.orchestration_v2_projection_provider_session_bindings
+                                WHERE thread_id IN (SELECT thread_id FROM new_threads));
 INSERT OR IGNORE INTO main.orchestration_v2_projection_context_transfers
   SELECT * FROM src.orchestration_v2_projection_context_transfers
   WHERE target_thread_id IN (SELECT thread_id FROM new_threads);
