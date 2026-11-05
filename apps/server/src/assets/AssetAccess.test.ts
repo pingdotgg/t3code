@@ -1562,6 +1562,10 @@ describe("AssetAccess", () => {
       // The upstream sent no type, so it comes from the file name the host gave the media.
       expect(response.headers["content-type"]).toBe("image/png");
       expect(response.headers["content-length"]).toBe("5");
+
+      // A pull request's own repository wins over the checkout it is shown in.
+      yield* sourceControlMediaResponse({ ...asset, repository: "enterprise/private" }, {});
+      expect(fetched.at(-1)?.repository).toBe("enterprise/private");
     }).pipe(
       Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)),
       Effect.scoped,
