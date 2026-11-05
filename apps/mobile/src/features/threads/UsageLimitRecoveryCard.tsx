@@ -114,7 +114,10 @@ export function UsageLimitRecoveryCard({
         },
       };
   return (
-    <View className="mx-3 mb-2 flex-row gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
+    <View
+      accessibilityRole={chatGptLimit ? "alert" : undefined}
+      className="mx-3 mb-2 flex-row gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3"
+    >
       {chatGptLimit ? (
         <View className="pt-0.5">
           <ProviderIcon provider="codex" size={16} />
