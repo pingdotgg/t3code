@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -111,6 +112,15 @@ const isPricedModel = (model: ShellModel): model is PricedModel => model in PRIC
 const T3_PREFIX = "mcp__t3-code__";
 const RUNTIME_MARKER = "<runtime_info>";
 const TOOL_LOADED = "Tool loaded.";
+
+class EvalToolCallError extends Schema.TaggedError<EvalToolCallError>()("EvalToolCallError", {
+  tool: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `The ${this.tool} tool call failed.`;
+  }
+}
 const DEFERRED_LIST =
   /(The following deferred tools are now available via ToolSearch\.[^\n]*\n)((?:[^\n]+\n)*)/;
 const MODEL_LINE = /You are powered by the model named .+?\. The exact model ID is [\w.-]+\./;
@@ -2062,24 +2072,27 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             runPromise,
           );
         };
-        return yield* Effect.tryPromise(async () => {
-          const output =
-            use.name === "exec"
-              ? await executeCodex(
-                  valueText(use.input),
-                  codexCatalog(base),
-                  answer,
-                  sample.codeStore,
-                )
-              : await answer(use.name, use.input, false);
-          const item = {
-            type: use.name === "exec" ? "custom_tool_call_output" : "function_call_output",
-            call_id: use.id,
-            output: valueText(output),
-          };
-          input.push(item);
-          transcript.push(item);
-          return toolResult(use.id, output);
+        return yield* Effect.tryPromise({
+          try: async () => {
+            const output =
+              use.name === "exec"
+                ? await executeCodex(
+                    valueText(use.input),
+                    codexCatalog(base),
+                    answer,
+                    sample.codeStore,
+                  )
+                : await answer(use.name, use.input, false);
+            const item = {
+              type: use.name === "exec" ? "custom_tool_call_output" : "function_call_output",
+              call_id: use.id,
+              output: valueText(output),
+            };
+            input.push(item);
+            transcript.push(item);
+            return toolResult(use.id, output);
+          },
+          catch: (cause) => new EvalToolCallError({ tool: use.name, cause }),
         });
       }),
     );
@@ -2403,7 +2416,7 @@ const main = Effect.gen(function* () {
     }
     return;
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+  const apiKey = yield* Config.String("ANTHROPIC_API_KEY").pipe(Config.withDefault(""));
   const out = flags.out;
   if ((!apiKey && !codex) || out === undefined) {
     const message =
@@ -2428,11 +2441,16 @@ const main = Effect.gen(function* () {
   // Only a case that passed every baseline sample can stop a run; flaky ones are just reported.
   const passedBefore = (id: string) => baseline.get(id) === 1;
   // Before the paid runs, so a missing git cannot lose their results.
-  const commit = yield* Effect.try(() =>
-    NodeChildProcess.execFileSync("git", ["describe", "--always", "--dirty"], {
-      encoding: "utf8",
-    }).trim(),
-  ).pipe(Effect.orElseSucceed(() => "unknown"));
+  const commit = yield* Effect.sync(() =>
+    Option.getOrElse(
+      Option.liftThrowable(() =>
+        NodeChildProcess.execFileSync("git", ["describe", "--always", "--dirty"], {
+          encoding: "utf8",
+        }).trim(),
+      )(),
+      () => "unknown",
+    ),
+  );
   const inFlight = yield* Semaphore.make(flags.concurrency);
   const runOne = (testCase: McpToolUseCase) => {
     const { id, kind, pattern } = testCase;
