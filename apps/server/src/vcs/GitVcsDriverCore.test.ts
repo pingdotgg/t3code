@@ -1699,7 +1699,7 @@ describe("rejected git refs", () => {
 
   // A fetch into a diverged local branch prints the same rejected line, but
   // never "failed to push some refs".
-  it.effect("leaves a rejected fetch unclassified with a redacted diagnostic excerpt", () =>
+  it.effect("leaves a rejected fetch unclassified without exposing diagnostics", () =>
     Effect.gen(function* () {
       const error = yield* failWith(
         [`From ${remoteUrl}`, " ! [rejected]        main       -> side  (non-fast-forward)"].join(
@@ -1708,8 +1708,7 @@ describe("rejected git refs", () => {
       );
 
       assert.equal(error.reason, undefined);
-      assert.include(error.detail, "[rejected]");
-      assert.include(error.detail, "non-fast-forward");
+      assert.equal(error.detail, "Git command exited with a non-zero status.");
       for (const text of leakedText) assert.notInclude(error.message, text);
     }),
   );
@@ -1790,8 +1789,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         });
         assert.isNumber(error.exitCode);
         assert.isAbove(error.stderrLength ?? 0, 0);
-        assert.include(error.detail, "unknown option");
-        assert.include(error.detail, "[redacted]");
+        assert.equal(error.detail, "Git command exited with a non-zero status.");
         assert.notInclude(error.detail, secret);
         assert.notInclude(error.message, secret.split("=").at(-1)!.split("\n")[0]!);
         assert.notInclude(error.message, secret);
@@ -1855,9 +1853,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect.each(["https", "Bearer", "-sensitive-subject"])(
-      "surfaces a rejected commit hook safely (subject: %s)",
-      (subject) =>
+    it.effect.each(
+      ["https", "Bearer", "-sensitive-subject"].flatMap((subject) =>
+        ["stdout", "stderr"].map((stream) => ({ subject, stream })),
+      ),
+    )(
+      "surfaces a rejected commit hook safely (subject: $subject, stream: $stream)",
+      ({ subject, stream }) =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -1869,17 +1871,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* writeTextFile(
             cwd,
             ".git/hooks/pre-commit",
-            "#!/bin/sh\necho 'error: lint: fix formatting in README.md; https://user:private-secret@host/repo?token=query-secret; Authorization: Bearer TOKEN123; rejected commit -sensitive-subject' >&2\nexit 1\n",
+            `#!/bin/sh\necho 'error: arbitrary-hook-secret; lint: fix formatting in README.md; https://user:private-secret@host/repo?token=query-secret; Authorization: Bearer TOKEN123; rejected commit -sensitive-subject' ${stream === "stderr" ? ">&2" : ""}\nexit 1\n`,
           );
           yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
 
           const error = yield* driver.commit(cwd, subject, "").pipe(Effect.flip);
 
           assert.notProperty(error, "reason");
-          assert.include(error.detail, "lint: fix formatting in README.md");
-          assert.include(error.detail, "rejected commit");
+          assert.equal(error.detail, "Git command exited with a non-zero status.");
           if (subject.startsWith("-")) assert.notInclude(error.message, subject);
-          for (const secret of ["private-secret", "query-secret", "TOKEN123"]) {
+          for (const secret of [
+            "arbitrary-hook-secret",
+            "private-secret",
+            "query-secret",
+            "TOKEN123",
+          ]) {
             assert.notInclude(error.message, secret);
           }
         }),

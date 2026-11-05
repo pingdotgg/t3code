@@ -526,81 +526,9 @@ const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string
   tag_would_be_clobbered: "Updating would overwrite an existing tag. Delete or move the tag first.",
 };
 
-const GIT_FAILURE_EXCERPT_MAX_CHARS = 400;
-// Userinfo can contain @; remove through the last one before the host boundary.
-const GIT_FAILURE_URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi;
-const GIT_FAILURE_QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\1(?=[\s:]|$)/gi;
-const GIT_FAILURE_URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
-
-function redactGitFailureText(text: string, args: readonly string[]): string {
-  // Find every sensitive span before replacements can hide overlapping credentials or argv.
-  const spans: Array<{ start: number; end: number }> = [];
-  for (const pattern of [
-    GIT_FAILURE_QUOTED_URL_QUERY,
-    GIT_FAILURE_URL_QUERY,
-    GIT_FAILURE_URL_WITH_USERINFO,
-    /\b(Bearer|Basic)\s+[^\s,;]+/gi,
-    /\bsk-[A-Za-z0-9_-]{16,}\b/g,
-  ]) {
-    for (const match of text.matchAll(pattern)) {
-      spans.push({ start: match.index, end: match.index + match[0].length });
-    }
-  }
-  for (const arg of args.slice(1)) {
-    const values = arg.includes("=") ? [arg, arg.slice(arg.indexOf("=") + 1)] : [arg];
-    if (arg.startsWith("--")) values.push(arg.slice(2));
-    for (const value of values) {
-      if (value.length === 0) continue;
-      let start = text.indexOf(value);
-      while (start !== -1) {
-        spans.push({ start, end: start + value.length });
-        start = text.indexOf(value, start + 1);
-      }
-    }
-  }
-  spans.sort((left, right) => left.start - right.start);
-  let redacted = "";
-  let end = 0;
-  for (const span of spans) {
-    if (span.start >= end) {
-      redacted += text.slice(end, span.start) + "[redacted]";
-    }
-    end = Math.max(end, span.end);
-  }
-  return redacted + text.slice(end);
-}
-
-function gitFailureExcerpt(
-  stderr: string,
-  stdout: string,
-  args: readonly string[],
-): string | undefined {
-  const safeStderr = redactGitFailureText(stderr, args);
-  const diagnosticLines = safeStderr
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => GIT_DIAGNOSTIC_LINE_PATTERN.test(line));
-  const raw =
-    diagnosticLines.length > 0
-      ? diagnosticLines.join("\n")
-      : safeStderr.trim().length > 0
-        ? safeStderr.trim()
-        : redactGitFailureText(stdout, args).trim();
-  if (raw.length === 0) return undefined;
-  const redacted = raw.replace(/\s+\n/g, "\n").trim();
-  if (redacted.length === 0) return undefined;
-  if (redacted.length <= GIT_FAILURE_EXCERPT_MAX_CHARS) return redacted;
-  return `${redacted.slice(0, GIT_FAILURE_EXCERPT_MAX_CHARS - 1)}…`;
-}
-
-function gitFailureDetail(
-  reason: GitCommandFailureReason | null,
-  output: { readonly stderr: string; readonly stdout: string; readonly args: readonly string[] },
-): string {
-  const staticDetail = reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason];
-  if (staticDetail !== undefined) return staticDetail;
+function gitFailureDetail(reason: GitCommandFailureReason | null): string {
   return (
-    gitFailureExcerpt(output.stderr, output.stdout, output.args) ??
+    (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
     "Git command exited with a non-zero status."
   );
 }
@@ -1167,11 +1095,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
             ...(reason === null ? {} : { reason }),
-            detail: gitFailureDetail(reason, {
-              stderr: stderr.text,
-              stdout: stdout.text,
-              args: commandInput.args,
-            }),
+            detail: gitFailureDetail(reason),
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
@@ -1283,14 +1207,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail:
-              classifiedDetail ??
-              options.fallbackErrorDetail ??
-              gitFailureDetail(null, {
-                stderr: result.stderr,
-                stdout: result.stdout,
-                args,
-              }),
+            detail: classifiedDetail ?? options.fallbackErrorDetail ?? gitFailureDetail(null),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -3031,13 +2948,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* new GitCommandError({
         ...gitCommandContext({ operation: "GitVcsDriver.pullCurrentBranch.pull", cwd, args }),
         ...(reason === null ? {} : { reason }),
-        detail:
-          fetchFailureDetail(result.stderr) ??
-          gitFailureDetail(reason, {
-            stderr: result.stderr,
-            stdout: result.stdout,
-            args,
-          }),
+        detail: fetchFailureDetail(result.stderr) ?? gitFailureDetail(reason),
         exitCode: result.exitCode,
         stdoutLength: result.stdout.length,
         stderrLength: result.stderr.length,
