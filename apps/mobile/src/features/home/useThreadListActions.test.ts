@@ -444,6 +444,21 @@ describe("thread action undo", () => {
     });
   });
 
+  it("restores the previous wake time when undoing a reschedule", async () => {
+    const thread = makeThread({
+      snoozedAt: "2026-09-02T00:00:00.000Z",
+      snoozedUntil: "2099-01-01T09:00:00.000Z",
+    });
+    await useThreadListActions().snoozeThread(thread, "2099-01-02T09:00:00.000Z");
+    expect(readThreadUndoNotice()?.action).toBe("Rescheduled");
+    await readThreadUndoNotice()!.undo();
+    expect(state.requests.map(({ action }) => action)).toEqual(["snooze", "snooze"]);
+    expect(state.requests[1]?.input).toEqual({
+      threadId: thread.id,
+      snoozedUntil: "2099-01-01T09:00:00.000Z",
+    });
+  });
+
   it.each([null, "2099-01-01T09:00:00.000Z", "2000-01-01T09:00:00.000Z"])(
     "restores an unpinned thread's previous position and unexpired snooze (%s)",
     async (snoozedUntil) => {
