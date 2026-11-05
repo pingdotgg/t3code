@@ -28,6 +28,7 @@ import {
   neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
+  restartSourceInputUnrecorded,
 } from "./RestartBackgroundNote.ts";
 
 const CONTINUE_PROMPT =
@@ -169,14 +170,15 @@ export function restartContinuationRun(
   )
     return;
   if (settled) return hasOpenAwaitedWork(projection, providerThread) ? run : undefined;
+  const attemptTurns = projection.providerTurns.filter(
+    (turn) =>
+      turn.providerThreadId === providerThread.id && turn.runAttemptId === run.activeAttemptId,
+  );
+  const codexBeforeTurn = providerThread.driver === "codex" && attemptTurns.length === 0;
   if (
     liveTurnRequired &&
-    !projection.providerTurns.some(
-      (turn) =>
-        turn.providerThreadId === providerThread.id &&
-        turn.runAttemptId === run.activeAttemptId &&
-        turn.status === "running",
-    )
+    !codexBeforeTurn &&
+    !attemptTurns.some((turn) => turn.status === "running")
   )
     return;
   return run;
@@ -191,7 +193,15 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
       input.threadId,
-      ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
+      [
+        "messages",
+        "runs",
+        "providerThreads",
+        "providerTurns",
+        "attempts",
+        "runtimeRequests",
+        "turnItems",
+      ],
       { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
     if (
@@ -299,12 +309,20 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    const driver = projection.providerThreads.find(
+      (thread) => thread.id === source.providerThreadId,
+    )?.driver;
+    // Native history may lack a prompt the provider never acknowledged.
+    const resent =
+      !note.settled &&
+      sourceMessage !== undefined &&
+      (driver === "codex" || driver === "acpRegistry") &&
+      restartSourceInputUnrecorded(source, projection.providerTurns, projection.runs)
+        ? sourceMessage
+        : undefined;
+    const prompt = resent?.text ?? CONTINUE_PROMPT;
     const text =
-      noteText === undefined
-        ? CONTINUE_PROMPT
-        : note.settled
-          ? noteText
-          : `${noteText}\n\n${CONTINUE_PROMPT}`;
+      noteText === undefined ? prompt : note.settled ? noteText : `${noteText}\n\n${prompt}`;
     yield* threads
       .dispatch({
         type: "message.dispatch",
@@ -320,7 +338,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
             : "T3 Code restarted and resumed this turn",
           detail: text,
         },
-        attachments: [],
+        attachments: resent?.attachments ?? [],
+        ...(resent?.context === undefined ? {} : { context: resent.context }),
         modelSelection: source.modelSelection,
         dispatchMode: { type: "start_immediately" },
         createdBy: "agent",

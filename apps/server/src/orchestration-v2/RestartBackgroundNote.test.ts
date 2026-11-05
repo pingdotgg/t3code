@@ -13,6 +13,7 @@ import {
   cancelledTurnItemWork,
   isAwaitedWork,
   isRestartNoteContinuation,
+  isRestartResendContinuation,
   pendingRestartCancelledBackgroundWork,
   restartContinuationNote,
   mergeRestartCancelledBackgroundWork,
@@ -42,6 +43,22 @@ const turnFor = (source: OrchestrationV2Run) => ({
   runAttemptId: source.activeAttemptId,
   providerThreadId: source.providerThreadId!,
   status: "completed" as const,
+});
+
+it("keeps native restart continuations native across another restart", () => {
+  const source = run(1, codexThread);
+  const resumed = run(2, codexThread, { restartContinuationOfRunId: source.id });
+  const next = run(3, codexThread, { restartContinuationOfRunId: resumed.id });
+  const confirmed = {
+    ...turnFor(source),
+    inputRecordedAt: DateTime.makeUnsafe("2026-10-03T10:00:00.000Z"),
+  };
+  assert.isFalse(isRestartResendContinuation(next, [source, resumed, next], [confirmed]));
+  assert.isTrue(isRestartResendContinuation(next, [source, resumed, next], []));
+  const unrelated = run(2, codexThread);
+  assert.isTrue(isRestartResendContinuation(next, [source, unrelated, next], [confirmed]));
+  const switched = { ...source, providerThreadId: claudeThread };
+  assert.isTrue(isRestartResendContinuation(next, [switched, resumed, next], [confirmed]));
 });
 
 it("keeps the note for the provider thread that lost the work across a provider switch", () => {

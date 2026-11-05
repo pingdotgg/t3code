@@ -1360,6 +1360,7 @@ interface ActiveAcpTurn {
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
+  inputRecordedAt?: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
   readonly outgoingPrompt?: ReadonlyArray<EffectAcpSchema.ContentBlock> | undefined;
   consumedPromptMessageId?: string;
@@ -4937,6 +4938,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
+          // Session metadata and child output do not acknowledge this root prompt.
+          if (
+            context !== null &&
+            !context.finalized &&
+            context.inputRecordedAt === undefined &&
+            notification.sessionId === context.nativeThreadId &&
+            (yield* Deferred.isDone(context.promptDispatched)) &&
+            ((update.sessionUpdate === "user_message" &&
+              context.outgoingPrompt !== undefined &&
+              Equal.equals(update.content, context.outgoingPrompt)) ||
+              ((update.sessionUpdate === "agent_message_chunk" ||
+                update.sessionUpdate === "agent_thought_chunk" ||
+                update.sessionUpdate === "agent_message" ||
+                update.sessionUpdate === "agent_thought") &&
+                acpPostSettleWakeEvidence(notification, flavor)))
+          ) {
+            context.inputRecordedAt = yield* DateTime.now;
+            const turn = providerTurnPayload(context, "running", null);
+            yield* Ref.update(providerTurns, (current) =>
+              new Map(current).set(String(turn.id), turn),
+            );
+            yield* emitProviderEvent({
+              type: "provider_turn.updated",
+              driver,
+              threadId: context.input.threadId,
+              providerTurn: turn,
+            });
+          }
           if (
             followsAgentWorkState &&
             flavor.extractSubagentSessionEvent !== undefined &&
@@ -7473,6 +7502,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status,
           startedAt: context.startedAt,
           completedAt,
+          ...(context.inputRecordedAt === undefined
+            ? {}
+            : { inputRecordedAt: context.inputRecordedAt }),
           ...(status === "running" || status === "pending"
             ? {}
             : {
