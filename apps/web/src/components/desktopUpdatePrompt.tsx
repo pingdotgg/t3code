@@ -48,7 +48,7 @@ export function DesktopUpdatePrompt() {
           <AlertDialogDescription>You're on {state.currentVersion}.</AlertDialogDescription>
         </AlertDialogHeader>
         {state.releaseNotes.length > 0 ? (
-          <div className="px-5">
+          <div className="flex min-h-0 flex-col px-5">
             <DesktopUpdateReleaseNoteList shell={bridge} state={state} />
           </div>
         ) : null}
