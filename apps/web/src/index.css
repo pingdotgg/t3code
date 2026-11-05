@@ -5321,3 +5321,27 @@ body {
 .chat-markdown :not(pre) > code {
   font-size: 0.78125rem;
 }
+
+.chat-scroll-to-bottom {
+  opacity: 1;
+  transition:
+    opacity 150ms ease-out,
+    display 150ms allow-discrete;
+}
+
+.chat-scroll-to-bottom[data-visible="false"] {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .chat-scroll-to-bottom {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-scroll-to-bottom {
+    transition: none;
+  }
+}
