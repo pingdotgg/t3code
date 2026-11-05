@@ -7,6 +7,8 @@ import { TerminalIcon } from "lucide-react";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
+import { ChevronDown, ChevronRight } from "lucide";
+import { MorphIcon } from "../MorphIcon";
 
 export const MESSAGE_HEADING_LEVEL = 3;
 
@@ -124,6 +126,58 @@ export function SlashCommandChip({ name }: { name: string }) {
   );
 }
 
+export function WorkFoldCaret({
+  expanded,
+  hidden = false,
+  fade = false,
+}: {
+  expanded: boolean;
+  hidden?: boolean;
+  fade?: boolean;
+}) {
+  return (
+    <MorphIcon
+      aria-hidden
+      className={cn(
+        "size-3 shrink-0 text-dim-foreground",
+        fade && "transition-opacity duration-200 ease-out motion-reduce:transition-none",
+        hidden && "opacity-0",
+      )}
+      icon={expanded ? ChevronDown : ChevronRight}
+    />
+  );
+}
+
+export function WorkFoldToggle({
+  togglable,
+  expanded,
+  fadeCaret = false,
+  tone = "neutral",
+  children,
+  onClick,
+  ...props
+}: Omit<ComponentProps<"button">, "className" | "type" | "disabled"> & {
+  togglable: boolean;
+  expanded: boolean;
+  fadeCaret?: boolean;
+  tone?: "neutral" | "warning" | "error";
+}) {
+  return (
+    <WorkingBarControl
+      variant="history"
+      tone={tone}
+      disabled={!togglable}
+      aria-expanded={togglable ? expanded : undefined}
+      data-scroll-anchor-ignore
+      onClick={togglable ? onClick : undefined}
+      {...props}
+    >
+      {children}
+      <WorkFoldCaret expanded={expanded} hidden={!togglable} fade={fadeCaret} />
+    </WorkingBarControl>
+  );
+}
+
 /** The working bar's controls share its compact, feature-owned spacing. */
 export function WorkingBarControl({
   variant,
@@ -132,7 +186,7 @@ export function WorkingBarControl({
   ...props
 }: Omit<useRender.ComponentProps<"button">, "className"> & {
   variant: "chip" | "history" | "question";
-  tone?: "neutral" | "warning";
+  tone?: "neutral" | "warning" | "error";
 }) {
   const defaultProps = {
     type: render ? undefined : ("button" as const),
@@ -140,12 +194,18 @@ export function WorkingBarControl({
       variant === "chip"
         ? "inline-flex h-[22px] shrink-0 cursor-pointer items-center gap-1.5 rounded-row px-2 text-meta whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 disabled:pointer-events-none disabled:opacity-64 [&_svg]:size-3 [&_svg]:shrink-0"
         : variant === "history"
-          ? "flex shrink-0 cursor-pointer select-none items-center gap-2 self-stretch rounded-md text-left text-label text-muted-foreground tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 disabled:cursor-default"
+          ? "flex shrink-0 cursor-pointer select-none items-center gap-2 self-stretch rounded-md text-left text-label whitespace-nowrap tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 disabled:cursor-default"
           : "inline-flex h-[22px] min-w-0 shrink items-center gap-1.5 rounded-row text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 text-info-foreground cursor-pointer",
       variant === "chip" &&
         (tone === "warning"
           ? "bg-warning-foreground/10 text-warning-foreground hover:bg-warning-foreground/15"
           : "bg-badge-neutral text-muted-foreground hover:text-foreground"),
+      variant === "history" &&
+        (tone === "error"
+          ? "text-error-foreground"
+          : tone === "warning"
+            ? "text-warning-foreground"
+            : "text-muted-foreground enabled:hover:text-foreground"),
     ),
   };
   return useRender({
