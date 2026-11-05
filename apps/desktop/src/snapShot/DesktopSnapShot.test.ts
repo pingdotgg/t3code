@@ -790,6 +790,10 @@ it.effect.each(["darwin", "win32"] as const)(
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.promise(() => flying.promise);
         const overlayCount = flashWindows.length;
+        assert.deepEqual(
+          flashWindows.flatMap((window) => window.shownOnFullScreen),
+          flashWindows.map(() => platform === "darwin"),
+        );
 
         for (let repeat = 0; repeat < 20; repeat++) {
           yield* TestClock.adjust("200 millis");

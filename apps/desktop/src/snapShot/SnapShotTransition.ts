@@ -55,8 +55,11 @@ type ActiveTransition = {
   landed?: boolean | undefined;
 };
 
+export type SnapShotOverlayWindowType = "panel" | undefined;
+
 type SnapShotTransitionOptions = {
   readonly showWindow?: ((window: Electron.BaseWindow) => void) | undefined;
+  readonly windowType?: SnapShotOverlayWindowType;
   readonly boundOverlayToCaptureDisplays?: boolean | undefined;
   readonly waitForCompositorFrame?: boolean | undefined;
   readonly alwaysOnTopLevel?:
@@ -103,9 +106,11 @@ export function snapShotAnimationDisplayBounds(
 function createWindow(
   bounds: Electron.Rectangle,
   alwaysOnTopLevel: SnapShotTransitionOptions["alwaysOnTopLevel"],
+  windowType: SnapShotOverlayWindowType,
 ): Electron.BrowserWindow {
   const window = new Electron.BrowserWindow({
     ...bounds,
+    ...(windowType ? { type: windowType } : {}),
     alwaysOnTop: true,
     backgroundColor: "#00000000",
     focusable: false,
@@ -205,6 +210,7 @@ export class SnapShotTransition {
   private readonly boundOverlayToCaptureDisplays: boolean;
   private readonly waitForCompositorFrame: boolean;
   private readonly alwaysOnTopLevel: SnapShotTransitionOptions["alwaysOnTopLevel"];
+  private readonly windowType: SnapShotOverlayWindowType;
   private readonly showWindow: (window: Electron.BaseWindow) => void;
 
   get isAnimating(): boolean {
@@ -215,6 +221,7 @@ export class SnapShotTransition {
     this.boundOverlayToCaptureDisplays = options.boundOverlayToCaptureDisplays ?? false;
     this.waitForCompositorFrame = options.waitForCompositorFrame ?? false;
     this.alwaysOnTopLevel = options.alwaysOnTopLevel;
+    this.windowType = options.windowType;
     this.showWindow = options.showWindow ?? ((window) => window.showInactive());
   }
 
@@ -269,7 +276,7 @@ export class SnapShotTransition {
     const overlays: ActiveTransition["overlays"] = [];
     try {
       for (const bounds of requestedBounds) {
-        const window = createWindow(bounds, this.alwaysOnTopLevel);
+        const window = createWindow(bounds, this.alwaysOnTopLevel, this.windowType);
         const overlay = { window, requestedBounds: bounds, bounds: window.getBounds() };
         active.overlays.push(overlay);
         overlays.push(overlay);

@@ -74,7 +74,11 @@ import {
   type RegionSnapShotPool,
   type RegionSnapShotSource,
 } from "./RegionSnapShot.ts";
-import { type SnapShotAnimationDestination, SnapShotTransition } from "./SnapShotTransition.ts";
+import {
+  type SnapShotAnimationDestination,
+  type SnapShotOverlayWindowType,
+  SnapShotTransition,
+} from "./SnapShotTransition.ts";
 import {
   type AccessibilityProcessPool,
   makeSnapShotAccessibilityProcessPool,
@@ -605,9 +609,22 @@ async function captureSource({
   }
 }
 
-function createSnapShotFlashWindow(bounds: Electron.Rectangle): Electron.BaseWindow {
+function showMacCaptureOverlay(window: Electron.BaseWindow): void {
+  // Panels joined to every Space can cover another app's full-screen Space without leaving it.
+  window.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    skipTransformProcessType: true,
+  });
+  window.showInactive();
+}
+
+function createSnapShotFlashWindow(
+  bounds: Electron.Rectangle,
+  windowType: SnapShotOverlayWindowType,
+): Electron.BaseWindow {
   const window = new Electron.BaseWindow({
     ...bounds,
+    ...(windowType ? { type: windowType } : {}),
     alwaysOnTop: true,
     focusable: false,
     frame: false,
@@ -628,11 +645,14 @@ class SnapShotFlash {
   private animationTimer: ReturnType<typeof setInterval> | undefined;
   private closeTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly showWindow: (window: Electron.BaseWindow) => void;
+  private readonly windowType: SnapShotOverlayWindowType;
 
   constructor(
     showWindow: (window: Electron.BaseWindow) => void = (window) => window.showInactive(),
+    windowType?: SnapShotOverlayWindowType,
   ) {
     this.showWindow = showWindow;
+    this.windowType = windowType;
   }
 
   showAnimated(bounds: Electron.Rectangle): Promise<void> {
@@ -658,7 +678,7 @@ class SnapShotFlash {
     durationMs: number,
   ): Promise<void> {
     this.dispose();
-    const window = createSnapShotFlashWindow(bounds);
+    const window = createSnapShotFlashWindow(bounds, this.windowType);
     this.flashWindow = window;
     if (window.isDestroyed()) return;
     this.showWindow(window);
@@ -831,10 +851,16 @@ export const make = Effect.gen(function* () {
   let lastShortcutAt: bigint | undefined;
   let stopShiftShortcut: (() => void) | undefined;
   const showCaptureWindow =
-    environment.platform === "win32" ? showWindowsCaptureOverlay : undefined;
-  const flash = new SnapShotFlash(showCaptureWindow);
+    environment.platform === "win32"
+      ? showWindowsCaptureOverlay
+      : environment.platform === "darwin"
+        ? showMacCaptureOverlay
+        : undefined;
+  const overlayWindowType = environment.platform === "darwin" ? "panel" : undefined;
+  const flash = new SnapShotFlash(showCaptureWindow, overlayWindowType);
   const transition = new SnapShotTransition({
     showWindow: showCaptureWindow,
+    windowType: overlayWindowType,
     waitForCompositorFrame: environment.platform === "win32",
     // Transparent Windows surfaces must not resize while their compositor animation is running.
     boundOverlayToCaptureDisplays: environment.platform !== "linux",
