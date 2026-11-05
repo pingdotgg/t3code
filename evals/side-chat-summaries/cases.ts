@@ -111,16 +111,16 @@ export const sideChatSummaryCases = [
     source:
       "~/t3-learn-notes/context-management/lesson.md (the side-chat summary finding near line 969; 63% of summaries hit the cap)",
     messages: longMessages,
-    confusion: "why does keeping the first user message help when the newest messages are selected",
+    judgeChars: 400,
     rubric:
-      "Name the learner's confusion about retaining the first user message alongside newest messages in the first 400 characters.",
+      "The text names the learner's confusion about why the first user message is kept alongside the newest messages.",
   },
   {
     id: "short-control",
     source:
       "~/t3-learn-notes/context-management/lesson.md (control for the side-chat summary finding near line 969)",
     messages: shortMessages,
-    confusion: null,
+    judgeChars: null,
     rubric:
       "The learner's understanding or state comes before lesson progress and topic, or the summary has no learner-state claim to order.",
   },

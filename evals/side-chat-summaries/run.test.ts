@@ -14,6 +14,7 @@ it("parses a judge's yes or no answer", () => {
   assert.strictEqual(parseYesNo("YES"), true);
   assert.strictEqual(parseYesNo("**NO**\n"), false);
   assert.strictEqual(parseYesNo("Maybe"), null);
+  assert.strictEqual(parseYesNo("YESTERDAY"), null);
 });
 
 it("requires the learner confusion judge for the long case", () => {
@@ -31,5 +32,8 @@ it("requires the learner confusion judge for the long case", () => {
       "The lesson teaches context management. The learner is confused later.",
       false,
     ).at(-1)!.pass,
+  );
+  assert.isFalse(
+    gradeSummary(fixture, "The learner is confused. The lesson continues.", null).at(-1)!.pass,
   );
 });

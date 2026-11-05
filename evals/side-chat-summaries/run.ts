@@ -2,16 +2,17 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalConsole:off - Eval runner uses Node's file, HTTP and stdout boundaries.
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
+import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import { buildSideChatTextPrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
 import { buildSideChatSummarizerInput } from "../../apps/server/src/orchestration-v2/sideChat/sideChatText.ts";
 import { sideChatSummaryCases, type SideChatSummaryCase } from "./cases.ts";
 
-export const MODEL = "claude-haiku-4-5";
+const MODEL = "claude-haiku-4-5";
 const MAX_EVAL_CHARS = 1_800;
 
 type WriterResult = { readonly text: string | null };
 type Check = { readonly name: string; readonly pass: boolean; readonly detail: string };
-export type SampleResult = {
+type SampleResult = {
   readonly id: string;
   readonly sample: number;
   readonly summary: string;
@@ -48,9 +49,9 @@ export const gradeSummary = (
     name: "learner-first",
     pass: learnerStateJudge === true,
     detail:
-      fixture.confusion === null
+      fixture.judgeChars === null
         ? "learner state leads or is absent"
-        : "learner confusion is named in the first 400 characters",
+        : `learner confusion is named in the first ${fixture.judgeChars} characters`,
   },
 ];
 
@@ -62,7 +63,7 @@ const summarizerInput = (fixture: SideChatSummaryCase) =>
     anchorOpeningText: null,
   });
 
-export const writerBody = (fixture: SideChatSummaryCase, model: string) => {
+const writerBody = (fixture: SideChatSummaryCase, model: string) => {
   const prompt = buildSideChatTextPrompt({
     kind: "opening_summary",
     prompt: summarizerInput(fixture),
@@ -75,14 +76,14 @@ export const writerBody = (fixture: SideChatSummaryCase, model: string) => {
   };
 };
 
-export const judgeBody = (fixture: SideChatSummaryCase, summary: string, model: string) => ({
+const judgeBody = (fixture: SideChatSummaryCase, summary: string, model: string) => ({
   model,
   max_tokens: 20,
   system: "Answer only YES or NO.",
   messages: [
     {
       role: "user",
-      content: `Rubric: ${fixture.rubric}\nThe summary is:\n${summary}\n\nDoes it pass the rubric? Answer YES or NO.`,
+      content: `Rubric: ${fixture.rubric}\nThe summary is:\n${fixture.judgeChars === null ? summary : summary.slice(0, fixture.judgeChars)}\n\nDoes it pass the rubric? Answer YES or NO.`,
     },
   ],
 });
@@ -103,7 +104,7 @@ const apiCall = async (body: unknown, apiKey: string): Promise<string> => {
 };
 
 const parseWriter = (text: string): WriterResult => {
-  const json = JSON.parse(text) as WriterResult;
+  const json = JSON.parse(extractJsonObject(text)) as WriterResult;
   return { text: typeof json.text === "string" ? json.text.trim() : null };
 };
 
@@ -117,6 +118,20 @@ const selectedCases = (ids: string[] | undefined): ReadonlyArray<SideChatSummary
 };
 
 const run = async (
+  fixture: SideChatSummaryCase,
+  sample: number,
+  model: string,
+  apiKey: string,
+): Promise<SampleResult> => {
+  try {
+    return await runOnce(fixture, sample, model, apiKey);
+  } catch (error) {
+    const checks = [{ name: "error", pass: false, detail: String(error) }];
+    return { id: fixture.id, sample, summary: "", checks, pass: false };
+  }
+};
+
+const runOnce = async (
   fixture: SideChatSummaryCase,
   sample: number,
   model: string,
