@@ -312,6 +312,22 @@ A watched thread counts as working between wakes, so it stays in the **Working**
 not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
 returns to your inbox.
 
+**Agent merge** starts a watch and tells the agent to act on what it sees, without asking. Start it
+from the bot button in the thread details card, or from a row's menu in the **Linked pull requests**
+panel; on mobile, long-press a linked review. Pick how far the agent may go:
+
+- **Fix checks** fixes failing checks and merge conflicts, then hands the work back once checks pass.
+  Comments do not wake it.
+- **Fix checks and feedback** also addresses review comments. Anyone who can comment on the pull
+  request can wake the agent, so use it with care on public repositories.
+- **Fix and merge when ready** also merges once required checks pass, the branch is clean, and
+  every comment is handled. The agent never bypasses branch protection, and it merges with your
+  host's own tools, so your merge method setting does not apply.
+
+Agent merge starts right away, even if the agent is idle: it first reviews where the pull request
+stands. Pick another option to change it, or stop it the same way you stop a watch. All the limits
+above apply. Starting it needs an active thread whose agent can push to the pull request's branch.
+
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 

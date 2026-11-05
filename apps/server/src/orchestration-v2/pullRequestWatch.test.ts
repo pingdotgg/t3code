@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestAgentMergeMessage,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -334,6 +335,59 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
     assert.equal(report.next.remarksThrough, "2026-10-02T12:06:00Z");
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
+  });
+
+  it("keeps agent merge across reads and leaves comments out of fix-checks mode", () => {
+    const comment = remark("reviewer", "2026-10-02T12:05:00.000Z");
+    const checksOnly = evaluatePullRequestWatch(
+      watch({ agentMerge: "checks" }),
+      detail({ checks: [check("lint", "failure")] }),
+      [comment],
+    );
+    assert.deepEqual(
+      checksOnly.changes.map((change) => change.kind),
+      ["checks-failed"],
+    );
+    assert.equal(checksOnly.next.agentMerge, "checks");
+    assert.equal(checksOnly.next.remarksThrough, comment.createdAt);
+    assert.equal(checksOnly.next.wakes, 0);
+
+    const feedback = evaluatePullRequestWatch(watch({ agentMerge: "feedback" }), detail(), [
+      comment,
+    ]);
+    assert.deepEqual(
+      feedback.changes.map((change) => change.kind),
+      ["remarks"],
+    );
+  });
+
+  it("grants merging only in the agent merge mode that asks for it", () => {
+    const wake = (agentMerge?: "checks" | "feedback" | "merge") =>
+      pullRequestWatchMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        baseBranch: "main",
+        headSha: "aaaaaaaaaa",
+        agentMerge,
+        report: evaluatePullRequestWatch(
+          watch(),
+          detail({ checks: [check("lint", "failure")] }),
+          noRemarks,
+        ),
+      }).text;
+    const start = (agentMerge: "checks" | "feedback" | "merge") =>
+      pullRequestAgentMergeMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        agentMerge,
+      }).text;
+    const grant = "authorized you to merge";
+    for (const text of [wake("merge"), start("merge")]) assert.include(text, grant);
+    for (const text of [wake(), wake("checks"), wake("feedback"), start("feedback")]) {
+      assert.notInclude(text, grant);
+    }
+    assert.include(wake("checks"), "Leave review comments to the user");
+    assert.include(wake(), "act on it as your task requires");
   });
 
   it("cuts a long remark in the wake message without splitting an emoji", () => {

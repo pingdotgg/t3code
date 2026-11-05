@@ -1,9 +1,16 @@
 import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ScopedThreadRef,
+  type ThreadPullRequestAgentMerge,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import {
   pullRequestListLines,
   resolveThreadPullRequestChains,
+  threadCanStartAgentMerge,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
@@ -13,7 +20,8 @@ import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } fro
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
 
-import { useProjects } from "~/state/entities";
+import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
+import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -28,12 +36,14 @@ function ThreadDetailsPrLinkRow({
   onOpen,
   onActed,
   onStopWatching,
+  onStartAgentMerge,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
+  onStartAgentMerge?: ((agentMerge: ThreadPullRequestAgentMerge) => void) | undefined;
 }) {
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
@@ -58,6 +68,8 @@ function ThreadDetailsPrLinkRow({
       openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
+      agentMerge={link.watch?.agentMerge}
+      onStartAgentMerge={onStartAgentMerge}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -91,7 +103,37 @@ export function ThreadDetailsPrRows({
               watching: false,
             },
           });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
+  const thread = useThreadShell(threadRef);
+  const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
+  const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
+  const canStartAgentMerge =
+    canOperate &&
+    capabilities?.threadPullRequestAgentMerge === true &&
+    thread != null &&
+    threadCanStartAgentMerge(thread);
+  const startAgentMerge = (link: ThreadPullRequestLink | null) =>
+    link === null || !canStartAgentMerge
+      ? undefined
+      : (agentMerge: ThreadPullRequestAgentMerge) =>
+          void watch({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              host: link.host,
+              repository: link.repository,
+              number: link.number,
+              watching: true,
+              agentMerge,
+            },
+          });
+  const currentRow = (
+    <ThreadDetailsPrRow
+      {...row}
+      onStopWatching={stopWatching(currentLink)}
+      agentMerge={currentLink?.watch?.agentMerge}
+      onStartAgentMerge={startAgentMerge(currentLink)}
+    />
+  );
   const rest =
     currentLink === null
       ? []
@@ -113,6 +155,7 @@ export function ThreadDetailsPrRows({
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
+              onStartAgentMerge={startAgentMerge(link)}
             />
           ))}
         </div>

@@ -3043,6 +3043,105 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("agent merge briefs the agent once per mode and never outlives its stop", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-agent-merge");
+      const projectId = ProjectId.make("agent-merge-project");
+      yield* seedProject({
+        projectId,
+        title: "Agent merge",
+        workspaceRoot: "/workspace/agent-merge",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("agent-merge-create"),
+        threadId,
+        projectId,
+        title: "Agent merge",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+      const url = "https://github.com/pingdotgg/t3code/pull/7";
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("agent-merge-link"),
+        threadId,
+        ...key,
+        url,
+        source: "manual",
+      });
+      const start = (id: string, agentMerge: "checks" | "merge" | undefined) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(id),
+          threadId,
+          ...key,
+          watching: true,
+          ...(agentMerge === undefined ? {} : { agentMerge }),
+        });
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      const briefs = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.map((message) => message.text),
+      );
+
+      yield* start("agent-merge-start", "checks");
+      const started = yield* watchOf;
+      assert.equal(started?.agentMerge, "checks");
+      assert.lengthOf(yield* briefs, 1);
+      assert.include((yield* briefs)[0], url);
+
+      yield* start("agent-merge-repeat", "checks");
+      yield* start("agent-merge-agent-watch", undefined);
+      assert.deepEqual(yield* watchOf, started);
+      assert.lengthOf(yield* briefs, 1);
+
+      yield* TestClock.adjust("1 second");
+      yield* start("agent-merge-upgrade", "merge");
+      const upgraded = yield* watchOf;
+      assert.equal(upgraded?.agentMerge, "merge");
+      assert.notEqual(upgraded?.startedAt, started?.startedAt);
+      assert.lengthOf(yield* briefs, 2);
+      assert.include((yield* briefs)[1], "authorized you to merge");
+
+      const stale = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("agent-merge-stale-read"),
+          threadId,
+          ...key,
+          startedAt: started!.startedAt,
+          watch: started!,
+        })
+        .pipe(Effect.flip);
+      assert.equal(stale._tag, "OrchestratorDispatchError");
+      assert.equal((yield* watchOf)?.agentMerge, "merge");
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("agent-merge-stop"),
+        threadId,
+        ...key,
+        watching: false,
+      });
+      yield* start("agent-merge-plain-watch", undefined);
+      assert.isUndefined((yield* watchOf)?.agentMerge);
+      assert.lengthOf(yield* briefs, 2);
+    }),
+  );
+
   it.effect.each(["manual", "automatic"])("settling ends every pull request watch: %s", (mode) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

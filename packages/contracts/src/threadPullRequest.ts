@@ -79,8 +79,13 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+/** What a watching agent may do unprompted; each mode includes the ones before it. */
+export const ThreadPullRequestAgentMerge = Schema.Literals(["checks", "feedback", "merge"]);
+export type ThreadPullRequestAgentMerge = typeof ThreadPullRequestAgentMerge.Type;
+
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
+  agentMerge: Schema.optional(ThreadPullRequestAgentMerge),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   passed: Schema.Boolean,

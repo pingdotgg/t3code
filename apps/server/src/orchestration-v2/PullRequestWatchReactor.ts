@@ -562,6 +562,7 @@ export const make = Effect.gen(function* () {
           url: target.link.url,
           baseBranch: detail.baseBranch,
           headSha: report.next.headSha,
+          agentMerge: target.watch.agentMerge,
           report,
         });
         // An ending watch keeps what this pass saw, so watching again starts from it.
