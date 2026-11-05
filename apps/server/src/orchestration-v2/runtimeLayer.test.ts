@@ -1,5 +1,5 @@
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, UNTIMED_SNOOZE_WAKE_AT } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -3917,6 +3917,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       yield* reactor.sweep;
       assert.isUndefined(yield* snoozeWatch);
+
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("pr-snooze-unsettled"),
+        threadId,
+        reason: "user",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("pr-snooze-untimed"),
+        threadId,
+        snoozedUntil: UNTIMED_SNOOZE_WAKE_AT,
+        wakeOnPullRequest: true,
+      });
+      assert.equal(DateTime.formatIso((yield* shell)!.snoozedUntil!), UNTIMED_SNOOZE_WAKE_AT);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.unlink",
+        commandId: CommandId.make("pr-snooze-untimed-unlink"),
+        threadId,
+        ...key,
+      });
+      assert.isAtMost(
+        DateTime.toEpochMillis((yield* shell)!.snoozedUntil!),
+        DateTime.toEpochMillis(yield* DateTime.now),
+      );
     }),
   );
 

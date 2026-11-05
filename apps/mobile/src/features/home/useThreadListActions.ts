@@ -255,7 +255,11 @@ export function useThreadListActions(): {
                   if (!checkThreadOperationPermission(thread, failureTitle)) return false;
                   const result = await snoozeMutation({
                     environmentId: thread.environmentId,
-                    input: { threadId: thread.id, snoozedUntil: step.snoozedUntil },
+                    input: {
+                      threadId: thread.id,
+                      snoozedUntil: step.snoozedUntil,
+                      ...(step.wakeOnPullRequest ? { wakeOnPullRequest: true } : {}),
+                    },
                   });
                   if (result._tag === "Failure") {
                     const error = Cause.squash(result.cause);

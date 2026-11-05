@@ -79,6 +79,9 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+/** A `snoozedUntil` that never arrives: only a pull request watch can wake the thread. */
+export const UNTIMED_SNOOZE_WAKE_AT = "9999-01-01T00:00:00.000Z";
+
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
   headSha: Schema.NullOr(TrimmedNonEmptyString),
