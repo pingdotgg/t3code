@@ -468,6 +468,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
       : []),
+    ...(settings.historySwipeNavigation !== DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation
+      ? ["Swipe to navigate"]
+      : []),
     ...(settings.notificationMode !== DEFAULT_UNIFIED_SETTINGS.notificationMode
       ? ["Thread notifications"]
       : []),
@@ -633,6 +636,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      historySwipeNavigation: DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -1069,6 +1073,31 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("history-swipe-navigation")}
+          description="Swipe two fingers sideways to go back or forward."
+          resetAction={
+            settings.historySwipeNavigation !== DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation ? (
+              <SettingResetButton
+                label="swipe to navigate"
+                onClick={() =>
+                  updateSettings({
+                    historySwipeNavigation: DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.historySwipeNavigation}
+              onCheckedChange={(checked) =>
+                updateSettings({ historySwipeNavigation: Boolean(checked) })
+              }
+              aria-label="Swipe to navigate"
+            />
           }
         />
       </SettingsSection>

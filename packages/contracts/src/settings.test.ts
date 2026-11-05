@@ -311,6 +311,21 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings history swipe navigation", () => {
+  it("stays on for existing settings that omit it", () => {
+    expect(decodeClientSettings({}).historySwipeNavigation).toBe(true);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("historySwipeNavigation");
+  });
+
+  it("round-trips an explicit opt-out", () => {
+    expect(
+      decodeClientSettingsPatch({ historySwipeNavigation: false }).historySwipeNavigation,
+    ).toBe(false);
+    const settings = decodeClientSettings({ historySwipeNavigation: false });
+    expect(encodeClientSettings(settings).historySwipeNavigation).toBe(false);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
