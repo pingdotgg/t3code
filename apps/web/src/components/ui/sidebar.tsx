@@ -514,12 +514,12 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
         onPointerUp={drag.onPointerUp}
         onPointerCancel={drag.onPointerCancel}
         onLostPointerCapture={drag.onLostPointerCapture}
-        onClick={() => {
+        onClick={(event) => {
           if (suppressClick.current) {
             suppressClick.current = false;
             return;
           }
-          if (!near) return;
+          if (event.detail !== 0 && !near) return;
           setOpen(true);
         }}
       />
