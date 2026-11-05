@@ -9,7 +9,6 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -110,7 +109,6 @@ export function ThreadPullRequestsSheet(
 
   return (
     <View collapsable={false} className="flex-1 bg-header">
-      <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
       <AppBar
         sheet
         title={title}

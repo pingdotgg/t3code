@@ -7,7 +7,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../../components/ui/AppBar";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/ui/AppText";
 import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -69,14 +68,6 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       className="bg-sheet ios:flex-1"
       style={Platform.OS === "android" ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
-      {Platform.OS === "android" ? (
-        <NativeStackScreenOptions
-          options={{
-            sheetCornerRadius: 28,
-            sheetAllowedDetents: "fitToContents",
-          }}
-        />
-      ) : null}
       {Platform.OS === "android" ? (
         <AppBar
           sheet

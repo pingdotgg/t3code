@@ -27,7 +27,6 @@ import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { InspectorSheetContext } from "../../layout/workspace-inspector-sheet";
 import { AppText as Text } from "../../../components/ui/AppText";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -376,9 +375,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       collapsable={false}
       className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-sheet"}
     >
-      <NativeStackScreenOptions
-        options={{ sheetCornerRadius: Platform.OS === "android" ? 28 : undefined }}
-      />
       <AppBar
         sheet
         title={currentBranchLabel}
