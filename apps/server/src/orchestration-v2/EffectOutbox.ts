@@ -45,6 +45,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     runId: RunId,
   }),
   Schema.Struct({
+    type: Schema.Literal("provider-turn.interrupt-start"),
+    runId: RunId,
+    attemptId: RunAttemptId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("provider-turn.interrupt"),
     providerSessionId: ProviderSessionId,
     providerThreadId: ProviderThreadId,
@@ -138,6 +143,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
 export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.start",
   "provider-turn.interrupt",
+  "provider-turn.interrupt-start",
   "provider-turn.steer",
   "provider-turn.restart",
   "runtime-request.respond",
@@ -209,6 +215,7 @@ export interface EffectOutboxV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly cancelUnsettled: (input: {
     readonly threadId: ThreadId;
+    readonly runId?: RunId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
     readonly reason: string;
   }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
@@ -437,7 +444,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           ),
         ),
       cancelUnsettled: Effect.fn("EffectOutbox.cancelUnsettled")(
-        function* ({ threadId, effectTypes, reason }) {
+        function* ({ threadId, runId, effectTypes, reason }) {
           if (effectTypes.length === 0) return [];
           const now = DateTime.formatIso(yield* DateTime.now);
           const rows = yield* sql<{ readonly effect_id: string }>`
@@ -451,6 +458,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE thread_id = ${threadId}
               AND status IN ('pending', 'running')
               AND effect_type IN ${sql.in(effectTypes)}
+              AND (${runId ?? null} IS NULL OR json_extract(payload_json, '$.runId') = ${runId ?? null})
             RETURNING effect_id
           `;
           return rows.map(({ effect_id }) => effect_id);

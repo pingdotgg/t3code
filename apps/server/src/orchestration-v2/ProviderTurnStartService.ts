@@ -271,19 +271,26 @@ export const layer: Layer.Layer<
             }),
           ),
         hasUnpairedRunInterruptRequest: () =>
-          projectionStore
-            .hasUnpairedRunInterruptRequest(
-              input.threadId,
-              idAllocator.derive.runSignalTurnItem({
-                runId: input.runId,
-                signal: "interrupt-request",
-              }),
-              idAllocator.derive.runSignalTurnItem({
-                runId: input.runId,
-                signal: "interrupt-result",
-              }),
-            )
-            .pipe(Effect.catchCause(() => Effect.succeed(false))),
+          projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
+            Effect.flatMap((current) =>
+              current.runs.some(
+                (run) => run.id === input.runId && run.activeAttemptId === input.attemptId,
+              )
+                ? projectionStore.hasUnpairedRunInterruptRequest(
+                    input.threadId,
+                    idAllocator.derive.runSignalTurnItem({
+                      runId: input.runId,
+                      signal: "interrupt-request",
+                    }),
+                    idAllocator.derive.runSignalTurnItem({
+                      runId: input.runId,
+                      signal: "interrupt-result",
+                    }),
+                  )
+                : Effect.succeed(false),
+            ),
+            Effect.catchCause(() => Effect.succeed(false)),
+          ),
         loadRunInterruptReason: () =>
           projectionStore
             .getThreadRecords(input.threadId, ["turnItems"], {

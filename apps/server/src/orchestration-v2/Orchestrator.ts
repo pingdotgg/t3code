@@ -604,6 +604,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
     case "thread.interrupt.unresponsive":
+    case "run.interrupt.unresponsive":
+    case "run.force-stop.settle":
     case "thread.stop":
     case "provider.switch":
       return command.threadId;
@@ -1069,6 +1071,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -11014,22 +11017,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     function* (
       command: Extract<
         OrchestrationV2InternalCommand,
-        { readonly type: "thread.interrupt.unresponsive" }
+        { readonly type: "thread.interrupt.unresponsive" | "run.interrupt.unresponsive" }
       >,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     ) {
-      const { providerTurn } = yield* projectionStore
-        .getProviderControlContext(command.threadId, {
-          providerThreadId: command.providerThreadId,
-          providerTurnId: command.providerTurnId,
-        })
-        .pipe(mapDispatchError(command));
+      const providerTurn =
+        command.type === "thread.interrupt.unresponsive"
+          ? (yield* projectionStore
+              .getProviderControlContext(command.threadId, {
+                providerThreadId: command.providerThreadId,
+                providerTurnId: command.providerTurnId,
+              })
+              .pipe(mapDispatchError(command))).providerTurn
+          : undefined;
       const { runs } = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
         .pipe(mapDispatchError(command));
-      const run = runs.find(
-        (candidate) =>
-          providerTurn !== undefined && candidate.activeAttemptId === providerTurn.runAttemptId,
+      const run = runs.find((candidate) =>
+        command.type === "run.interrupt.unresponsive"
+          ? candidate.id === command.runId && candidate.activeAttemptId === command.attemptId
+          : providerTurn !== undefined && candidate.activeAttemptId === providerTurn.runAttemptId,
       );
       // A settled run still counts: Stop may have targeted its background work.
       if (run === undefined) return;
@@ -11322,10 +11329,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const dispatchRunInterrupt = Effect.fn("Orchestrator.dispatchRunInterrupt")(function* (
-    command: Extract<OrchestrationV2Command, { readonly type: "run.interrupt" }>,
+    incoming: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "run.interrupt" | "run.force-stop.settle" }
+    >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
+    const command: Extract<OrchestrationV2Command, { readonly type: "run.interrupt" }> =
+      incoming.type === "run.force-stop.settle" ? { ...incoming, type: "run.interrupt" } : incoming;
     const projection = yield* loadProjectionForCommand(
       command,
       [
@@ -11390,6 +11402,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is not interruptible.`,
       });
     }
+    if (
+      incoming.type === "run.force-stop.settle" &&
+      (run.activeAttemptId !== incoming.attemptId ||
+        !["preparing", "starting", "running"].includes(run.status))
+    )
+      return undefined;
+    const ownership =
+      run.activeAttemptId === null
+        ? Option.none()
+        : yield* runExecution.getStartOwnership({
+            threadId: command.threadId,
+            runId: run.id,
+            attemptId: run.activeAttemptId,
+          });
+    const interruptOwnedStart =
+      incoming.type !== "run.force-stop.settle" &&
+      Option.isSome(ownership) &&
+      (providerTurn === undefined || ownership.value.startPending);
     const now = yield* DateTime.now;
     const completionMessage = projection.messages.find(
       (candidate) => candidate.id === run.userMessageId,
@@ -11494,6 +11524,84 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    if (interruptOwnedStart && run.activeAttemptId !== null) {
+      const session =
+        providerThread.providerSessionId === null
+          ? Option.none()
+          : yield* providerSessions
+              .get(providerThread.providerSessionId)
+              .pipe(mapDispatchError(command));
+      if (Option.isNone(session))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Owned start has no live provider session.",
+        });
+      yield* mapDispatchError(command)(
+        commandPolicy.ensureInterrupt({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          providerInstanceId: run.providerInstanceId,
+          capabilities: session.value.providerSession.capabilities,
+        }),
+      );
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        nodeId: rootNode.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: interruptRequestItem,
+      });
+      yield* stopRemainingWork();
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:provider-turn.interrupt-start:${run.activeAttemptId}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "provider-turn.interrupt-start",
+            runId: run.id,
+            attemptId: run.activeAttemptId!,
+          },
+        } satisfies PendingOrchestrationEffectV2,
+        ...otherProviderInterrupts,
+      ]);
+      return {
+        runId: run.id,
+        effectTypes: ["provider-turn.start", "provider-turn.restart"] as const,
+        reason: `Stop requested for owned start ${run.id}.`,
+      };
+    }
+
+    if (incoming.type === "run.force-stop.settle" && providerTurn !== undefined) {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        nodeId: rootNode.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: interruptRequestItem,
+      });
+      yield* settleInterruptedRun({ command, projection, providerTurn, events, effects, now });
+      yield* settleBackgroundWork({
+        command,
+        events,
+        projection,
+        stoppedProviderThreadId: providerThread.id,
+        throughRunOrdinal: run.ordinal,
+        now,
+      });
+      return {
+        runId: run.id,
+        effectTypes: ["provider-turn.start", "provider-turn.restart"] as const,
+        reason: incoming.reason,
+      };
+    }
+
     if (
       providerTurn === undefined &&
       (run.status === "preparing" || run.status === "starting" || run.status === "running")
@@ -11525,7 +11633,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_result",
-        message: "Run interrupted before provider start",
+        message:
+          incoming.type === "run.force-stop.settle"
+            ? incoming.reason
+            : "Run interrupted before provider start",
       };
       yield* emitEvent({
         type: "turn-item.updated",
@@ -11641,9 +11752,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* stopRemainingWork();
       yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
       return {
+        runId: run.id,
         effectTypes: ["provider-turn.start", "provider-turn.restart"],
         reason: `Run ${run.id} was interrupted before its provider turn started.`,
       } satisfies {
+        readonly runId?: RunId;
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
       };
@@ -13122,6 +13235,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
       readonly cancelUnsettledEffects?: {
+        readonly runId?: RunId;
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
       };
@@ -13139,6 +13253,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
     let cancelUnsettledEffects:
       | {
+          readonly runId?: RunId;
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
           readonly reason: string;
         }
@@ -13339,6 +13454,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "subagent.stop":
         yield* dispatchSubagentStop(command, events, effects);
         break;
+      case "run.force-stop.settle":
+        cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
+        break;
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
         if (command.holdQueue === true) {
@@ -13478,6 +13596,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.background-work.settle":
         yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
+      case "run.interrupt.unresponsive":
       case "thread.interrupt.unresponsive":
         yield* dispatchInterruptUnresponsive(command, events);
         break;
@@ -13618,6 +13737,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planned.events.length > 0 ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
+          command.type === "run.interrupt.unresponsive" ||
+          command.type === "run.force-stop.settle" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
@@ -14337,6 +14458,7 @@ export const layer: Layer.Layer<
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
+  | RunExecutionService.RunExecutionServiceV2
   | ProviderSwitchServiceV2
   | ProjectionStoreV2
   | RuntimePolicyV2

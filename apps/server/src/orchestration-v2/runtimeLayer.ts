@@ -150,6 +150,8 @@ const layerProviderAuthServiceProvided = ProviderAuthService.layer.pipe(
 const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ThreadCommandExecutor.layer,
+      ProjectionStore.layer,
       McpAppModelContext.layer,
       PreviewAgentActivity.layer,
       layerCheckpointServiceProvided,
@@ -251,6 +253,7 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
   Layer.provide(
     Layer.mergeAll(
       layerOrchestratorProvided,
+      layerRunExecutionServiceProvided,
       layerLegacyV1ThreadImporterProvided,
       layerCommandReceiptStoreProvided,
       layerProviderSessionManagerProvided,
@@ -322,6 +325,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerProviderSessionManagerProvided,
       layerProviderTurnControlServiceProvided,
       layerProviderTurnStartServiceProvided,
+      layerRunExecutionServiceProvided,
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,

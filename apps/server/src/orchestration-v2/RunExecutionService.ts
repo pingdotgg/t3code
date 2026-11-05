@@ -18,18 +18,20 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
+  RunId,
+  RunAttemptId,
+  ThreadId,
   type ProviderThreadId,
   type ProviderTurnId,
-  type RunAttemptId,
-  type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -47,7 +49,9 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   knownProviderFailureMessage,
   makeProviderFailure,
@@ -553,6 +557,17 @@ export const RunExecutionServiceV2Error = Schema.Union([
 ]);
 export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
 
+const isRunExecutionStartError = Schema.is(RunExecutionStartError);
+// This structured rejection precedes turn/start, unlike a lost start response.
+const isRejectedGoal = Schema.is(
+  Schema.Struct({
+    cause: Schema.TaggedStruct("CodexAppServerRequestError", {
+      code: Schema.Literal(-32600),
+      method: Schema.Literal("thread/goal/set"),
+    }),
+  }),
+);
+
 export interface RunExecutionServiceV2StartRootRunInput {
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
@@ -581,7 +596,50 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
+type StartOwnerKey = {
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly attemptId: RunAttemptId;
+};
+type StartInterruptTarget = {
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerThreadId: ProviderThreadId;
+  readonly providerTurnId: ProviderTurnId;
+};
+
+export class RunExecutionInterruptError extends Schema.TaggedError<RunExecutionInterruptError>()(
+  "RunExecutionInterruptError",
+  {
+    threadId: ThreadId,
+    runId: RunId,
+    attemptId: RunAttemptId,
+    cause: Schema.Defect(),
+    unresponsive: Schema.Boolean,
+  },
+) {
+  override get message(): string {
+    return "Could not confirm interruption of the owned provider start.";
+  }
+}
+
+interface StartOwner {
+  readonly input: RunExecutionServiceV2StartRootRunInput;
+  readonly accepted: Deferred.Deferred<OrchestrationV2ProviderTurn>;
+  readonly terminal: Deferred.Deferred<void>;
+  startPending: boolean;
+  revoked: boolean;
+  turn?: OrchestrationV2ProviderTurn;
+  fiber?: Fiber.Fiber<void, RunExecutionServiceV2Error>;
+}
+
 export interface RunExecutionServiceV2Shape {
+  readonly getStartOwnership: (
+    key: StartOwnerKey,
+  ) => Effect.Effect<Option.Option<{ readonly startPending: boolean }>>;
+  readonly interruptOwnedStart: (
+    key: StartOwnerKey,
+  ) => Effect.Effect<StartInterruptTarget | undefined, RunExecutionInterruptError>;
+  readonly revokeOwnedStart: (key: StartOwnerKey) => Effect.Effect<void>;
   readonly startRootRun: (
     input: RunExecutionServiceV2StartRootRunInput,
   ) => Effect.Effect<void, RunExecutionServiceV2Error>;
@@ -595,6 +653,8 @@ export class RunExecutionServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   RunExecutionServiceV2,
   never,
+  | ThreadCommandExecutor.ThreadCommandExecutor
+  | ProjectionStore.ProjectionStoreV2
   | CheckpointService.CheckpointServiceV2
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
@@ -607,6 +667,22 @@ export const layer: Layer.Layer<
   RunExecutionServiceV2,
   Effect.gen(function* () {
     const scope = yield* Effect.scope;
+    const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const owners = new Map<string, StartOwner>();
+    const ownerId = (key: StartOwnerKey) =>
+      JSON.stringify([key.threadId, key.runId, key.attemptId]);
+    const releaseOwner = Effect.fn("RunExecutionService.releaseOwner")(function* (
+      owner: StartOwner,
+    ) {
+      const key = {
+        threadId: owner.input.run.threadId,
+        runId: owner.input.run.id,
+        attemptId: owner.input.attemptId,
+      };
+      yield* Deferred.succeed(owner.terminal, undefined);
+      if (owners.get(ownerId(key)) === owner) owners.delete(ownerId(key));
+    });
     const checkpointService = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -884,7 +960,108 @@ export const layer: Layer.Layer<
     );
 
     return RunExecutionServiceV2.of({
+      getStartOwnership: Effect.fn("RunExecutionService.getStartOwnership")((key) =>
+        Effect.sync(() => {
+          const owner = owners.get(ownerId(key));
+          return owner === undefined
+            ? Option.none()
+            : Option.some({ startPending: owner.startPending });
+        }),
+      ),
+      revokeOwnedStart: Effect.fn("RunExecutionService.revokeOwnedStart")((key) =>
+        Effect.sync(() => {
+          const owner = owners.get(ownerId(key));
+          if (owner === undefined) return;
+          owner.revoked = true;
+          if (owner.startPending && owner.fiber !== undefined) {
+            // Request only: provider I/O must never be awaited under the thread lock.
+            owner.fiber.interruptUnsafe();
+          }
+        }),
+      ),
+      interruptOwnedStart: Effect.fn("RunExecutionService.interruptOwnedStart")(function* (key) {
+        const wait = Effect.gen(function* () {
+          const owner = owners.get(ownerId(key));
+          if (owner === undefined) {
+            const { attempts, providerTurns } = yield* projectionStore.getThreadRecords(
+              key.threadId,
+              ["attempts", "providerTurns"],
+            );
+            const attempt = attempts.find(
+              (attempt) => attempt.id === key.attemptId && attempt.runId === key.runId,
+            );
+            if (
+              attempt !== undefined &&
+              ["completed", "interrupted", "failed", "cancelled"].includes(attempt.status) &&
+              providerTurns
+                .filter((turn) => turn.runAttemptId === key.attemptId)
+                .every((turn) => isTerminalProviderTurnStatus(turn.status))
+            )
+              return;
+            return yield* Effect.fail("Missing unresolved native-start owner");
+          }
+          const accepted = yield* Deferred.await(owner.accepted).pipe(
+            Effect.raceFirst(Deferred.await(owner.terminal).pipe(Effect.as(undefined))),
+          );
+          if (accepted === undefined) return;
+          const current = yield* projectionStore.getThreadRecords(key.threadId, [
+            "runs",
+            "providerThreads",
+          ]);
+          const run = current.runs.find((run) => run.id === key.runId);
+          const binding = current.providerThreads.find(
+            (thread) => thread.id === owner.input.providerThread.id,
+          );
+          if (
+            run?.activeAttemptId !== key.attemptId ||
+            binding?.providerSessionId !== owner.input.providerSessionId ||
+            run.providerThreadId !== binding.id ||
+            binding.providerInstanceId !== owner.input.session.instanceId ||
+            binding.nativeThreadRef?.nativeId !==
+              owner.input.providerThread.nativeThreadRef?.nativeId
+          ) {
+            return yield* Effect.fail("Native-start binding was superseded");
+          }
+          if (yield* Deferred.isDone(owner.terminal)) return;
+          const turn = owner.turn ?? accepted;
+          yield* owner.input.session.interruptTurn({
+            providerThread: owner.input.providerThread,
+            providerTurnId: turn.id,
+            requestRuntimeRestart: true,
+          });
+          yield* Deferred.await(owner.terminal);
+          return {
+            providerSessionId: owner.input.providerSessionId,
+            providerThreadId: owner.input.providerThread.id,
+            providerTurnId: turn.id,
+          };
+        });
+        return yield* wait.pipe(
+          Effect.timeout("15 seconds"),
+          Effect.mapError(
+            (cause) =>
+              new RunExecutionInterruptError({
+                ...key,
+                cause,
+                unresponsive:
+                  typeof cause === "object" &&
+                  cause !== null &&
+                  "_tag" in cause &&
+                  (cause._tag === "TimeoutError" ||
+                    cause._tag === "ProviderAdapterInterruptTimeoutError"),
+              }),
+          ),
+        );
+      }),
       startRootRun: Effect.fn("RunExecutionService.startRootRun")(function* (input) {
+        const existingOwner = owners.get(
+          ownerId({
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            attemptId: input.attemptId,
+          }),
+        );
+        if (existingOwner?.fiber !== undefined) return yield* Fiber.join(existingOwner.fiber);
         const rootTurnOrigin: ProviderUsageAnalytics.ProviderTurnOrigin = {
           createdBy: input.message.createdBy,
           creationSource: input.message.creationSource,
@@ -1001,6 +1178,13 @@ export const layer: Layer.Layer<
         if (responseStreamingMode === null) {
           return;
         }
+        const owner: StartOwner = {
+          input,
+          accepted: yield* Deferred.make<OrchestrationV2ProviderTurn>(),
+          terminal: yield* Deferred.make<void>(),
+          startPending: true,
+          revoked: false,
+        };
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
@@ -1117,6 +1301,7 @@ export const layer: Layer.Layer<
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
           }
           yield* Ref.set(rootRunFinalized, true);
+          yield* releaseOwner(owner);
         });
         // Runs for every provider event, including streamed text updates; avoid a per-event span.
         const trackChildLifecycle = Effect.fnUntraced(function* (
@@ -1412,6 +1597,8 @@ export const layer: Layer.Layer<
                 event.providerTurn.providerThreadId === input.providerThread.id
               ) {
                 yield* Ref.set(latestRootProviderTurn, event.providerTurn);
+                owner.turn = event.providerTurn;
+                yield* Deferred.succeed(owner.accepted, event.providerTurn);
               }
               let storedEventCount = 0;
               const deliveredEvent = filterAssistantEvent(
@@ -1504,6 +1691,12 @@ export const layer: Layer.Layer<
                   Math.max(current, event.turnItem.ordinal),
                 );
               }
+              if (
+                event.type === "provider_session.updated" &&
+                event.providerSession.id === input.providerSessionId &&
+                event.providerSession.status === "stopped"
+              )
+                yield* releaseOwner(owner);
               if (event.type === "turn.terminal") {
                 yield* Ref.set(terminalEvent, event);
                 yield* Ref.set(rootTerminalSeen, true);
@@ -1664,7 +1857,7 @@ export const layer: Layer.Layer<
           ),
           Effect.ensuring(endPreviewActivity),
           Effect.ensuring(eventSubscription.close),
-          Effect.forkDetach,
+          Effect.forkIn(scope),
         );
 
         // A provider turn is a sign that the session is still alive. Keep
@@ -1676,16 +1869,17 @@ export const layer: Layer.Layer<
             message: "Failed to refresh MCP credential liveness.",
           }),
         );
-        yield* touchMcpCredential;
-        const appContext = (yield* mcpAppModelContext
-          .forThread(input.run.threadId)
-          .pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
-                Effect.as([]),
-              ),
+        yield* touchMcpCredential.pipe(
+          Effect.onInterrupt(() => Fiber.interrupt(providerEventFiber)),
+        );
+        const appContext = (yield* mcpAppModelContext.forThread(input.run.threadId).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
+              Effect.as([]),
             ),
-          )).map((entry) => ({
+          ),
+          Effect.onInterrupt(() => Fiber.interrupt(providerEventFiber)),
+        )).map((entry) => ({
           // The item id alone is unique and needs no escaping; server and
           // tool names are free text that would break the tag Codex wraps
           // the context in.
@@ -1714,33 +1908,54 @@ export const layer: Layer.Layer<
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
         };
-        // Check after the context read: ingestion can settle the run while
-        // it awaits. A failed ownership read fails the start below.
-        const shouldStart =
-          input.shouldStartProviderTurn === undefined
-            ? Exit.succeed(true)
-            : yield* Effect.exit(input.shouldStartProviderTurn());
-        if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-          yield* Fiber.interrupt(providerEventFiber);
-          return;
-        }
-
         const compact =
           input.message.attachments.length === 0 &&
           input.message.text.trim().toLowerCase() === "/compact";
-        const startTurn = compact
-          ? (input.session.compactThread?.(turnInput) ??
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterTurnStartError({
-                driver: input.session.driver,
-                threadId: input.run.threadId,
-                providerThreadId: input.providerThread.id,
-                runId: input.run.id,
-                cause: "This provider does not support context compaction.",
-              }),
-            ))
-          : input.session.startTurn(turnInput);
-        yield* Effect.andThen(shouldStart, startTurn).pipe(
+        const startTurn = Effect.suspend(() =>
+          compact
+            ? (input.session.compactThread?.(turnInput) ??
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: input.session.driver,
+                  threadId: input.run.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.run.id,
+                  cause: "This provider does not support context compaction.",
+                }),
+              ))
+            : input.session.startTurn(turnInput),
+        );
+        const failBeforeNativeStart = Effect.fn("RunExecutionService.failBeforeNativeStart")(
+          function* (cause: Cause.Cause<unknown>) {
+            yield* Fiber.interrupt(providerEventFiber);
+            yield* writeFinalRunEvents({
+              run: input.run,
+              rootNode: input.rootNode,
+              checkpointScope: input.checkpointScope,
+              providerThread: yield* Ref.get(latestProviderThread),
+              attempt: input.attempt,
+              writeIfRunCurrent: { activeAttemptId: input.attempt.id, expectedStatus: "running" },
+              openRunOwnedSubagents: yield* Ref.get(openRunOwnedSubagents),
+              terminal: makeFailedTerminalEvent(
+                makeProviderFailure({ cause: Cause.squash(cause), class: "provider_error" }),
+                (yield* Ref.get(latestTurnItemOrdinal)) + 1,
+              ),
+              failureItemPersisted: false,
+              refreshAfterTurn,
+            }).pipe(
+              Effect.mapError(
+                (writeCause) =>
+                  new RunExecutionStartError({
+                    commandId: input.commandId,
+                    runId: input.run.id,
+                    cause: { start: cause, write: writeCause },
+                  }),
+              ),
+            );
+            yield* releaseOwner(owner);
+          },
+        );
+        const nativeStart = Effect.suspend(() => (owner.revoked ? Effect.void : startTurn)).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.
           Effect.tap(() =>
@@ -1750,51 +1965,88 @@ export const layer: Layer.Layer<
             ),
           ),
           Effect.catchCause((cause) =>
-            Effect.logError("orchestration V2 provider turn start failed", {
-              runId: input.run.id,
-              cause,
-            }).pipe(
-              Effect.andThen(Fiber.interrupt(providerEventFiber)),
-              Effect.andThen(Ref.get(latestProviderThread)),
-              Effect.flatMap((providerThread) =>
-                Ref.get(latestTurnItemOrdinal).pipe(
-                  Effect.flatMap((latestItemOrdinal) =>
-                    Ref.get(openRunOwnedSubagents).pipe(
-                      Effect.flatMap((openSubagents) =>
-                        writeFinalRunEvents({
-                          run: input.run,
-                          rootNode: input.rootNode,
-                          checkpointScope: input.checkpointScope,
-                          providerThread,
-                          attempt: input.attempt,
-                          writeIfRunCurrent: {
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running",
-                          },
-                          openRunOwnedSubagents: openSubagents,
-                          terminal: makeFailedTerminalEvent(
-                            makeProviderFailure({
-                              cause: Cause.squash(cause),
-                              class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
-                            }),
-                            latestItemOrdinal + 1,
-                          ),
-                          failureItemPersisted: false,
-                          refreshAfterTurn,
+            Effect.gen(function* () {
+              if (
+                !owner.revoked &&
+                !(yield* Deferred.isDone(owner.accepted)) &&
+                isRejectedGoal(Cause.squash(cause))
+              )
+                return yield* failBeforeNativeStart(cause);
+              // A failed response is not proof that native work never started.
+              return yield* new RunExecutionStartError({
+                commandId: input.commandId,
+                runId: input.run.id,
+                cause,
+              });
+            }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              owner.startPending = false;
+            }),
+          ),
+        );
+        let claimed = false;
+        let reused = false;
+        yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const fiber = yield* restore(
+              threadDispatch.withLock(
+                input.run.threadId,
+                Effect.gen(function* () {
+                  const existing = owners.get(
+                    ownerId({
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      attemptId: input.attemptId,
+                    }),
+                  );
+                  if (existing !== undefined) {
+                    reused = true;
+                    return existing.fiber;
+                  }
+                  if (
+                    input.shouldStartProviderTurn !== undefined &&
+                    !(yield* input.shouldStartProviderTurn())
+                  )
+                    return undefined;
+                  return yield* Effect.uninterruptibleMask((restoreStart) =>
+                    Effect.gen(function* () {
+                      owners.set(
+                        ownerId({
+                          threadId: input.run.threadId,
+                          runId: input.run.id,
+                          attemptId: input.attemptId,
                         }),
-                      ),
-                    ),
-                  ),
-                ),
+                        owner,
+                      );
+                      claimed = true;
+                      owner.fiber = yield* restoreStart(nativeStart).pipe(Effect.forkIn(scope));
+                      return owner.fiber;
+                    }),
+                  );
+                }),
               ),
-              Effect.mapError(
-                (writeCause) =>
-                  new RunExecutionStartError({
-                    commandId: input.commandId,
-                    runId: input.run.id,
-                    cause: { start: cause, write: writeCause },
-                  }),
-              ),
+            );
+            if (fiber !== undefined) yield* restore(Fiber.join(fiber));
+          }),
+        ).pipe(
+          Effect.catchCauseIf(
+            (cause) => !claimed && !reused && !Cause.hasInterruptsOnly(cause),
+            failBeforeNativeStart,
+          ),
+          Effect.mapError((cause) =>
+            isRunExecutionStartError(cause)
+              ? cause
+              : new RunExecutionStartError({
+                  commandId: input.commandId,
+                  runId: input.run.id,
+                  cause,
+                }),
+          ),
+          Effect.ensuring(
+            Effect.suspend(() =>
+              claimed ? Effect.void : Fiber.interrupt(providerEventFiber).pipe(Effect.asVoid),
             ),
           ),
         );
