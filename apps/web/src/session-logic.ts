@@ -52,7 +52,6 @@ import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 
-export { formatDuration } from "@t3tools/shared/orchestrationTiming";
 export {
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolFailure,
