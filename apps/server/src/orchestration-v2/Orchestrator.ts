@@ -3356,6 +3356,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} branch changed before the metadata update could be applied.`,
       });
     }
+    const projectChanged =
+      command.type === "thread.metadata.update" &&
+      command.projectId !== undefined &&
+      command.projectId !== thread.projectId;
+    const workspaceChanged =
+      command.type === "thread.metadata.update" &&
+      (projectChanged ||
+        (command.worktreePath !== undefined && command.worktreePath !== thread.worktreePath));
+    if (workspaceChanged) {
+      const records = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"])
+        .pipe(mapDispatchError(command));
+      if (
+        (projectChanged ||
+          (command.type === "thread.metadata.update" && command.expectedIdle === true)) &&
+        records.runs.some((run) => isBlockingRun(run) || run.status === "queued")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Stop the current turn and cancel queued turns before changing workspace.",
+        });
+      }
+      if (isProviderNativeSubagentThread(thread)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "A provider-managed subagent cannot change workspace.",
+        });
+      }
+    }
+    if (projectChanged && command.type === "thread.metadata.update") {
+      const project = yield* projects.get(command.projectId!).pipe(mapDispatchError(command));
+      if (Option.isNone(project)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The destination project does not exist.",
+        });
+      }
+    }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
@@ -3549,9 +3590,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "provider.switch" ||
       command.type === "thread.archive" ||
       command.type === "thread.settle" ||
-      (command.type === "thread.metadata.update" &&
-        command.worktreePath !== undefined &&
-        command.worktreePath !== thread.worktreePath);
+      workspaceChanged;
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
@@ -3848,6 +3887,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   };
           return {
             ...thread,
+            ...(projectChanged
+              ? {
+                  projectId: command.projectId!,
+                  branch: null,
+                  worktreePath: null,
+                  branchPullRequest: null,
+                }
+              : {}),
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
@@ -4367,9 +4414,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-        : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+        : workspaceChanged
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])
