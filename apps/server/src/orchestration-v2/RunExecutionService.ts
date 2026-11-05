@@ -54,6 +54,7 @@ import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   knownProviderFailureMessage,
+  refusedBeforePrompt,
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
@@ -630,6 +631,7 @@ interface StartOwner {
   revoked: boolean;
   turn?: OrchestrationV2ProviderTurn;
   fiber?: Fiber.Fiber<void, RunExecutionServiceV2Error>;
+  unsubscribeClosed?: Effect.Effect<void>;
 }
 
 export interface RunExecutionServiceV2Shape {
@@ -680,8 +682,9 @@ export const layer: Layer.Layer<
         runId: owner.input.run.id,
         attemptId: owner.input.attemptId,
       };
-      yield* Deferred.succeed(owner.terminal, undefined);
       if (owners.get(ownerId(key)) === owner) owners.delete(ownerId(key));
+      yield* owner.unsubscribeClosed ?? Effect.void;
+      yield* Deferred.succeed(owner.terminal, undefined);
     });
     const checkpointService = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
@@ -1024,12 +1027,16 @@ export const layer: Layer.Layer<
           }
           if (yield* Deferred.isDone(owner.terminal)) return;
           const turn = owner.turn ?? accepted;
-          yield* owner.input.session.interruptTurn({
-            providerThread: owner.input.providerThread,
-            providerTurnId: turn.id,
-            requestRuntimeRestart: true,
-          });
-          yield* Deferred.await(owner.terminal);
+          yield* owner.input.session
+            .interruptTurn({
+              providerThread: owner.input.providerThread,
+              providerTurnId: turn.id,
+              requestRuntimeRestart: true,
+            })
+            .pipe(
+              Effect.andThen(Deferred.await(owner.terminal)),
+              Effect.raceFirst(Deferred.await(owner.terminal)),
+            );
           return {
             providerSessionId: owner.input.providerSessionId,
             providerThreadId: owner.input.providerThread.id,
@@ -1178,6 +1185,46 @@ export const layer: Layer.Layer<
         if (responseStreamingMode === null) {
           return;
         }
+        const compact =
+          input.message.attachments.length === 0 &&
+          input.message.text.trim().toLowerCase() === "/compact";
+        const compactThread = input.session.compactThread;
+        if (compact && compactThread === undefined) {
+          yield* writeFinalRunEvents({
+            run: input.run,
+            rootNode: input.rootNode,
+            checkpointScope: input.checkpointScope,
+            providerThread: input.providerThread,
+            attempt: input.attempt,
+            writeIfRunCurrent: { activeAttemptId: input.attemptId, expectedStatus: "running" },
+            terminal: makeFailedTerminalEvent(
+              makeProviderFailure({
+                cause: new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: input.session.driver,
+                  threadId: input.run.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.run.id,
+                  cause: "This provider does not support context compaction.",
+                }),
+                class: "provider_error",
+              }),
+              input.providerTurnOrdinal * 100 + 1,
+            ),
+            failureItemPersisted: false,
+            refreshAfterTurn,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new RunExecutionStartError({
+                  commandId: input.commandId,
+                  runId: input.run.id,
+                  cause,
+                }),
+            ),
+          );
+          return;
+        }
+        const sessionClosed = yield* Deferred.make<void>();
         const owner: StartOwner = {
           input,
           accepted: yield* Deferred.make<OrchestrationV2ProviderTurn>(),
@@ -1510,6 +1557,15 @@ export const layer: Layer.Layer<
         const providerEventFiber = yield* eventSubscription.events.pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
+              if (
+                event.type === "provider_session.updated" &&
+                event.providerSession.id === input.providerSessionId &&
+                event.providerSession.status === "stopped"
+              ) {
+                owner.revoked = true;
+                owner.fiber?.interruptUnsafe();
+                yield* Deferred.succeed(sessionClosed, undefined);
+              }
               const previous = yield* Ref.get(eventRouting);
               const [accepted, routing] = routeProviderEvent(event, routeIdentity, previous);
               yield* Ref.set(eventRouting, routing);
@@ -1691,12 +1747,6 @@ export const layer: Layer.Layer<
                   Math.max(current, event.turnItem.ordinal),
                 );
               }
-              if (
-                event.type === "provider_session.updated" &&
-                event.providerSession.id === input.providerSessionId &&
-                event.providerSession.status === "stopped"
-              )
-                yield* releaseOwner(owner);
               if (event.type === "turn.terminal") {
                 yield* Ref.set(terminalEvent, event);
                 yield* Ref.set(rootTerminalSeen, true);
@@ -1718,7 +1768,13 @@ export const layer: Layer.Layer<
               if (yield* agentTurnsSettled) yield* endPreviewActivity;
             }),
           ),
-          Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
+          Stream.takeUntilEffect(() =>
+            Deferred.isDone(sessionClosed).pipe(
+              Effect.flatMap((closed) =>
+                closed ? Effect.succeed(true) : shouldStopProviderEventIngestion,
+              ),
+            ),
+          ),
           Stream.runDrain,
           Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
           Effect.flatMap(() =>
@@ -1765,6 +1821,7 @@ export const layer: Layer.Layer<
                         })
                         .pipe(
                           Effect.as(true),
+                          Effect.raceFirst(Deferred.await(sessionClosed).pipe(Effect.as(true))),
                           Effect.catchCauseIf(
                             (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
                             (interruptCause) =>
@@ -1853,6 +1910,9 @@ export const layer: Layer.Layer<
                   Effect.forkIn(scope),
                   Effect.flatMap(Fiber.join),
                 );
+                if ((yield* Deferred.isDone(sessionClosed)) || abandonedProviderTurn !== null) {
+                  yield* releaseOwner(owner);
+                }
               }),
           ),
           Effect.ensuring(endPreviewActivity),
@@ -1908,21 +1968,9 @@ export const layer: Layer.Layer<
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
         };
-        const compact =
-          input.message.attachments.length === 0 &&
-          input.message.text.trim().toLowerCase() === "/compact";
         const startTurn = Effect.suspend(() =>
-          compact
-            ? (input.session.compactThread?.(turnInput) ??
-              Effect.fail(
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: input.session.driver,
-                  threadId: input.run.threadId,
-                  providerThreadId: input.providerThread.id,
-                  runId: input.run.id,
-                  cause: "This provider does not support context compaction.",
-                }),
-              ))
+          compact && compactThread !== undefined
+            ? compactThread(turnInput)
             : input.session.startTurn(turnInput),
         );
         const failBeforeNativeStart = Effect.fn("RunExecutionService.failBeforeNativeStart")(
@@ -1969,7 +2017,7 @@ export const layer: Layer.Layer<
               if (
                 !owner.revoked &&
                 !(yield* Deferred.isDone(owner.accepted)) &&
-                isRejectedGoal(Cause.squash(cause))
+                (isRejectedGoal(Cause.squash(cause)) || refusedBeforePrompt(Cause.squash(cause)))
               )
                 return yield* failBeforeNativeStart(cause);
               // A failed response is not proof that native work never started.
@@ -1990,6 +2038,17 @@ export const layer: Layer.Layer<
         let reused = false;
         yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
+            if (input.session.onSessionClosed !== undefined) {
+              owner.unsubscribeClosed = yield* input.session.onSessionClosed(
+                Effect.gen(function* () {
+                  owner.revoked = true;
+                  owner.fiber?.interruptUnsafe();
+                  yield* Deferred.succeed(sessionClosed, undefined);
+                  yield* Fiber.await(providerEventFiber);
+                  yield* releaseOwner(owner);
+                }),
+              );
+            }
             const fiber = yield* restore(
               threadDispatch.withLock(
                 input.run.threadId,
@@ -2006,8 +2065,9 @@ export const layer: Layer.Layer<
                     return existing.fiber;
                   }
                   if (
-                    input.shouldStartProviderTurn !== undefined &&
-                    !(yield* input.shouldStartProviderTurn())
+                    owner.revoked ||
+                    (input.shouldStartProviderTurn !== undefined &&
+                      !(yield* input.shouldStartProviderTurn()))
                   )
                     return undefined;
                   return yield* Effect.uninterruptibleMask((restoreStart) =>
@@ -2046,7 +2106,12 @@ export const layer: Layer.Layer<
           ),
           Effect.ensuring(
             Effect.suspend(() =>
-              claimed ? Effect.void : Fiber.interrupt(providerEventFiber).pipe(Effect.asVoid),
+              claimed
+                ? Effect.void
+                : Fiber.interrupt(providerEventFiber).pipe(
+                    Effect.andThen(owner.unsubscribeClosed ?? Effect.void),
+                    Effect.asVoid,
+                  ),
             ),
           ),
         );

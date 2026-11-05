@@ -12,6 +12,7 @@ import {
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Logger from "effect/Logger";
 import * as References from "effect/References";
@@ -33,6 +34,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -49,11 +51,17 @@ it.effect.each([
   "interrupt-timeout",
   "identity-timeout",
   "identity-timeout-force",
+  "unsupported-compact",
+  "prompt-refusal",
+  "manager-release",
+  "manager-release-interrupt",
+  "provider-stopped",
+  "stream-ended",
 ] as const)("Stop crosses native start: %s", (scenario) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`start-stop-${scenario}`);
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
       const entered = yield* Deferred.make<void>();
       const accept = yield* Deferred.make<void>();
       const nativeAccepted = yield* Deferred.make<void>();
@@ -94,6 +102,18 @@ it.effect.each([
               turn,
             ) =>
               Effect.gen(function* () {
+                if (scenario === "prompt-refusal") {
+                  return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver,
+                    threadId: turn.threadId,
+                    providerThreadId: turn.providerThread.id,
+                    runId: turn.runId,
+                    cause: {
+                      _tag: "ClaudeAppendSystemPromptFileError",
+                      path: "/task-owned/missing-file",
+                    },
+                  });
+                }
                 yield* Deferred.succeed(entered, undefined);
                 yield* Deferred.await(accept);
                 assert.isUndefined(active, "native turns must never overlap");
@@ -290,6 +310,15 @@ it.effect.each([
         const originalStart = execution.startRootRun;
         let staleInput: RunExecutionService.RunExecutionServiceV2StartRootRunInput | undefined;
         using _beforeOwnership = vi.spyOn(execution, "startRootRun").mockImplementation((input) => {
+          if (scenario === "unsupported-compact") {
+            const session = { ...input.session };
+            delete session.compactThread;
+            return originalStart({
+              ...input,
+              message: { ...input.message, text: "/compact" },
+              session,
+            });
+          }
           if (scenario !== "before-ownership") return originalStart(input);
           staleInput = input;
           return Deferred.succeed(beforeOwnership, undefined).pipe(Effect.andThen(Effect.never));
@@ -312,6 +341,26 @@ it.effect.each([
         });
         yield* send("first");
         const startup = yield* worker.drain(1).pipe(Effect.forkScoped);
+        if (scenario === "unsupported-compact" || scenario === "prompt-refusal") {
+          yield* Fiber.join(startup);
+          const failed = yield* orchestrator.getThreadProjection(threadId);
+          const run = failed.runs[0]!;
+          assert.equal(run.status, "failed");
+          assert.equal(failed.attempts[0]?.status, "failed");
+          assert.equal(failed.nodes.find((node) => node.id === run.rootNodeId)?.status, "failed");
+          assert.isTrue(
+            Option.isNone(
+              yield* execution.getStartOwnership({
+                threadId,
+                runId: run.id,
+                attemptId: run.activeAttemptId!,
+              }),
+            ),
+          );
+          assert.equal(starts, 0);
+          assert.deepEqual(interrupts, []);
+          return;
+        }
         if (scenario === "before-ownership") {
           yield* Deferred.await(beforeOwnership);
           yield* orchestrator.dispatch({
@@ -333,6 +382,75 @@ it.effect.each([
         if (scenario === "queued-promotion") yield* send("promoted", true);
         const initial = yield* orchestrator.getThreadProjection(threadId);
         const run = initial.runs.find((run) => run.status === "running")!;
+        if (
+          [
+            "manager-release",
+            "manager-release-interrupt",
+            "provider-stopped",
+            "stream-ended",
+          ].includes(scenario)
+        ) {
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const providerSessionId = initial.providerThreads.find(
+            (thread) => thread.id === run.providerThreadId,
+          )!.providerSessionId!;
+          const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
+          if (scenario === "manager-release-interrupt") {
+            const accepted = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider-turn.updated" && event.payload.status === "running",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            yield* Deferred.succeed(accept, undefined);
+            yield* Fiber.join(accepted);
+          }
+          const waiter = yield* Deferred.succeed(ownedWait, undefined).pipe(
+            Effect.andThen(
+              execution.interruptOwnedStart({
+                threadId,
+                runId: run.id,
+                attemptId: run.activeAttemptId!,
+              }),
+            ),
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(ownedWait);
+          if (scenario === "manager-release-interrupt") yield* Deferred.await(interruptCalled);
+          if (scenario === "provider-stopped" || scenario === "stream-ended") {
+            if (scenario === "provider-stopped")
+              yield* Queue.offer(events, {
+                type: "provider_session.updated",
+                driver,
+                providerSession: { ...runtime.providerSession, status: "stopped" },
+              });
+            yield* Queue.end(events);
+          } else {
+            yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+          }
+          yield* Fiber.join(waiter);
+          yield* Fiber.join(startup);
+          assert.isTrue(
+            Option.isNone(
+              yield* execution.getStartOwnership({
+                threadId,
+                runId: run.id,
+                attemptId: run.activeAttemptId!,
+              }),
+            ),
+          );
+          const failed = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(failed.runs[0]?.status, "failed");
+          assert.equal(failed.attempts[0]?.status, "failed");
+          assert.isFalse(failed.turnItems.some((item) => item.type === "run_interrupt_result"));
+          yield* Deferred.succeed(accept, undefined);
+          yield* Deferred.succeed(releaseStart, undefined);
+          assert.equal(starts, scenario === "manager-release-interrupt" ? 1 : 0);
+          return;
+        }
         const original = store.getThreadRecords;
         let armed = true;
         using _snapshot = vi.spyOn(store, "getThreadRecords").mockImplementation((...args) =>
@@ -448,6 +566,15 @@ it.effect.each([
             assert.deepEqual(interrupts, []);
             const outcome = yield* threads.forceStopThread({ threadId, runId: run.id });
             assert.equal(outcome.outcome, "released");
+            assert.isTrue(
+              Option.isNone(
+                yield* execution.getStartOwnership({
+                  threadId,
+                  runId: run.id,
+                  attemptId: run.activeAttemptId!,
+                }),
+              ),
+            );
             const forced = yield* orchestrator.getThreadProjection(threadId);
             assert.equal(forced.runs[0]?.status, "interrupted");
             assert.isTrue(

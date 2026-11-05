@@ -22,7 +22,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -54,6 +53,7 @@ import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
   makeProviderFailure,
+  refusedBeforePrompt,
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -97,23 +97,6 @@ const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
-
-/**
- * Claude refuses these before it reads the prompt: replacing a process running background work,
- * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
- * that never answers while the query opens.
- */
-const PROMPT_REFUSAL_TAGS = [
-  "ClaudeBackgroundWorkBlocksQueryReplacementError",
-  "ClaudeAppendSystemPromptFileError",
-  "ClaudeAppendSystemPromptMissingValueError",
-  "ClaudeSettingsLaunchArgError",
-  "ClaudeMcpRegistrationTimeoutError",
-] as const;
-
-const refusedBeforePrompt = (error: unknown): boolean =>
-  PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
-  (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {

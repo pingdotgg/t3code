@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
+import * as Predicate from "effect/Predicate";
 
 import * as IdAllocator from "./IdAllocator.ts";
 import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
@@ -34,6 +35,19 @@ export class ContextHandoffBackgroundWorkError extends Schema.TaggedError<Contex
     return "The target provider still has background work running. Wait for it to finish or stop it before retrying the handoff.";
   }
 }
+
+// These Claude refusals happen before the process reads the prompt.
+const PROMPT_REFUSAL_TAGS = [
+  "ClaudeBackgroundWorkBlocksQueryReplacementError",
+  "ClaudeAppendSystemPromptFileError",
+  "ClaudeAppendSystemPromptMissingValueError",
+  "ClaudeSettingsLaunchArgError",
+  "ClaudeMcpRegistrationTimeoutError",
+] as const;
+
+export const refusedBeforePrompt = (error: unknown): boolean =>
+  PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;

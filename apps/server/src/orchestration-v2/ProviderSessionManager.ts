@@ -226,6 +226,7 @@ interface LiveSessionEntry {
   readonly eventSubscribers: Ref.Ref<
     ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
   >;
+  readonly closeObservers: Ref.Ref<ReadonlySet<Effect.Effect<void>> | null>;
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
@@ -971,9 +972,11 @@ export const layerWithOptions = (
       const closeScopeWithin = Effect.fn("ProviderSessionManager.closeScopeWithin")(function* (
         scope: Scope.Closeable,
         annotations: { readonly providerSessionId?: ProviderSessionId; readonly reason: string },
+        onClosed: Effect.Effect<void> = Effect.void,
       ) {
         const closeFiber = yield* Scope.close(scope, Exit.void).pipe(
           Effect.exit,
+          Effect.tap((exit) => (Exit.isSuccess(exit) ? onClosed : Effect.void)),
           Effect.forkDetach({ startImmediately: true }),
         );
         const closeExit = yield* Fiber.join(closeFiber).pipe(
@@ -1039,10 +1042,18 @@ export const layerWithOptions = (
                       input.detail ?? `Provider session released: ${input.reason}.`,
                     );
                   }
-                  const closeExit = yield* closeScopeWithin(entry.scope, {
-                    providerSessionId: input.providerSessionId,
-                    reason: input.reason,
-                  });
+                  const closeExit = yield* closeScopeWithin(
+                    entry.scope,
+                    { providerSessionId: input.providerSessionId, reason: input.reason },
+                    Ref.getAndSet(entry.closeObservers, null).pipe(
+                      Effect.flatMap((observers) =>
+                        Effect.forEach(observers ?? [], (observer) => observer, {
+                          concurrency: "unbounded",
+                          discard: true,
+                        }),
+                      ),
+                    ),
+                  );
                   const records = {
                     entry,
                     reason: input.reason,
@@ -1695,6 +1706,7 @@ export const layerWithOptions = (
         eventSubscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
         >,
+        closeObservers: LiveSessionEntry["closeObservers"],
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
@@ -1711,6 +1723,22 @@ export const layerWithOptions = (
         return {
           ...runtime,
           subscribeEvents,
+          onSessionClosed: (observer) =>
+            Ref.modify(closeObservers, (current) =>
+              current === null
+                ? ([true, current] as const)
+                : ([false, new Set([...current, observer])] as const),
+            ).pipe(
+              Effect.tap((closed) => (closed ? observer : Effect.void)),
+              Effect.as(
+                Ref.update(closeObservers, (current) => {
+                  if (current === null) return null;
+                  const next = new Set(current);
+                  next.delete(observer);
+                  return next;
+                }),
+              ),
+            ),
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
           ),
@@ -2232,7 +2260,10 @@ export const layerWithOptions = (
               const eventSubscribers = yield* Ref.make<
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
-              const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
+              const closeObservers = yield* Ref.make<ReadonlySet<Effect.Effect<void>> | null>(
+                new Set(),
+              );
+              const exposedRuntime = decorateRuntime(runtime, eventSubscribers, closeObservers);
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
@@ -2246,6 +2277,7 @@ export const layerWithOptions = (
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
+                closeObservers,
                 requestEventPermit: yield* Semaphore.make(1),
                 scope: sessionScope,
                 idleGeneration: 0,
