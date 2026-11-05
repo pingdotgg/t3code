@@ -68,6 +68,9 @@ export function createBrowserVoiceInputPlatform(input: {
         );
       }
     };
+    if (!status.supportsStreaming && !status.supportsBufferedStreaming) {
+      return { locale, transcribe: transcribeRecording };
+    }
     const url = await runtime.runPromise(getEnvironmentSpeechStreamUrl(input.prepared), options);
     return {
       locale,
