@@ -24,6 +24,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -36,6 +37,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ThreadManagementService from "../ThreadManagementService.ts";
 import { SIDE_CHAT_OPENING_FRAMING } from "../sideChat/sideChatText.ts";
 import { makePromptRecordingAdapter } from "./PromptRecordingAdapter.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
@@ -74,13 +76,21 @@ const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
 };
 
 /** The orchestrator with a paused adapter and an effect worker that runs only when drained. */
-function openHarness() {
+function openHarness(
+  wrapThreadManagementDispatch?: (
+    dispatch: ThreadManagementService.ThreadManagementService["Service"]["dispatch"],
+  ) => ThreadManagementService.ThreadManagementService["Service"]["dispatch"],
+) {
   const layerDatabase = SqlitePersistence.layerMemory;
   return Layer.mergeAll(
     ProviderReplayHarness.layerWithRegistry(
       { name: "side-chat-open" },
       ProviderAdapterRegistry.layerFromAdapters([adapter]),
-      { databaseLayer: layerDatabase, runEffectWorker: false },
+      {
+        databaseLayer: layerDatabase,
+        runEffectWorker: false,
+        ...(wrapThreadManagementDispatch === undefined ? {} : { wrapThreadManagementDispatch }),
+      },
     ),
     EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   );
@@ -1234,6 +1244,127 @@ describe("side chat cascade", () => {
       assert.isNull(yield* orchestrator.getThreadShell(space));
       assert.isNull(yield* orchestrator.getThreadShell(box));
     }).pipe(Effect.provide(openHarness())),
+  );
+
+  it.effect("does not retry a side-chat archive the server refused", () =>
+    Effect.gen(function* () {
+      const sideChat = ThreadId.make("thread:side-chat:archive-refused");
+      const layer = openHarness(
+        (dispatch) => (command) =>
+          command.type === "thread.archive" && command.threadId === sideChat
+            ? Effect.fail(
+                new Orchestrator.OrchestratorCommandRejectedError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                }),
+              )
+            : dispatch(command),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* createLesson();
+        yield* seedSideChatThread({
+          threadId: sideChat,
+          anchorThreadId: LESSON_THREAD_ID,
+          sideChat: pendingSideChat({
+            anchor: observationAnchor(),
+            excerpt: OBSERVATION_EXCERPT,
+            requestId: "command:side-chat:open-archive-refused",
+          }),
+        });
+        const cascadeId = CommandId.make("command:side-chat:archive-refused");
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: cascadeId,
+          threadId: LESSON_THREAD_ID,
+        });
+        yield* worker.drain();
+        const cascade = (yield* outbox.listByCommandId(cascadeId)).find(
+          (effect) => effect.request.type === "side-chat.cascade",
+        );
+        assert.equal(cascade?.status, "succeeded");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("retries a side-chat archive after a child dispatch fails", () =>
+    Effect.gen(function* () {
+      const failOnce = yield* Ref.make(true);
+      const dispatches = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+      const layer = openHarness(
+        (dispatch) => (command) =>
+          command.type === "thread.archive" && command.threadId !== LESSON_THREAD_ID
+            ? Effect.gen(function* () {
+                yield* Ref.update(dispatches, (ids) => [...ids, command.threadId]);
+                const shouldFail =
+                  command.threadId === ThreadId.make("thread:side-chat:archive-retry-second") &&
+                  (yield* Ref.getAndSet(failOnce, false));
+                if (shouldFail) {
+                  return yield* new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "simulated child dispatch failure",
+                  });
+                }
+                return yield* dispatch(command);
+              })
+            : dispatch(command),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const firstSideChat = ThreadId.make("thread:side-chat:archive-retry-first");
+        const secondSideChat = ThreadId.make("thread:side-chat:archive-retry-second");
+
+        yield* createLesson();
+        yield* seedSideChatThread({
+          threadId: firstSideChat,
+          anchorThreadId: LESSON_THREAD_ID,
+          sideChat: pendingSideChat({
+            anchor: observationAnchor(),
+            excerpt: OBSERVATION_EXCERPT,
+            requestId: "command:side-chat:open-archive-retry",
+          }),
+        });
+        yield* seedSideChatThread({
+          threadId: secondSideChat,
+          anchorThreadId: LESSON_THREAD_ID,
+          sideChat: pendingSideChat({
+            anchor: observationAnchor(),
+            excerpt: OBSERVATION_EXCERPT,
+            requestId: "command:side-chat:open-archive-retry-second",
+          }),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("command:side-chat:archive-retry"),
+          threadId: LESSON_THREAD_ID,
+        });
+
+        yield* worker.drain();
+        const cascadeId = CommandId.make("command:side-chat:archive-retry");
+        const firstAttempt = (yield* outbox.listByCommandId(cascadeId)).find(
+          (effect) => effect.request.type === "side-chat.cascade",
+        );
+        assert.equal(firstAttempt?.status, "pending");
+        assert.isNotNull((yield* readThread(firstSideChat)).archivedAt);
+        assert.isNull((yield* readThread(secondSideChat)).archivedAt);
+
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* worker.drain();
+        const retried = (yield* outbox.listByCommandId(cascadeId)).find(
+          (effect) => effect.request.type === "side-chat.cascade",
+        );
+        assert.equal(retried?.status, "succeeded");
+        assert.isNotNull((yield* readThread(secondSideChat)).archivedAt);
+        const attemptedThreadIds = yield* Ref.get(dispatches);
+        assert.equal(attemptedThreadIds.filter((id) => id === firstSideChat).length, 1);
+        assert.equal(attemptedThreadIds.filter((id) => id === secondSideChat).length, 2);
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("refuses to unarchive a side chat while its lesson is archived", () =>

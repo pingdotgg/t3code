@@ -288,6 +288,9 @@ export function layerWithRegistry<Error>(
     readonly sideChatTextGeneration?: TextGeneration.TextGeneration["Service"]["generateSideChatText"];
     readonly providers?: ReadonlyArray<import("@t3tools/contracts").ServerProvider>;
     readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+    readonly wrapThreadManagementDispatch?: (
+      dispatch: ThreadManagementService.ThreadManagementService["Service"]["dispatch"],
+    ) => ThreadManagementService.ThreadManagementService["Service"]["dispatch"];
     readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Layer.Layer<
@@ -507,7 +510,8 @@ export function layerWithRegistry<Error>(
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       return Layer.mock(ThreadManagementService.ThreadManagementService)({
-        dispatch: orchestrator.dispatch,
+        dispatch:
+          options.wrapThreadManagementDispatch?.(orchestrator.dispatch) ?? orchestrator.dispatch,
         getThreadRecords: orchestrator.getThreadRecords,
         getThreadProjection: orchestrator.getThreadProjection,
         recoverDelegatedTask: orchestrator.recoverDelegatedTask,
