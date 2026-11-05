@@ -31,6 +31,28 @@ describe("GitLab change request URLs", () => {
     expect(parse("https://gitlab.com/t3code/-/merge_requests/12")).toBeNull();
   });
 
+  it("recognizes only merge request URLs it can parse", () => {
+    for (const url of [
+      "https://gitlab.com/g/p?x=/-/merge_requests/5",
+      "https://gitlab.com/g/p#/-/merge_requests/5",
+      "https://gitlab.com?x=/g/p/-/merge_requests/5",
+      "https://gitlab.com#/g/p/-/merge_requests/5",
+      "https://gitlab.com/t3code/-/merge_requests/12",
+      "https://gitlab.com/g//-/merge_requests/5",
+    ]) {
+      expect(definition.isChangeRequestReference(url), url).toBe(false);
+      expect(parse(url), url).toBeNull();
+    }
+    for (const url of [
+      "https://code.acme.test/a/b/c/-/merge_requests/7?tab=diffs",
+      "http://git.internal/a/b/c/-/merge_requests/7#note_1",
+      "https://code.acme.test/a/b/c/-/merge_requests/7/diffs",
+    ]) {
+      expect(definition.isChangeRequestReference(url), url).toBe(true);
+      expect(parse(url), url).toMatchObject({ repository: "a/b/c", number: 7 });
+    }
+  });
+
   it("builds merge request URLs below the repository", () => {
     expect(
       definition.changeRequestUrl({
@@ -39,6 +61,22 @@ describe("GitLab change request URLs", () => {
         number: 4,
       }),
     ).toBe("https://gitlab.com/group/sub/project/-/merge_requests/4");
+    expect(
+      definition.changeRequestUrl({
+        host: "gitlab.internal",
+        repository: "team/app",
+        number: 5,
+        remoteUrl: "http://gitlab.internal:8080/team/app.git",
+      }),
+    ).toBe("http://gitlab.internal:8080/team/app/-/merge_requests/5");
+    expect(
+      definition.changeRequestUrl({
+        host: "gitlab.internal",
+        repository: "team/app",
+        number: 5,
+        remoteUrl: "git@gitlab.internal:team/app.git",
+      }),
+    ).toBe("https://gitlab.internal/team/app/-/merge_requests/5");
     expect(
       definition.changeRequestUrl({
         host: "gitlab.com",

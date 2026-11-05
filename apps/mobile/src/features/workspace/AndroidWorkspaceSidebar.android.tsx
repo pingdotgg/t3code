@@ -1,49 +1,72 @@
+import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
-import { useMemo, type ReactNode } from "react";
+import { useNavigationState } from "@react-navigation/native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { FLOATING_TABS } from "./floating-workspace-tabs";
 import { View } from "react-native";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
+import { selectedPullRequestKey } from "../pull-requests/pullRequestSelection";
+import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
+import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
+import { WorkspaceThreadSidebar } from "./WorkspaceThreadSidebar";
+import { WorkspaceAppBarScope } from "../../components/ui/WorkspaceAppBar.android";
 
-export function AndroidWorkspaceSidebar(props: {
-  readonly children: ReactNode;
-  readonly onRequestVisibility: () => void;
-  readonly selectedPullRequestKey: string | null;
-}) {
+/** The Home route in the sidebar column: the selected tab's list. */
+export function AndroidWorkspaceSidebar() {
+  const floatingTabsEnabled = useAndroidFloatingTabs();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
-  const context = useMemo(() => ({ ...workspace, bottomClearance: 16 }), [workspace]);
+  const insets = useSafeAreaInsets();
+  const { fabSize } = useAndroidControlSizing();
+  const { revealPrimarySidebar, startNewTask } = useAdaptiveWorkspaceLayout();
+  const selectedPullRequest = useNavigationState(selectedPullRequestKey);
+  // Settings and Usage cover the sidebar.
+  const coveredByPage =
+    (useAndroidWorkspaceRoot()?.settingsOpen ?? false) || workspace.state.selectedTab === "usage";
+  const bottomClearance = floatingTabsEnabled
+    ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
+    : 16;
+  const context = { ...workspace, bottomClearance };
   if (enabled.length === 0) return <WorkspaceNoTabs />;
   return (
-    <WorkspaceTabPanes
-      tabs={NAVIGATION_TAB_ORDER}
-      selected={workspace.state.selectedTab}
-      renderTab={(tab) =>
-        tab === "threads" ? (
-          props.children
-        ) : tab !== "pullRequests" ? (
-          <View className="flex-1 bg-screen" />
-        ) : (
-          <WorkspaceTabsContext value={context}>
-            <PullRequestFilterMenuProvider>
-              <View className="flex-1 bg-header">
-                <PullRequestToolbar onRequestVisibility={props.onRequestVisibility} />
-                <ScreenContent insetHorizontal>
-                  <PullRequestsScreen
-                    sidebar
-                    selectedPullRequestKey={props.selectedPullRequestKey}
-                  />
-                </ScreenContent>
-              </View>
-            </PullRequestFilterMenuProvider>
-          </WorkspaceTabsContext>
-        )
-      }
-    />
+    <WorkspaceAppBarScope>
+      <WorkspaceTabPanes
+        tabs={NAVIGATION_TAB_ORDER}
+        selected={workspace.state.selectedTab}
+        renderTab={(tab) =>
+          tab === "threads" ? (
+            <AndroidHomeFabLayout sidebar disabled={coveredByPage} onStartNewTask={startNewTask}>
+              <WorkspaceThreadSidebar />
+            </AndroidHomeFabLayout>
+          ) : tab !== "pullRequests" ? (
+            <View className="flex-1 bg-screen" />
+          ) : (
+            <WorkspaceTabsContext value={context}>
+              <PullRequestsScreen
+                sidebar
+                selectedPullRequestKey={selectedPullRequest}
+                renderFrame={(filters, list) => (
+                  <View className="flex-1 bg-header">
+                    <PullRequestToolbar
+                      filters={filters}
+                      onRequestVisibility={revealPrimarySidebar}
+                    />
+                    <ScreenContent insetHorizontal>{list}</ScreenContent>
+                  </View>
+                )}
+              />
+            </WorkspaceTabsContext>
+          )
+        }
+      />
+    </WorkspaceAppBarScope>
   );
 }
