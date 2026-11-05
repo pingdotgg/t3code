@@ -503,44 +503,64 @@ export const makeProviderInstanceRegistry = Effect.fn(
       );
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does
-  // not restart providers whose credentials are the same.
-  const reloadSecrets: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reloadSecrets"] =
-    Effect.fn("ProviderInstanceRegistry.reloadSecrets")(
-      function* (instanceId) {
-        const configMap = yield* Ref.get(configMapRef);
-        const targets = yield* Effect.filter(Object.entries(configMap), ([rawInstanceId, entry]) =>
-          (instanceId === undefined || rawInstanceId === instanceId) &&
-          secretReferencesOf(driversById, entry).length > 0
-            ? isEntryEnabled(driversById, entry)
-            : Effect.succeed(false),
-        );
-        if (targets.length === 0) return;
-        const resolver = yield* SecretResolver.SecretResolver;
-        const references = targets.flatMap(([, entry]) => secretReferencesOf(driversById, entry));
-        yield* resolver.invalidate(references);
-        yield* resolver.read(references);
-        const live = yield* Ref.get(entries);
-        const rebuild = new Set<ProviderInstanceId>();
-        for (const [rawInstanceId, entry] of targets) {
-          const current = live.get(ProviderInstanceId.make(rawInstanceId));
-          if (current === undefined) {
-            rebuild.add(ProviderInstanceId.make(rawInstanceId));
-            continue;
-          }
-          const { secrets, unreadable } = yield* readInstanceSecrets(
-            driversById.get(entry.driver),
-            entry,
-          );
-          // A failed re-read keeps the working instance and the value it already holds.
-          if (unreadable.length === 0 && !Equal.equals(secrets, current.secrets)) {
-            rebuild.add(current.instance.instanceId);
-          }
+  // not restart providers whose credentials are the same. `fresh` drops the cached values first;
+  // without it the values a caller just read are used as they are.
+  const reloadWhere = Effect.fn("ProviderInstanceRegistry.reloadWhere")(
+    function* (
+      select: (rawInstanceId: string, entry: ProviderInstanceConfig) => boolean,
+      fresh: boolean,
+    ) {
+      const configMap = yield* Ref.get(configMapRef);
+      const targets = yield* Effect.filter(Object.entries(configMap), ([rawInstanceId, entry]) =>
+        select(rawInstanceId, entry) && secretReferencesOf(driversById, entry).length > 0
+          ? isEntryEnabled(driversById, entry)
+          : Effect.succeed(false),
+      );
+      if (targets.length === 0) return [];
+      const resolver = yield* SecretResolver.SecretResolver;
+      const references = targets.flatMap(([, entry]) => secretReferencesOf(driversById, entry));
+      if (fresh) yield* resolver.invalidate(references);
+      yield* resolver.read(references);
+      const live = yield* Ref.get(entries);
+      const rebuild = new Set<ProviderInstanceId>();
+      for (const [rawInstanceId, entry] of targets) {
+        const current = live.get(ProviderInstanceId.make(rawInstanceId));
+        if (current === undefined) {
+          rebuild.add(ProviderInstanceId.make(rawInstanceId));
+          continue;
         }
-        yield* reconcileWithR(configMap, rebuild);
-      },
-      (effect) => semaphore.withPermits(1)(effect),
-      Effect.provideContext(driverContext),
-    );
+        const { secrets, unreadable } = yield* readInstanceSecrets(
+          driversById.get(entry.driver),
+          entry,
+        );
+        // A failed re-read keeps the working instance and the value it already holds.
+        if (unreadable.length === 0 && !Equal.equals(secrets, current.secrets)) {
+          rebuild.add(current.instance.instanceId);
+        }
+      }
+      yield* reconcileWithR(configMap, rebuild);
+      return targets.map(([rawInstanceId]) => ProviderInstanceId.make(rawInstanceId));
+    },
+    (effect) => semaphore.withPermits(1)(effect),
+    Effect.provideContext(driverContext),
+  );
+  const reloadSecrets: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reloadSecrets"] =
+    (instanceId) =>
+      reloadWhere(
+        (rawInstanceId) => instanceId === undefined || rawInstanceId === instanceId,
+        true,
+      ).pipe(Effect.asVoid);
+  const applySecret: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["applySecret"] =
+    (reference) =>
+      reloadWhere(
+        (_, entry) =>
+          secretReferencesOf(driversById, entry).some(
+            (candidate) =>
+              candidate.provider === reference.provider &&
+              candidate.reference === reference.reference,
+          ),
+        false,
+      );
 
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
@@ -592,6 +612,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
   const mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape = {
     reconcile,
     reloadSecrets,
+    applySecret,
   };
 
   return { registry, mutator };
