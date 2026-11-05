@@ -141,6 +141,24 @@ describe("CodexAdapterV2 context usage", () => {
     );
   });
 
+  it("omits a configured limit that a token-budget fallback buffer moves", () => {
+    const config = { model_auto_compact_token_limit: 100_000 };
+
+    assert.equal(CodexAdapterV2.codexAutoCompactLimit(config), 100_000);
+    assert.isUndefined(
+      CodexAdapterV2.codexAutoCompactLimit({
+        ...config,
+        features: {
+          token_budget: {
+            enabled: true,
+            auto_compact_fallback_prompt: "Finish the remaining work.",
+            auto_compact_fallback_buffer_tokens: 50_000,
+          },
+        },
+      }),
+    );
+  });
+
   it.effect("reports the auto-compaction limit Codex resolves for the thread's cwd", () =>
     Effect.gen(function* () {
       const scenario = "auto-compact-threshold";

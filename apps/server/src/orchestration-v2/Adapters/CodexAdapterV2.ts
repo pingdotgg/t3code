@@ -94,6 +94,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -224,9 +225,17 @@ export function codexProviderTurnTokenUsage(
 }
 
 // A "body_after_prefix" limit excludes the carried prefix, so it is not a point on the full-context meter.
-function codexAutoCompactLimit(config: CodexSchema.V2ConfigReadResponse["config"]) {
+// A token-budget fallback prompt makes Codex add its buffer to the limit before compacting.
+export function codexAutoCompactLimit(config: CodexSchema.V2ConfigReadResponse["config"]) {
   const limit = config.model_auto_compact_token_limit;
+  const tokenBudget = Predicate.isObject(config.features)
+    ? Reflect.get(config.features, "token_budget")
+    : undefined;
+  const fallbackPrompt = Predicate.isObject(tokenBudget)
+    ? Reflect.get(tokenBudget, "auto_compact_fallback_prompt")
+    : undefined;
   return config.model_auto_compact_token_limit_scope !== "body_after_prefix" &&
+    fallbackPrompt == null &&
     limit != null &&
     Number.isSafeInteger(limit) &&
     limit > 0
