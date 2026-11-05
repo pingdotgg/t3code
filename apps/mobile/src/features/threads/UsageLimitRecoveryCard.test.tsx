@@ -4,6 +4,7 @@ import {
   CHATGPT_USAGE_LIMIT_CODE,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
+import * as Clipboard from "expo-clipboard";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -55,43 +56,57 @@ function failedThread(
 }
 
 describe("UsageLimitRecoveryCard", () => {
-  // Older servers report ChatGPT sharing limits as provider errors.
+  // Older servers report ChatGPT sharing limits as provider errors and may store a reset.
   it.each([
-    [CHATGPT_USAGE_LIMIT_CODE, "usage_limit", "Manage usage"],
-    [CHATGPT_WORKSPACE_USAGE_LIMIT_CODE, "usage_limit", "Copy request for admin"],
-    [CHATGPT_USAGE_LIMIT_CODE, "provider_error", "Manage usage"],
-  ])("shows one ChatGPT notice for %s (%s)", (code, errorClass, action) => {
+    [CHATGPT_USAGE_LIMIT_CODE, "usage_limit", null, ["Manage usage"]],
+    [CHATGPT_WORKSPACE_USAGE_LIMIT_CODE, "usage_limit", null, ["Copy request for admin"]],
+    [CHATGPT_USAGE_LIMIT_CODE, "provider_error", null, ["Manage usage"]],
+    [
+      CHATGPT_USAGE_LIMIT_CODE,
+      "usage_limit",
+      new Date(DAY_MS).toISOString(),
+      ["Manage usage", "Resume at reset", "Snooze until reset"],
+    ],
+  ])("shows one ChatGPT notice for %s (%s, reset %s)", (code, errorClass, resetAt, actions) => {
     const container = document.createElement("div");
     const root = createRoot(container);
     using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
     act(() =>
       root.render(
         <UsageLimitRecoveryCard
-          thread={failedThread(null, code, errorClass)}
+          thread={failedThread(resetAt, code, errorClass)}
           environmentId={"env-1" as EnvironmentId}
         />,
       ),
     );
     expect(container.textContent).toContain("ChatGPT usage limit reached");
     expect(container.textContent).not.toContain("did not report a reset time");
-    expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
-      action,
-    ]);
+    expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual(
+      actions,
+    );
   });
 
-  it("keeps reset controls for a ChatGPT limit stored with a reset time", () => {
+  it("drops a failed copy's error once a retry copies the request", async () => {
+    vi.mocked(Clipboard.setStringAsync)
+      .mockRejectedValueOnce(new Error("denied"))
+      .mockResolvedValueOnce(true);
     const container = document.createElement("div");
     const root = createRoot(container);
     using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
     act(() =>
       root.render(
         <UsageLimitRecoveryCard
-          thread={failedThread(new Date(DAY_MS).toISOString(), CHATGPT_USAGE_LIMIT_CODE)}
+          thread={failedThread(null, CHATGPT_WORKSPACE_USAGE_LIMIT_CODE)}
           environmentId={"env-1" as EnvironmentId}
         />,
       ),
     );
-    expect(container.textContent).toContain("Resume at reset");
+    const copy = () => container.querySelector("button")!.click();
+    await act(async () => copy());
+    expect(container.textContent).toContain("Could not copy the request");
+    await act(async () => copy());
+    expect(container.textContent).toContain("Request copied");
+    expect(container.textContent).not.toContain("Could not copy the request");
   });
 
   it("disables Snooze once a reset more than 24.8 days away passes", () => {

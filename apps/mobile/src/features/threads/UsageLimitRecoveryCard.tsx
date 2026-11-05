@@ -89,19 +89,24 @@ export function UsageLimitRecoveryCard({
     ? {
         label: "Copy request for admin",
         role: "button" as const,
-        run: () =>
+        run: () => {
+          setError(null);
+          setCopied(false);
           void Clipboard.setStringAsync(CHATGPT_WORKSPACE_ADMIN_REQUEST).then(
             () => setCopied(true),
             () => setError("Could not copy the request. Try again."),
-          ),
+          );
+        },
       }
     : {
         label: "Manage usage",
         role: "link" as const,
-        run: () =>
+        run: () => {
+          setError(null);
           void Linking.openURL(CHATGPT_USAGE_URL).catch(() =>
             setError("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."),
-          ),
+          );
+        },
       };
   return (
     <View className="mx-3 mb-2 flex-row gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
