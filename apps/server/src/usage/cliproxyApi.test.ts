@@ -457,29 +457,58 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
-    Effect.gen(function* () {
-      const test = fixture();
-      const api = yield* test.api;
-      expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome: "reset" });
-      expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome: "reset" });
-      const redemptions = test.requests.filter((request) =>
-        request.body?.url?.endsWith("/consume"),
-      );
-      expect(redemptions).toHaveLength(2);
-      expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
-      expect(redemptions[0]?.body?.data).toBe(
-        encodeJson({
-          redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
-          credit_id: "credit-b",
-        }),
-      );
-      expect(
-        test.requests
-          .filter((request) => request.path.endsWith("/reset-quota"))
-          .map((request) => request.body?.auth_index),
-      ).toEqual(["b", "b"]);
-    }),
+  it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
+    "pins redemption and reconciles retained credit metadata after %s",
+    (code) =>
+      Effect.gen(function* () {
+        let consumed = false;
+        const test = fixture({
+          upstream: (request) => {
+            if (request.url?.endsWith("/consume")) {
+              consumed = true;
+              return { status: 200, body: { code } };
+            }
+            if (consumed) return { status: 503, body: {} };
+            if (request.url?.endsWith("/rate-limit-reset-credits"))
+              return { status: 200, body: { credits: [credit("credit-b")] } };
+            return {
+              status: 200,
+              body: { plan_type: "pro", rate_limit: { primary_window: { used_percent: 80 } } },
+            };
+          },
+        });
+        const api = yield* test.api;
+        const initial = yield* api.readAccounts(config);
+        expect(initial[1]?.usageLimits.resetCredits?.nextCreditId).toBe("credit-b");
+        const outcome =
+          code === "reset" ? "reset" : code === "already_redeemed" ? "alreadyRedeemed" : "noCredit";
+        expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome });
+        expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome });
+        const redemptions = test.requests.filter((request) =>
+          request.body?.url?.endsWith("/consume"),
+        );
+        expect(redemptions).toHaveLength(2);
+        expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
+        expect(redemptions[0]?.body?.data).toBe(
+          encodeJson({
+            redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
+            credit_id: "credit-b",
+          }),
+        );
+        expect(
+          test.requests
+            .filter((request) => request.path.endsWith("/reset-quota"))
+            .map((request) => request.body?.auth_index),
+        ).toEqual(code === "no_credit" ? [] : ["b", "b"]);
+        yield* TestClock.adjust("5 minutes");
+        const refreshed = yield* api.readAccounts(config);
+        expect(refreshed[1]?.usageLimits.stale).toBe(true);
+        expect(refreshed[1]?.usageLimits.windows).toEqual(initial[1]?.usageLimits.windows);
+        expect(refreshed[1]?.usageLimits.resetCredits).toBeUndefined();
+        expect(refreshed[0]?.usageLimits.resetCredits).toEqual(
+          initial[0]?.usageLimits.resetCredits,
+        );
+      }),
   );
 
   it.effect("drops only the disproven credit balance after no_credit", () =>

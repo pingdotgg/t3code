@@ -336,13 +336,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return (yield* Cache.get(usageCache, yield* encodeJson({ hub, account, url }))).body;
   });
 
+  const usageAccountKey = (hub: CliproxyHub, account: typeof AuthFile.Type) =>
+    `${hub.url}\0${hub.managementKey}\0${account.auth_index}\0${account.id}\0${account.email ?? ""}\0${account.id_token?.chatgpt_account_id ?? ""}`;
   const lastGoodLimits = new Map<string, ServerProviderUsageLimits>();
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     hub: CliproxyHub,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const accountKey = `${hub.url}\0${hub.managementKey}\0${account.auth_index}\0${account.id}\0${account.email ?? ""}\0${account.id_token?.chatgpt_account_id ?? ""}`;
+    const accountKey = usageAccountKey(hub, account);
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
@@ -508,6 +510,14 @@ export const makeCliproxyApi = Effect.gen(function* () {
           already_redeemed: "alreadyRedeemed",
         } as const
       )[response.code];
+      if (outcome === "reset" || outcome === "alreadyRedeemed" || outcome === "noCredit") {
+        const accountKey = usageAccountKey(hub, account);
+        const previous = lastGoodLimits.get(accountKey);
+        if (previous) {
+          const { resetCredits: _resetCredits, ...limits } = previous;
+          lastGoodLimits.set(accountKey, limits);
+        }
+      }
       if (outcome === "noCredit") {
         yield* Cache.invalidateWhen(
           usageCache,
