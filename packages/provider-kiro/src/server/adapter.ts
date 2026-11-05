@@ -15,6 +15,7 @@ import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -50,6 +51,12 @@ import {
   kiroPermissionDisposition,
   makeKiroAcpRuntime,
 } from "./acpSupport.ts";
+import {
+  type KiroSkills,
+  kiroSkillCommandText,
+  kiroSkillsFromCommands,
+  makeKiroSkills,
+} from "./skills.ts";
 
 export const KIRO_PROVIDER = ProviderDriverKind.make("kiro");
 /** T3's slug for "Kiro default", and Kiro's documented default model id. */
@@ -193,6 +200,8 @@ export interface KiroAdapterV2Options {
    * default). Absent, it is `auto`.
    */
   readonly defaultModel?: Effect.Effect<string>;
+  /** Where the adapter records the skills Kiro sessions advertise; the driver publishes them. */
+  readonly skills?: KiroSkills;
   /** Replaces the `kiro-cli` launch (replay tests). Kiro's session setup still applies. */
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
@@ -523,7 +532,10 @@ function kiroPromptFailure(cause: unknown) {
   });
 }
 
-function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Flavor {
+function makeKiroAcpAdapterFlavor(
+  options: KiroAdapterV2Options,
+  skills: KiroSkills,
+): AcpAdapterV2Flavor {
   const makeRuntime =
     options.makeRuntime ??
     ((input: AcpAdapterV2RuntimeInput) => {
@@ -549,6 +561,9 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     normalizeSessionUpdate: (notification) =>
       stripSteeringNote(normalizeKiroSessionUpdate(notification)),
     extractSubagentUpdate: extractKiroSubagentUpdate,
+    onAvailableCommandsUpdate: (commands) =>
+      SubscriptionRef.set(skills, kiroSkillsFromCommands(commands)),
+    rewriteUserText: (text) => kiroSkillCommandText(skills, text),
     // See applyKiroModelSelection: `model` arrives after session/new.
     modelOptionArrivesLate: true,
     applyModelSelection: applyKiroModelSelection(
@@ -581,7 +596,7 @@ export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
 ) {
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeKiroAcpAdapterFlavor(options),
+    flavor: makeKiroAcpAdapterFlavor(options, options.skills ?? (yield* makeKiroSkills())),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
@@ -601,6 +616,7 @@ export type KiroAdapterV2DriverEnv =
 /** `defaultModel` reads Kiro's id for "Kiro default" from the provider snapshot. */
 export const makeKiroAdapterV2Driver = (
   defaultModel: Effect.Effect<string>,
+  skills: KiroSkills,
 ): ProviderAdapterDriver<KiroSettings, KiroAdapterV2DriverEnv> => ({
   driverKind: KIRO_PROVIDER,
   configSchema: KiroSettings,
@@ -617,6 +633,7 @@ export const makeKiroAdapterV2Driver = (
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
         defaultModel,
+        skills,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,
