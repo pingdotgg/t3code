@@ -842,7 +842,7 @@ describe("AcpRegistrySupport", () => {
   });
 
   it.effect("hides and refuses agents the policy leaves out", () => {
-    const allowed = makeAgent({ npx: { package: "@example/acp@1.0.0" } });
+    const allowed = makeAgent({ npx: { package: "@example/acp@V1.2.3" } });
     const refused = { ...allowed, id: "refused-agent", name: "Refused Agent" };
     const denial = "Example Corp's policy does not allow the ACP agent refused-agent.";
     return Effect.gen(function* () {
@@ -872,6 +872,11 @@ describe("AcpRegistrySupport", () => {
         .readFileString(toolchain.logPath)
         .pipe(Effect.orElseSucceed(() => ""));
       expect(commands).not.toContain("install --global");
+
+      const prepared = yield* catalog.prepare({ agentId: allowed.id });
+      expect(prepared.agentId).toBe(allowed.id);
+      const launched = yield* catalog.resolve(settings(), "/workspace", toolchain.environment);
+      expect(launched.spawn.command).toBe(toolchain.executablePath);
     }).pipe(
       Effect.scoped,
       Effect.provide(
