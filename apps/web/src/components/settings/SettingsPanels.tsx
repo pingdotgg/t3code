@@ -763,25 +763,28 @@ function AutoSettleDaysInput({
 }
 
 /** Restores every device setting from the settings and appearance headers. */
-export function RestoreDeviceDefaultsButton({
-  onRestored,
-  compact = false,
-}: {
-  onRestored?: () => void;
-  compact?: boolean;
-}) {
+export function RestoreDeviceDefaultsButton({ onRestored }: { onRestored?: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
   return (
-    <Button
-      size={compact ? "icon-sm" : "xs"}
-      variant="ghost"
-      aria-label={compact ? "Restore device defaults" : undefined}
-      disabled={changedSettingLabels.length === 0}
-      onClick={() => void restoreDefaults()}
-    >
-      <RotateCcwIcon className="size-3.5" />
-      {compact ? null : <span>Restore device defaults</span>}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          size="standard"
+          variant="ghost"
+          aria-label="Restore device defaults"
+          disabled={changedSettingLabels.length === 0}
+          onClick={() => void restoreDefaults()}
+        >
+          <RotateCcwIcon className="size-3.5" />
+          <span className="max-sm:sr-only">Restore device defaults</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {changedSettingLabels.length === 0
+          ? "Device settings already use their defaults."
+          : "Restore device defaults"}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
