@@ -673,9 +673,9 @@ export function buildBoundedThreadProjection(input: {
     turnItems: [],
     visibleTurnItems: [],
   });
-  // Keep the control-only window minimum, but required dependency cards claim their reserve first.
+  // Control state cannot be paged, so the window keeps half the budget; dependency cards take their reserve from that half.
   const windowBudget = Math.max(
-    dependencyReserve === 0 ? policy.maxEncodedBytes / 2 : 0,
+    Math.max(policy.maxEncodedBytes / 2 - dependencyReserve, 0),
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
   const windowPolicy: ThreadHistoryPagePolicy = { ...policy, maxEncodedBytes: windowBudget };
