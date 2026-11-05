@@ -58,9 +58,16 @@ export function threadChipTargets(
 ): ReadonlyArray<ThreadChipTarget> {
   const targets = new Map<string, ThreadChipTarget>();
   if (hasThreadLinks(markdown)) {
-    for (const [, href = ""] of markdown.matchAll(/\]\((t3-thread:\/\/v1\/[^\s)]+)\)/g)) {
-      const threadId = parseThreadLinkHref(href);
-      if (threadId) targets.set(href, { href, environmentId, threadId, link: true });
+    for (const [, href = ""] of markdown.matchAll(/\]\((t3-thread:\/\/v[12]\/[^\s)]+)\)/g)) {
+      const link = parseThreadLinkHref(href);
+      if (link) {
+        targets.set(href, {
+          href,
+          environmentId: link.environmentId ?? environmentId,
+          threadId: link.threadId,
+          link: true,
+        });
+      }
     }
   }
   for (const record of records ?? []) {

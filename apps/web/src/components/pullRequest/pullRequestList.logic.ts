@@ -1,14 +1,11 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import * as Schema from "effect/Schema";
 
-import {
+import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
+import type {
   EnvironmentId,
   PullRequestListEntry,
   PullRequestListProjectError,
   PullRequestListResult,
-  resolvePullRequestAuthorFilter,
-} from "@t3tools/contracts";
-import type {
   ProjectId,
   RepositoryIdentity,
   PullRequestAction,
@@ -22,7 +19,7 @@ import type {
   PullRequestState,
 } from "@t3tools/contracts";
 
-import { toSortableTimestamp } from "../../lib/threadSort";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
 
 export interface EnvironmentPullRequestEntry extends PullRequestListEntry {
@@ -472,11 +469,16 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
       others.push(entry);
     }
   }
-  const byRecency = (left: Entry, right: Entry) => right.updatedAt.localeCompare(left.updatedAt);
   return (
     [
-      { key: "authored", entries: [...authoredByKey.values()].toSorted(byRecency) },
-      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
+      {
+        key: "authored",
+        entries: [...authoredByKey.values()].toSorted(comparePullRequestsByRecency),
+      },
+      {
+        key: "reviewRequested",
+        entries: [...reviewByKey.values()].toSorted(comparePullRequestsByRecency),
+      },
       { key: "others", entries: others },
     ] as const
   )
@@ -567,7 +569,7 @@ export function mergePullRequestLists(
   return {
     viewers,
     providers: [...providers.values()],
-    entries: entries.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    entries: entries.toSorted(comparePullRequestsByRecency),
     errors,
     truncated,
     nextCursors,
@@ -575,98 +577,12 @@ export function mergePullRequestLists(
   };
 }
 
-const SNAPSHOT_MAX_ENTRIES = 99;
-
-type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
-
 export const pullRequestEnvironmentSetKey = (environmentIds: ReadonlyArray<string>): string =>
   [...environmentIds].sort((left, right) => left.localeCompare(right)).join(",");
-
-const snapshotStorageKey = (environmentSetKey: string) =>
-  `t3.pullRequests.list:${environmentSetKey}`;
 
 export interface PullRequestPartitionsSnapshot {
   readonly authored: ReadonlyArray<EnvironmentPullRequestEntry>;
   readonly reviewing: ReadonlyArray<EnvironmentPullRequestEntry>;
-}
-
-export interface PullRequestListSnapshot {
-  readonly scope: string;
-  readonly data: MergedPullRequestList;
-  readonly partitions?: PullRequestPartitionsSnapshot | undefined;
-}
-
-const EnvironmentPullRequestEntrySchema = Schema.Struct({
-  ...PullRequestListEntry.fields,
-  environmentId: EnvironmentId,
-});
-
-const EnvironmentPullRequestErrorSchema = Schema.Struct({
-  ...PullRequestListProjectError.fields,
-  environmentId: EnvironmentId,
-});
-
-const decodeSnapshot = Schema.decodeUnknownOption(
-  Schema.Struct({
-    scope: Schema.String,
-    data: Schema.Struct({
-      ...PullRequestListResult.fields,
-      entries: Schema.Array(EnvironmentPullRequestEntrySchema),
-      errors: Schema.Array(EnvironmentPullRequestErrorSchema),
-      nextCursors: Schema.Record(Schema.String, PullRequestListResult.fields.nextCursors),
-      truncatedEnvironments: Schema.Array(Schema.String),
-    }),
-    partitions: Schema.optional(
-      Schema.Struct({
-        authored: Schema.Array(EnvironmentPullRequestEntrySchema),
-        reviewing: Schema.Array(EnvironmentPullRequestEntrySchema),
-      }),
-    ),
-  }),
-);
-
-export function readPullRequestListSnapshot(
-  storage: SnapshotStorage | undefined,
-  environmentSetKey: string,
-): PullRequestListSnapshot | null {
-  try {
-    const raw = storage?.getItem(snapshotStorageKey(environmentSetKey));
-    if (!raw) return null;
-    const decoded = decodeSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writePullRequestListSnapshot(
-  storage: SnapshotStorage | undefined,
-  environmentSetKey: string,
-  snapshot: PullRequestListSnapshot,
-): void {
-  try {
-    storage?.setItem(
-      snapshotStorageKey(environmentSetKey),
-      JSON.stringify({
-        scope: snapshot.scope,
-        data: {
-          ...snapshot.data,
-          entries: snapshot.data.entries.slice(0, SNAPSHOT_MAX_ENTRIES),
-          errors: [],
-          nextCursors: {},
-          truncatedEnvironments: [],
-        },
-        ...(snapshot.partitions === undefined
-          ? {}
-          : {
-              partitions: {
-                authored: snapshot.partitions.authored.slice(0, SNAPSHOT_MAX_ENTRIES),
-                reviewing: snapshot.partitions.reviewing.slice(0, SNAPSHOT_MAX_ENTRIES),
-              },
-            }),
-      }),
-    );
-  } catch {}
 }
 
 /** Retain project scope during reconnect until projects arrive. */
@@ -749,7 +665,7 @@ export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
   if (query.trim().length === 0) return entries;
   return entries.toSorted((left, right) => {
     const byScore = scorePullRequestMatch(right, query) - scorePullRequestMatch(left, query);
-    return byScore !== 0 ? byScore : right.updatedAt.localeCompare(left.updatedAt);
+    return byScore !== 0 ? byScore : comparePullRequestsByRecency(left, right);
   });
 }
 
@@ -770,24 +686,29 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
     if (byTier !== 0) return byTier;
     const measured = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
     const sized = left.additions + left.deletions - (right.additions + right.deletions);
-    return measured || sized || right.updatedAt.localeCompare(left.updatedAt);
+    return measured || sized || comparePullRequestsByRecency(left, right);
   });
+}
+
+export function comparePullRequestsByRecency(
+  left: PullRequestListEntry,
+  right: PullRequestListEntry,
+) {
+  const leftUpdated = toSortableTimestamp(left.updatedAt);
+  const rightUpdated = toSortableTimestamp(right.updatedAt);
+  const measured = Number(leftUpdated === null) - Number(rightUpdated === null);
+  if (measured !== 0) return measured;
+  if (leftUpdated === null || rightUpdated === null) return 0;
+  return rightUpdated - leftUpdated;
 }
 
 function rankByTierThenRecency<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
   tier: (entry: Entry) => number,
 ): ReadonlyArray<Entry> {
-  const timestamp = (entry: Entry) => toSortableTimestamp(entry.updatedAt);
   return entries.toSorted((left, right) => {
     const byTier = tier(left) - tier(right);
-    if (byTier !== 0) return byTier;
-    const leftUpdated = timestamp(left);
-    const rightUpdated = timestamp(right);
-    const measured = Number(leftUpdated === null) - Number(rightUpdated === null);
-    if (measured !== 0) return measured;
-    if (leftUpdated === null || rightUpdated === null) return 0;
-    return rightUpdated - leftUpdated;
+    return byTier !== 0 ? byTier : comparePullRequestsByRecency(left, right);
   });
 }
 

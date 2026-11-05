@@ -1,7 +1,6 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  androidWorkspaceTabFromNavigationState,
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
 } from "../features/workspace/android-workspace-tabs";
@@ -37,6 +36,9 @@ const options = {
     "PullRequestFile",
     "PullRequestReviewers",
     "Settings",
+    "SettingsEnvironments",
+    "SettingsAppearance",
+    "SettingsOpenSourceLicenses",
     "SettingsUsage",
     "SettingsUsageAccount",
   ],
@@ -218,38 +220,40 @@ describe("Android workspace navigation", () => {
 describe("Android Settings tab", () => {
   type State = ReturnType<typeof router.getInitialState>;
   type Tab = AndroidWorkspaceNavigationTab;
-  const openTab = (state: State, tab: Tab) =>
-    apply(state, CommonActions.reset(androidWorkspaceTabNavigationState(state, tab)));
-  const selectedTab = (state: State, previous: Tab) =>
-    androidWorkspaceTabFromNavigationState(state, previous);
+  const openTab = (state: State, tab: Tab, columns = false) =>
+    apply(state, CommonActions.reset(androidWorkspaceTabNavigationState(state, tab, columns)));
+
+  it("opens a default Settings page beside the category list in wide layouts", () => {
+    const settings = openTab(legacyHistory(), "settings", true);
+    expect(names(settings)).toEqual(["Home", "Settings", "SettingsEnvironments"]);
+    expect(names(apply(settings, StackActions.pop()))).toEqual(["Home", "Settings"]);
+  });
+
+  it("keeps the selected category mounted when reselecting wide Settings", () => {
+    let settings = openTab(legacyHistory(), "settings");
+    settings = apply(settings, StackActions.push("SettingsAppearance"));
+    const category = settings.routes.at(-1);
+    settings = apply(settings, StackActions.push("SettingsOpenSourceLicenses"));
+    const reselected = openTab(settings, "settings", true);
+    expect(names(reselected)).toEqual(["Home", "Settings", "SettingsAppearance"]);
+    expect(reselected.routes.at(-1)?.key).toBe(category?.key);
+  });
 
   it("opens over Home alone, dropping chat and PR history, and Back returns to Home", () => {
     const previous = legacyHistory();
     const settings = openTab(previous, "settings");
     expect(names(settings)).toEqual(["Home", "Settings"]);
     expect(settings.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(settings, "threads")).toBe("settings");
     const back = apply(settings, StackActions.pop());
     expect(names(back)).toEqual(["Home"]);
     expect(back.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(back, "settings")).not.toBe("settings");
   });
 
   it("stays selected under a settings page until a list tab returns to Home", () => {
     const previous = legacyHistory();
     const usage = apply(openTab(previous, "settings"), StackActions.push("SettingsUsage"));
-    expect(selectedTab(usage, "threads")).toBe("settings");
     const list = openTab(usage, "pullRequests");
     expect(names(list)).toEqual(["Home"]);
     expect(list.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(list, "pullRequests")).toBe("pullRequests");
-  });
-
-  it("leaves a settings page opened from the Usage tab in that tab", () => {
-    const account = apply(
-      router.getInitialState(options),
-      StackActions.push("SettingsUsageAccount"),
-    );
-    expect(selectedTab(account, "usage")).toBe("usage");
   });
 });

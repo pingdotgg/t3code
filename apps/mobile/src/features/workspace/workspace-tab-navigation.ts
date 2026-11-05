@@ -17,6 +17,14 @@ type PullRequestSelection = NonNullable<WorkspaceSelections["pullRequests"]>;
 /** Opened when Settings has columns and none of its pages has been opened yet. */
 export const DEFAULT_SETTINGS_PAGE = "SettingsEnvironments" satisfies SettingsPageTarget;
 
+export function workspaceTabColumns(
+  platform: string,
+  tab: WorkspaceTab | "settings",
+  columns: boolean,
+) {
+  return columns && (platform === "ios" || (platform === "android" && tab === "settings"));
+}
+
 // Pages a Settings row opens, minus Project overview: it shows the project chosen in the
 // Settings scope, which resets whenever Settings closes.
 const REMEMBERED_SETTINGS_PAGES: ReadonlySet<string> = new Set(
