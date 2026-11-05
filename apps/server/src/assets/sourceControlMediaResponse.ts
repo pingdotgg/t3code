@@ -46,7 +46,7 @@ export const sourceControlMediaResponse = Effect.fn(
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
-  const response = yield* fetchMedia({ url: asset.url, headers: forwarded });
+  const response = yield* fetchMedia({ url: asset.url, cwd: asset.cwd, headers: forwarded });
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
   // holds the connection open until the browser gives up on it.

@@ -441,15 +441,9 @@ export function pullRequestCheckoutBranchName(input: {
 const contextHost = (context: SourceControlProvider.SourceControlProviderContext | undefined) =>
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
 
-export const make = Effect.gen(function* () {
-  const api = yield* GitHubRest.GitHubRest;
-  const sourceControlHost = yield* SourceControlHost.SourceControlHost;
-  const process = sourceControlHost.process;
-  const environment = yield* HostProcess.Environment;
-  const git = sourceControlHost.git;
-  const fileSystem = yield* FileSystem.FileSystem;
-
-  const gitRead = (cwd: string, args: ReadonlyArray<string>) =>
+const gitReader =
+  (process: SourceControlHost.SourceControlHost["Service"]["process"]) =>
+  (cwd: string, args: ReadonlyArray<string>) =>
     process.run({
       operation: "GitHubSourceControlProvider.resolveRepository",
       command: "git",
@@ -458,6 +452,11 @@ export const make = Effect.gen(function* () {
       allowNonZeroExit: true,
       timeoutMs: 5_000,
     });
+
+/** The repository `gh` would pick for a checkout: `GH_REPO`, then the checkout's remotes. */
+export const makeResolveRepository = Effect.gen(function* () {
+  const gitRead = gitReader((yield* SourceControlHost.SourceControlHost).process);
+  const environment = yield* HostProcess.Environment;
 
   const resolveRepository = Effect.fn("GitHubSourceControlProvider.resolveRepository")(
     function* (input: {
@@ -496,6 +495,18 @@ export const make = Effect.gen(function* () {
       );
     },
   );
+
+  return resolveRepository;
+});
+
+export const make = Effect.gen(function* () {
+  const api = yield* GitHubRest.GitHubRest;
+  const sourceControlHost = yield* SourceControlHost.SourceControlHost;
+  const environment = yield* HostProcess.Environment;
+  const git = sourceControlHost.git;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const gitRead = gitReader(sourceControlHost.process);
+  const resolveRepository = yield* makeResolveRepository;
 
   const client = yield* GraphQLClient.make(
     GraphQLGroup.make(LenientPullRequestsByHead, PullRequestByNumber).middleware(
