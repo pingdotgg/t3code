@@ -221,6 +221,26 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(result.omittedReleaseCount).toBe(1);
   });
 
+  it("lists only releases newer than the running one", () => {
+    const releaseNotes = [
+      { version: "0.1.7-learn.12", note: "- Twelve" },
+      { version: "0.1.7-learn.11", note: "- Eleven" },
+      { version: "0.1.7-learn.10", note: "- Ten" },
+      { version: "0.1.7-learn.9", note: "- Nine" },
+    ];
+    const versions = (currentVersion: string) =>
+      normalizeDesktopUpdateReleaseNotes(
+        releaseNotes,
+        "0.1.7-learn.12",
+        "latest",
+        undefined,
+        currentVersion,
+      ).releaseNotes.map(({ version }) => version);
+
+    expect(versions("0.1.7-learn.10")).toEqual(["0.1.7-learn.12", "0.1.7-learn.11"]);
+    expect(versions("0.1.8-learn.1")).toEqual(["0.1.7-learn.12"]);
+  });
+
   it("ignores malformed and empty entries instead of throwing", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [

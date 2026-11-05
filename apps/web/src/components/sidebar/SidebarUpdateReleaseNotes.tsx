@@ -55,6 +55,84 @@ function ReleaseLink({
   );
 }
 
+export function DesktopUpdateReleaseNoteList({
+  shell,
+  state,
+}: {
+  readonly shell: DesktopUpdateShell | undefined;
+  readonly state: DesktopUpdateState;
+}) {
+  return (
+    <div className="min-h-0 max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-3 pb-1">
+      {state.releaseNotes.map((releaseNote, index) => {
+        const releaseUrl = getDesktopUpdateReleaseUrl(releaseNote.version);
+        const omittedItemCount = Math.max(0, releaseNote.totalItems - releaseNote.items.length);
+        const linkLabel =
+          releaseNote.stats ??
+          (omittedItemCount === 0
+            ? "View release on GitHub"
+            : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`);
+
+        const generated = releaseNote.stats !== undefined || releaseNote.intro !== undefined;
+        return (
+          <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
+            {generated ? (
+              releaseNote.version !== state.availableVersion && (
+                <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
+                  {releaseNote.releasedAt
+                    ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt)}`
+                    : releaseNote.version}
+                </h3>
+              )
+            ) : (
+              <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
+                {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+              </h3>
+            )}
+            {releaseNote.intro ? (
+              <p className="break-words text-xs leading-5 text-popover-foreground">
+                {releaseNote.intro}
+              </p>
+            ) : releaseNote.items.length > 0 ? (
+              <ul className="space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+                {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => {
+                  const highlight = /^\*\*([^*]+)\*\* (.+)$/.exec(item);
+                  return (
+                    <li className="list-disc break-words" key={key}>
+                      {highlight ? (
+                        <>
+                          <strong>{highlight[1]}</strong> {highlight[2]}
+                        </>
+                      ) : (
+                        item
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+            {releaseNote.footer && (
+              <p className="mt-2 text-xs leading-5 font-semibold">{releaseNote.footer}</p>
+            )}
+            {releaseUrl && (
+              <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
+                {linkLabel}
+              </ReleaseLink>
+            )}
+          </section>
+        );
+      })}
+      {state.omittedReleaseCount > 0 ? (
+        <div className="mt-3">
+          <ReleaseLink releaseUrl={getDesktopUpdateReleaseHistoryUrl()} shell={shell}>
+            {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
+          </ReleaseLink>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function SidebarUpdateReleaseNotes({
   shell,
   state,
@@ -91,73 +169,7 @@ export function SidebarUpdateReleaseNotes({
           <div className="text-sm leading-5 font-medium">{tooltip}</div>
         )}
       </div>
-      <div className="min-h-0 max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-3 pb-1">
-        {state.releaseNotes.map((releaseNote, index) => {
-          const releaseUrl = getDesktopUpdateReleaseUrl(releaseNote.version);
-          const omittedItemCount = Math.max(0, releaseNote.totalItems - releaseNote.items.length);
-          const linkLabel =
-            releaseNote.stats ??
-            (omittedItemCount === 0
-              ? "View release on GitHub"
-              : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`);
-
-          const generated = releaseNote.stats !== undefined || releaseNote.intro !== undefined;
-          return (
-            <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
-              {generated ? (
-                releaseNote.version !== state.availableVersion && (
-                  <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
-                    {releaseNote.releasedAt
-                      ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt)}`
-                      : releaseNote.version}
-                  </h3>
-                )
-              ) : (
-                <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
-                </h3>
-              )}
-              {releaseNote.intro ? (
-                <p className="break-words text-xs leading-5 text-popover-foreground">
-                  {releaseNote.intro}
-                </p>
-              ) : releaseNote.items.length > 0 ? (
-                <ul className="space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                  {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => {
-                    const highlight = /^\*\*([^*]+)\*\* (.+)$/.exec(item);
-                    return (
-                      <li className="list-disc break-words" key={key}>
-                        {highlight ? (
-                          <>
-                            <strong>{highlight[1]}</strong> {highlight[2]}
-                          </>
-                        ) : (
-                          item
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : null}
-              {releaseNote.footer && (
-                <p className="mt-2 text-xs leading-5 font-semibold">{releaseNote.footer}</p>
-              )}
-              {releaseUrl && (
-                <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
-                  {linkLabel}
-                </ReleaseLink>
-              )}
-            </section>
-          );
-        })}
-        {state.omittedReleaseCount > 0 ? (
-          <div className="mt-3">
-            <ReleaseLink releaseUrl={getDesktopUpdateReleaseHistoryUrl()} shell={shell}>
-              {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
-            </ReleaseLink>
-          </div>
-        ) : null}
-      </div>
+      <DesktopUpdateReleaseNoteList shell={shell} state={state} />
     </div>
   );
 }
