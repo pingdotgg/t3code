@@ -1369,7 +1369,14 @@ describe("deriveMessagesTimelineRows", () => {
     expect(foldRow?.label).toBe("Worked for 12s");
   });
 
-  it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {
+  it.each([
+    ["00:00:00.400Z", "Stopped at 0s"],
+    ["00:00:05.300Z", "Stopped at 5s"],
+    ["00:00:47.000Z", "Stopped at 47s"],
+    ["00:00:59.700Z", "Stopped at 59s"],
+    ["00:01:12.700Z", "Stopped at 1m 12s"],
+    ["01:02:03.900Z", "Stopped at 1h 2m 3s"],
+  ])("uses latest-turn timings and the live timer format, ending at %s", (completedAt, label) => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -1389,7 +1396,7 @@ describe("deriveMessagesTimelineRows", () => {
         runId: "turn-1" as never,
         status: "interrupted",
         startedAt: "2026-01-01T00:00:00Z",
-        completedAt: "2026-01-01T00:00:47Z",
+        completedAt: `2026-01-01T${completedAt}`,
       },
       isWorking: false,
       activeTurnStartedAt: null,
@@ -1401,7 +1408,7 @@ describe("deriveMessagesTimelineRows", () => {
       expect.objectContaining({
         kind: "turn-fold",
         runId: "turn-1",
-        label: "Stopped at 47s",
+        label,
         ending: "stopped",
         expanded: false,
       }),
