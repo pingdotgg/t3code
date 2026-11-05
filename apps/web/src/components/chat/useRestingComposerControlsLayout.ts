@@ -1,10 +1,13 @@
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import { observeResize } from "~/lib/observeResize";
+import { readContextStripCompaction } from "../BranchToolbar.logic";
 import {
   resolveRestingComposerControlsLayout,
   type RestingComposerControlsLayout,
 } from "../composerFooterLayout";
 import { useLayoutEffect, useRef, useState } from "react";
+
+const CONTEXT_STRIP_SELECTOR = '[data-slot="composer-tray-row"]';
 
 export function useRestingComposerControlsLayout(
   host: HTMLDivElement | null,
@@ -27,6 +30,7 @@ export function useRestingComposerControlsLayout(
 
     const measurement = measureRestingComposerControls(controls);
     if (!measurement) return;
+    const strip = controls.closest<HTMLElement>(CONTEXT_STRIP_SELECTOR);
     const style = getComputedStyle(currentHost);
     const hostWidth =
       currentHost.clientWidth -
@@ -38,9 +42,11 @@ export function useRestingComposerControlsLayout(
         ...measurement,
         hostWidth,
         previous: current,
+        ...(strip ? { stripCompaction: readContextStripCompaction(strip.dataset.compact) } : {}),
       });
       return next.hiddenCount === current.hiddenCount &&
         next.iconOnlyCount === current.iconOnlyCount &&
+        next.traitsIconOnly === current.traitsIconOnly &&
         next.pickerIconOnly === current.pickerIconOnly &&
         next.visible === current.visible
         ? current
@@ -70,10 +76,14 @@ export function useRestingComposerControlsLayout(
     observeControls();
     const mutations = new MutationObserver(observeControls);
     mutations.observe(controls, { childList: true, subtree: true, characterData: true });
+    const stripMutations = new MutationObserver(measure);
+    const strip = controls.closest(CONTEXT_STRIP_SELECTOR);
+    if (strip) stripMutations.observe(strip, { attributeFilter: ["data-compact"] });
     document.fonts.addEventListener("loadingdone", measure);
     return () => {
       stopObserving();
       mutations.disconnect();
+      stripMutations.disconnect();
       document.fonts.removeEventListener("loadingdone", measure);
     };
   }, [host, controls, useControlsAsHost, measure]);
@@ -83,6 +93,7 @@ export function useRestingComposerControlsLayout(
     attachControls,
     hiddenBlockCount: layout.hiddenCount,
     iconOnlyBlockCount: layout.iconOnlyCount ?? 0,
+    traitsIconOnly: layout.traitsIconOnly ?? false,
     pickerIconOnly: layout.pickerIconOnly ?? false,
     controlsVisible: layout.visible,
   };

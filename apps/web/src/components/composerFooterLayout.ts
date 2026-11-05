@@ -1,3 +1,5 @@
+import type { ContextStripCompaction } from "./BranchToolbar.logic";
+
 const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
 const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
 const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
@@ -48,6 +50,7 @@ export interface RestingComposerControlsMeasurement {
   blockWidths: readonly number[];
   overflowWidth: number;
   iconOnlyBlockWidths?: readonly number[];
+  traitsIconOnlyFixedWidth?: number;
   /** The leading picker's width with only its icon, when it has one. */
   iconOnlyFixedWidth?: number;
 }
@@ -77,14 +80,6 @@ function restingComposerControlsWidth(
   );
 }
 
-/** Reserve natural composer width to prevent strip labels from repeatedly expanding into space vacated by
- * hidden controls. */
-export function resolveRestingComposerControlsNaturalWidth(
-  input: RestingComposerControlsMeasurement,
-): number {
-  return restingComposerControlsWidth(input, 0);
-}
-
 export function resolveRestingComposerControlsMinimumWidth(
   input: RestingComposerControlsMeasurement,
 ): number {
@@ -100,50 +95,78 @@ const RESTING_CONTROLS_SLACK_PX = 1;
 export interface RestingComposerControlsLayout {
   hiddenCount: number;
   iconOnlyCount?: number;
+  traitsIconOnly?: boolean;
   pickerIconOnly?: boolean;
   visible: boolean;
 }
 
 function restingComposerControlsSteps(input: RestingComposerControlsMeasurement) {
   const iconSteps = input.iconOnlyBlockWidths ? input.blockWidths.length : 0;
+  const traitsSteps = input.traitsIconOnlyFixedWidth === undefined ? 0 : 1;
   const pickerSteps = input.iconOnlyFixedWidth === undefined ? 0 : 1;
+  const traitsStep = iconSteps + traitsSteps;
+  const labelSteps = traitsStep + pickerSteps;
+  const lastStep = labelSteps + input.blockWidths.length;
+  const traitsSavedWidth = input.naturalFixedWidth - (input.traitsIconOnlyFixedWidth ?? 0);
   const widthAtStep = (step: number, minimum = false) => {
-    const pickerIconOnly = pickerSteps > 0 && step > iconSteps;
+    const pickerIconOnly = pickerSteps > 0 && step > traitsStep;
+    const traitsIconOnly = traitsSteps > 0 && step > iconSteps;
+    const labeledPickerWidth = minimum ? input.minimumFixedWidth : input.naturalFixedWidth;
     const fixedWidth = pickerIconOnly
       ? input.iconOnlyFixedWidth!
-      : minimum
-        ? input.minimumFixedWidth
-        : input.naturalFixedWidth;
+      : traitsIconOnly
+        ? labeledPickerWidth - traitsSavedWidth
+        : labeledPickerWidth;
     return restingComposerControlsWidth(
       input,
-      Math.max(0, step - iconSteps - pickerSteps),
+      Math.max(0, step - labelSteps),
       fixedWidth,
       Math.min(step, iconSteps),
     );
   };
-  return { iconSteps, pickerSteps, widthAtStep };
+  const stepRange = (stripCompaction: ContextStripCompaction | undefined) =>
+    stripCompaction === "none"
+      ? ([0, traitsStep] as const)
+      : stripCompaction === "labels"
+        ? ([traitsStep, labelSteps] as const)
+        : stripCompaction === "branch"
+          ? ([labelSteps, lastStep] as const)
+          : ([0, lastStep] as const);
+  return { iconSteps, traitsSteps, pickerSteps, traitsStep, labelSteps, widthAtStep, stepRange };
+}
+
+export function resolveRestingComposerControlsNarrowestWidth(
+  input: RestingComposerControlsMeasurement,
+  stripCompaction: Exclude<ContextStripCompaction, "branch">,
+): number {
+  const { widthAtStep, stepRange } = restingComposerControlsSteps(input);
+  return widthAtStep(stepRange(stripCompaction)[1]);
 }
 
 export function resolveRestingComposerControlsLayout(
   input: RestingComposerControlsMeasurement & {
     hostWidth: number;
     previous?: RestingComposerControlsLayout;
+    stripCompaction?: ContextStripCompaction;
   },
 ): RestingComposerControlsLayout {
   const { blockWidths, hostWidth, previous } = input;
-  const { iconSteps, pickerSteps, widthAtStep } = restingComposerControlsSteps(input);
-  const labelSteps = iconSteps + pickerSteps;
+  const { iconSteps, traitsSteps, pickerSteps, traitsStep, labelSteps, widthAtStep, stepRange } =
+    restingComposerControlsSteps(input);
   const previousStep = previous
     ? previous.hiddenCount > 0
       ? labelSteps + Math.min(previous.hiddenCount, blockWidths.length)
       : previous.pickerIconOnly && pickerSteps > 0
         ? labelSteps
-        : Math.min(previous.iconOnlyCount ?? 0, iconSteps)
+        : previous.traitsIconOnly && traitsSteps > 0
+          ? traitsStep
+          : Math.min(previous.iconOnlyCount ?? 0, iconSteps)
     : 0;
-  let step = 0;
+  const [firstStep, lastStep] = stepRange(input.stripCompaction);
+  let step = firstStep;
   // Use 1px slack for natural-width jitter on promotion; demote immediately to avoid clipping.
   while (
-    step < labelSteps + blockWidths.length &&
+    step < lastStep &&
     widthAtStep(step) > hostWidth - (step < previousStep ? RESTING_CONTROLS_SLACK_PX : 0)
   ) {
     step += 1;
@@ -158,7 +181,8 @@ export function resolveRestingComposerControlsLayout(
   return {
     hiddenCount,
     ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}),
-    ...(pickerSteps > 0 ? { pickerIconOnly: step > iconSteps } : {}),
+    ...(traitsSteps > 0 ? { traitsIconOnly: step > iconSteps } : {}),
+    ...(pickerSteps > 0 ? { pickerIconOnly: step > traitsStep } : {}),
     visible,
   };
 }

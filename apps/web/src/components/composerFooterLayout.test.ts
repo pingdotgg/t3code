@@ -1,65 +1,104 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveContextStripCompaction } from "./BranchToolbar.logic";
+import { type ContextStripCompaction, resolveContextStripCompaction } from "./BranchToolbar.logic";
 import {
+  type RestingComposerControlsLayout,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsMinimumWidth,
-  resolveRestingComposerControlsNaturalWidth,
+  resolveRestingComposerControlsNarrowestWidth,
 } from "./composerFooterLayout";
 
-describe("context strip labels and resting composer controls", () => {
-  const stripWidth = 724;
-  const labelWidth = 327;
-  const chromeWidth = 125;
-  const measurement = {
-    gap: 4,
-    naturalFixedWidth: 96.3828125 + 5 + 4,
-    minimumFixedWidth: 52 + 5 + 4,
-    blockWidths: [130.6953125, 119.671875],
+describe("composer footer collapse order", () => {
+  const stripGap = 4;
+  const chipsChromeWidth = 110;
+  const envLabelWidth = 64;
+  const branchLabelWidth = 180;
+  const truncatedBranchLabelWidth = 96;
+  const controls = {
+    gap: 2,
+    naturalFixedWidth: 148,
+    minimumFixedWidth: 110,
+    traitsIconOnlyFixedWidth: 118,
+    iconOnlyFixedWidth: 56,
+    blockWidths: [58],
+    iconOnlyBlockWidths: [28],
     overflowWidth: 28,
   };
-  const naturalWidth = resolveRestingComposerControlsNaturalWidth(measurement);
+  const chipsWidth = (strip: ContextStripCompaction) =>
+    chipsChromeWidth +
+    (strip === "none" ? envLabelWidth : 0) +
+    (strip === "branch" ? truncatedBranchLabelWidth : branchLabelWidth);
 
-  function hostWidth(compact: boolean): number {
-    return stripWidth - chromeWidth - (compact ? 0 : labelWidth);
+  function settle(
+    availableWidth: number,
+    previous: { strip: ContextStripCompaction; controls: RestingComposerControlsLayout },
+  ) {
+    let { strip, controls: layout } = previous;
+    for (let pass = 0; pass < 3; pass += 1) {
+      strip = resolveContextStripCompaction({
+        current: strip,
+        neededWidth:
+          chipsWidth("none") +
+          stripGap +
+          resolveRestingComposerControlsNarrowestWidth(controls, "none"),
+        labelsNeededWidth:
+          chipsWidth("labels") +
+          stripGap +
+          resolveRestingComposerControlsNarrowestWidth(controls, "labels"),
+        availableWidth,
+      });
+      layout = resolveRestingComposerControlsLayout({
+        ...controls,
+        hostWidth: availableWidth - chipsWidth(strip) - stripGap,
+        previous: layout,
+        stripCompaction: strip,
+      });
+    }
+    return { strip, controls: layout };
   }
 
-  it("keeps the labels compact when the full controls only fit beside compact labels", () => {
-    const layout = resolveRestingComposerControlsLayout({
-      ...measurement,
-      hostWidth: hostWidth(true),
-    });
-    expect(layout).toEqual({ hiddenCount: 0, visible: true });
+  const collapsed = ({
+    strip,
+    controls: layout,
+  }: {
+    strip: ContextStripCompaction;
+    controls: RestingComposerControlsLayout;
+  }) => [
+    (layout.iconOnlyCount ?? 0) > 0,
+    layout.traitsIconOnly === true,
+    strip !== "none",
+    layout.pickerIconOnly === true,
+    strip === "branch",
+    layout.hiddenCount > 0,
+  ];
 
-    const compaction = resolveContextStripCompaction({
-      current: "labels",
-      neededWidth: chromeWidth + labelWidth + naturalWidth,
-      availableWidth: stripWidth,
-      labelsSavedWidth: labelWidth,
-    });
-    expect(compaction).toBe("labels");
-
-    expect(
-      resolveRestingComposerControlsLayout({
-        ...measurement,
-        hostWidth: hostWidth(compaction !== "none"),
-      }),
-    ).toEqual(layout);
+  it("collapses one item at a time in priority order and expands in reverse", () => {
+    let state = {
+      strip: "none" as ContextStripCompaction,
+      controls: { hiddenCount: 0, visible: true } as RestingComposerControlsLayout,
+    };
+    const visit = (widths: number[]) => {
+      const steps: number[] = [];
+      for (const width of widths) {
+        state = settle(width, state);
+        const items = collapsed(state);
+        const step = items.filter(Boolean).length;
+        expect(items).toEqual(items.map((_, index) => index < step));
+        if (steps.at(-1) !== step) steps.push(step);
+      }
+      return steps;
+    };
+    const widths = Array.from({ length: 501 }, (_, index) => 700 - index);
+    expect(visit(widths)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(visit(widths.toReversed())).toEqual([6, 5, 4, 3, 2, 1, 0]);
   });
 
-  it("compacts the branch before the full controls collapse", () => {
-    const strip = (availableWidth: number, current: "labels" | "branch") =>
-      resolveContextStripCompaction({
-        current,
-        neededWidth: chromeWidth + labelWidth + naturalWidth,
-        availableWidth,
-        labelsSavedWidth: labelWidth,
-      });
-    const compactLabelsWidth = chromeWidth + naturalWidth;
-    expect(strip(compactLabelsWidth, "labels")).toBe("labels");
-    expect(strip(compactLabelsWidth - 1, "labels")).toBe("branch");
-    expect(strip(compactLabelsWidth + 15, "branch")).toBe("branch");
-    expect(strip(compactLabelsWidth + 16, "branch")).toBe("labels");
+  it("reserves exactly the width where the collapsed controls still fit", () => {
+    const minimumWidth = resolveRestingComposerControlsMinimumWidth(controls);
+    const layout = (hostWidth: number) =>
+      resolveRestingComposerControlsLayout({ ...controls, hostWidth, stripCompaction: "branch" });
+    expect(layout(minimumWidth).visible).toBe(true);
+    expect(layout(minimumWidth - 1).visible).toBe(false);
   });
 });
 

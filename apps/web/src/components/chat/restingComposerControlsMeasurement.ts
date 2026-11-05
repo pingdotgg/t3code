@@ -140,14 +140,15 @@ export function measureRestingComposerControls(
   const fixedWidths = fixedControls.map((control) => controlBlockWidths(control, scale));
   const fixedNatural = fixedWidths.reduce((sum, width) => sum + width.natural + gap, 0);
   const fixedIconOnly = fixedWidths.reduce((sum, width) => sum + width.iconOnly + gap, 0);
+  const naturalFixedWidth =
+    (picker
+      ? providerModelPickerNaturalWidth(picker, scale)
+      : elementOuterWidth(leadingControl, scale)) +
+    separatorAndGapWidth +
+    fixedNatural;
   return {
     gap,
-    naturalFixedWidth:
-      (picker
-        ? providerModelPickerNaturalWidth(picker, scale)
-        : elementOuterWidth(leadingControl, scale)) +
-      separatorAndGapWidth +
-      fixedNatural,
+    naturalFixedWidth,
     minimumFixedWidth:
       (picker
         ? providerModelPickerMinimumWidth(picker)
@@ -157,6 +158,9 @@ export function measureRestingComposerControls(
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow, scale) : 0,
+    ...(fixedIconOnly < fixedNatural
+      ? { traitsIconOnlyFixedWidth: naturalFixedWidth - fixedNatural + fixedIconOnly }
+      : {}),
     ...(pickerIconOnlyWidth === undefined
       ? {}
       : { iconOnlyFixedWidth: pickerIconOnlyWidth + separatorAndGapWidth + fixedIconOnly }),
