@@ -12,7 +12,7 @@ export type ThreadListProvider = Pick<
   "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
-const capabilityKeys = ["threadAutoSettleOptOut"] as const;
+const capabilityKeys = ["threadAutoSettleOptOut", "threadPullRequestSnooze"] as const;
 
 function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {

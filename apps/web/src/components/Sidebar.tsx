@@ -223,6 +223,7 @@ import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   pickSnoozePreset,
   resolveSnoozePresets,
+  resolveThreadSnoozePresets,
   snoozeWakeLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
@@ -2586,11 +2587,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
-        const snoozePresets = resolveSnoozePresets(
-          new Date(),
-          timestampFormat,
-          thread.environmentId,
-        );
+        const snoozePresets = resolveThreadSnoozePresets(new Date(), timestampFormat, thread);
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
