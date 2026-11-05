@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import {
   CommandId,
+  ProjectId,
   IsoDateTime,
   NonNegativeInt,
   ThreadId,
@@ -40,20 +41,39 @@ const ThreadMetadataClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLe
   )
   .annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
 
-export const ThreadMetadataMcpAction = Schema.Literals(["rename", "regenerate_title"]);
+export const ThreadMetadataMcpAction = Schema.Literals([
+  "rename",
+  "regenerate_title",
+  "change_workspace",
+]);
 export type ThreadMetadataMcpAction = typeof ThreadMetadataMcpAction.Type;
 
 export const ThreadMetadataMcpUpdateInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   action: ThreadMetadataMcpAction,
+  projectId: Schema.optional(ProjectId),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   title: Schema.optional(ThreadMetadataTitle),
   clientRequestId: Schema.optional(ThreadMetadataClientRequestId),
 }).check(
-  Schema.makeFilter((input) =>
-    (input.action === "rename") === (input.title !== undefined)
+  Schema.makeFilter((input) => {
+    if (input.action === "change_workspace") {
+      return input.title === undefined &&
+        (input.projectId !== undefined || input.worktreePath !== undefined)
+        ? true
+        : "change_workspace requires projectId or worktreePath.";
+    }
+    if (
+      input.projectId !== undefined ||
+      input.worktreePath !== undefined ||
+      input.branch !== undefined
+    )
+      return "Workspace fields require change_workspace.";
+    return (input.action === "rename") === (input.title !== undefined)
       ? true
-      : "rename requires title; regenerate_title does not accept one.",
-  ),
+      : "rename requires title; regenerate_title does not accept one.";
+  }),
 );
 export type ThreadMetadataMcpUpdateInput = typeof ThreadMetadataMcpUpdateInput.Type;
 
