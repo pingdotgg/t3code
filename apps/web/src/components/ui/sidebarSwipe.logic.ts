@@ -20,6 +20,7 @@ export interface SidebarSwipePoint {
 }
 
 export interface SidebarSwipeGesture {
+  pointerType: "touch" | "pen";
   phase: SidebarSwipePhase;
   intent: SidebarSwipeIntent;
   pointerId: number;
@@ -35,7 +36,9 @@ export interface SidebarSwipeGesture {
  * Mouse drags would fight text selection in a narrow window.
  * Touch and pen are the only pointers that should move the sheet.
  */
-function isSidebarSwipePointer(pointerType: string): boolean {
+function isSidebarSwipePointer(
+  pointerType: string,
+): pointerType is SidebarSwipeGesture["pointerType"] {
   return pointerType === "touch" || pointerType === "pen";
 }
 
@@ -50,6 +53,7 @@ export function beginSidebarSwipe(input: {
   if (!isSidebarSwipePointer(input.pointerType)) return null;
 
   return {
+    pointerType: input.pointerType,
     phase: "pending",
     intent: input.intent,
     pointerId: input.pointerId,
