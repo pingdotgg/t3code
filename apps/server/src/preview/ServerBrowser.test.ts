@@ -381,23 +381,34 @@ const mockDesktopChannel = Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
   pointer: () => Effect.void,
   turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
 });
-const sharedDependencies = Layer.mergeAll(
-  Broker.layer,
-  Manager.layer,
-  Layer.succeed(ServerEnvironment.ServerEnvironment, {
-    getEnvironmentId: Effect.succeed(scope.environmentId),
-    getDescriptor: Effect.die("unused descriptor"),
-  }),
-  Layer.succeed(PreviewBrowser.PreviewBrowser, {
-    executable: Effect.die("mock Chromium does not need an executable"),
-    installed: Effect.die("mock Chromium does not need an executable"),
-  }),
-  PreviewAgentActivity.layer,
-).pipe(
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-);
-const dependencies = Layer.merge(sharedDependencies, mockDesktopChannel);
+const testConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" });
+const sharedDependencies = (config: typeof testConfig) =>
+  Layer.mergeAll(
+    Broker.layer,
+    Manager.layer,
+    Layer.succeed(ServerEnvironment.ServerEnvironment, {
+      getEnvironmentId: Effect.succeed(scope.environmentId),
+      getDescriptor: Effect.die("unused descriptor"),
+    }),
+    Layer.succeed(PreviewBrowser.PreviewBrowser, {
+      executable: Effect.die("mock Chromium does not need an executable"),
+      installed: Effect.die("mock Chromium does not need an executable"),
+    }),
+    PreviewAgentActivity.layer,
+  ).pipe(
+    Layer.provideMerge(config),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+// The mock channel stands in for a desktop that passed its browser fds.
+const desktopConfig = Layer.effect(
+  ServerConfig.ServerConfig,
+  Effect.map(ServerConfig.ServerConfig, (config) => ({
+    ...config,
+    desktopBrowserFd: 3,
+    desktopBrowserControlFd: 4,
+  })),
+).pipe(Layer.provide(testConfig));
+const dependencies = Layer.merge(sharedDependencies(desktopConfig), mockDesktopChannel);
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
 const ready = Effect.gen(function* () {
   const browser = yield* ServerBrowser.ServerBrowser;
@@ -645,7 +656,7 @@ it.effect("a server with no desktop app attached marks its tabs headless", () =>
     Effect.provide(
       ServerBrowser.layer.pipe(
         Layer.provide(DesktopChannel.layer),
-        Layer.provideMerge(sharedDependencies),
+        Layer.provideMerge(sharedDependencies(testConfig)),
       ),
     ),
   ),

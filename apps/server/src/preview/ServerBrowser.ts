@@ -1468,8 +1468,6 @@ const make = Effect.gen(function* () {
         manager
           .open({
             ...input,
-            // No desktop can draw this tab, so it must not publish as natively renderable.
-            ...(desktopChannel.available ? {} : { headless: true }),
             beforePublish: (snapshot) => {
               pendingTabs.delete(key);
               key = tabKey(snapshot.threadId, snapshot.tabId);
