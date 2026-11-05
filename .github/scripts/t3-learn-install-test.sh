@@ -102,6 +102,28 @@ if [ "$scenario" = fresh ]; then
     log "Installing the previous release, $previous"
     # A leftover bundle from an earlier run on a reused Mac would be updated instead.
     if [ "$os" = Darwin ]; then rm -rf /Applications/OminaX.app "/Applications/T3 Learn.app"; fi
+    if [ "$os" = Darwin ]; then
+      # Ad hoc signed builds each get a Keychain partition of their own cdhash, so the
+      # updated app would ask for the login password, which nobody types on a runner.
+      # A throwaway keychain whose Safe Storage key admits both builds keeps it quiet.
+      builds="$RUNNER_TEMP/builds"
+      zip_arch="$(uname -m | sed 's/x86_64/x64/')"
+      gh release download "v$previous" -R "$repo" -p "*-$previous-$zip_arch.zip" -D "$builds"
+      gh release download "v$version" -R "$repo" -p "*-$version-$zip_arch.zip" -D "$builds"
+      partitions="apple-tool:,apple:"
+      for zip in "$builds"/*.zip; do
+        ditto -x -k "$zip" "${zip%.zip}"
+        partitions="$partitions,cdhash:$(codesign -dvvv "${zip%.zip}"/*.app 2>&1 | sed -n 's/^CDHash=//p')"
+      done
+      keychain="$HOME/Library/Keychains/t3-learn-install-test.keychain-db"
+      security create-keychain -p ci "$keychain"
+      security set-keychain-settings "$keychain"
+      security unlock-keychain -p ci "$keychain"
+      security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+      security default-keychain -d user -s "$keychain"
+      security add-generic-password -A -s "t3learn Safe Storage" -a "t3learn Key" -w "$(openssl rand -base64 24)" "$keychain"
+      security set-generic-password-partition-list -S "$partitions" -k ci -s "t3learn Safe Storage" "$keychain" >/dev/null
+    fi
     curl -fsSL "https://github.com/$repo/releases/download/v$previous/install.sh" |
       env T3LEARN_VERSION="$previous" T3LEARN_FORMAT="$format" sh 2>&1 | tee "$artifacts/install-previous.log"
     previous_running="$(wait_for_server "$HOME/.t3-learn" "$previous")"
