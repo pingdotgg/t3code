@@ -227,6 +227,10 @@ it.each([
     `pwsh -Command "Start-Process 'https://example.com'"`,
     `pwsh -c "Start-Process 'https://example.com'"`,
     "powershell -NoProfile -Command Start-Process https://example.com",
+    'if command -v python3; then python3 -m webbrowser "$url"; fi',
+    'if command -v xdg-open; then xdg-open "$url"; fi',
+    'if false; then :; else gio open "$url"; fi',
+    'for url in https://example.com; do open "$url"; done',
   ].map(
     (command) =>
       [
