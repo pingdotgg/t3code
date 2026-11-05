@@ -20,6 +20,7 @@ import {
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parsePullRequestUrl } from "../shared/definition.ts";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
@@ -165,7 +166,7 @@ const cloneUrls = (target: Target) => ({
 });
 
 const isSshRemote = (remoteUrl: string | undefined) =>
-  remoteUrl !== undefined && (/^ssh:\/\//iu.test(remoteUrl) || /^[^/:]+@[^/:]+:/u.test(remoteUrl));
+  remoteUrl !== undefined && isSshRemoteUrl(remoteUrl);
 
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;

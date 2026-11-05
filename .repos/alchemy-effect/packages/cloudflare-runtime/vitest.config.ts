@@ -1,16 +1,29 @@
-import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import path from "node:path";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { loadEnv } from "vite";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
-const sourceRoot = (...parts: Array<string>) =>
-  path.resolve(import.meta.dirname, "src", ...parts);
+const sourceRoot = (...parts: Array<string>) => path.resolve(import.meta.dirname, "src", ...parts);
 
 const coreRoot = sourceRoot("core");
 const rolldownRoot = sourceRoot("rolldown");
 const viteRoot = sourceRoot("vite");
 const workersSharedRoot = sourceRoot("internal/workers-shared");
 const workflowsSharedRoot = sourceRoot("internal/workflows-shared");
+
+/**
+ * Suites that run Linux container images on a Docker daemon. CI's macOS and
+ * Windows runners can't host one (Apple Silicon VMs have no nested
+ * virtualization; Windows runs only Windows containers), so
+ * cloudflare-tools.yml sets `ALCHEMY_TEST_EXCLUDE_LINUX_CONTAINERS` there and
+ * these run on its Linux runner. Everywhere else they run, and a missing
+ * daemon fails them.
+ */
+const linuxContainerSuites = [
+  "test/DockerDaemon.test.ts",
+  "test/bindings/Container.test.ts",
+  "test/bindings/NativeContainer.test.ts",
+];
 
 export default defineConfig({
   test: {
@@ -21,6 +34,9 @@ export default defineConfig({
         test: {
           name: "core",
           include: ["test/**/*.test.ts"],
+          exclude: process.env.ALCHEMY_TEST_EXCLUDE_LINUX_CONTAINERS
+            ? [...configDefaults.exclude, ...linuxContainerSuites]
+            : configDefaults.exclude,
           setupFiles: ["./test/setup.ts"],
           pool: "forks",
           testTimeout: 30_000,
@@ -72,9 +88,7 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             wrangler: {
-              configPath: sourceRoot(
-                "internal/workers-shared/workers/asset-worker/wrangler.jsonc",
-              ),
+              configPath: sourceRoot("internal/workers-shared/workers/asset-worker/wrangler.jsonc"),
             },
           }),
         ],
@@ -110,15 +124,14 @@ export default defineConfig({
               compatibilityFlags: ["service_binding_extra_handlers"],
             },
             wrangler: {
-              configPath: sourceRoot(
-                "internal/workflows-shared/wrangler.jsonc",
-              ),
+              configPath: sourceRoot("internal/workflows-shared/wrangler.jsonc"),
             },
           }),
         ],
         test: {
           name: "workflows-shared",
           include: ["test/**/*.test.ts"],
+          globalSetup: ["./test/global-setup.ts"],
           testTimeout: 50_000,
         },
       },
