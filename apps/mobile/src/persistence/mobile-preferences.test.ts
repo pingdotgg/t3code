@@ -23,7 +23,7 @@ function makeStorage() {
   const secure = new Map<string, string>();
 
   const database = MobileDatabase.MobileDatabase.of({
-    loadCache: () => Effect.succeed(Option.none()),
+    loadCache: () => Effect.succeedNone,
     listCache: () => Effect.succeed([]),
     saveCache: () => Effect.void,
     removeCache: () => Effect.void,
