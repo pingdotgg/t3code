@@ -312,9 +312,11 @@ const ensureNativeFork: CommandPolicyV2Shape["ensureNativeFork"] = (input) => {
 };
 
 const ensureRollback: CommandPolicyV2Shape["ensureRollback"] = (input) => {
+  // Without native truncation, the next turn replays the kept conversation as a handoff.
   if (
     !input.capabilities.threads.canRollbackThread ||
-    !input.capabilities.checkpointing.providerCanRollbackConversation
+    (!input.capabilities.checkpointing.providerCanRollbackConversation &&
+      !input.capabilities.context.canConsumeHandoffSummaries)
   ) {
     return Effect.fail(
       unsupported(input, "rollback", "providerInstanceId conversation rollback is unavailable"),
