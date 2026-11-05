@@ -875,14 +875,19 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => tryOpenExternalUrl(assetPreviewUri, "file-preview"),
           } as const)
         : null,
-      resolvedActiveMode === "preview" &&
-      (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+      selectingText ||
+      (resolvedActiveMode === "preview" &&
+        (isBrowserFile || isImageFile || isVideoFile || isAudioFile))
         ? ({
             id: "refresh",
             title: "Refresh",
             icon: "arrow.clockwise",
             inline: false,
             onPress: async () => {
+              if (selectingText) {
+                await fileQuery.refresh();
+                return;
+              }
               if (isVideoFile || isAudioFile) await assetPreview.refresh();
               setPreviewRevision((current) => current + 1);
             },

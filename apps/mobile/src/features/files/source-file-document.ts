@@ -66,3 +66,22 @@ export function boundedSelectableSourceTokens(
   }
   return tokens;
 }
+
+export interface SelectableSourceHtmlStyle {
+  readonly foreground: string;
+  readonly selection: string;
+  readonly fontSize: number;
+  readonly rowHeight: number;
+  readonly wordBreak: boolean;
+}
+
+// A <pre> would drop a leading newline, so whitespace is preserved on a plain <div>.
+export function selectableSourceHtml(contents: string, style: SelectableSourceHtmlStyle): string {
+  const text = contents.replace(/[&<>]/g, (char) =>
+    char === "&" ? "&amp;" : char === "<" ? "&lt;" : "&gt;",
+  );
+  const wrap = style.wordBreak
+    ? "white-space:pre-wrap;overflow-wrap:anywhere"
+    : "white-space:pre;width:max-content";
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none';style-src 'unsafe-inline'"><style>html,body{margin:0;background:transparent}div{box-sizing:border-box;padding:8px 12px ${style.rowHeight}px;color:${style.foreground};font-family:monospace;font-size:${style.fontSize}px;line-height:${style.rowHeight / style.fontSize};${wrap}}::selection{background:color-mix(in srgb,${style.selection} 32%,transparent)}</style></head><body><div>${text}</div></body></html>`;
+}

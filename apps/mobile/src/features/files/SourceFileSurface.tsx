@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { WebView } from "react-native-webview";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { LoadingStrip } from "../../components/ui/LoadingStrip";
@@ -35,7 +36,11 @@ import {
 } from "./nativeSourceFileAdapter";
 import { SourceText } from "@t3tools/mobile-source-text";
 
-import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
+import {
+  boundedSelectableSourceTokens,
+  prepareSourceFileDocument,
+  selectableSourceHtml,
+} from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 import { createSourceLineScroll } from "./source-file-scroll";
 
@@ -237,7 +242,8 @@ function NativeSourceFileSurface(
 
 function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const usesAutomaticInsets = Platform.OS === "ios" && !props.embedded;
-  const foreground = useUniwindTheme()["--color-foreground"];
+  const appTheme = useUniwindTheme();
+  const foreground = appTheme["--color-foreground"];
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
@@ -249,6 +255,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   ) : undefined;
 
   const usesLineList = !props.selectable;
+  // Android lays out a full selectable TextView on the UI thread, which can stall large files.
+  const usesWebSelection = props.selectable === true && Platform.OS === "android";
 
   // Layout effect so a pending jump is cancelled in the commit that swaps the file.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
@@ -324,6 +332,28 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     </SourceText>
   ) : null;
 
+  const webSelection = usesWebSelection ? (
+    <WebView
+      testID="source-selectable-web-view"
+      source={{
+        html: selectableSourceHtml(normalizedContents, {
+          foreground,
+          selection: appTheme["--color-focus"],
+          fontSize: codeSurface.fontSize,
+          rowHeight: codeSurface.rowHeight,
+          wordBreak: codeWordBreak,
+        }),
+      }}
+      originWhitelist={["*"]}
+      javaScriptEnabled={false}
+      domStorageEnabled={false}
+      cacheEnabled={false}
+      setSupportMultipleWindows={false}
+      onShouldStartLoadWithRequest={(request) => request.url === "about:blank"}
+      style={{ flex: 1, backgroundColor: "transparent" }}
+    />
+  ) : null;
+
   const list = (
     <FlatList
       ref={listRef}
@@ -382,6 +412,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
             {list}
           </ScrollView>
         )
+      ) : usesWebSelection ? (
+        webSelection
       ) : codeWordBreak ? (
         padded
       ) : (
