@@ -1873,7 +1873,9 @@ it.effect("capture fails closed while snapshots are disabled", () => {
 
 it.effect("points capture setup failures at SnapShot settings", () => {
   vi.stubEnv("XDG_SESSION_TYPE", "wayland");
-  linuxCaptureMock.mockRejectedValueOnce(new CaptureSetupRequiredError("Install the helper."));
+  linuxCaptureMock.mockRejectedValueOnce(
+    new CaptureSetupRequiredError({ state: "Install the helper." }),
+  );
   return Effect.scoped(
     Effect.gen(function* () {
       const service = yield* DesktopSnapShot.make;

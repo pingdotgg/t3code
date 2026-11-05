@@ -217,9 +217,7 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response(null, { status: 405 });
   }
-  const pathname = yield* Effect.try(() => decodeURIComponent(url.pathname)).pipe(
-    Effect.orElseSucceed(() => null),
-  );
+  const pathname = Option.getOrNull(Option.liftThrowable(decodeURIComponent)(url.pathname));
   if (pathname === null || pathname.includes("\0")) return new Response(null, { status: 400 });
   const root = path.resolve(assetDirectory);
   const assetPath = path.resolve(root, `.${pathname}`);
