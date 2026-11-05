@@ -547,10 +547,21 @@ export function decodeDiscussionsJson(
     const notes = (discussion.value.notes ?? []).filter((note) => note.system !== true);
     const root = notes[0];
     const position = root?.position;
-    if (root === undefined || !position || position.position_type !== "text") continue;
-    const side = position.new_line === null || position.new_line === undefined ? "left" : "right";
-    const path = trimmed(side === "left" ? position.old_path : position.new_path);
-    const line = side === "left" ? position.old_line : position.new_line;
+    if (root === undefined || !position) continue;
+    let side: "left" | "right";
+    let path: string | null;
+    let line: number | null | undefined;
+    if (position.position_type === "text") {
+      side = position.new_line === null || position.new_line === undefined ? "left" : "right";
+      path = trimmed(side === "left" ? position.old_path : position.new_path);
+      line = side === "left" ? position.old_line : position.new_line;
+    } else if (position.position_type === "file" || position.position_type === "image") {
+      side = "right";
+      path = trimmed(position.new_path) ?? trimmed(position.old_path);
+      line = null;
+    } else {
+      continue;
+    }
     if (path === null) continue;
     threads.push({
       id: discussion.value.id,
