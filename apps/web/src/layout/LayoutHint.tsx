@@ -21,9 +21,10 @@ const ARROWS: Record<string, string> = { Left: "←", Right: "→", Up: "↑", D
 /** How long a hint stays before its one-shot fade. */
 const HINT_VISIBLE_MS = 2400;
 const HINT_FADE_MS = 200;
-/** Room between the hint and the composer (or the pane's bottom) under it. */
+/** Room between the hint and the composer under it. */
 const HINT_GAP_PX = 12;
 const HINT_EDGE_PX = 16;
+const HINT_BOTTOM_PX = 108;
 
 /** Fades the hint after a beat, then clears it. */
 function useHintLifetime(id: number): boolean {
@@ -44,9 +45,9 @@ function useHintLifetime(id: number): boolean {
 }
 
 /**
- * Centers a hint on the focused pane, a gap above its composer stack (banners,
- * request cards and tray included), or above the pane's bottom when it has no
- * composer. Follows the strip while it scrolls to the landed pane.
+ * Centers a hint on the focused pane at the same height on every pane, lifted
+ * a gap above its composer stack (banners, request cards and tray included)
+ * when that grows taller. Follows the strip while it scrolls to the landed pane.
  */
 function useHintPlacement() {
   const [hint, setHint] = useState<HTMLDivElement | null>(null);
@@ -61,9 +62,10 @@ function useHintPlacement() {
       const hostRect = host.getBoundingClientRect();
       const paneRect = pane.getBoundingClientRect();
       const composer = pane.querySelector('[data-chat-composer-stack="true"]');
+      const rest = paneRect.bottom - HINT_BOTTOM_PX;
       const floor = composer
-        ? composer.getBoundingClientRect().top - HINT_GAP_PX
-        : paneRect.bottom - HINT_EDGE_PX;
+        ? Math.min(rest, composer.getBoundingClientRect().top - HINT_GAP_PX)
+        : rest;
       const next = {
         left: paneRect.left + paneRect.width / 2 - hostRect.left,
         bottom: hostRect.bottom - floor,
@@ -151,7 +153,7 @@ function TerminalHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "te
       aria-live="polite"
       data-layout-hint="terminal"
       className={cn(
-        "pointer-events-none absolute bottom-30 left-1/2 z-40 flex h-8.5 max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2.5 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
+        "pointer-events-none absolute bottom-27 left-1/2 z-40 flex h-8.5 max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2.5 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
         leaving && "opacity-0",
       )}
     >
@@ -212,7 +214,7 @@ function WorkspaceHintPill({
       aria-live="polite"
       data-layout-hint={hint.kind}
       className={cn(
-        "pointer-events-none absolute bottom-30 left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
+        "pointer-events-none absolute bottom-27 left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
         small ? "h-7.5" : "h-8.5 gap-2.5",
         leaving && "opacity-0",
       )}
@@ -254,7 +256,7 @@ function ColumnHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "colu
       aria-live="polite"
       data-layout-hint="column"
       className={cn(
-        "pointer-events-none absolute bottom-30 left-1/2 z-40 flex h-8.5 max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2.5 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
+        "pointer-events-none absolute bottom-27 left-1/2 z-40 flex h-8.5 max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2.5 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
         leaving && "opacity-0",
       )}
     >

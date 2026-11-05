@@ -133,6 +133,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const setupCancelledRef = useRef(false);
   const controllerRef = useRef<VoiceInputController<true> | null>(null);
   const startRequestRef = useRef(0);
+  const pendingStartRef = useRef<number | null>(null);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
@@ -320,8 +321,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       request === startRequestRef.current &&
       controllerRef.current === expectedController &&
       latestInputRef.current.ownerKey === expectedOwner;
-    setQueuedStart({ prepared, request });
     let latestStatus: EnvironmentSpeechStatus;
+    pendingStartRef.current = request;
     try {
       latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
       if (!stillCurrent()) return;
@@ -346,6 +347,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       setQueuedStart(null);
       return;
+    } finally {
+      if (pendingStartRef.current === request) pendingStartRef.current = null;
     }
     setQueuedStart(null);
     if (!latestStatus.supported) return;
@@ -443,9 +446,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     blocksSubmission: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),
     start,
+    startPending: () => pendingStartRef.current !== null,
     stop: () => controllerRef.current?.stop() ?? Promise.resolve(),
     cancel: () => {
       startRequestRef.current += 1;
+      pendingStartRef.current = null;
       setQueuedStart(null);
       controllerRef.current?.cancel();
     },
