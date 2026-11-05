@@ -21,6 +21,7 @@ type SpeechActions = {
   available: boolean;
   state: VoiceInputState<true>;
   start(): Promise<void>;
+  startPending?(): boolean;
   stop(): Promise<void>;
   cancel(): void;
 };
@@ -48,8 +49,11 @@ const shortcutTargets = new Map<symbol, () => ShortcutInput & { backgroundThread
 function ownsShortcut(id: symbol) {
   const entries = [...shortcutTargets].filter(([, read]) => !read().backgroundThread);
   const busy = entries.find(([, read]) => {
-    const phase = read().speech.state.phase;
-    return phase !== "idle" && phase !== "error";
+    const { speech } = read();
+    return (
+      (speech.state.phase !== "idle" && speech.state.phase !== "error") ||
+      speech.startPending?.() === true
+    );
   });
   if (busy) return busy[0] === id;
   // A focused text field wins over the pane it sits in (a comment editor in a chat).
@@ -100,7 +104,12 @@ export function useDictationShortcut(input: ShortcutInput) {
       if (!ownsShortcut(id.current)) return;
       if (event.isComposing || event.keyCode === 229) return;
       const { speech } = current.current;
-      if (event.key === "Escape" && (pressed.current !== null || speech.state.phase !== "idle")) {
+      if (
+        event.key === "Escape" &&
+        (pressed.current !== null ||
+          speech.state.phase !== "idle" ||
+          speech.startPending?.() === true)
+      ) {
         event.preventDefault();
         event.stopImmediatePropagation();
         pressed.current = null;

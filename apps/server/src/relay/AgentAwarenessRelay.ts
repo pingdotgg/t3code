@@ -1,8 +1,8 @@
-import type { AgentAwarenessThread } from "../orchestration-v2/ProjectionStore.ts";
 import {
   isListedThreadLineage,
   type EnvironmentId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   type Project,
   type ThreadId,
@@ -283,7 +283,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
 });
 
 function describeThreadShellForAwareness(
-  thread: Option.Option<AgentAwarenessThread>,
+  thread: Option.Option<OrchestrationV2ThreadShell>,
 ): Record<string, unknown> {
   if (Option.isNone(thread)) {
     return { found: false };
@@ -302,7 +302,7 @@ function describeThreadShellForAwareness(
 
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
-  readonly thread: Option.Option<AgentAwarenessThread>;
+  readonly thread: Option.Option<OrchestrationV2ThreadShell>;
   readonly project: Option.Option<Project>;
 }): {
   readonly projectId: string | null;
@@ -336,7 +336,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   };
 }
 
-function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
+function terminalWorkSinceStart(thread: OrchestrationV2ThreadShell, startedAt: number): boolean {
   return (
     thread.latestRunCompletedAt != null &&
     DateTime.toEpochMillis(thread.latestRunCompletedAt) > startedAt
@@ -347,7 +347,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
   readonly startedAt: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
-  readonly threads: ReadonlyArray<AgentAwarenessThread>;
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
 }): ReadonlyArray<ThreadId> {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
@@ -524,7 +524,7 @@ export const make = Effect.gen(function* () {
     });
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
-    const threadShell = (yield* threads.getAgentAwarenessSnapshot(threadId)).threads[0] ?? null;
+    const threadShell = yield* threads.getThreadShell(threadId);
     if (
       threadShell !== null &&
       !isListedThreadLineage(threadShell.lineage) &&
@@ -535,7 +535,7 @@ export const make = Effect.gen(function* () {
     }
     const thread =
       threadShell === null || threadShell.archivedAt !== null
-        ? Option.none<AgentAwarenessThread>()
+        ? Option.none<OrchestrationV2ThreadShell>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
@@ -735,12 +735,19 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const projectSnapshot = yield* projects.snapshot;
-    const activitySnapshot = yield* threads.getAgentAwarenessSnapshot();
+    // Subagents and side chats never publish awareness, and subagents are most threads.
+    const topLevelThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
+      isListedThreadLineage(thread.lineage) ? [thread.id] : [],
+    );
+    const shellSnapshot = yield* threads.getShellSnapshot({
+      location: "active",
+      threadIds: topLevelThreadIds,
+    });
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       startedAt,
       projects: projectSnapshot.projects,
-      threads: activitySnapshot.threads,
+      threads: shellSnapshot.threads,
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");

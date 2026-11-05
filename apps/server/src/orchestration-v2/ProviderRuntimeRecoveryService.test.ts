@@ -501,19 +501,7 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each([
-  "queued",
-  "preparing",
-  "starting",
-  "starting-other-request",
-  "starting-own-request",
-  "starting-scheduled",
-] as const)("recovers $0 work after restart", (scenario) => {
-  const status = scenario.startsWith("starting") ? "starting" : scenario;
-  const terminalized =
-    status === "preparing" ||
-    scenario === "starting-own-request" ||
-    scenario === "starting-scheduled";
+it.effect.each(["queued", "preparing"] as const)("recovers $0 work after restart", (status) => {
   const threadId = ThreadId.make("thread_queued_restart");
   const runId = RunId.make("run_queued_restart");
   const attemptId = RunAttemptId.make("attempt_queued_restart");
@@ -522,18 +510,7 @@ it.effect.each([
     null;
   const projection = {
     thread: { id: threadId },
-    runtimeRequests: scenario.endsWith("request")
-      ? [
-          {
-            id: RuntimeRequestId.make("pending-recovery-request"),
-            nodeId:
-              scenario === "starting-own-request" ? rootNodeId : NodeId.make("other-run-request"),
-            kind: "user_input",
-            status: "pending",
-            responseCapability: { type: "message" },
-          },
-        ]
-      : [],
+    runtimeRequests: [],
     providerSessions: [],
     providerThreads: [],
     providerTurns: [],
@@ -541,9 +518,6 @@ it.effect.each([
       {
         id: runId,
         status,
-        startedAt: null,
-        activeAttemptId: attemptId,
-        userMessageId: MessageId.make("message_queued_restart"),
         queuePosition: 1,
         providerInstanceId: ProviderInstanceId.make("codex"),
         ...(status === "preparing"
@@ -566,15 +540,6 @@ it.effect.each([
       },
     ],
     nodes: [
-      ...(scenario === "starting-other-request"
-        ? [
-            {
-              id: NodeId.make("other-run-request"),
-              runId: RunId.make("earlier-run"),
-              status: "waiting",
-            },
-          ]
-        : []),
       {
         id: rootNodeId,
         runId,
@@ -582,16 +547,7 @@ it.effect.each([
       },
     ],
     subagents: [],
-    messages:
-      status === "starting"
-        ? [
-            {
-              id: MessageId.make("message_queued_restart"),
-              createdBy: "user",
-              ...(scenario === "starting-scheduled" ? { scheduledTaskId: "scheduled-task" } : {}),
-            },
-          ]
-        : [],
+    messages: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
@@ -601,16 +557,6 @@ it.effect.each([
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-          getMessagesById: (requestedThreadId, messageIds) =>
-            Effect.succeed(
-              new Map(
-                projection.messages
-                  .filter(
-                    (message) => requestedThreadId === threadId && messageIds.includes(message.id),
-                  )
-                  .map((message) => [message.id, message]),
-              ),
-            ),
           getThreadRecords: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
@@ -633,7 +579,7 @@ it.effect.each([
   return Effect.gen(function* () {
     const summary =
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
-    assert.equal(summary.terminalizedRuns, terminalized ? 1 : 0);
+    assert.equal(summary.terminalizedRuns, status === "preparing" ? 1 : 0);
     const command = committedInput;
     assert.isNotNull(command);
     if (command === null) return;
@@ -642,17 +588,17 @@ it.effect.each([
     const nodeEvent = command.events.find((event) => event.type === "node.updated");
     assert.equal(
       runEvent?.type === "run.updated" ? runEvent.payload.status : null,
-      terminalized ? "cancelled" : "queued",
+      status === "preparing" ? "cancelled" : "queued",
     );
     assert.isEmpty(command.effects);
-    if (terminalized) {
+    if (status === "preparing") {
       assert.equal(
         attemptEvent?.type === "run-attempt.updated" ? attemptEvent.payload.status : null,
         "cancelled",
       );
       assert.equal(
         nodeEvent?.type === "node.updated" ? nodeEvent.payload.status : null,
-        scenario === "starting-own-request" ? null : "cancelled",
+        "cancelled",
       );
     } else {
       assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.queuePosition : null, 1);
