@@ -4,14 +4,11 @@ import { useMemo } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
-import { Toolbar } from "../../components/ui/Toolbar";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   LinkedPullRequestRow,
   linkedPullRequestKey,
@@ -22,7 +19,6 @@ import { useLinkedPullRequestActions } from "./useLinkedPullRequestActions";
 export function ThreadPullRequestsSheet(
   _props: StaticScreenProps<{ readonly environmentId: string; readonly threadId: string }>,
 ) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
@@ -67,7 +63,7 @@ export function ThreadPullRequestsSheet(
         recycleItems
         alwaysBounceVertical
         style={{ flex: 1 }}
-        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           paddingBottom: Math.max(insets.bottom, 18) + 18,
@@ -89,31 +85,11 @@ export function ThreadPullRequestsSheet(
     </View>
   );
 
-  if (Platform.OS === "ios") {
-    return (
-      <View collapsable={false} className="flex-1 bg-sheet">
-        <SheetHeader presentation="native" title={title} onClose={() => navigation.goBack()} />
-        {actions.canLink ? (
-          <Toolbar placement="right">
-            <Toolbar.Button
-              icon="plus"
-              accessibilityLabel={`Link ${singular}`}
-              onPress={actions.promptLink}
-            />
-          </Toolbar>
-        ) : null}
-        {content}
-      </View>
-    );
-  }
-
   return (
-    <View collapsable={false} className="flex-1 bg-header">
-      <AppBar
-        sheet
+    <View collapsable={false} className="flex-1 bg-sheet">
+      <SheetHeader
         title={title}
-        hideBottomBorder
-        onBack={() => navigation.goBack()}
+        onClose={() => navigation.goBack()}
         actions={
           actions.canLink
             ? [
@@ -126,7 +102,7 @@ export function ThreadPullRequestsSheet(
             : undefined
         }
       />
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+      <ScreenContent>{content}</ScreenContent>
     </View>
   );
 }

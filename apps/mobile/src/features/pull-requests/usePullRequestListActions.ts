@@ -1,6 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
 import {
   executeAtomQuery,
   settlePromise,
@@ -23,6 +22,7 @@ import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -32,8 +32,8 @@ export function usePullRequestListActions(
   ) => void,
 ) {
   const registry = use(RegistryContext);
-  const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
+  const openDetail = useOpenWorkspaceDetail();
   const permissionKey = JSON.stringify(environmentIds);
   const permissionAtom = (() => {
     const ids: readonly EnvironmentId[] = JSON.parse(permissionKey);
@@ -79,12 +79,10 @@ export function usePullRequestListActions(
           !pr.viewerPermissions.requestReviewers
         )
           throw new Error(`Review requests aren't available for this ${terminology.singular}.`);
-        if (Platform.OS === "android") {
-          selectDetail(
-            { name: "PullRequest", params: params(entry) },
-            { name: "PullRequestReviewers", params: params(entry) },
-          );
-        } else navigation.navigate("PullRequestReviewers", params(entry));
+        openDetail(
+          { name: "PullRequest", params: params(entry) },
+          { name: "PullRequestReviewers", params: params(entry) },
+        );
         return;
       }
       if (

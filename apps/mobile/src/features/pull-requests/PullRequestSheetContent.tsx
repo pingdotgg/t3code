@@ -34,7 +34,6 @@ export function PullRequestSheetContent(props: {
       style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
       <SheetHeader
-        presentation={android ? "inline" : "native"}
         title={props.title}
         subtitle={props.subtitle}
         onCancel={() => navigation.goBack()}

@@ -797,7 +797,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 onTouchStart={(event) => trackListTouches(event, true)}
                 onTouchEnd={(event) => trackListTouches(event, false)}
                 onTouchCancel={(event) => trackListTouches(event, false)}
-                renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
+                renderScrollComponent={renderHomeScrollView}
                 data={threadListV2Items}
                 renderItem={renderV2Item}
                 keyExtractor={v2KeyExtractor}
@@ -826,7 +826,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 }
                 ListEmptyComponent={v2ListEmpty}
                 style={{ flex: 1 }}
-                automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+                automaticallyAdjustsScrollIndicatorInsets
                 // UIKit owns the bar's inset, so a minimizing bar and a resized column move
                 // the list in the same frame as the bar.
                 contentInsetAdjustmentBehavior="automatic"
