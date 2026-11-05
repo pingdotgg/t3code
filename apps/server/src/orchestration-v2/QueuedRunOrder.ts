@@ -9,6 +9,7 @@ export function isAutomaticCompletionRun(
   );
 }
 
+/** Automatic completions, and messages reordered ahead of them, run before other queued messages. */
 export function queuedRunsInDeliveryOrder(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): ReadonlyArray<OrchestrationV2Run> {
@@ -20,9 +21,10 @@ export function queuedRunsInDeliveryOrder(
   return projection.runs
     .filter((run) => run.status === "queued")
     .toSorted((left, right) => {
-      const deliveryPriority =
-        Number(automaticCompletionMessageIds.has(right.userMessageId)) -
-        Number(automaticCompletionMessageIds.has(left.userMessageId));
+      const hasPriority = (run: OrchestrationV2Run) =>
+        automaticCompletionMessageIds.has(run.userMessageId) ||
+        run.queuedAheadOfCompletions === true;
+      const deliveryPriority = Number(hasPriority(right)) - Number(hasPriority(left));
       return (
         deliveryPriority ||
         (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||

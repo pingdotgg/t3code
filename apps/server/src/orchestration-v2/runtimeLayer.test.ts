@@ -22,6 +22,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
@@ -63,6 +64,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -6709,6 +6711,154 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(cancelAgainError._tag, "OrchestratorDispatchError");
+    }),
+  );
+
+  it.effect("moves a queued message ahead of queued delegated completions and back", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-reorder-before-completion-thread");
+      const messageId = (key: string) =>
+        MessageId.make(`runtime-layer-reorder-before-completion-${key}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-reorder-before-completion-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-reorder-before-completion-project"),
+        title: "Reorder before completions",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-reorder-before-completion",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-reorder-before-completion-active"),
+        threadId,
+        messageId: messageId("active"),
+        text: "Keep the provider occupied.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const queueCompletion = (generation: number) =>
+        Effect.gen(function* () {
+          const activeRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          const taskIds = [
+            NodeId.make(`runtime-layer-reorder-before-completion-task-${generation}`),
+          ];
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`runtime-layer-reorder-before-completion-open-${generation}`),
+                type: "run.updated",
+                threadId,
+                runId: activeRun.id,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...activeRun,
+                  delegatedCompletion: {
+                    disposition: "open",
+                    nextGeneration: generation + 1,
+                    delivery: {
+                      messageId: messageId(`completion-${generation}`),
+                      generation,
+                      taskIds,
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "server",
+            commandId: CommandId.make(`runtime-layer-reorder-before-completion-${generation}`),
+            threadId,
+            messageId: messageId(`completion-${generation}`),
+            text: `Completion ${generation}`,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "queue_after_active" },
+            delegatedCompletion: { parentRunId: activeRun.id, generation, taskIds },
+          });
+        });
+      yield* queueCompletion(1);
+      yield* queueCompletion(2);
+      for (const key of ["correction", "follow-up"]) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-reorder-before-completion-${key}`),
+          threadId,
+          messageId: messageId(key),
+          text: key,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+        });
+      }
+      const runIdFor = (projection: OrchestrationV2ThreadProjection, key: string) =>
+        projection.runs.find((run) => run.userMessageId === messageId(key))!.id;
+      const before = yield* orchestrator.getThreadProjection(threadId);
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.reorder",
+        commandId: CommandId.make("runtime-layer-reorder-before-completion-reorder"),
+        threadId,
+        runId: runIdFor(before, "correction"),
+        beforeRunId: runIdFor(before, "completion-1"),
+      });
+
+      yield* queueCompletion(3);
+
+      const deliveryOrder = Effect.gen(function* () {
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        return queuedRunsInDeliveryOrder(projection).map((run) =>
+          run.userMessageId.replace(messageId(""), ""),
+        );
+      });
+      assert.deepEqual(yield* deliveryOrder, [
+        "correction",
+        "completion-1",
+        "completion-2",
+        "completion-3",
+        "follow-up",
+      ]);
+
+      const completionReorder = yield* orchestrator
+        .dispatch({
+          type: "queued-run.reorder",
+          commandId: CommandId.make("runtime-layer-reorder-before-completion-completion"),
+          threadId,
+          runId: runIdFor(before, "completion-2"),
+          beforeRunId: runIdFor(before, "completion-1"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(completionReorder._tag, "OrchestratorDispatchError");
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.reorder",
+        commandId: CommandId.make("runtime-layer-reorder-before-completion-back"),
+        threadId,
+        runId: runIdFor(before, "correction"),
+        beforeRunId: null,
+      });
+      assert.deepEqual(yield* deliveryOrder, [
+        "completion-1",
+        "completion-2",
+        "completion-3",
+        "follow-up",
+        "correction",
+      ]);
     }),
   );
 });

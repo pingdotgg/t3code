@@ -6301,6 +6301,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           queuedRunId: runId,
           targetRunId: goalStopRunId,
           reason: "Stopped to apply /goal",
+          goal: true,
           now,
         });
       }
@@ -9620,7 +9621,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nodeId: queuedRootNode.id,
         providerInstanceId: queuedRun.providerInstanceId,
         occurredAt: now,
-        payload: { ...queuedRun, queuePosition: 1 },
+        payload: {
+          ...queuedRun,
+          queuePosition: 1,
+          ...(goalCommand === null ? {} : { queuedAheadOfCompletions: false }),
+        },
       });
       const stops =
         isLiveRun(target) && !(yield* stopReachedRun(command, command.threadId, target.id));
@@ -9632,6 +9637,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuedRunId: queuedRun.id,
         targetRunId: stops ? target.id : undefined,
         reason: "Skipped compaction to send a queued message",
+        goal: goalCommand !== null,
         now,
       });
     }
@@ -9647,7 +9653,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nodeId: queuedRootNode.id,
         providerInstanceId: queuedRun.providerInstanceId,
         occurredAt: now,
-        payload: { ...queuedRun, queuePosition: 1 },
+        payload: { ...queuedRun, queuePosition: 1, queuedAheadOfCompletions: false },
       });
       const stops =
         target !== undefined &&
@@ -9663,6 +9669,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuedRunId: queuedRun.id,
         targetRunId: stops ? target.id : undefined,
         reason: "Stopped to apply /goal",
+        goal: true,
         now,
       });
     }
@@ -9762,19 +9769,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Automatic completion deliveries cannot be reordered.",
       });
     }
-    const automaticRuns = queuedRuns.filter((run) => isAutomaticCompletionRun(projection, run));
-    if (
-      command.beforeRunId !== null &&
-      automaticRuns.some((run) => run.id === command.beforeRunId)
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "Queued messages cannot be reordered ahead of automatic completion delivery.",
-      });
-    }
-    const reorderableRuns = queuedRuns.filter((run) => !isAutomaticCompletionRun(projection, run));
-    const withoutMoving = reorderableRuns.filter((run) => run.id !== command.runId);
+    const withoutMoving = queuedRuns.filter((run) => run.id !== command.runId);
     const beforeIndex =
       command.beforeRunId === null
         ? withoutMoving.length
@@ -9787,11 +9782,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const reordered = [
-      ...automaticRuns,
       ...withoutMoving.slice(0, beforeIndex),
       moving,
       ...withoutMoving.slice(beforeIndex),
     ];
+    const lastCompletionIndex = reordered.findLastIndex((run) =>
+      isAutomaticCompletionRun(projection, run),
+    );
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     yield* Effect.forEach(
@@ -9799,7 +9796,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (run, index) =>
         Effect.gen(function* () {
           const queuePosition = index + 1;
-          if (run.queuePosition === queuePosition) {
+          const aheadOfCompletions =
+            index < lastCompletionIndex && !isAutomaticCompletionRun(projection, run);
+          if (
+            run.queuePosition === queuePosition &&
+            (run.queuedAheadOfCompletions === true) === aheadOfCompletions
+          ) {
             return;
           }
           yield* emitEvent({
@@ -9812,6 +9814,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: {
               ...run,
               queuePosition,
+              ...(aheadOfCompletions || run.queuedAheadOfCompletions === true
+                ? { queuedAheadOfCompletions: aheadOfCompletions }
+                : {}),
             },
           });
         }),
@@ -11885,15 +11890,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly queuedRunId: RunId;
       readonly targetRunId: RunId | undefined;
       readonly reason: string;
+      /** A goal goes first among queued messages, so it drops their priority over completions. */
+      readonly goal: boolean;
       readonly now: DateTime.Utc;
     }) {
       const { command, events, effects, projection, now, targetRunId } = input;
+      // Completions are renumbered too: a message moved ahead of them shares their position range.
       const others = queuedRunsInDeliveryOrder(projection).filter(
-        (run) => run.id !== input.queuedRunId && !isAutomaticCompletionRun(projection, run),
+        (run) => run.id !== input.queuedRunId,
       );
       for (const [index, run] of others.entries()) {
         const queuePosition = index + 2;
-        if (run.queuePosition === queuePosition) continue;
+        if (
+          run.queuePosition === queuePosition &&
+          (!input.goal || run.queuedAheadOfCompletions !== true)
+        )
+          continue;
         yield* emit(
           events,
           command,
@@ -11904,7 +11916,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, queuePosition },
+          payload: {
+            ...run,
+            queuePosition,
+            ...(input.goal ? { queuedAheadOfCompletions: false } : {}),
+          },
         });
       }
       if (targetRunId === undefined) return undefined;
