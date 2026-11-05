@@ -2137,6 +2137,8 @@ export default function ChatView(props: ChatViewProps) {
     timelineAnchorMessageId,
     setTimelineAnchor,
   });
+  const onScrollToEnd = () => scrollToEnd(true);
+  const onScrollToEndStable = useStableCallback(onScrollToEnd);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
@@ -2728,7 +2730,7 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
-      "chat.scrollToEnd": () => scrollToEnd(true),
+      "chat.scrollToEnd": onScrollToEndStable,
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
           return false;
@@ -3519,7 +3521,7 @@ export default function ChatView(props: ChatViewProps) {
                 <ScrollToEndButton
                   bottom={scrollToEndClearance + 4}
                   summary={scrollToEndSummary}
-                  onScrollToEnd={() => scrollToEnd(true)}
+                  onScrollToEnd={onScrollToEndStable}
                 />
               )}
             </div>
