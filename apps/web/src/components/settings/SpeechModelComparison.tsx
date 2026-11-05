@@ -73,21 +73,25 @@ export function LanguageRow({
 export function ModelBenchmarks({
   model,
   languages,
+  facts,
 }: {
   model: EnvironmentSpeechModel;
   languages: readonly string[];
+  /** Plain facts, such as language count and size, shown after the scores. */
+  facts: readonly string[];
 }) {
   const data = model.benchmark;
-  if (!data) return null;
-  const visible = languages.length
-    ? languages
-    : [model.languages.find((code) => data.accuracy[code]) ?? model.languages[0]].filter(
-        (code): code is string => code !== undefined,
-      );
+  const visible = !data
+    ? []
+    : languages.length
+      ? languages
+      : [model.languages.find((code) => data.accuracy[code]) ?? model.languages[0]].filter(
+          (code): code is string => code !== undefined,
+        );
   return (
     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
       {visible.map((code) => {
-        const score = data.accuracy[code];
+        const score = data?.accuracy[code];
         return (
           <span key={code}>
             {languageLabel(code)}:{" "}
@@ -102,16 +106,21 @@ export function ModelBenchmarks({
           </span>
         );
       })}
-      <span>
-        Speed:{" "}
-        {data.secondsPer30s === null ? (
-          "not benchmarked"
-        ) : (
-          <>
-            <strong className="font-medium text-foreground">{data.secondsPer30s} s</strong> / 30 s
-          </>
-        )}
-      </span>
+      {data ? (
+        <span>
+          Speed:{" "}
+          {data.secondsPer30s === null ? (
+            "not benchmarked"
+          ) : (
+            <>
+              <strong className="font-medium text-foreground">{data.secondsPer30s} s</strong> / 30 s
+            </>
+          )}
+        </span>
+      ) : null}
+      {facts.map((fact) => (
+        <span key={fact}>{fact}</span>
+      ))}
     </div>
   );
 }

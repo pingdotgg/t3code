@@ -503,7 +503,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "dictation-shortcut-mode",
-    title: "Dictation shortcut mode",
+    title: "Dictation shortcut",
     to: "/settings/voice",
     searchTerms: ["speech voice keyboard hotkey hold toggle auto"],
   },
@@ -524,7 +524,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project dictionary",
     to: "/settings/voice",
     scope: "project-defaults",
-    searchTerms: ["speech voice transcription vocabulary shared team environment glossary"],
+    searchTerms: [
+      "speech voice transcription vocabulary shared dictionary team environment glossary",
+    ],
   },
   {
     id: "speech-post-processing-model",

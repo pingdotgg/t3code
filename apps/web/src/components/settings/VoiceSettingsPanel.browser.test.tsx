@@ -136,7 +136,7 @@ it("preserves the model test transcript when its model is filtered out", async (
 
           const search = screen.getByRole("textbox", { name: "Search transcription models" });
           await userEvent.fill(search, "no matching model");
-          await expect.element(screen.getByText("No matching models.")).toBeVisible();
+          await expect.element(screen.getByText("No models match.")).toBeVisible();
           await userEvent.clear(search);
           await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
           const french = screen.getByRole("button", { name: "French", exact: true });
@@ -273,7 +273,7 @@ it("keeps a missing destination selected without claiming it cannot transcribe",
   await expect
     .element(screen.getByRole("combobox", { name: "Send microphone audio to" }))
     .toHaveTextContent("Chosen environment (unavailable)");
-  await expect.element(screen.getByText(/cannot transcribe audio/)).not.toBeInTheDocument();
+  await expect.element(screen.getByText(/can’t transcribe audio/)).not.toBeInTheDocument();
 });
 
 it("shows the model's effective language and restores the saved preference when supported again", async () => {

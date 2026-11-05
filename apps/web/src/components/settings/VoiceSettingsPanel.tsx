@@ -62,6 +62,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
 import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -71,6 +72,7 @@ import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { LanguageRow, ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
+import { AdvancedSettings } from "./AdvancedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -88,9 +90,9 @@ const OFF = "off";
 const SYSTEM_DEFAULT = "system-default";
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const SHORTCUT_MODE_LABELS: Record<VoiceShortcutMode, string> = {
-  auto: "Auto: tap to toggle, hold to record",
-  hold: "Hold: record while the keys are down",
-  toggle: "Toggle: press to start and to finish",
+  auto: "Auto: press to toggle, hold to record",
+  hold: "Hold: record while held",
+  toggle: "Toggle: press to start, press again to stop",
 };
 const UNLOAD_LABELS: Record<SpeechModelUnloadTimeout, string> = {
   never: "Never",
@@ -128,6 +130,18 @@ type ModelCardProps = {
   readonly children?: ReactNode;
 };
 
+function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="outline" />}>
+        {props.icon}
+        {props.label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function ModelCard(props: ModelCardProps) {
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
@@ -138,33 +152,40 @@ function ModelCard(props: ModelCardProps) {
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium leading-5">{model.name}</span>
           {model.recommended ? (
-            <Badge variant="outline">
-              <StarIcon className="mr-1 size-3" />
-              Recommended
-            </Badge>
+            <ModelBadge
+              icon={<StarIcon className="mr-1 size-3" />}
+              label="Recommended"
+              tooltip="A good default pick for the languages it covers."
+            />
           ) : null}
           {model.supportsStreaming ? (
-            <Badge variant="outline">
-              <AudioLinesIcon className="mr-1 size-3" />
-              Live preview
-            </Badge>
+            <ModelBadge
+              icon={<AudioLinesIcon className="mr-1 size-3" />}
+              label="Live preview"
+              tooltip="Shows words in your draft as you speak, before the recording finishes."
+            />
           ) : null}
           {model.supportsTranslation ? (
-            <Badge variant="outline">
-              <LanguagesIcon className="mr-1 size-3" />
-              Translate
-            </Badge>
+            <ModelBadge
+              icon={<LanguagesIcon className="mr-1 size-3" />}
+              label="Translate"
+              tooltip="Can write English text from speech in another language. Turn on Translate to English to use it."
+            />
           ) : null}
         </div>
-        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-          {model.description}{" "}
-          {model.languages.length === 1
-            ? languageLabel(model.languages[0]!)
-            : `${model.languages.length} languages`}
-          {" · "}
-          {formatSize(model.size)}
-        </p>
-        <ModelBenchmarks model={model} languages={props.comparisonLanguages} />
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
+        <ModelBenchmarks
+          model={model}
+          languages={props.comparisonLanguages}
+          facts={[
+            ...(model.languages.length > 1
+              ? [`${model.languages.length} languages`]
+              : model.benchmark
+                ? []
+                : [languageLabel(model.languages[0] ?? "")]),
+            formatSize(model.size),
+          ]}
+        />
         {downloading ? (
           <div className="mt-2">
             <div
@@ -277,13 +298,13 @@ function DictionaryEditor(props: {
   };
   return (
     <>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-start gap-1.5">
         <Textarea
           value={termDraft}
           rows={1}
           maxLength={5_100}
           disabled={disabled}
-          placeholder="Add words or phrases, separated by commas or new lines"
+          placeholder="Add words or phrases, separated by commas or line breaks"
           aria-label={`Add a word or phrase to the ${label}`}
           onChange={(event) => setTermDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -292,7 +313,7 @@ function DictionaryEditor(props: {
             addTerm();
           }}
         />
-        <Button type="button" size="sm" disabled={!canAddTerm} onClick={addTerm}>
+        <Button type="button" disabled={!canAddTerm} onClick={addTerm}>
           Add
         </Button>
       </div>
@@ -369,8 +390,8 @@ function ProjectDictionaryRow() {
       title={isProjectScope ? "Project dictionary" : "Shared dictionary"}
       description={
         isProjectScope
-          ? `Saved with ${scope.scope.label} on its environment and used by everyone who dictates in it, together with their personal dictionary. Project spellings win when the two overlap.`
-          : "Saved on the environment and used for every project there, together with each person's personal dictionary. Pick a project above to keep words to that project."
+          ? `Saved with ${scope.scope.label} on its environment. Everyone who dictates in this project gets these spellings, along with their own dictionary. Project spellings win when the two overlap.`
+          : "Saved on the environment and used in every project there, along with each person’s own dictionary. Pick a project above to limit these words to one project."
       }
       control={
         <span className="text-xs text-muted-foreground">
@@ -378,7 +399,7 @@ function ProjectDictionaryRow() {
         </span>
       }
     >
-      <div className="mt-2">
+      <div className="mt-2 pb-3.5">
         <DictionaryEditor
           label={isProjectScope ? "project dictionary" : "shared dictionary"}
           words={words}
@@ -440,8 +461,8 @@ function CleanupModelRow() {
       title="Cleanup model"
       description={
         dedicated
-          ? `Transcripts from drafts on ${environment?.label ?? "this environment"} are cleaned with this model instead of its text generation model.`
-          : `Uses the text generation model of ${environment?.label ?? "this environment"}. Pick a model to clean transcripts with a cheaper or faster one.`
+          ? `Drafts on ${environment?.label ?? "this environment"} use this model for cleanup instead of the environment’s text generation model.`
+          : `Cleanup currently uses the text generation model on ${environment?.label ?? "this environment"}. Pick another model if you want a cheaper or faster one.`
       }
       resetAction={
         dedicated ? (
@@ -607,18 +628,18 @@ function AdvancedSpeechSettings({
   if (!status?.supported) return null;
   const supported = status;
   return (
-    <SettingsSection {...searchableSetting("speech-hardware")} title="Advanced">
-      {" "}
+    <AdvancedSettings targetIds={[searchableSetting("speech-hardware").id]}>
       <SettingsRow
+        {...searchableSetting("speech-hardware")}
         title="Hardware"
-        description="Auto uses a GPU when the environment has one."
+        description="Auto uses the environment’s GPU when it has one."
         control={
           <Select
             value={supported.acceleration}
             disabled={controlsDisabled}
             onValueChange={(value) => {
               if (value)
-                void run("Could not change hardware", () =>
+                void run("Could not change transcription hardware", () =>
                   runtime.runPromise(
                     updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
                   ),
@@ -650,14 +671,14 @@ function AdvancedSpeechSettings({
       />
       <SettingsRow
         title="Unload model"
-        description="Free the model's memory on the environment after it sits idle."
+        description="Release the model’s memory on the environment after it sits idle."
         control={
           <Select
             value={supported.modelUnloadTimeout}
             disabled={controlsDisabled}
             onValueChange={(value) => {
               if (value)
-                void run("Could not change unload timing", () =>
+                void run("Could not change when the model unloads", () =>
                   runtime.runPromise(
                     updateEnvironmentSpeechModelUnloadTimeout(
                       prepared,
@@ -680,7 +701,7 @@ function AdvancedSpeechSettings({
           </Select>
         }
       />
-    </SettingsSection>
+    </AdvancedSettings>
   );
 }
 
@@ -729,15 +750,15 @@ function SpeechModelBrowser(props: {
     >
       {status && !status.supported ? (
         <p className="px-4 py-2 text-sm text-muted-foreground">
-          This environment cannot transcribe: {status.reason}.
+          This environment can’t transcribe audio: {status.reason}.
         </p>
       ) : null}
       {status?.supported ? (
         <>
           <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-            Select languages to see models that support them all. Accuracy is measured word or
-            character error; lower is better. Speed is the time for 30 seconds of audio on Handy’s
-            benchmark GPU.
+            Pick languages to see models that support all of them. Accuracy is word or character
+            error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
+            Handy’s benchmark GPU.
           </p>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
@@ -776,7 +797,7 @@ function SpeechModelBrowser(props: {
                   />
                 ))}
                 {visibleLanguages.length === 0 && (
-                  <p className="px-2 py-1 text-xs text-muted-foreground">No matching languages.</p>
+                  <p className="px-2 py-1 text-xs text-muted-foreground">No languages match.</p>
                 )}
               </div>
             </div>
@@ -802,7 +823,7 @@ function SpeechModelBrowser(props: {
                 tabIndex={0}
               >
                 {sortedModels.length === 0 && (
-                  <p className="px-4 py-2 text-sm text-muted-foreground">No matching models.</p>
+                  <p className="px-4 py-2 text-sm text-muted-foreground">No models match.</p>
                 )}
                 {renderedModels.map((model) => {
                   const card: ModelCardProps = {
@@ -918,7 +939,7 @@ function TranscriptionTest(props: {
               <span className="text-xs text-muted-foreground">
                 {speech.status?.supported === false
                   ? speech.status.reason
-                  : "Waiting for the environment"}
+                  : "Waiting for the environment to connect"}
               </span>
             )}
           </div>
@@ -928,8 +949,8 @@ function TranscriptionTest(props: {
           <div className="w-full">
             <div className="flex items-start gap-2">
               <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
-                Dictate a sentence using the language and dictionary above. Transcript cleanup is
-                skipped so you see what the model heard. The result stays on this page.
+                Say a sentence in the language above. Cleanup is skipped, so you see exactly what
+                the model heard. The transcript stays on this page.
               </p>
               <Button
                 size="icon-sm"
@@ -1047,7 +1068,7 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("voice-microphone")}
           title="Microphone"
-          description="System default follows the operating system when devices change. Test a ten-second recording and play it back here. Test audio stays on this device and is never transcribed."
+          description="System default follows your operating system. Record a ten-second test and play it back here. Test audio stays on this device and is never transcribed."
           control={
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
               <SettingsSearchTarget {...searchableSetting("microphone-test")}>
@@ -1092,7 +1113,7 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
           title="Dictation shortcut"
-          description="How the dictation keybinding starts and finishes a recording."
+          description="How the dictation shortcut starts and stops recording."
           control={
             <Select
               value={settings.voiceShortcutMode}
@@ -1122,9 +1143,8 @@ export function VoiceSettingsPanel() {
           title="Send microphone audio to"
           description={
             <>
-              Microphone audio recorded on this device is sent to the environment you choose here,
-              where it is transcribed and discarded. Off keeps voice input off on this device. This
-              choice is saved on this device only.
+              Microphone audio is sent to this environment to transcribe, then discarded. Choose Off
+              to turn voice input off on this device. This choice is saved on this device only.
             </>
           }
           control={
@@ -1164,8 +1184,8 @@ export function VoiceSettingsPanel() {
         >
           {destination.environmentId && chosenUnsupported ? (
             <p className="mt-2 text-xs text-destructive">
-              {chosenEnvironment.label} cannot transcribe audio. Voice input stays off until you
-              choose an environment that can.
+              {chosenEnvironment.label} can’t transcribe audio. Pick an environment that can to use
+              voice input.
             </p>
           ) : null}
         </SettingsRow>
@@ -1175,15 +1195,15 @@ export function VoiceSettingsPanel() {
           title="Language"
           description={
             model
-              ? `${model.model} ${model.supportsLanguageDetection ? "can detect the language" : "uses a fixed language"}.`
-              : "Choose an environment to see which languages its model supports."
+              ? `${model.model} ${model.supportsLanguageDetection ? "detects the language automatically" : "uses one fixed language"}.`
+              : "Choose an environment above to see the languages its transcription model supports."
           }
           control={<SpeechLanguageSelect model={model} />}
         />
         {model?.supportsTranslation ? (
           <SettingsRow
             title="Translate to English"
-            description="Write English text whatever language you speak."
+            description="Speak any language and get English text."
             control={
               <Switch
                 aria-label="Translate to English"
@@ -1207,12 +1227,13 @@ export function VoiceSettingsPanel() {
             projectName={project?.title ?? null}
           />
         ) : null}
+        {prepared && <AdvancedSpeechSettings prepared={prepared} catalog={catalog} />}
       </SettingsSection>
       <SettingsSection id="voice-recognition" title="Transcription options">
         <SettingsRow
           {...searchableSetting("speech-silence-filtering")}
           title="Silence filtering"
-          description="Skip non-speech audio before transcription. Keeps a short buffer around speech to preserve words."
+          description="Skip silence and other non-speech audio before transcription, keeping a short buffer so words aren’t cut off."
           control={
             <Switch
               aria-label="Silence filtering"
@@ -1226,7 +1247,7 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
           title="Remove filler words"
-          description="Drop hesitation sounds such as um and uh from transcripts."
+          description="Remove filler words like “um” and “uh” from transcripts."
           control={
             <Switch
               aria-label="Remove filler words"
@@ -1240,7 +1261,7 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("speech-dictionary")}
           title="Dictionary"
-          description="Names and terms the model should get right, saved on this device. Add an alias to a term to correct a spelling transcription keeps producing. The name of the project you dictate in is a hint too."
+          description="Names and terms transcription should spell your way, saved on this device. Add an alias when it keeps hearing a term wrong. The name of the project you dictate in is also sent as a hint."
           control={
             <span className="text-xs text-muted-foreground">
               {settings.speechCustomWords.length}{" "}
@@ -1248,7 +1269,7 @@ export function VoiceSettingsPanel() {
             </span>
           }
         >
-          <div className="mt-2">
+          <div className="mt-2 pb-3.5">
             <DictionaryEditor
               label="dictionary"
               words={settings.speechCustomWords}
@@ -1262,7 +1283,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
           title="Clean up transcripts with a provider"
-          description="After transcription, the transcript and the text around the cursor in your draft are sent to the text generation provider configured on the draft's environment, which fixes punctuation, numbers, and spoken corrections. Off by default; it never runs on the audio itself."
+          description="Sends each transcript, plus the draft text around your cursor, to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Your audio is never sent. Off by default."
           control={
             <Switch
               aria-label="Clean up transcripts with a provider"
@@ -1326,7 +1347,7 @@ export function VoiceSettingsPanel() {
           <SettingsRow
             {...searchableSetting("speech-correction-word")}
             title="Correction cue"
-            description="A word you say to flag a spoken correction, such as “sorry” or “scratch that”. Cleanup applies the correction only when the context shows one, and the model hears the cue as a hint."
+            description="The word or phrase you say to flag a correction, like “sorry” or “scratch that”. Cleanup applies the correction only where one is meant, and hears the cue as a hint."
             control={
               <Input
                 key={settings.speechCorrectionWord}
@@ -1345,8 +1366,6 @@ export function VoiceSettingsPanel() {
           />
         ) : null}
       </SettingsSection>
-
-      {prepared && <AdvancedSpeechSettings prepared={prepared} catalog={catalog} />}
     </SettingsPageContainer>
   );
 }
