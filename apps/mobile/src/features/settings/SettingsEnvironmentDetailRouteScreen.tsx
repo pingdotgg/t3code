@@ -1,3 +1,4 @@
+import { AgentFileSyncSection } from "./AgentFileSyncSection";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -230,6 +231,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
               </Text>
             ) : null}
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
+            {config?.environment.capabilities.agentFileSync && connected ? (
+              <AgentFileSyncSection environmentId={environmentId} />
+            ) : null}
             {config && !outdated ? (
               <>
                 <SettingsSection title="T3 Code">

@@ -523,6 +523,10 @@
       "types": "./src/modelTraits.ts",
       "default": "./src/modelTraits.ts"
     },
+    "./state/agentFileSync": {
+      "types": "./src/state/agentFileSync.ts",
+      "default": "./src/state/agentFileSync.ts"
+    },
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"

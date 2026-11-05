@@ -251,3 +251,26 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Sync skills and instructions
+
+Open **Settings → Skills & instructions** on web or desktop to browse an environment’s
+skills and `AGENTS.md`/`CLAUDE.md` files. **All projects** shows global files; a project
+shows its files alongside the global ones. Select an item to read its contents with
+line numbers, inspect its source, and see where it is shared.
+
+To share an item, open its sharing controls, choose the receiving environments,
+and review the first change before enabling automatic sync. Skills include the
+whole folder; instruction files let you choose individual sections.
+
+Sync runs while a web or desktop client is open, or the mobile app is in the
+foreground, and connects both machines. Offline machines catch up after reconnecting.
+Selections are saved on the destination. Skills include their supporting files;
+standard personal and project skill directories are supported, while custom provider
+homes and plugin-managed skills are excluded.
+
+Instruction sections use headings and keep host-specific text outside their managed
+blocks. Editing a synced block or skill on a destination pauses its subscription.
+Restore that content and resume, or stop sync and review a new selection. Pause,
+resume, and stop are also available in the mobile environment settings. Stopping sync
+keeps the destination's current files.

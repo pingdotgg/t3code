@@ -207,6 +207,8 @@ import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as AgentFileSyncLinks from "./agentFileSync/AgentFileSyncLinks.ts";
+import * as AgentFileSync from "./agentFileSync/AgentFileSync.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -1477,6 +1479,8 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const agentFileSync = yield* AgentFileSync.AgentFileSync;
+      const agentFileSyncLinks = yield* AgentFileSyncLinks.AgentFileSyncLinks;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2933,6 +2937,17 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.agentFileSyncLinks]: () => agentFileSyncLinks.list,
+        [WS_METHODS.agentFileSyncSubscribe]: (input) =>
+          agentFileSyncLinks.subscribe(input, Effect.void),
+        [WS_METHODS.agentFileSyncRefresh]: (input) => agentFileSyncLinks.refresh(input),
+        [WS_METHODS.agentFileSyncManage]: (input) => agentFileSyncLinks.manage(input, Effect.void),
+        [WS_METHODS.agentFileSyncCheck]: (input) => agentFileSync.check(input),
+        [WS_METHODS.agentFileSyncList]: (input) => agentFileSync.list(input),
+        [WS_METHODS.agentFileSyncExport]: (input) => agentFileSync.export(input),
+        [WS_METHODS.agentFileSyncPreview]: (input) => agentFileSync.preview(input),
+        [WS_METHODS.agentFileSyncApply]: (input) => agentFileSync.apply(input, true, Effect.void),
+        [WS_METHODS.agentFileSyncUndo]: (input) => agentFileSync.undo(input),
         [WS_METHODS.projectsReadFile]: (input) =>
           workspaceFileSystem.readFile(input).pipe(
             Effect.mapError(
