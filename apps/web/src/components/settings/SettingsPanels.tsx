@@ -1839,6 +1839,7 @@ export function ThreadsSettingsPanel() {
       ) ? (
         <SideChatSettings />
       ) : null}
+      {!isProjectScope ? <ChatSyncSection /> : null}
     </SettingsPageContainer>
   );
 }
@@ -1925,8 +1926,6 @@ export function MaintenanceSettingsPanel() {
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
       </SettingsSection>
-
-      <ChatSyncSection />
 
       <StorageCleanupSections />
 
