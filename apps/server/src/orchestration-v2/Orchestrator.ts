@@ -1171,6 +1171,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const ensureShellCommandTextOnly = (
+    command: OrchestrationV2ServerCommand,
+    message: Parameters<typeof userShellCommand>[0] & {
+      readonly attachments?: ReadonlyArray<unknown> | undefined;
+      readonly context?: { readonly records: ReadonlyArray<unknown> } | undefined;
+    },
+  ) =>
+    userShellCommand(message) !== null &&
+    ((message.attachments?.length ?? 0) > 0 || (message.context?.records.length ?? 0) > 0)
+      ? Effect.fail(
+          new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Shell commands take text only. Remove the attachments and context.",
+          }),
+        )
+      : Effect.void;
+
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, OrchestratorDispatchError, R> =>
@@ -5833,6 +5851,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.dispatchMode,
       command.deliveryIntent,
     );
+    yield* ensureShellCommandTextOnly(command, command);
     if (userShellCommand(command) !== null && projection.runs.some(isActiveRun)) {
       dispatchMode = { type: "queue_after_active" };
     }
@@ -10207,6 +10226,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "A guest's message cannot be edited. Cancel it instead.",
       });
     }
+    yield* ensureShellCommandTextOnly(command, {
+      ...queuedMessage,
+      text: command.text,
+      attachments: command.attachments ?? queuedMessage.attachments,
+      context: command.context ?? queuedMessage.context,
+    });
     yield* ensureGoalCommandSupported(
       command,
       { text: command.text, attachments: command.attachments ?? queuedMessage.attachments },

@@ -737,6 +737,32 @@ it.effect("keeps native maintenance commands out of steering and restart message
               })
               .pipe(Effect.flip);
             assert.include(String(failure.cause), "Shell commands cannot be promoted");
+            const edit = yield* threads
+              .dispatch({
+                type: "queued-run.edit",
+                commandId: CommandId.make(`${scenario.name}:edit`),
+                threadId: launched.threadId,
+                runId: queued.id,
+                text: scenario.next,
+                context: {
+                  version: 1,
+                  records: [
+                    {
+                      version: 1,
+                      contextId: ComposerContextId.make("ctx-shell"),
+                      kind: "terminal",
+                      label: "Terminal 1",
+                      terminalId: "term-1",
+                      terminalLabel: "Terminal 1",
+                      lineStart: 1,
+                      lineEnd: 1,
+                      text: "boom",
+                    },
+                  ],
+                },
+              })
+              .pipe(Effect.flip);
+            assert.include(String(edit.cause), "Shell commands take text only");
           }
           continue;
         }
