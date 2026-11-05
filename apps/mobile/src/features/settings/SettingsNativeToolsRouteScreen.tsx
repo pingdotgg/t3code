@@ -7,8 +7,8 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
-  AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
+  useSettingsEnvironmentMenu,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -17,6 +17,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 
 export function SettingsNativeToolsRouteScreen() {
   const { selectedTargets } = useSettingsEnvironmentFilter();
+  const environmentMenu = useSettingsEnvironmentMenu();
   const writable = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, {
     label: "T3 tool settings update",
@@ -27,7 +28,7 @@ export function SettingsNativeToolsRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="T3 tools" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen title="T3 tools" menus={[environmentMenu]}>
         <ScreenScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
