@@ -130,7 +130,7 @@ const T3_LEARN_DARK_COLORS: ThemeColors = {
 
 export const T3_LEARN_THEME: ThemeDefinition = {
   id: "t3-learn",
-  label: "T3 Learn",
+  label: "OminaX",
   appearance: "light",
   colors: T3_LEARN_LIGHT_COLORS,
   variants: { dark: T3_LEARN_DARK_COLORS },

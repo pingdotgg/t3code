@@ -10,6 +10,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
+// Installed launchers carry this text and are matched on it, so it keeps the pre-OminaX name.
 export const MARKER = "Written by T3 Learn: runs the desktop app's bundled t3 CLI.";
 
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
@@ -19,7 +20,7 @@ const shellWord = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const cmdText = (value: string) => value.replaceAll("%", "%%");
 const cmdWord = (value: string) => `"${cmdText(value)}"`;
 
-const MOVED = "T3 Learn has moved or been removed. Open the app once to update this command.";
+const MOVED = "OminaX has moved or been removed. Open the app once to update this command.";
 
 export type CliShimTarget =
   | { readonly kind: "appimage"; readonly appImage: string; readonly executableName: string }

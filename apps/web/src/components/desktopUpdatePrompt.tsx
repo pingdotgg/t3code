@@ -39,7 +39,7 @@ export function DesktopUpdatePrompt() {
     await installLocalUpdate(bridge);
   };
   const title =
-    prompt === "available" ? `T3 Learn ${version} is available` : `T3 Learn ${version} is ready`;
+    prompt === "available" ? `OminaX ${version} is available` : `OminaX ${version} is ready`;
   return (
     <AlertDialog open onOpenChange={(open) => !open && dismiss()}>
       <AlertDialogPopup>

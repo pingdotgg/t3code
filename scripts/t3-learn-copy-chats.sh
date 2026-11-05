@@ -44,7 +44,7 @@ say() { printf '%s %s\n' "$(date +%T)" "$*"; }
 count() { sqlite3 -readonly "$1" "$2"; }
 
 target=$LEARN/userdata/statev2.sqlite
-[ -e "$target" ] || { echo "$ME: no T3 Learn database at $LEARN; start $UNIT once first" >&2; exit 1; }
+[ -e "$target" ] || { echo "$ME: no OminaX database at $LEARN; start $UNIT once first" >&2; exit 1; }
 
 # The import runs this checkout's migrations, so they must be the running server's.
 tag_tree=$(git -C "$CHECKOUT" rev-parse "v$VERSION^{tree}")
@@ -182,7 +182,7 @@ COMMIT;"
 new=$(sqlite3 -readonly "$target" "ATTACH DATABASE '$db' AS src;
   SELECT COUNT(*) FROM src.orchestration_v2_projection_threads $new_where")
 if [ "$new" = 0 ]; then
-  say "T3 Learn has every T3 Code chat that is not active or usage-limited; nothing to add."
+  say "OminaX has every T3 Code chat that is not active or usage-limited; nothing to add."
   rm -rf "$STAGE"
   exit 0
 fi
@@ -200,7 +200,7 @@ busy=$(count "$target" "SELECT
   (SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status IN ('preparing','starting','running','waiting'))
 + (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending')")
 if [ "$busy" != 0 ]; then
-  say "T3 Learn has $busy item(s) running; nothing added. Run again when it is idle."
+  say "OminaX has $busy item(s) running; nothing added. Run again when it is idle."
   rm -rf "$STAGE"
   exit 0
 fi

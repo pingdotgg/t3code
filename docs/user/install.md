@@ -1,4 +1,4 @@
-> **T3 Learn:** This guide describes upstream T3 Code. For T3 Learn, use the fork installers and releases in the [T3 Learn README](../../README.md); update the Linux launcher with `t3-learn update --yes` (or set `T3CODE_HOME=~/.t3-learn` when using the plain CLI).
+> **OminaX:** This guide describes upstream T3 Code. For OminaX, use the fork installers and releases in the [OminaX README](../../README.md); update the Linux launcher with `t3-learn update --yes` (or set `T3CODE_HOME=~/.t3-learn` when using the plain CLI).
 
 # Install T3 Code
 
@@ -12,7 +12,7 @@ launch T3 Code and configure providers afterwards.
 
 ## Command line
 
-T3 Learn's command is `t3-learn`. Install T3 Learn from the
+OminaX's command is `t3-learn`. Install OminaX from the
 [README](../../README.md#install), then turn the command on in **Settings → About**
 ([The `t3-learn` command](#the-t3-learn-command)).
 

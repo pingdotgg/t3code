@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 
-it.effect("keeps T3 Learn's own feed when a T3 Code policy names a mirror", () =>
+it.effect("keeps OminaX's own feed when a T3 Code policy names a mirror", () =>
   Effect.gen(function* () {
     const policy = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
     assert.equal(policy.feedUrl, undefined);

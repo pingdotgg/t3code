@@ -92,8 +92,8 @@ it("opens by itself after first-run setup when this device has not seen it and a
   await using _screen = await mount();
 
   await expect.element(guide()).toBeVisible();
-  await expect.element(heading("Welcome to T3 Learn")).toBeVisible();
-  await expect.element(guide()).toHaveAccessibleDescription(/^Welcome to T3 Learn Every chat/);
+  await expect.element(heading("Welcome to OminaX")).toBeVisible();
+  await expect.element(guide()).toHaveAccessibleDescription(/^Welcome to OminaX Every chat/);
   expect(storedSeenAt()).toBeNull();
 });
 
@@ -131,14 +131,14 @@ it("moves through the steps and records the visit when the learner finishes", as
   await using _screen = await mount();
   using _clock = systemTime(NOW);
 
-  await expect.element(heading("Welcome to T3 Learn")).toBeVisible();
+  await expect.element(heading("Welcome to OminaX")).toBeVisible();
   await expect.element(button("Back")).not.toBeInTheDocument();
   await userEvent.click(button("Next"));
   await expect.element(heading("Highlight what you don't get")).toBeVisible();
   await expect.element(button("Highlight, step 2")).toHaveAttribute("aria-current", "step");
   await expect.element(guide()).toHaveAccessibleDescription(/^Highlight what you don't get /);
   await userEvent.click(button("Back"));
-  await expect.element(heading("Welcome to T3 Learn")).toBeVisible();
+  await expect.element(heading("Welcome to OminaX")).toBeVisible();
   await expect.element(button("Next")).toHaveFocus();
 
   await userEvent.click(button("Next"));

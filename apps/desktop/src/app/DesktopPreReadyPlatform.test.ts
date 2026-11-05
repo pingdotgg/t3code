@@ -161,7 +161,7 @@ describe("DesktopPreReadyPlatform", () => {
         const identity = yield* Effect.promise(() => portalIdentity);
         assert.equal(identity.desktopName, "io.github.aabdel0181.T3Learn.desktop");
         assert.include(identity.desktopEntry ?? "", "Exec=/Applications/current.AppImage %U");
-        assert.include(identity.desktopEntry ?? "", "Name=T3 Learn (Beta)");
+        assert.include(identity.desktopEntry ?? "", "Name=OminaX (Beta)");
         assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3learn;");
         assert.include(
           identity.desktopEntry ?? "",

@@ -350,7 +350,7 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
 
 /** Prints the one-time admin pairing URL to stdout only; logger records reach trace files and collectors. */
 export const announceStartupPairingUrl = (pairingUrl: string) =>
-  Effect.logInfo("Authentication required. Open T3 Learn using the pairing URL.").pipe(
+  Effect.logInfo("Authentication required. Open OminaX using the pairing URL.").pipe(
     Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
   );
 

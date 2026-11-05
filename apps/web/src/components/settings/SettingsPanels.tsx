@@ -316,7 +316,7 @@ function AboutVersionSection() {
       {hasDesktopBridge && updateState?.enabled ? (
         <SettingsRow
           {...searchableSetting("auto-update")}
-          description="Download updates in the background and install them when T3 Learn starts."
+          description="Download updates in the background and install them when OminaX starts."
           control={
             <Switch
               aria-label="Update automatically"
@@ -2039,7 +2039,7 @@ export function AboutSettingsPanel() {
           {...searchableSetting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? "How T3 Code handles your data. By default, T3 Learn sends no usage data to T3 Code's analytics."
+              ? "How T3 Code handles your data. By default, OminaX sends no usage data to T3 Code's analytics."
               : `How T3 Code handles your data. ${telemetryOff}`
           }
           control={

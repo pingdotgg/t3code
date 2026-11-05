@@ -158,7 +158,7 @@ export class PortalCaptureShortcut {
       shortcutPending: false,
       shortcutCanRetry: !this.managedByHyprland,
       shortcutMessage: this.managedByHyprland
-        ? "Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart T3 Learn."
+        ? "Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart OminaX."
         : error instanceof Error
           ? error.message
           : "Could not register the capture shortcut.",
@@ -321,7 +321,7 @@ export class PortalCaptureShortcut {
         shortcutPending: false,
         shortcutMessage: shortcut
           ? "Managed by Hyprland. Add the binding to your config and save it."
-          : "Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart T3 Learn.",
+          : "Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart OminaX.",
       });
       return;
     }

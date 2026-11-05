@@ -195,7 +195,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       for (const harness of [service, desktop]) {
         expect(
           (yield* harness.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
-        ).toBe("Example Corp manages T3 Learn updates.");
+        ).toBe("Example Corp manages OminaX updates.");
       }
       expect([...service.order, ...desktop.order]).toEqual([]);
     }),
@@ -219,7 +219,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(
         (yield* selfUpdate.update({ targetVersion: "1.2.0-nightly.20261028.1" }).pipe(Effect.flip))
           .reason,
-      ).toBe("Example Corp manages T3 Learn updates. Only stable releases can be installed.");
+      ).toBe("Example Corp manages OminaX updates. Only stable releases can be installed.");
       expect(order).toEqual([]);
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
       // T3 Learn ignores the policy's mirror, which serves T3 Code builds.

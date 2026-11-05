@@ -3,14 +3,14 @@
   <id>io.github.aabdel0181.t3learn</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
-  <name>T3 Learn</name>
+  <name>OminaX</name>
   <summary>Learn with coding agents, one side chat at a time</summary>
   <developer id="io.github.aabdel0181">
     <name>aabdel0181</name>
   </developer>
   <description>
     <p>
-      T3 Learn is a fork of T3 Code for learning with AI. Highlight anything in a
+      OminaX is a fork of T3 Code for learning with AI. Highlight anything in a
       reply and ask about it in a side chat that opens next to the lesson.
     </p>
     <p>

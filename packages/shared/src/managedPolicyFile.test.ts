@@ -187,7 +187,7 @@ describe("readManagedPolicy", () => {
         }
         assert.include(
           yield* win32({}, new WindowsRegistryError({})),
-          "cannot load its registry reader; reinstall T3 Learn",
+          "cannot load its registry reader; reinstall OminaX",
         );
         assert.include(
           yield* win32({}, policyKey([{ name: "Policy", type: "other" }])),

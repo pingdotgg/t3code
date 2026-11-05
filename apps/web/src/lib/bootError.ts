@@ -238,7 +238,7 @@ function mountUpdateButton(
           : undefined;
     run?.then(
       (result) => render(result.state),
-      (error: unknown) => console.warn("Could not update T3 Learn.", error),
+      (error: unknown) => console.warn("Could not update OminaX.", error),
     );
   });
   // A pushed state is newer than the initial read, so the read must not overwrite it.
@@ -258,7 +258,7 @@ function mountUpdateButton(
 }
 
 export function showBootError(error: unknown) {
-  console.error("T3 Learn failed to start.", error);
+  console.error("OminaX failed to start.", error);
   const bootShell = document.getElementById("boot-shell");
   if (!bootShell) return;
 
@@ -277,7 +277,7 @@ export function showBootError(error: unknown) {
   };
 
   const message = element("div", {}, [
-    element("h1", { textContent: "T3 Learn failed to start" }),
+    element("h1", { textContent: "OminaX failed to start" }),
     element("p", {
       textContent: offline
         ? "This browser appears to be offline. Check the connection, then reload."
@@ -370,7 +370,7 @@ export function showBootError(error: unknown) {
     element("div", {}, [
       element("p", {
         textContent:
-          "Run this on the computer that runs T3 Learn. Your agent can check the local logs and help you file a bug report.",
+          "Run this on the computer that runs OminaX. Your agent can check the local logs and help you file a bug report.",
       }),
       element("div", { id: "boot-error-command" }, [command, copyCommand]),
     ]),

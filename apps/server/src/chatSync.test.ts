@@ -19,31 +19,31 @@ describe("parseChatSyncStatus", () => {
     [
       "succeeded",
       "inactive",
-      "Starting T3 sync\n20:17:46 T3 Learn already has every T3 Code chat; nothing to add.",
+      "Starting T3 sync\n20:17:46 OminaX already has every T3 Code chat; nothing to add.",
       {
         state: "succeeded",
-        message: "T3 Learn already has every T3 Code chat; nothing to add.",
+        message: "OminaX already has every T3 Code chat; nothing to add.",
         addedChats: 0,
       },
     ],
     [
       "succeeded",
       "inactive",
-      "Starting T3 sync\n12:00:00 T3 Learn has every T3 Code chat that is not active or usage-limited; nothing to add.",
+      "Starting T3 sync\n12:00:00 OminaX has every T3 Code chat that is not active or usage-limited; nothing to add.",
       {
         state: "succeeded",
         message:
-          "T3 Learn has every T3 Code chat that is not active or usage-limited; nothing to add.",
+          "OminaX has every T3 Code chat that is not active or usage-limited; nothing to add.",
         addedChats: 0,
       },
     ],
     [
       "succeeded",
       "inactive",
-      "Starting T3 sync\n12:00:00 T3 Learn has 2 item(s) running; nothing added. Run again when it is idle.",
+      "Starting T3 sync\n12:00:00 OminaX has 2 item(s) running; nothing added. Run again when it is idle.",
       {
         state: "succeeded",
-        message: "T3 Learn has 2 item(s) running; nothing added. Run again when it is idle.",
+        message: "OminaX has 2 item(s) running; nothing added. Run again when it is idle.",
         addedChats: null,
       },
     ],
@@ -70,10 +70,10 @@ describe("parseChatSyncStatus", () => {
     [
       "succeeded",
       "inactive",
-      "Starting old\n20:00:00 Done. Added 3 chats, 1 projects.\nFinished old\nStarting new\n12:00:00 T3 Learn already has every T3 Code chat; nothing to add.",
+      "Starting old\n20:00:00 Done. Added 3 chats, 1 projects.\nFinished old\nStarting new\n12:00:00 OminaX already has every T3 Code chat; nothing to add.",
       {
         state: "succeeded",
-        message: "T3 Learn already has every T3 Code chat; nothing to add.",
+        message: "OminaX already has every T3 Code chat; nothing to add.",
         addedChats: 0,
       },
     ],

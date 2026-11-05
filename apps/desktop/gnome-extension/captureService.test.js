@@ -23,7 +23,7 @@ function fixture(overrides = {}) {
 
 it("rejects other clients before looking at the active window", async () => {
   const { service, snapshots } = fixture();
-  await expect(service.capture(":1.99")).rejects.toThrow("Only T3 Learn");
+  await expect(service.capture(":1.99")).rejects.toThrow("Only OminaX");
   expect(snapshots()).toBe(0);
   expect(await service.capture(":1.23")).toBe("pixels");
 });
@@ -33,7 +33,7 @@ it("rechecks the name owner on each capture", async () => {
   const { service } = fixture({ getNameOwner: async () => owner });
   expect(await service.capture(owner)).toBe("pixels");
   owner = ":1.24";
-  await expect(service.capture(":1.23")).rejects.toThrow("Only T3 Learn");
+  await expect(service.capture(":1.23")).rejects.toThrow("Only OminaX");
 });
 
 it("serves T3 Learn and leaves T3 Code to its own extension", async () => {
@@ -42,7 +42,7 @@ it("serves T3 Learn and leaves T3 Code to its own extension", async () => {
     "io.github.aabdel0181.T3Learn.SnapShot": ":1.23",
   };
   const { service, snapshots } = fixture({ getNameOwner: async (name) => owners[name] ?? null });
-  await expect(service.capture(":1.40")).rejects.toThrow("Only T3 Learn");
+  await expect(service.capture(":1.40")).rejects.toThrow("Only OminaX");
   expect(snapshots()).toBe(0);
   expect(await service.capture(":1.23")).toBe("pixels");
 });
@@ -100,7 +100,7 @@ it("rejects concurrent requests and clears busy after a failed capture", async (
   await expect(service.capture(":1.23")).rejects.toThrow("already in progress");
   finish(new Error("gone"));
   await expect(first).rejects.toThrow("gone");
-  await expect(service.capture(":1.99")).rejects.toThrow("Only T3 Learn");
+  await expect(service.capture(":1.99")).rejects.toThrow("Only OminaX");
 });
 
 it("prepares focus/effects only after pixels and identity have been captured", async () => {

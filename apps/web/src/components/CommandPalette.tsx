@@ -1790,7 +1790,7 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:welcome-guide",
-      searchTerms: ["guide", "tour", "onboarding", "side chat", "T3 Learn"],
+      searchTerms: ["guide", "tour", "onboarding", "side chat", "OminaX"],
       title: "Show welcome guide",
       icon: <MessageCircleQuestionIcon className={ITEM_ICON_CLASS} />,
       run: async () => openWelcomeGuide(),

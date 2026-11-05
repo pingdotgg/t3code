@@ -87,7 +87,7 @@ const queueEntry = Schema.Struct({
 
 const LessonCreateTool = Tool.make("lesson_create", {
   description:
-    "Create a new T3 Learn lesson: a new thread that teaches a topic at a chosen depth and for a reason. Use when the user asks to make a lesson out of something. First ask the user the three questions (what to learn, how deep: overview / working / deep, why: toward an outcome or building prerequisites, and what for) unless they already answered them; pass the passage they mean as excerpt. After an error or lost reply, retry with the same clientRequestId.",
+    "Create a new OminaX lesson: a new thread that teaches a topic at a chosen depth and for a reason. Use when the user asks to make a lesson out of something. First ask the user the three questions (what to learn, how deep: overview / working / deep, why: toward an outcome or building prerequisites, and what for) unless they already answered them; pass the passage they mean as excerpt. After an error or lost reply, retry with the same clientRequestId.",
   parameters: Schema.Struct({
     topic: OrchestrationV2Lesson.fields.topic,
     depth: OrchestrationV2Lesson.fields.depth,

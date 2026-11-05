@@ -493,8 +493,8 @@ const layerTest = (
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
             platform,
-            branding: { baseName: "T3 Learn", stageLabel: "Dev", displayName: "T3 Learn (Dev)" },
-            displayName: "T3 Learn (Dev)",
+            branding: { baseName: "OminaX", stageLabel: "Dev", displayName: "OminaX (Dev)" },
+            displayName: "OminaX (Dev)",
             stateDir: "/state",
             linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
             appRoot: "/repo",
@@ -1787,7 +1787,7 @@ it.effect("flags revoked macOS permissions on read and re-registers once they re
       const revoked = yield* service.state;
       assert.equal(
         revoked.message,
-        "Allow Screen Recording in System Settings, then restart T3 Learn.",
+        "Allow Screen Recording in System Settings, then restart OminaX.",
       );
       assert.deepEqual(revoked.macPermissions, { screenRecording: false, accessibility: true });
 
@@ -1800,7 +1800,7 @@ it.effect("flags revoked macOS permissions on read and re-registers once they re
       const blocked = yield* service.state;
       assert.equal(
         blocked.message,
-        "Allow Screen Recording in System Settings, then restart T3 Learn.",
+        "Allow Screen Recording in System Settings, then restart OminaX.",
       );
       assert.isFalse(blocked.shortcutRegistered);
 

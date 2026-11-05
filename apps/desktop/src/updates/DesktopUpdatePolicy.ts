@@ -77,7 +77,7 @@ const make = Effect.gen(function* () {
             mode: "off",
             feedUrl: undefined,
             allowNightly: false,
-            message: `Updates are off because T3 Learn cannot use the managed policy at ${error.path}. Contact your administrator.`,
+            message: `Updates are off because OminaX cannot use the managed policy at ${error.path}. Contact your administrator.`,
           }),
         ),
     }),

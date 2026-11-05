@@ -271,7 +271,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Sync from T3 Code",
     to: "/settings/threads",
     scope: "environment-defaults",
-    searchTerms: ["copy chats sync T3 Learn"],
+    searchTerms: ["copy chats sync OminaX"],
     environmentOnly: true,
     requiresChatSync: true,
   },
@@ -752,7 +752,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
     scope: "environment-defaults",
     requiresSideChats: true,
-    searchTerms: ["instructions prompt teaching learning explain custom T3 Learn"],
+    searchTerms: ["instructions prompt teaching learning explain custom OminaX"],
   },
   {
     id: "side-chat-skills",
@@ -794,7 +794,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "welcome-guide",
     title: "Welcome guide",
     to: "/settings/about",
-    searchTerms: ["welcome guide tour onboarding tutorial help intro side chat notes map T3 Learn"],
+    searchTerms: ["welcome guide tour onboarding tutorial help intro side chat notes map OminaX"],
   },
   {
     id: "mobile-app",

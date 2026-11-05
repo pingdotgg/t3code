@@ -19,7 +19,6 @@ import { shortcutLabelForCommand } from "~/keybindings";
 import { cn } from "~/lib/utils";
 import { environmentPresentations } from "~/state/presentation";
 import { primaryServerKeybindingsAtom } from "~/state/server";
-import { T3LearnWordmark } from "../T3LearnWordmark";
 import { Button } from "../ui/button";
 import { Dialog, DialogDescription } from "../ui/dialog";
 import { Kbd } from "../ui/kbd";
@@ -97,14 +96,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
       <WizardPopup size="wide" initialFocus={nextRef}>
         <WizardHeader
           title="Welcome guide"
-          identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Learn">
-              <T3LearnWordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Learn
-              </span>
-            </div>
-          }
+          identity={<span className="text-2xl font-medium tracking-tight">OminaX</span>}
         >
           <WizardSteps
             label="Guide progress"
@@ -173,7 +165,7 @@ function guideSteps(askShortcut: string | null, mapShortcut: string | null) {
     {
       label: "Welcome",
       illustration: <LessonMock />,
-      title: "Welcome to T3 Learn",
+      title: "Welcome to OminaX",
       body: "Every chat is a lesson. When a reply uses something you don't know yet, you can dig into it on the side while the lesson stays on track.",
     },
     {

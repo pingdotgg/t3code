@@ -43,7 +43,7 @@ function swapMacBundleAfterQuit(zipPath: string): void {
     NodeFS.accessSync(folder, NodeFS.constants.W_OK);
   } catch {
     throw new Error(
-      `T3 Learn cannot replace itself in ${folder}. Run its install command again to update.`,
+      `OminaX cannot replace itself in ${folder}. Run its install command again to update.`,
     );
   }
   NodeChildProcess.spawn(

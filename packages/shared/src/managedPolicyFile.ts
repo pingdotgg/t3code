@@ -28,7 +28,7 @@ export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFile
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_MANAGED_POLICY;
 
   override get message(): string {
-    return `T3 Learn cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
+    return `OminaX cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
   }
 }
 
@@ -528,7 +528,7 @@ const readPlatformPolicy = Effect.fnUntraced(function* (
               path,
               reason:
                 cause.code === undefined
-                  ? "this T3 Learn install cannot load its registry reader; reinstall T3 Learn"
+                  ? "this OminaX install cannot load its registry reader; reinstall OminaX"
                   : `the registry cannot be read (${cause.message})`,
               cause,
             }),
