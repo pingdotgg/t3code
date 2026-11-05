@@ -33,10 +33,10 @@ describe("announce", () => {
       Array.from(document.querySelectorAll('[aria-live="polite"]'), (region) => region.textContent);
 
     announce("Claude");
-    vi.runAllTimers();
+    vi.advanceTimersByTime(250);
     const first = regionTexts();
     announce("Claude");
-    vi.runAllTimers();
+    vi.advanceTimersByTime(250);
 
     expect(regionTexts()).toEqual([...first].reverse());
     expect(regionTexts()).toContain("Claude");
@@ -48,15 +48,32 @@ describe("announce", () => {
     announce("Settled 1 thread, Ctrl+Z to undo", "undo");
     announce("Opening in VS Code");
     announce("Settled 2 threads, Ctrl+Z to undo", "undo");
-    vi.runAllTimers();
+    vi.advanceTimersByTime(250);
 
     expect(spokenText()).toEqual(["Opening in VS Code. Settled 2 threads, Ctrl+Z to undo"]);
 
     announce("Settled 1 thread, Ctrl+Z to undo", "undo");
     announce("Opening in Zed");
     cancelAnnouncement("undo");
-    vi.runAllTimers();
+    vi.advanceTimersByTime(250);
 
     expect(spokenText()).toEqual(["Opening in Zed"]);
+  });
+
+  it("removes spoken text once it has been read, or as soon as its source cancels it", () => {
+    using _timers = fakeTimers();
+
+    announce("Model: Claude Sonnet 5.5");
+    vi.advanceTimersByTime(250);
+    expect(spokenText()).toEqual(["Model: Claude Sonnet 5.5"]);
+    vi.advanceTimersByTime(7_000);
+    expect(spokenText()).toEqual([]);
+
+    announce("Settled 1 thread, Ctrl+Z to undo", "undo");
+    vi.advanceTimersByTime(250);
+    cancelAnnouncement("other");
+    expect(spokenText()).toEqual(["Settled 1 thread, Ctrl+Z to undo"]);
+    cancelAnnouncement("undo");
+    expect(spokenText()).toEqual([]);
   });
 });

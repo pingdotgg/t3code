@@ -2,14 +2,24 @@
 // whatever they were saying. So the regions exist before the first message lands, and
 // messages wait until focus has stayed put for a moment, then are spoken together.
 const FOCUS_SETTLE_MS = 250;
+// Spoken text stays readable in browse mode, so it is removed once it has had time to be read.
+const CLEAR_SPOKEN_MS = 7_000;
 
 let regions: readonly [HTMLElement, HTMLElement] | null = null;
 let pending: { message: string; source: string | undefined }[] = [];
+let spokenSources: readonly (string | undefined)[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
+let clearTimer: ReturnType<typeof setTimeout> | undefined;
 
 function scheduleFlush() {
   clearTimeout(flushTimer);
   flushTimer = setTimeout(flush, FOCUS_SETTLE_MS);
+}
+
+function clearSpoken() {
+  clearTimeout(clearTimer);
+  spokenSources = [];
+  for (const region of regions ?? []) region.textContent = "";
 }
 
 function flush() {
@@ -20,7 +30,10 @@ function flush() {
   first.textContent = "";
   second.textContent = "";
   target.textContent = pending.map((entry) => entry.message).join(". ");
+  spokenSources = pending.map((entry) => entry.source);
   pending = [];
+  clearTimeout(clearTimer);
+  clearTimer = setTimeout(clearSpoken, CLEAR_SPOKEN_MS);
 }
 
 function createRegion() {
@@ -50,7 +63,8 @@ export function announce(message: string, source?: string) {
   scheduleFlush();
 }
 
-/** Drops a message from `source` that hasn't been spoken yet, once it no longer applies. */
+/** Drops a message from `source` once it no longer applies, whether or not it was spoken yet. */
 export function cancelAnnouncement(source: string) {
   pending = pending.filter((entry) => entry.source !== source);
+  if (spokenSources.includes(source)) clearSpoken();
 }
