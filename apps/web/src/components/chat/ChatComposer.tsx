@@ -220,11 +220,7 @@ import {
   type ExpandedImagePreview,
 } from "./ExpandedImagePreview";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
-import {
-  getComposerPromptLengthValidationMessage,
-  getComposerSubmissionValidationMessage,
-  submitComposerDraft,
-} from "./composerSubmission";
+import { getComposerSubmissionValidationMessage, submitComposerDraft } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
@@ -1181,8 +1177,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
 
   const isComposerApprovalState = activePendingApproval !== null;
-  // A send declines the approvals shown here to redirect the agent, so it steers the waiting
-  // turn instead of queueing behind it. Approvals the typing guard holds stay unseen and pending.
   const followUpBehavior = pendingApprovals.some(
     (approval) => !heldRequestIds.has(approval.requestId),
   )
@@ -1409,7 +1403,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }
 
   if (composerSubmissionError !== null) {
-    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    const nextError = getComposerSubmissionValidationMessage({
+      prompt,
+      isSendBusy,
+      submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+    });
     if (nextError !== composerSubmissionError) {
       setComposerSubmissionError(nextError);
     }
@@ -2098,6 +2096,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     const submission = submitComposerDraft({
+      isSendBusy,
       prompt: promptRef.current,
       submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
       event,

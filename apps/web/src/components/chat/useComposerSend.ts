@@ -93,6 +93,7 @@ import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/u
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  approvalsForComposerRedirect,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -546,7 +547,12 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
-    const approvalFeedbackTarget = pendingApprovalsRef.current.find(
+    const approvalFeedbackTarget = approvalsForComposerRedirect({
+      approvals: pendingApprovalsRef.current,
+      shownApprovalIds: sendCtx.shownPendingApprovalIds,
+      dispatchMode,
+      sameThread: currentRouteThreadKeyRef.current === routeThreadKey,
+    }).find(
       (approval) =>
         approval.supportsFeedback && approval.requestId === sendCtx.shownPendingApprovalIds[0],
     );
@@ -1028,16 +1034,12 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
-    // A message sent while approvals are pending redirects the agent. They are declined only
-    // here, after everything above has accepted the send, so local commands and rejected
-    // drafts leave them alone. After navigating away during an upload, the shown approvals
-    // are another thread's, so this send leaves them alone too.
-    const approvalsToDecline =
-      currentRouteThreadKeyRef.current === routeThreadKey
-        ? pendingApprovalsRef.current.filter((approval) =>
-            sendCtx?.shownPendingApprovalIds.includes(approval.requestId),
-          )
-        : [];
+    const approvalsToDecline = approvalsForComposerRedirect({
+      approvals: pendingApprovalsRef.current,
+      shownApprovalIds: sendCtx.shownPendingApprovalIds,
+      dispatchMode,
+      sameThread: currentRouteThreadKeyRef.current === routeThreadKey,
+    });
     if (approvalsToDecline.length > 0 || approvalFeedbackTarget !== undefined) {
       // A draft edited since send, or a paste still landing in it, is no longer the message
       // the user sent.

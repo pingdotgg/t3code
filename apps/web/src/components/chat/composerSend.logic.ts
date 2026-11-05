@@ -1,4 +1,6 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import type { ThreadPendingApproval } from "@t3tools/client-runtime/state/thread-requests";
+import type { EnvironmentId, RuntimeRequestId, ThreadContextRecord } from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
@@ -78,4 +80,14 @@ export function approvalRedirectNotice(input: {
     return "Another approval arrived, so your message wasn't sent.";
   }
   return null;
+}
+
+export function approvalsForComposerRedirect(input: {
+  readonly approvals: ReadonlyArray<ThreadPendingApproval>;
+  readonly shownApprovalIds: ReadonlyArray<RuntimeRequestId>;
+  readonly dispatchMode: ComposerDispatchMode;
+  readonly sameThread: boolean;
+}) {
+  if (!input.sameThread || input.dispatchMode === "queue") return [];
+  return input.approvals.filter((approval) => input.shownApprovalIds.includes(approval.requestId));
 }

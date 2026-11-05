@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
@@ -6,6 +6,7 @@ import { threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
+  approvalsForComposerRedirect,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -122,5 +123,28 @@ describe("approvalRedirectNotice", () => {
   it("stays quiet when the decline failed or the user left the thread", () => {
     expect(approvalRedirectNotice({ ...settled, declined: false })).toBeNull();
     expect(approvalRedirectNotice(settled)).toBeNull();
+  });
+});
+
+describe("approvalsForComposerRedirect", () => {
+  it("leaves approvals alone when queueing and redirects only shown approvals when steering", () => {
+    const shown = {
+      requestId: RuntimeRequestId.make("shown"),
+      requestKind: "command" as const,
+      responseCapability: "live" as const,
+      supportsFeedback: true,
+      createdAt: "2026-11-05T00:00:00.000Z",
+    };
+    const held = { ...shown, requestId: RuntimeRequestId.make("held") };
+    const input = {
+      approvals: [shown, held],
+      shownApprovalIds: [shown.requestId],
+      sameThread: true,
+    };
+    expect(approvalsForComposerRedirect({ ...input, dispatchMode: "queue" })).toEqual([]);
+    expect(approvalsForComposerRedirect({ ...input, dispatchMode: "steer" })).toEqual([shown]);
+    expect(
+      approvalsForComposerRedirect({ ...input, dispatchMode: "steer", sameThread: false }),
+    ).toEqual([]);
   });
 });
