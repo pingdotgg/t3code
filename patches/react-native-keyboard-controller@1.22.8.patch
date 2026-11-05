@@ -16,31 +16,35 @@ index cdbd633..41a72bc 100644
  
    @objc func unmount() {
 diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
-index 545a5b2..2e60b85 100644
+index 545a5b2..0278af5 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
 +++ b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
-@@ -9,6 +9,11 @@ extension KeyboardMovementObserver {
+@@ -8,6 +8,12 @@
+ extension KeyboardMovementObserver {
    @objc func keyboardWillAppear(_ notification: Notification) {
      guard !UIResponder.isKeyboardPreloading else { return }
- 
++    floatingHideTask?.cancel()
++
 +    if isFloatingKeyboard(notification) {
 +      hideIfKeyboardShown(notification)
 +      return
 +    }
-+
+ 
      let (duration, frame) = notification.keyboardMetaData()
      if let keyboardFrame = frame {
-       tag = UIResponder.current.reactViewTag
-@@ -36,6 +41,29 @@ extension KeyboardMovementObserver {
+@@ -36,8 +42,35 @@ extension KeyboardMovementObserver {
      }
    }
  
 +  @objc func keyboardWillChangeFrame(_ notification: Notification) {
 +    guard !UIResponder.isKeyboardPreloading, isFloatingKeyboard(notification) else { return }
-+    // runs after a willShow/willHide posted with this notification, so hide events fire once
-+    DispatchQueue.main.async { [weak self] in
++    // runs after a willShow/willHide posted with this notification, which cancel it, so hide events fire once
++    floatingHideTask?.cancel()
++    let task = DispatchWorkItem { [weak self] in
 +      self?.hideIfKeyboardShown(notification)
 +    }
++    floatingHideTask = task
++    DispatchQueue.main.async(execute: task)
 +  }
 +
 +  // iPadOS floating keyboards (and the collapsed shortcuts bar) cover no app content and are narrower
@@ -60,7 +64,22 @@ index 545a5b2..2e60b85 100644
 +
    @objc func keyboardWillDisappear(_ notification: Notification) {
      guard !UIResponder.isKeyboardPreloading else { return }
++    floatingHideTask?.cancel()
      let (duration, _) = notification.keyboardMetaData()
+     tag = UIResponder.current.reactViewTag
+     self.notification = notification
+diff --git a/ios/observers/movement/observer/KeyboardMovementObserver.swift b/ios/observers/movement/observer/KeyboardMovementObserver.swift
+index ae97d61..2ea1d2d 100644
+--- a/ios/observers/movement/observer/KeyboardMovementObserver.swift
++++ b/ios/observers/movement/observer/KeyboardMovementObserver.swift
+@@ -37,6 +37,7 @@ public class KeyboardMovementObserver: NSObject {
+   // manual did events
+   var notification: Notification?
+   var keyboardDidTask: DispatchWorkItem?
++  var floatingHideTask: DispatchWorkItem?
+ 
+   @objc public init(
+     handler: @escaping (NSString, NSNumber, NSNumber, NSNumber, NSNumber) -> Void,
 diff --git a/lib/commonjs/components/KeyboardChatScrollView/index.js b/lib/commonjs/components/KeyboardChatScrollView/index.js
 index 0b78ff3..98b3b6c 100644
 --- a/lib/commonjs/components/KeyboardChatScrollView/index.js
