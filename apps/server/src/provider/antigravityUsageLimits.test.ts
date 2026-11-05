@@ -180,7 +180,8 @@ describe("Antigravity subscription limits", () => {
         expect(quotaCalls()).toBe(4);
         yield* TestClock.adjust("5 minutes");
         options.userId = discovery === "fails" ? undefined : "google-account";
-        yield* probe;
+        const blockedRenewal = yield* probe;
+        expect(blockedRenewal.credentialFingerprint).toBe(first.credentialFingerprint);
         expect(requests.filter(({ url }) => url.endsWith("/token"))).toHaveLength(2);
         expect(quotaCalls()).toBe(4);
         options.userId = "another-google-account";
@@ -194,6 +195,13 @@ describe("Antigravity subscription limits", () => {
         yield* TestClock.adjust("5 minutes");
         yield* probe;
         expect(quotaCalls()).toBe(8);
+        options.summaryStatus = 200;
+        yield* TestClock.adjust("10 minutes");
+        const recovered = yield* probe;
+        expect(recovered.unavailable).toBeUndefined();
+        options.summaryStatus = 503;
+        yield* TestClock.adjust("5 minutes");
+        expect((yield* probe).credentialFingerprint).toBe(recovered.credentialFingerprint);
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

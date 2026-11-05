@@ -201,6 +201,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     | undefined;
   let generation = 0;
   const throttleIdentities = new Map<string, string>();
+  const quotaOwners = new Map<string, string>();
 
   const sha256 = (text: string) =>
     crypto
@@ -244,7 +245,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const fingerprint = yield* sha256(
       `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
     );
-    if (cached?.fingerprint === fingerprint) onAccount(cached.account);
+    if (cached?.fingerprint === fingerprint)
+      onAccount(quotaOwners.get(fingerprint) ?? cached.account);
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
     let account: string;
@@ -283,7 +285,9 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
-    onAccount(account);
+    // Google discovery can recover before quota access; failures still belong to the last sample.
+    const quotaOwner = quotaOwners.get(fingerprint) ?? account;
+    onAccount(quotaOwner);
     const throttleIdentity = throttleIdentities.get(fingerprint) ?? account;
     throttleIdentities.set(fingerprint, throttleIdentity);
     const sampleTimes: string[] = [];
@@ -345,9 +349,10 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           reason: "probeFailed",
           message: "Antigravity did not return usable quota information.",
         }),
-        credentialFingerprint: account,
+        credentialFingerprint: quotaOwner,
       };
     }
+    if (generation === startedGeneration) quotaOwners.set(fingerprint, account);
     return {
       ...makeUsageLimits({ checkedAt: sampleTimes.toSorted()[0] ?? checkedAt, windows }),
       credentialFingerprint: account,

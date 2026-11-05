@@ -7,6 +7,8 @@ import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgro
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
@@ -70,7 +72,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const host = yield* ProviderHost.ProviderHost;
   let usageRefreshAfter = 0;
   const refreshSemaphore = yield* Semaphore.make(1);
-  const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
+  const usageRefreshQueued = yield* Ref.make<Deferred.Deferred<
+    Exit.Exit<void, ServerSettingsError>
+  > | null>(null);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -257,28 +261,43 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled || snapshot.usageLimits?.externalUsage) return;
     // An in-flight refresh may have read cached usage, so one refresh waits behind it.
-    const claim = Symbol();
-    const release = Ref.update(usageRefreshQueued, (queued) => (queued === claim ? null : queued));
     yield* Effect.uninterruptibleMask((restore) =>
-      Ref.modify(usageRefreshQueued, (queued) => [queued !== null, queued ?? claim]).pipe(
-        Effect.flatMap((held) =>
-          held
-            ? Effect.void
-            : restore(
-                refreshSemaphore.withPermits(1)(
-                  release.pipe(
-                    Effect.andThen(input.invalidateUsageCache ?? Effect.void),
-                    Effect.andThen(input.getSettings),
-                    Effect.flatMap((settings) =>
-                      applySnapshotBase(settings, { forceRefresh: true }).pipe(
-                        Effect.provideService(UsagePolling, true),
-                      ),
-                    ),
+      Effect.gen(function* () {
+        while (true) {
+          const claim = yield* Deferred.make<Exit.Exit<void, ServerSettingsError>>();
+          const pending = yield* Ref.modify(
+            usageRefreshQueued,
+            (queued) => [queued, queued ?? claim] as const,
+          );
+          if (pending !== null) {
+            const completed = yield* restore(Deferred.await(pending));
+            // A cancelled owner cannot satisfy another caller's demand.
+            if (Exit.hasInterrupts(completed)) continue;
+            yield* completed;
+            return;
+          }
+          const release = Ref.update(usageRefreshQueued, (queued) =>
+            queued === claim ? null : queued,
+          );
+          yield* restore(
+            refreshSemaphore.withPermits(1)(
+              release.pipe(
+                Effect.andThen(input.invalidateUsageCache ?? Effect.void),
+                Effect.andThen(input.getSettings),
+                Effect.flatMap((settings) =>
+                  applySnapshotBase(settings, { forceRefresh: true }).pipe(
+                    Effect.provideService(UsagePolling, true),
                   ),
                 ),
-              ).pipe(Effect.onInterrupt(() => release)),
-        ),
-      ),
+                Effect.asVoid,
+              ),
+            ),
+          ).pipe(
+            Effect.onExit((exit) => release.pipe(Effect.andThen(Deferred.succeed(claim, exit)))),
+          );
+          return;
+        }
+      }),
     );
   });
 

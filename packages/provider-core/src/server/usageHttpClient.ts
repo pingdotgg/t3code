@@ -149,9 +149,10 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
             );
             const finishedAt = yield* Clock.currentTimeMillis;
             if (
-              generation === state.generation ||
-              Exit.isFailure(result) ||
-              result.value.status >= 400
+              !Exit.hasInterrupts(result) &&
+              (generation === state.generation ||
+                Exit.isFailure(result) ||
+                result.value.status >= 400)
             )
               cached.set(
                 Exit.isSuccess(result) && [401, 403].includes(result.value.status) ? tokenKey : key,

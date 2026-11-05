@@ -2,6 +2,7 @@ import { assert, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
@@ -97,8 +98,8 @@ it.effect.each(["seconds", "date", "missing"] as const)(
     }),
 );
 
-it.effect.each([200, 503, 429])(
-  "invalidates in-flight successes without losing failed-read backoff (%s)",
+it.effect.each([200, 503, 429, "interrupted"] as const)(
+  "does not reuse invalidated or interrupted reads while preserving failure backoff (%s)",
   (status) =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -113,18 +114,28 @@ it.effect.each([200, 503, 429])(
               yield* Deferred.succeed(started, undefined);
               yield* Deferred.await(finish);
             }
-            return HttpClientResponse.fromWeb(input, Response.json({ reading }, { status }));
-          }),
+            return HttpClientResponse.fromWeb(
+              input,
+              Response.json({ reading }, { status: typeof status === "number" ? status : 200 }),
+            );
+          }).pipe(Effect.interruptible),
         ),
       );
-      const pending = yield* client.execute(request("a")).pipe(Effect.forkChild);
+      const pending = yield* client
+        .execute(request("a"))
+        .pipe(Effect.uninterruptible, Effect.forkChild);
       yield* Deferred.await(started);
       yield* client.invalidateSuccessfulReads("https://api.anthropic.com", "Bearer a");
-      yield* Deferred.succeed(finish, undefined);
-      yield* Fiber.join(pending);
-      const refreshed = yield* client.execute(request("a"));
-      const expected = status < 400 ? 2 : 1;
-      assert.deepStrictEqual(yield* refreshed.json, { reading: expected });
+      if (status === "interrupted") yield* Fiber.interrupt(pending);
+      else {
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(pending);
+      }
+      const refreshed = yield* client.execute(request("a")).pipe(Effect.exit);
+      assert.strictEqual(refreshed._tag, "Success");
+      if (Exit.isFailure(refreshed)) return;
+      const expected = status === "interrupted" || status < 400 ? 2 : 1;
+      assert.deepStrictEqual(yield* refreshed.value.json, { reading: expected });
       assert.strictEqual(calls, expected);
     }),
 );

@@ -11,6 +11,7 @@ import { UsagePolling } from "./usageLimits.ts";
 import * as Cache from "effect/Cache";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -273,12 +274,19 @@ describe("makeManagedServerProvider", () => {
         const queued = yield* provider.refreshUsage!.pipe(
           Effect.forkChild({ startImmediately: true }),
         );
-        yield* provider.refreshUsage!;
+        const completed = yield* Deferred.make<void>();
+        const coalesced = yield* provider.refreshUsage!.pipe(
+          Effect.andThen(Deferred.succeed(completed, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        assert.strictEqual(yield* Deferred.isDone(completed), false);
         assert.strictEqual(yield* Ref.get(calls), 2);
         assert.strictEqual((yield* provider.getSnapshot).usageLimits?.windows[0]?.usedPercent, 20);
         yield* Deferred.succeed(releaseProbe, undefined);
         yield* Fiber.join(refresh);
         yield* Fiber.join(queued);
+        yield* Fiber.join(coalesced);
+        assert.strictEqual(yield* Deferred.isDone(completed), true);
         assert.strictEqual(yield* Ref.get(calls), 3);
         assert.strictEqual((yield* provider.getSnapshot).usageLimits?.windows[0]?.usedPercent, 100);
       }),
@@ -323,12 +331,16 @@ describe("makeManagedServerProvider", () => {
         );
         yield* Fiber.interrupt(running);
         yield* Deferred.await(statusProbeStarted);
+        const extraCompleted = yield* Deferred.make<void>();
         const extra = yield* provider.refreshUsage!.pipe(
+          Effect.andThen(Deferred.succeed(extraCompleted, undefined)),
           Effect.forkChild({ startImmediately: true }),
         );
+        assert.strictEqual(yield* Deferred.isDone(extraCompleted), false);
+        yield* Fiber.interrupt(waiting);
         yield* Deferred.succeed(releaseStatusProbe, undefined);
         yield* Fiber.join(status);
-        yield* Fiber.join(waiting);
+        assert.strictEqual(Exit.hasInterrupts(yield* Fiber.await(waiting)), true);
         yield* Fiber.join(extra);
         assert.strictEqual(yield* Ref.get(calls), 4);
       }),
