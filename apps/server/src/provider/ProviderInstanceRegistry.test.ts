@@ -898,8 +898,12 @@ describe("ProviderInstanceRegistry secret environment", () => {
     }).pipe(Effect.scoped);
   });
 
-  it.effect("marks an instance unavailable and names the variable it could not read", () => {
-    const fixture = setup({});
+  // An empty secret must not let a driver fall back to a credential the server inherited.
+  it.effect.each([
+    ["missing", {}],
+    ["empty", { [secret.reference]: " " }],
+  ] as const)("marks an instance unavailable when its secret is %s", ([, initial]) => {
+    const fixture = setup(initial);
     return Effect.gen(function* () {
       const { registry, mutator } = yield* fixture.make;
       const readsAtStartup = fixture.reads.length;
