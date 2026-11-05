@@ -93,7 +93,6 @@ import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmentConnectionPresentation";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { T3LearnWordmark } from "../T3LearnWordmark";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CommandBlock } from "../CommandBlock";
@@ -242,14 +241,7 @@ export function WelcomeWizard({
       >
         <WizardHeader
           title="Set up OminaX"
-          identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="OminaX">
-              <T3LearnWordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Learn
-              </span>
-            </div>
-          }
+          identity={<span className="text-2xl font-medium tracking-tight">OminaX</span>}
         >
           <WizardSteps
             steps={ONBOARDING_STAGES}
