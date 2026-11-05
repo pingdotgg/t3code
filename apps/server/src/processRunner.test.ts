@@ -1,4 +1,5 @@
 import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -260,6 +261,23 @@ describe("runProcess", () => {
       expect(result.stdout).toBe("stdin payload");
       expect(result.code).toBe(0);
     }),
+  );
+});
+
+describe("ProcessRunner.layer", () => {
+  // Forking the server for every git call stalls its event loop in proportion to its RSS.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "launches commands from a helper process instead of forking the server",
+    () =>
+      Effect.gen(function* () {
+        const runner = yield* ProcessRunner.ProcessRunner;
+        const result = yield* runner.run({ command: "sh", args: ["-c", "echo $PPID"] });
+
+        expect(
+          Number(result.stdout.trim()),
+          "the command's parent process is the server process itself",
+        ).not.toBe(process.pid);
+      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
   );
 });
 
