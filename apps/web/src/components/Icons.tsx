@@ -25,6 +25,28 @@ export const FinderIcon: Icon = (props) => (
   </svg>
 );
 
+export const TerminalAppIcon: Icon = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" {...props}>
+    <rect
+      x="2.5"
+      y="2.5"
+      width="19"
+      height="19"
+      rx="3.5"
+      fill="#1F2937"
+      stroke="#FFFFFF"
+      strokeOpacity="0.18"
+    />
+    <path
+      d="m7 8 4 4-4 4m6 0h4"
+      stroke="#F8FAFC"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 export const FileExplorerIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
     <path
