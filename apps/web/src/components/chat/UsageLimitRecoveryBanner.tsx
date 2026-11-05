@@ -32,13 +32,14 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, errorCode, resetAt, stoppedAt, timestampFormat } = props;
+  const { runId, errorCode, resetAt, stoppedAt, timestampFormat, recovery } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const recoveryActions = canSchedule ? (
-    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
-  ) : null;
+  const recoveryActions =
+    canSchedule || (recovery?.autoResume && recovery.resetAt === resetAt) ? (
+      <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
+    ) : null;
   const resetDescription = resetAt
     ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
     : "Reset time unavailable; retry manually";
@@ -79,8 +80,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
 function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
   const [pending, setPending] = useState(false);
 
-  const scheduled =
-    recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
+  const scheduled = recovery?.resetAt === resetAt && recovery.autoResume;
   // The server leaves snoozedUntil in place after the timer wakes the thread,
   // so a snooze whose reset has passed is no longer active.
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));

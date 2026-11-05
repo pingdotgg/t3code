@@ -340,7 +340,7 @@ it.effect.each([
           if (cancel === "after its limit") cancelled = yield* cancelTask;
           assert.equal(cancelled, cancelStatus);
 
-          yield* TestClock.adjust("1 minute");
+          yield* TestClock.adjust("3 minutes");
           yield* sweep;
           const childAfter = yield* orchestrator.getThreadProjection(childThreadId);
           assert.deepEqual(

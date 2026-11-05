@@ -11,6 +11,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as UsageLimitRecovery from "./UsageLimitRecovery.ts";
 
 const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
 
@@ -34,7 +35,8 @@ export function limitRecoveryCommand(
   // An already-expired window reported with a fresh failure cannot start a retry loop.
   if (
     !Number.isFinite(resetMs) ||
-    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
+    (resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt) &&
+      !UsageLimitRecovery.staleResetAllowed(thread))
   )
     return null;
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
@@ -56,7 +58,7 @@ export function limitRecoveryCommand(
   }
   if (
     !recovery.autoResume ||
-    resetMs > nowMs ||
+    UsageLimitRecovery.dueMs(resetMs, thread.latestRunCompletedAt ?? thread.updatedAt) > nowMs ||
     (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
   )
     return null;
