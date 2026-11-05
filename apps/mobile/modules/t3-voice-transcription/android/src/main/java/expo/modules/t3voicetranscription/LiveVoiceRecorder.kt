@@ -125,11 +125,17 @@ internal class LiveVoiceRecorder(
   }
 
   suspend fun stop() {
-    val selection = synchronized(this) { inputSelection }
-    selection?.cancel()
-    selection?.join()
-    capture?.stop()
-    if (!inferenceStarted) pipe?.close()
+    val recording = capture
+    val output = pipe
+    try {
+      val selection = synchronized(this) { inputSelection }
+      selection?.cancel()
+      selection?.join()
+      recording?.stop()
+    } finally {
+      // Recognition can start after Stop and still needs the captured PCM pipe.
+      if (recording?.hasStarted != true) output?.close()
+    }
   }
 
   fun status() = mapOf(

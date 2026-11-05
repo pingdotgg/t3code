@@ -33,7 +33,7 @@ internal class LivePcmCapture(
   private val output: PcmOutput,
   private val clock: TimeSource = TimeSource.Monotonic
 ) {
-  private var worker: Job? = null
+  @Volatile private var worker: Job? = null
   private val completion = CompletableDeferred<Result<Unit>>()
   private val microphoneStopped = CompletableDeferred<Result<Unit>>()
 
@@ -50,7 +50,8 @@ internal class LivePcmCapture(
 
   @Volatile var inputExhausted = false
     private set
-  val isRecording get() = worker != null && !microphoneStopped.isCompleted
+  val hasStarted get() = worker != null
+  val isRecording get() = hasStarted && !microphoneStopped.isCompleted
 
   fun start(scope: CoroutineScope, seconds: Double, onFinished: (Throwable?) -> Unit) {
     check(worker == null && !sourceReleased) { "The microphone is not prepared." }
