@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { DesktopUpdateState } from "@t3tools/contracts";
 import type * as Electron from "electron";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
@@ -64,7 +65,17 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
-const checkForUpdatesFromMenu = Effect.gen(function* () {
+// The sidebar owns installing: it confirms first, because restarting interrupts running tasks.
+const INSTALL_FROM_SIDEBAR = "Install it from the update button at the bottom of the sidebar.";
+
+function describeUpdate(
+  state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
+): string {
+  const version = state.downloadedVersion ?? state.availableVersion;
+  return version === null ? "An update" : `T3 Code ${version}`;
+}
+
+export const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const result = yield* updates.check("menu");
@@ -83,6 +94,42 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       title: "Update check failed",
       message: "Could not check for updates.",
       detail: updateState.message ?? "An unknown error occurred. Please try again later.",
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "available") {
+    const { response } = yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update available",
+      message: `${describeUpdate(updateState)} is available.`,
+      detail: `You're on ${updateState.currentVersion}. ${INSTALL_FROM_SIDEBAR}`,
+      buttons: ["Download", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response !== 0) return;
+    const download = yield* updates.download;
+    if (download.completed) return;
+    yield* electronDialog.showMessageBox({
+      type: "warning",
+      title: "Could not download update",
+      message: "The update did not download.",
+      detail: download.state.message ?? "Please try again from the bottom of the sidebar.",
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "downloading") {
+    yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update downloading",
+      message: `${describeUpdate(updateState)} is downloading.`,
+      detail: INSTALL_FROM_SIDEBAR,
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "downloaded") {
+    yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update ready to install",
+      message: `${describeUpdate(updateState)} is ready to install.`,
+      detail: INSTALL_FROM_SIDEBAR,
       buttons: ["OK"],
     });
   }

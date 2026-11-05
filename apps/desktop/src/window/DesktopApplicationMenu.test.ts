@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -13,6 +14,7 @@ import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
 const environmentInput = {
@@ -50,14 +52,16 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   on: () => Effect.void,
 } satisfies ElectronApp.ElectronApp["Service"]);
 
-const layerElectronDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
+const electronDialogStub = {
   pickFolder: () => Effect.succeedNone,
   pickFiles: () => Effect.succeed([]),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
-} satisfies ElectronDialog.ElectronDialog["Service"]);
+} satisfies ElectronDialog.ElectronDialog["Service"];
 
-const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
+const layerElectronDialog = Layer.succeed(ElectronDialog.ElectronDialog, electronDialogStub);
+
+const desktopUpdatesStub = {
   getState: Effect.die("unexpected getState"),
   isActionActive: Effect.succeed(false),
   isInstallActive: Effect.succeed(false),
@@ -70,7 +74,9 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   download: Effect.die("unexpected download"),
   install: Effect.die("unexpected install"),
   installPrepared: () => Effect.die("unexpected installPrepared"),
-} satisfies DesktopUpdates.DesktopUpdates["Service"]);
+} satisfies DesktopUpdates.DesktopUpdates["Service"];
+
+const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, desktopUpdatesStub);
 
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -127,6 +133,80 @@ const configureMenu = (
       ),
     ),
   );
+
+const updateState = (
+  status: DesktopUpdateState["status"],
+  overrides: Partial<DesktopUpdateState> = {},
+): DesktopUpdateState => ({
+  ...createInitialDesktopUpdateState(
+    "1.2.3",
+    { hostArch: "arm64", appArch: "arm64", runningUnderArm64Translation: false },
+    "latest",
+  ),
+  status,
+  availableVersion: "2.0.0",
+  ...overrides,
+});
+
+const downloadFinished: DesktopUpdateActionResult = {
+  accepted: true,
+  completed: true,
+  state: updateState("downloaded", { downloadedVersion: "2.0.0" }),
+};
+
+const downloadFailed: DesktopUpdateActionResult = {
+  accepted: true,
+  completed: false,
+  state: updateState("error", { message: "disk full" }),
+};
+
+describe("checkForUpdatesFromMenu", () => {
+  it.effect.each([
+    ["downloads a found update on accept", "available", 0, downloadFinished, ["Update available"]],
+    ["leaves a found update on Later", "available", 1, null, ["Update available"]],
+    [
+      "reports a download that fails",
+      "available",
+      0,
+      downloadFailed,
+      ["Update available", "Could not download update"],
+    ],
+    ["says a download is under way", "downloading", 0, null, ["Update downloading"]],
+    ["never installs a downloaded update", "downloaded", 0, null, ["Update ready to install"]],
+  ] as const)("%s", ([_case, status, response, download, expectedDialogs]) =>
+    Effect.gen(function* () {
+      const dialogs: Array<string | undefined> = [];
+      let downloads = 0;
+
+      yield* DesktopApplicationMenu.checkForUpdatesFromMenu.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(DesktopUpdates.DesktopUpdates, {
+              ...desktopUpdatesStub,
+              check: () => Effect.succeed({ checked: true, state: updateState(status) }),
+              download: Effect.suspend(() => {
+                downloads += 1;
+                return download === null
+                  ? Effect.die("unexpected download")
+                  : Effect.succeed(download);
+              }),
+            }),
+            Layer.succeed(ElectronDialog.ElectronDialog, {
+              ...electronDialogStub,
+              showMessageBox: (options) => {
+                dialogs.push(options.title);
+                return Effect.succeed({ response, checkboxChecked: false });
+              },
+            }),
+          ),
+        ),
+      );
+
+      assert.deepEqual(dialogs, [...expectedDialogs]);
+      assert.equal(downloads, download === null ? 0 : 1);
+    }),
+  );
+});
 
 describe("DesktopApplicationMenu", () => {
   it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
