@@ -1,10 +1,12 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  EventId,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -23,21 +25,26 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
+import { createDeterministicAttachmentId, resolveAttachmentPathById } from "../attachmentStore.ts";
+import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -49,6 +56,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -60,9 +68,19 @@ import {
 } from "./RunExecutionService.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
-const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(layerTestDatabase),
+const layerTestStoredContentConfig = ServerConfig.layerTest(process.cwd(), {
+  prefix: "ingestor-content-store-",
+}).pipe(Layer.provideMerge(NodeServices.layer));
+const layerTestContentStore = TurnItemContentStore.layer.pipe(
+  Layer.provide(layerTestStoredContentConfig),
+  Layer.provide(NodeCrypto.layer),
 );
+const layerTestStores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer,
+  layerTestStoredContentConfig,
+  layerTestContentStore,
+).pipe(Layer.provide(layerTestDatabase));
 
 const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
@@ -229,6 +247,134 @@ function threadCreatedEvent(
 }
 
 const layer = it.layer(layerTest);
+
+it.effect("does not leave image attachments after rejected or failed writes", () =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const crypto = yield* Digest.Digest;
+    const config = yield* ServerConfig.ServerConfig;
+    const now = yield* DateTime.now;
+    const threadEvent = yield* threadCreatedEvent(now);
+    yield* eventSink.write({ events: [threadEvent] });
+
+    const makeImageEvent = (id: string, eventId: string, bytes: Uint8Array) => ({
+      id: EventId.make(eventId),
+      type: "turn-item.updated" as const,
+      threadId: threadEvent.threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(id),
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed" as const,
+        title: "Search result",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool" as const,
+        toolName: "search",
+        input: {},
+        output: {
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: Buffer.from(bytes).toString("base64"),
+              },
+            },
+          ],
+        },
+      },
+    });
+    const attachmentPathFor = (bytes: Uint8Array) =>
+      Effect.gen(function* () {
+        const digest = yield* crypto.digest(Digest.sha256, bytes);
+        const attachmentId = createDeterministicAttachmentId(
+          threadEvent.threadId,
+          Hex.encode(digest),
+        );
+        if (attachmentId === null) throw new Error("Expected a safe thread id");
+        return resolveAttachmentRelativePath({
+          attachmentsDir: config.attachmentsDir,
+          relativePath: `${attachmentId}.bin`,
+        });
+      });
+
+    const rejectedBytes = Buffer.alloc(30_000, 31);
+    const rejectedPath = yield* attachmentPathFor(rejectedBytes);
+    const rejectedEvent = makeImageEvent(
+      "turn-item:rejected-image",
+      "event:rejected-image",
+      rejectedBytes,
+    );
+    yield* eventSink.writeIfRunCurrent({
+      threadId: threadEvent.threadId,
+      runId: RunId.make("run:missing-image-owner"),
+      activeAttemptId: RunAttemptId.make("attempt:missing-image-owner"),
+      expectedStatus: "running",
+      events: [rejectedEvent],
+    });
+    assert.isNotNull(rejectedPath);
+    assert.isFalse(yield* fileSystem.exists(rejectedPath!));
+
+    const failedBytes = Buffer.alloc(30_000, 32);
+    const failedPath = yield* attachmentPathFor(failedBytes);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TEMP TRIGGER reject_turn_item_event
+      BEFORE INSERT ON orchestration_events
+      WHEN NEW.event_type = 'turn-item.updated'
+      BEGIN SELECT RAISE(ABORT, 'injected event failure'); END`;
+    const contentStore = yield* TurnItemContentStore.TurnItemContentStore;
+    const cleanupEntered = yield* Deferred.make<void>();
+    const releaseCleanup = yield* Deferred.make<void>();
+    const removeNewAttachments = contentStore.removeNewAttachments;
+    using _cleanup = vi
+      .spyOn(contentStore, "removeNewAttachments")
+      .mockImplementation((ids) =>
+        Deferred.succeed(cleanupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCleanup)),
+          Effect.andThen(removeNewAttachments(ids)),
+        ),
+      );
+    const failedWriter = yield* eventSink
+      .write({
+        events: [makeImageEvent("turn-item:failed-image", "event:failed-image", failedBytes)],
+      })
+      .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(cleanupEntered);
+    yield* sql`DROP TRIGGER reject_turn_item_event`;
+    const successorTransactionEntered = yield* Deferred.make<void>();
+    const withTransaction = sql.withTransaction;
+    const observeTransaction: typeof sql.withTransaction = (effect) =>
+      Deferred.succeed(successorTransactionEntered, undefined).pipe(
+        Effect.andThen(withTransaction(effect)),
+      );
+    using _transaction = vi.spyOn(sql, "withTransaction").mockImplementation(observeTransaction);
+    const successor = yield* eventSink
+      .write({
+        events: [makeImageEvent("turn-item:successor-image", "event:successor-image", failedBytes)],
+      })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    const successorStarted = yield* Deferred.isDone(successorTransactionEntered);
+    yield* Effect.sync(() => assert.isFalse(successorStarted)).pipe(
+      Effect.ensuring(Deferred.succeed(releaseCleanup, undefined)),
+    );
+    const failed = yield* Fiber.join(failedWriter);
+    yield* Fiber.join(successor);
+    assert.equal(failed._tag, "Failure");
+    assert.isNotNull(failedPath);
+    assert.deepEqual(yield* fileSystem.readFile(failedPath!), failedBytes);
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("refreshes the failing instance snapshot after a committed usage_limit terminal", () =>
   Effect.scoped(
@@ -430,6 +576,9 @@ layer("ProviderEventIngestorV2", (it) => {
       const eventSink = yield* EventSink.EventSinkV2;
       const eventStore = yield* EventStore.EventStoreV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const crypto = yield* Digest.Digest;
+      const config = yield* ServerConfig.ServerConfig;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const threadEvent = yield* threadCreatedEvent(now);
@@ -473,6 +622,68 @@ layer("ProviderEventIngestorV2", (it) => {
           providerThread,
         },
       });
+
+      const importedImageBytes = Buffer.alloc(30_000, 41);
+      const importedImageDigest = yield* crypto.digest(Digest.sha256, importedImageBytes);
+      const importedImageAttachmentId = createDeterministicAttachmentId(
+        threadEvent.threadId,
+        Hex.encode(importedImageDigest),
+      );
+      assert.isNotNull(importedImageAttachmentId);
+      const importedImagePath = resolveAttachmentRelativePath({
+        attachmentsDir: config.attachmentsDir,
+        relativePath: `${importedImageAttachmentId}.bin`,
+      });
+      assert.isNotNull(importedImagePath);
+      const rejectedImport = yield* eventSink.write({
+        unlessNativeThreadOwned: {
+          driver: providerThread.driver,
+          providerInstanceId: providerThread.providerInstanceId,
+          appThreadId: ThreadId.make("thread:another-import"),
+          nativeThreadRef: providerThread.nativeThreadRef!,
+        },
+        events: [
+          {
+            id: EventId.make("event:rejected-native-import-image"),
+            type: "turn-item.updated",
+            threadId: threadEvent.threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:rejected-native-import-image"),
+              threadId: threadEvent.threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 3,
+              status: "completed",
+              title: "Imported image",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "dynamic_tool",
+              toolName: "search",
+              input: {},
+              output: {
+                content: [
+                  {
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: "image/png",
+                      data: importedImageBytes.toString("base64"),
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+      assert.isEmpty(rejectedImport);
+      assert.isFalse(yield* fileSystem.exists(importedImagePath!));
 
       const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
       const storedDomainEvents = yield* eventStore.read({}).pipe(Stream.runCollect);
@@ -1552,6 +1763,9 @@ layer("ProviderEventIngestorV2", (it) => {
       const eventSink = yield* EventSink.EventSinkV2;
       const eventStore = yield* EventStore.EventStoreV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const contentStore = yield* TurnItemContentStore.TurnItemContentStore;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const threadEvent = yield* threadCreatedEvent(now);
@@ -1623,17 +1837,67 @@ layer("ProviderEventIngestorV2", (it) => {
       });
 
       assert.equal(storedJson.includes(readBase64), false);
-      assert.equal(storedJson.includes(screenshotBase64), true);
+      assert.equal(storedJson.includes(screenshotBase64), false);
       assert.deepEqual(projectedRead?.type === "dynamic_tool" ? projectedRead.output : null, {
         type: "image",
         file: { type: "image/png", originalSize: 30_000, sizeBytes: 30_000 },
       });
-      assert.deepEqual(
+      const screenshotImage = toolOutputImages(
+        projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
+      )[0];
+      assert.equal(screenshotImage?.mimeType, "image/png");
+      assert.equal(screenshotImage?.sizeBytes, 20_000);
+      assert.isString(screenshotImage?.attachmentId);
+      const screenshotPath = resolveAttachmentPathById({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachmentId: screenshotImage!.attachmentId!,
+      });
+      assert.isNotNull(screenshotPath);
+      const screenshotBytes = yield* fileSystem.readFile(screenshotPath!);
+      assert.deepEqual(Buffer.from(screenshotBytes), Buffer.alloc(20_000, 9));
+      const hydratedScreenshot = yield* contentStore.read(projectedScreenshot!, {
+        includeImageData: true,
+      });
+      assert.equal(
         toolOutputImages(
-          projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
-        ),
-        [{ mimeType: "image/png", data: screenshotBase64 }],
+          hydratedScreenshot.type === "dynamic_tool" ? hydratedScreenshot.output : null,
+        )[0]?.data,
+        screenshotBase64,
       );
+
+      let deepOutput: unknown = { type: "text", text: "preserved" };
+      for (let index = 0; index < 70; index += 1) deepOutput = { nested: deepOutput };
+      const deepItem = toolItem("turn-item:deep-tool-output", 3, "search", deepOutput);
+      const restoredDeepItem = yield* contentStore.read(deepItem, { includeImageData: true });
+      assert.deepEqual(
+        restoredDeepItem.type === "dynamic_tool" ? restoredDeepItem.output : null,
+        deepOutput,
+      );
+
+      const foreignAttachmentId = "other-thread-11111111-1111-1111-1111-111111111111";
+      const foreignPath = resolveAttachmentRelativePath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        relativePath: `${foreignAttachmentId}.bin`,
+      });
+      assert.isNotNull(foreignPath);
+      yield* fileSystem.writeFile(foreignPath!, Buffer.alloc(24, 5));
+      const foreignImageItem = toolItem("turn-item:foreign-tool-image", 4, "search", {
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              attachmentId: foreignAttachmentId,
+              sizeBytes: 24,
+            },
+          },
+        ],
+      });
+      const foreignReadError = yield* contentStore
+        .read(foreignImageItem, { includeImageData: true })
+        .pipe(Effect.flip);
+      assert.equal(foreignReadError.reason, "invalid-reference");
     }),
   );
 
@@ -1712,6 +1976,108 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.isBelow(projectedLarge.diffStr?.length ?? 0, 40_000);
       assert.isTrue(largeDiff.startsWith(projectedLarge.diffStr?.split("\n…")[0] ?? "-"));
       assert.deepEqual(projectedSmall, small);
+    }),
+  );
+
+  it.effect("keeps serialized command and dynamic-tool rows under 64 KiB", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const contentStore = yield* TurnItemContentStore.TurnItemContentStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const base = {
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      } as const;
+      const command = {
+        ...base,
+        id: TurnItemId.make("turn-item:large-command-output"),
+        ordinal: 1,
+        type: "command_execution",
+        input: `printf '${"c".repeat(80_000)}'`,
+        output: "command output ".repeat(6_000),
+      } satisfies OrchestrationV2TurnItem;
+      const tool = {
+        ...base,
+        id: TurnItemId.make("turn-item:large-mcp-output"),
+        ordinal: 2,
+        type: "dynamic_tool",
+        toolName: "search",
+        input: { query: "q".repeat(80_000) },
+        output: [{ type: "text", text: "MCP output ".repeat(8_000) }],
+      } satisfies OrchestrationV2TurnItem;
+
+      yield* eventSink.write({ events: [threadEvent] });
+      for (const turnItem of [command, tool]) {
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+        });
+      }
+
+      const stored = yield* sql<{
+        readonly turn_item_id: string;
+        readonly event_bytes: number;
+        readonly projection_bytes: number;
+      }>`
+        SELECT
+          item.turn_item_id,
+          LENGTH(CAST(event.payload_json AS BLOB)) AS event_bytes,
+          LENGTH(CAST(item.payload_json AS BLOB)) AS projection_bytes
+        FROM orchestration_v2_projection_turn_items AS item
+        JOIN orchestration_events AS event
+          ON event.stream_id = item.thread_id
+         AND event.event_type = 'turn-item.updated'
+         AND json_extract(event.payload_json, '$.id') = item.turn_item_id
+        WHERE item.thread_id = ${threadEvent.threadId}
+        ORDER BY item.turn_item_id
+      `;
+
+      assert.lengthOf(stored, 2);
+      for (const row of stored) {
+        assert.isBelow(row.event_bytes, 64 * 1024);
+        assert.isBelow(row.projection_bytes, 64 * 1024);
+      }
+
+      const storedCommand = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: command.id,
+      });
+      const storedTool = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: tool.id,
+      });
+      assert.isTrue(storedCommand?.type === "command_execution");
+      assert.isTrue(storedTool?.type === "dynamic_tool");
+      if (storedCommand?.type !== "command_execution" || storedTool?.type !== "dynamic_tool") {
+        return;
+      }
+      assert.isDefined(storedCommand.contentRef);
+      assert.isDefined(storedTool.contentRef);
+      const restoredCommand = yield* contentStore.read(storedCommand);
+      const restoredTool = yield* contentStore.read(storedTool);
+      assert.deepEqual(restoredCommand, command);
+      assert.deepEqual(restoredTool, tool);
     }),
   );
 

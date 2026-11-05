@@ -17,9 +17,14 @@ import {
   type TerminalOutputState,
 } from "@t3tools/shared/terminalOutput";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -29,16 +34,73 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
-const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(layerTestDatabase),
+const layerTestContentStore = Layer.effect(
+  TurnItemContentStore.TurnItemContentStore,
+  Effect.gen(function* () {
+    const contents = yield* Ref.make(new Map<string, string>());
+    let nextAttachmentVersion = 0;
+    const storeForCommit: TurnItemContentStore.TurnItemContentStore["Service"]["storeForCommit"] = (
+      item,
+    ) => {
+      if (
+        item.type !== "command_execution" ||
+        item.output === undefined ||
+        Buffer.byteLength(item.output, "utf8") <= 64 * 1024
+      ) {
+        return Effect.succeed({ item, createdAttachmentIds: [] });
+      }
+      const output = item.output;
+      const attachmentId = `stored-${item.threadId}-${item.id}-${nextAttachmentVersion++}`;
+      const sizeBytes = Buffer.byteLength(output, "utf8");
+      return Ref.update(contents, (stored) => new Map(stored).set(attachmentId, output)).pipe(
+        Effect.as({
+          item: {
+            ...item,
+            output: "stored output preview",
+            contentRef: { attachmentId, sizeBytes },
+          },
+          createdAttachmentIds: [],
+        }),
+      );
+    };
+    const store: TurnItemContentStore.TurnItemContentStore["Service"]["store"] = (item) =>
+      storeForCommit(item).pipe(Effect.map((stored) => stored.item));
+    const read: TurnItemContentStore.TurnItemContentStore["Service"]["read"] = (item) => {
+      const contentRef = item.type === "command_execution" ? item.contentRef : undefined;
+      if (item.type !== "command_execution" || contentRef === undefined) {
+        return Effect.succeed(item);
+      }
+      return Ref.get(contents).pipe(
+        Effect.map((stored) => {
+          const output = stored.get(contentRef.attachmentId);
+          if (output === undefined) return item;
+          const { contentRef: _contentRef, ...command } = item;
+          return { ...command, output };
+        }),
+      );
+    };
+    return TurnItemContentStore.TurnItemContentStore.of({
+      store,
+      storeForCommit,
+      removeNewAttachments: () => Effect.void,
+      read,
+    });
+  }),
 );
+const layerTestStores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer,
+  layerTestContentStore,
+).pipe(Layer.provide(layerTestDatabase));
 const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
 const layerTest = Layer.mergeAll(
   layerTestEventSink,
+  layerTestStores,
   IdAllocator.layer,
   CommandOutputHub.layer.pipe(Layer.provide(Layer.merge(layerTestEventSink, layerTestStores))),
 );
@@ -171,6 +233,103 @@ const takeFrame = (frames: Queue.Queue<OrchestrationV2CommandOutputFrame | "ende
 
 const layer = it.layer(layerTest);
 
+it.effect("fails when stored output becomes unreadable during frame throttling", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const content = yield* TurnItemContentStore.TurnItemContentStore;
+      const clock = yield* Clock.Clock;
+      const firstFrame = yield* Deferred.make<void>();
+      const sleepStarted = yield* Deferred.make<void>();
+      const releaseSleep = yield* Deferred.make<void>();
+      const eventProcessed = yield* Deferred.make<void>();
+      const frames: OrchestrationV2CommandOutputFrame[] = [];
+      const threadId = yield* seedThread;
+      yield* writeCommandItem(threadId, { status: "running" });
+      const hub = yield* CommandOutputHub.make.pipe(
+        Effect.provideService(EventSink.EventSinkV2, {
+          ...sink,
+          stream: (input) =>
+            sink
+              .stream(input)
+              .pipe(
+                Stream.take(1),
+                Stream.concat(Stream.fromEffectDrain(Deferred.succeed(eventProcessed, undefined))),
+                Stream.concat(Stream.never),
+              ),
+        }),
+        Effect.provideService(TurnItemContentStore.TurnItemContentStore, {
+          ...content,
+          read: (item, options) =>
+            item.type === "command_execution" && item.contentRef !== undefined
+              ? Effect.fail(
+                  new TurnItemContentStore.TurnItemContentStoreError({
+                    threadId,
+                    itemId: item.id,
+                    operation: "read",
+                    reason: "content-missing",
+                  }),
+                )
+              : content.read(item, options),
+        }),
+      );
+      const subscriber = yield* hub.subscribe({ threadId, itemId: ITEM_ID }).pipe(
+        Stream.runForEach((frame) =>
+          Effect.sync(() => {
+            frames.push(frame);
+          }).pipe(Effect.andThen(Deferred.succeed(firstFrame, undefined))),
+        ),
+        Effect.flip,
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          sleep: () =>
+            Deferred.succeed(sleepStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSleep)),
+            ),
+        }),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(firstFrame);
+      yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "next chunk" });
+      yield* Deferred.await(sleepStarted);
+      yield* writeCommandItem(threadId, {
+        status: "completed",
+        exitCode: 0,
+        output: "x".repeat(70_000),
+      });
+      yield* Deferred.await(eventProcessed);
+      yield* Deferred.succeed(releaseSleep, undefined);
+      const error = yield* Fiber.join(subscriber);
+      assert.equal(error._tag, "OrchestrationV2CommandOutputError");
+      assert.equal(error.message, "Failed to read command output.");
+      assert.isTrue(frames.every((frame) => frame.running));
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("wakes a blocked command subscriber after stored output fails to read", () =>
+  Effect.gen(function* () {
+    const threadId = yield* seedThread;
+    const wake = yield* Queue.unbounded<void>();
+    let readFailureTag: string | undefined;
+    yield* CommandOutputHub.wakeAfterReadFailure({
+      threadId,
+      cause: new TurnItemContentStore.TurnItemContentStoreError({
+        threadId,
+        itemId: ITEM_ID,
+        operation: "read",
+        reason: "content-missing",
+      }),
+      wake,
+      setFailure: (error) => {
+        readFailureTag = error._tag;
+      },
+    });
+    assert.equal(readFailureTag, "OrchestrationV2CommandOutputError");
+    assert.isTrue(Option.isSome(yield* Queue.poll(wake)));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 layer("CommandOutputHub", (it) => {
   it.effect(
     "a late subscriber gets the running tail, then live appends, then the final output",
@@ -280,6 +439,30 @@ layer("CommandOutputHub", (it) => {
         assert.equal(yield* Queue.take(frames), "ended");
       }),
     ),
+  );
+
+  it.effect("test content references retain earlier command output versions", () =>
+    Effect.gen(function* () {
+      const threadId = yield* seedThread;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const contentStore = yield* TurnItemContentStore.TurnItemContentStore;
+      const firstOutput = "a".repeat(70_000);
+      const secondOutput = "b".repeat(70_000);
+      yield* writeCommandItem(threadId, { status: "running", output: firstOutput });
+      yield* writeCommandItem(threadId, { status: "completed", exitCode: 0, output: secondOutput });
+
+      const events = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+      const commandVersions = Array.from(events).flatMap((stored) => {
+        if (stored.event.type !== "turn-item.updated") return [];
+        const item = stored.event.payload;
+        return item.id === ITEM_ID && item.type === "command_execution" ? [item] : [];
+      });
+      const restored = yield* Effect.forEach(commandVersions, (item) => contentStore.read(item));
+      assert.deepEqual(
+        restored.map((item) => (item.type === "command_execution" ? item.output : null)),
+        [firstOutput, secondOutput],
+      );
+    }),
   );
 
   it.effect("a finished command whose output is one huge line still shows its tail", () =>

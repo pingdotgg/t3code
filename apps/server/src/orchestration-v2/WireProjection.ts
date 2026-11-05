@@ -160,7 +160,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       return projected;
     }
     case "command_execution": {
-      const { output, ...projected } = item;
+      const { contentRef, output, ...projected } = item;
       // A successful search can print "ENOENT" or "exit code 2", so output text
       // decides only when the provider reported no exit code.
       const failed =
@@ -172,7 +172,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       return {
         ...projected,
         ...(failed ? { outputIndicatesFailure: true } : {}),
-        ...(output?.trim() ? { outputOmitted: true } : {}),
+        ...(contentRef !== undefined || output?.trim() ? { outputOmitted: true } : {}),
       };
     }
     case "file_change": {
@@ -189,13 +189,13 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         result: item.result === null ? null : (truncateDetail(item.result) ?? null),
       };
     case "dynamic_tool": {
-      const { output: rawOutput, ...projected } = item;
+      const { contentRef, output: rawOutput, ...projected } = item;
       const output = compactDynamicToolOutput(rawOutput);
       return {
         ...projected,
         input: summarizeDynamicValue(item.input),
         ...(output === undefined ? {} : { output }),
-        ...(hasDynamicValue(rawOutput) ? { outputOmitted: true } : {}),
+        ...(contentRef !== undefined || hasDynamicValue(rawOutput) ? { outputOmitted: true } : {}),
       };
     }
     default:

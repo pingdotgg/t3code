@@ -406,6 +406,28 @@ it.effect.each(["sqlite"] as const)(
           },
         },
       });
+      const offloadedContentId = "thread-completion-reads-11111111-1111-1111-1111-111111111111";
+      const offloadedImageId = "thread-completion-reads-22222222-2222-2222-2222-222222222222";
+      yield* store.apply({
+        id: EventId.make("attachment:offloaded-tool-event"),
+        type: "turn-item.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          id: TurnItemId.make("attachment:offloaded-tool"),
+          type: "dynamic_tool",
+          toolName: "search",
+          input: {},
+          output: { summary: "stored outside SQLite" },
+          contentRef: {
+            attachmentId: offloadedContentId,
+            sizeBytes: 128,
+            attachmentIds: [offloadedImageId],
+          },
+        },
+      });
       const recordingId = "thread-completion-reads-0b9f6c1e-3c1d-4f7a-9d2e-5a6b7c8d9e0f-webm";
       yield* store.apply({
         id: EventId.make("attachment:recording-event"),
@@ -430,6 +452,8 @@ it.effect.each(["sqlite"] as const)(
         "attachment:old",
         "message-file",
         recordingId,
+        offloadedContentId,
+        offloadedImageId,
       ]);
     }).pipe(Effect.provide(layerDatabase)),
 );

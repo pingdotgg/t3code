@@ -428,10 +428,12 @@ export const make = Effect.gen(function* () {
       threadId,
     };
     const now = yield* DateTime.now;
+    const attachmentCleanup = yield* threadProjections.getThreadAttachmentIdsForDeletion(threadId);
     const plan = yield* planThreadDeletion({
       command,
       projection,
-      attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
+      attachmentIds: attachmentCleanup.attachmentIds,
+      attachmentOwnerThreadIds: attachmentCleanup.ownerThreadIds,
       now,
       idAllocator,
     });
@@ -476,7 +478,7 @@ export const make = Effect.gen(function* () {
       projectThreads,
       (thread) =>
         threadCommands
-          .withLock(thread.id, deleteChildThread(input, thread.id))
+          .withDeletionLock(threadCommands.withLock(thread.id, deleteChildThread(input, thread.id)))
           .pipe(
             Effect.mapError(
               (cause) =>

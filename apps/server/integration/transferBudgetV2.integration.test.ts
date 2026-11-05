@@ -46,6 +46,7 @@ import * as OrchestrationEventStore from "../src/persistence/OrchestrationEventS
 import * as EventStore from "../src/orchestration-v2/EventStore.ts";
 import * as EventSink from "../src/orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
+import * as TurnItemContentStoreTestkit from "../src/orchestration-v2/TurnItemContentStore.testkit.ts";
 import * as ThreadManagementService from "../src/orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "../src/orchestration-v2/ProjectStore.ts";
 import * as ProjectService from "../src/project/ProjectService.ts";
@@ -102,6 +103,7 @@ const layerPersistence = EventSink.layer.pipe(
   Layer.provideMerge(ProjectionStore.layer),
   Layer.provideMerge(OrchestrationEventStore.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provideMerge(TurnItemContentStoreTestkit.layerPassthrough),
 );
 const layerManagement = Layer.unwrap(
   Effect.gen(function* () {

@@ -144,6 +144,7 @@ import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 import {
   DispatchModeLimit,
   exceededDispatchModeLimit,
@@ -348,6 +349,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorThreadAlreadyExistsError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
+  TurnItemContentStore.TurnItemContentStoreError,
   OrchestratorDomainEventStreamError,
   OrchestratorProviderAdapterError,
   OrchestratorCommandPreviouslyRejectedError,
@@ -405,6 +407,7 @@ export interface OrchestratorV2Shape {
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
+    readonly includeImageData?: boolean;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
@@ -676,7 +679,13 @@ const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
 function withoutPreparationResult(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>,
 ) {
-  const { output: _output, exitCode: _exitCode, outputIndicatesFailure: _failure, ...rest } = item;
+  const {
+    contentRef: _contentRef,
+    output: _output,
+    exitCode: _exitCode,
+    outputIndicatesFailure: _failure,
+    ...rest
+  } = item;
   return rest;
 }
 
@@ -1102,6 +1111,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
+  const turnItemContentStore = yield* TurnItemContentStore.TurnItemContentStore;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -4588,9 +4598,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-    // Only side chat forks lock the source; validate the modes copied here, not an earlier read.
+    // Validate the modes copied here, not an earlier read.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
-    if (command.sideChat === true && sourceProjection.thread.deletedAt !== null) {
+    if (sourceProjection.thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -10386,7 +10396,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: state.run.providerInstanceId,
         occurredAt: now,
         payload: {
-          ...state.preparationItem,
+          ...withoutPreparationResult(state.preparationItem),
           status: "completed",
           title: "Workspace ready",
           output: "Workspace preparation completed.",
@@ -10461,7 +10471,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: state.run.providerInstanceId,
       occurredAt: now,
       payload: {
-        ...state.preparationItem,
+        ...withoutPreparationResult(state.preparationItem),
         status: "failed",
         title: "Workspace preparation failed",
         output: command.failure.message,
@@ -11772,7 +11782,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
           payload: {
-            ...preparationItem,
+            ...withoutPreparationResult(preparationItem),
             status: "interrupted",
             title: "Workspace preparation interrupted",
             output: command.reason ?? "Interrupted before provider start",
@@ -13410,13 +13420,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: deletion.threadId, cause }),
               ),
             );
+          const attachmentCleanup = yield* projectionStore
+            .getThreadAttachmentIdsForDeletion(deletion.threadId)
+            .pipe(mapDispatchError(command));
           return yield* mapDispatchError(command)(
             planThreadDeletion({
               command: deletion,
               projection,
-              attachmentIds: yield* projectionStore
-                .getThreadAttachmentIds(deletion.threadId)
-                .pipe(mapDispatchError(command)),
+              attachmentIds: attachmentCleanup.attachmentIds,
+              attachmentOwnerThreadIds: attachmentCleanup.ownerThreadIds,
               now,
               idAllocator,
             }),
@@ -13996,28 +14008,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
-    // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
-    // fork or command never interleave. A fork from a side chat or onto an existing thread would
-    // invert that order; dispatch rejects both, so they skip the source lock.
-    if (
-      command.type === "thread.fork" &&
-      command.sideChat === true &&
-      command.sourceThreadId !== command.targetThreadId
-    ) {
+    // A source lock serializes forks with deletion, which plans attachment cleanup from lineage.
+    if (command.type === "thread.fork" && command.sourceThreadId !== command.targetThreadId) {
       const source = yield* findThread(command.sourceThreadId);
       const target = yield* findThread(command.targetThreadId);
-      return yield* source === null || source.lineage.sideChat === true || target !== null
+      return yield* source === null ||
+      target !== null ||
+      (command.sideChat === true && source.lineage.sideChat === true)
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
+    // Fork-family cleanup eligibility must be planned after earlier deletions commit.
     if (command.type === "thread.delete")
-      return yield* threadDispatch.withLock(
-        command.threadId,
-        liveSideChatIds(command.threadId).pipe(
-          Effect.flatMap((sideChatIds) =>
-            sideChatIds.reduce(
-              (locked, sideChatId) => threadDispatch.withLock(sideChatId, locked),
-              dispatchWithReceiptEffect(command, sideChatIds),
+      return yield* threadDispatch.withDeletionLock(
+        threadDispatch.withLock(
+          command.threadId,
+          liveSideChatIds(command.threadId).pipe(
+            Effect.flatMap((sideChatIds) =>
+              sideChatIds.reduce(
+                (locked, sideChatId) => threadDispatch.withLock(sideChatId, locked),
+                dispatchWithReceiptEffect(command, sideChatIds),
+              ),
             ),
           ),
         ),
@@ -14394,13 +14405,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
     getTurnItem: Effect.fn("OrchestratorV2.getTurnItem")(function (input) {
-      return projectionStore
-        .getTurnItem(input)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
-          ),
-        );
+      return projectionStore.getTurnItem(input).pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+        ),
+        Effect.flatMap((item) =>
+          item === null
+            ? Effect.succeed(null)
+            : turnItemContentStore.read(item, {
+                includeImageData: input.includeImageData === true,
+              }),
+        ),
+      );
     }),
     getThreadRecords: Effect.fn("OrchestratorV2.getThreadRecords")(
       function (threadId, fields, filter) {
@@ -14551,6 +14567,7 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
+  | TurnItemContentStore.TurnItemContentStore
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
 );

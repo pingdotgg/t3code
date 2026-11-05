@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as CommandOutputHub from "../CommandOutputHub.ts";
 import type * as EventSink from "../EventSink.ts";
 import type * as ProjectionStore from "../ProjectionStore.ts";
+import type * as TurnItemContentStore from "../TurnItemContentStore.ts";
 
 export interface RecordedCommandOutput {
   readonly chunks: number;
@@ -25,7 +26,9 @@ export class CommandOutputRecorder extends Context.Service<
 export const layer: Layer.Layer<
   CommandOutputHub.CommandOutputHub | CommandOutputRecorder,
   never,
-  EventSink.EventSinkV2 | ProjectionStore.ProjectionStoreV2
+  | EventSink.EventSinkV2
+  | ProjectionStore.ProjectionStoreV2
+  | TurnItemContentStore.TurnItemContentStore
 > = Layer.effectContext(
   Effect.gen(function* () {
     const hub = yield* CommandOutputHub.make;

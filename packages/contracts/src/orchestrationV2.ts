@@ -1437,6 +1437,14 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
 
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
 
+export const OrchestrationV2TurnItemContentRef = Schema.Struct({
+  attachmentId: TrimmedNonEmptyString,
+  sizeBytes: NonNegativeInt,
+  attachmentIds: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(8))),
+  transcriptItemBytes: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2TurnItemContentRef = typeof OrchestrationV2TurnItemContentRef.Type;
+
 export const OrchestrationV2FileChangeDetail = Schema.Struct({
   operation: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
@@ -1671,6 +1679,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    contentRef: Schema.optional(OrchestrationV2TurnItemContentRef),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
@@ -1815,6 +1824,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    contentRef: Schema.optional(OrchestrationV2TurnItemContentRef),
+    outputIndicatesFailure: Schema.optional(Schema.Boolean),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
   }),
@@ -2505,6 +2516,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    contentRef: Schema.optional(OrchestrationV2TurnItemContentRef),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
@@ -2642,6 +2654,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    contentRef: Schema.optional(OrchestrationV2TurnItemContentRef),
+    outputIndicatesFailure: Schema.optional(Schema.Boolean),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
   }),

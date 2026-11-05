@@ -6,7 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
-import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
+import {
+  parseAttachmentFileExtension,
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPathById,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -28,6 +33,7 @@ export class ResourceCleanupService extends Context.Reference<{
   readonly cleanupPreviews: (threadId: string) => Effect.Effect<void, ResourceCleanupError>;
   readonly cleanupAttachments: (
     attachmentIds: ReadonlyArray<string>,
+    ownerThreadIds?: ReadonlyArray<string>,
   ) => Effect.Effect<void, ResourceCleanupError>;
 }>("t3/orchestration-v2/ResourceCleanupService", {
   defaultValue: () => ({
@@ -81,11 +87,32 @@ export const layer = Layer.effect(
             ),
           );
       }),
-      cleanupAttachments: Effect.fn("ResourceCleanupService.cleanupAttachments")(function (
+      cleanupAttachments: Effect.fn("ResourceCleanupService.cleanupAttachments")(function* (
         attachmentIds: ReadonlyArray<string>,
+        ownerThreadIds: ReadonlyArray<string> = [],
       ) {
-        return Effect.forEach(
-          attachmentIds,
+        const ids = new Set(attachmentIds);
+        if (ownerThreadIds.length > 0) {
+          const owners = new Set(ownerThreadIds.map(toSafeThreadAttachmentSegment));
+          const files = yield* fileSystem.readDirectory(config.attachmentsDir).pipe(
+            Effect.catchTags({
+              PlatformError: (cause) =>
+                cause.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(cause),
+            }),
+            Effect.mapError(
+              (cause) => new ResourceCleanupError({ operation: "attachment", cause }),
+            ),
+          );
+          // Pruning removes historical refs; final owner deletion also reclaims superseded payloads.
+          for (const file of files) {
+            if (!file.endsWith(".bin")) continue;
+            const id = file.slice(0, -4);
+            const owner = parseThreadSegmentFromAttachmentId(id);
+            if (owner !== null && owners.has(owner)) ids.add(id);
+          }
+        }
+        yield* Effect.forEach(
+          [...ids],
           (attachmentId) => {
             const extension = parseAttachmentFileExtension(attachmentId);
             const path =

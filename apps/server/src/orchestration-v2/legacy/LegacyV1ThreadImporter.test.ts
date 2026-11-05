@@ -20,6 +20,7 @@ import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
+import * as TurnItemContentStoreTestkit from "../TurnItemContentStore.testkit.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../../persistence/testkit/SqliteRouting.ts";
 
@@ -30,6 +31,7 @@ const layerStoresProvided = Layer.mergeAll(
   layerDatabase,
   layerEventStoreProvided,
   layerProjectionStoreProvided,
+  TurnItemContentStoreTestkit.layerPassthrough,
 );
 const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
 const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
