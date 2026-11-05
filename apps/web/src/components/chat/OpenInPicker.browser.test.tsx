@@ -85,6 +85,10 @@ async function setup() {
   state.markHintSeen.mockReset();
   state.listeners.clear();
   window.localStorage.clear();
+  // announce() keeps its live regions for the page's lifetime, so earlier tests' text stays.
+  for (const region of document.querySelectorAll('body > [aria-live="polite"]')) {
+    region.textContent = "";
+  }
 
   await using stack = new AsyncDisposableStack();
   const _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
@@ -195,10 +199,13 @@ describe("remote editor links", () => {
     const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } };
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
+    using _timers = fakeTimers();
 
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
     expect(state.run).not.toHaveBeenCalled();
+    // Speak now, so the announcement's flush can't land in a later test.
+    await act(async () => vi.runAllTimers());
   });
 });
 
