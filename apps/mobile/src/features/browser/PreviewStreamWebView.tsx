@@ -465,6 +465,7 @@ function PreviewStreamDocumentView({
             // The page answers by option index.
             keyExtractor={(_, index) => String(index)}
             className="flex-1"
+            nestedScrollEnabled
             contentInsetAdjustmentBehavior="automatic"
             contentContainerClassName="p-4"
             renderItem={({ item, index }) => (
