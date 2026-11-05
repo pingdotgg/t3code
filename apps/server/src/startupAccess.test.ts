@@ -82,7 +82,7 @@ describe("acceptsPrivateNetworkConnection", () => {
 });
 
 describe("closeNonPrivateNetworkConnections", () => {
-  it.effect("logs the local and remote address of each connection it closes", () =>
+  it.effect("logs the local and remote address of a connection it closes", () =>
     Effect.gen(function* () {
       const warnings: Array<Logger.Options<unknown>> = [];
       const server = NodeHttp.createServer();
