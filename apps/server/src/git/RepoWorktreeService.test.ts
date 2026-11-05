@@ -582,6 +582,26 @@ describe("RepoWorktreeService", () => {
         );
         assert.equal(yield* git(parentSubmodule, ["rev-parse", "HEAD"]), secondCommit);
 
+        // Nor are ignored files there that the new commit tracks.
+        yield* git(parentSubmodule, ["checkout", "--", "README.md"]);
+        yield* fileSystem.writeFileString(path.join(parentSubmodule, ".gitignore"), "local.env\n");
+        yield* fileSystem.writeFileString(path.join(parentSubmodule, "local.env"), "mine\n");
+        yield* commitFile(framework, "local.env", "theirs\n", "track local.env");
+        const ignoredRefusal = yield* service
+          .setSubmoduleCommit({
+            threadId,
+            worktreePath: parent,
+            submodulePath: "framework",
+            sourceWorktreePath: framework,
+          })
+          .pipe(Effect.flip, Effect.map(requestReason));
+        assert.equal(ignoredRefusal, "GitCommandError");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(parentSubmodule, "local.env")),
+          "mine\n",
+        );
+        assert.equal(yield* git(parentSubmodule, ["rev-parse", "HEAD"]), secondCommit);
+
         const notAttached = yield* service
           .setSubmoduleCommit({
             threadId,

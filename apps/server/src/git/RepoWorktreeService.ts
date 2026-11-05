@@ -1089,7 +1089,14 @@ const make = Effect.gen(function* () {
         commit,
       ]);
     }
-    yield* run(submoduleDir, "checkoutCommit", ["checkout", "--quiet", "--detach", commit]);
+    // The status check skips ignored files, so Git must refuse to overwrite them.
+    yield* run(submoduleDir, "checkoutCommit", [
+      "checkout",
+      "--quiet",
+      "--no-overwrite-ignore",
+      "--detach",
+      commit,
+    ]);
     const stage = input.stage ?? true;
     if (stage) {
       yield* run(parent.worktreePath, "stageGitlink", ["add", "--", submodulePath]);
