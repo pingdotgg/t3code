@@ -1548,6 +1548,7 @@ describe("AssetAccess", () => {
       expect(asset).toEqual({
         kind: "source-control-media",
         url: media.fetchUrl,
+        cwd: "/repo",
         expiresAt: issued.expiresAt,
       });
       if (asset?.kind !== "source-control-media") return;
@@ -1600,7 +1601,16 @@ describe("AssetAccess", () => {
       );
       expect(response.status).toBe(404);
       expect(response.headers["cache-control"]).toBe("private, no-store");
-    }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerTest,
+          layerDrivers,
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+        ),
+      ),
+      Effect.scoped,
+    );
   });
 
   it.effect("signs host media a client asks for without a repository", () =>
