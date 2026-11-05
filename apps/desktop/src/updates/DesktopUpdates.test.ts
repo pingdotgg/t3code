@@ -46,7 +46,10 @@ const pendingDownloadCache = Effect.fn("test.pendingDownloadCache")(function* (c
 
 const relaunchedUpdateInfo = {
   version: "1.2.4",
-  files: [{ url: "T3-Code-1.2.4-mac.zip", sha512: "sha-1.2.4" }],
+  files: [
+    { url: "T3-Code-1.2.4-arm64-mac.zip", sha512: "sha-1.2.4-arm64" },
+    { url: "T3-Code-1.2.4-mac.zip", sha512: "sha-1.2.4" },
+  ],
 };
 
 describe("DesktopUpdates", () => {
@@ -172,6 +175,8 @@ describe("DesktopUpdates", () => {
 
   it.effect.each([
     { name: "a cached package for another release", sha512: "sha-1.2.3" },
+    // The harness is an Intel Mac, so electron-updater would fetch the x64 zip instead.
+    { name: "a cached package for another architecture", sha512: "sha-1.2.4-arm64" },
     { name: "a missing cached package", sha512: "sha-1.2.4", packageFile: false },
     { name: "a cache without update-info.json", sha512: "sha-1.2.4", updateInfo: false },
   ])("keeps the update click-to-download with $name", (cache) =>
