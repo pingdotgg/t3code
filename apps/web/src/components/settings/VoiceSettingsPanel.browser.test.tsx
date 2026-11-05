@@ -60,7 +60,31 @@ it("preserves the model test transcript when its model is filtered out", async (
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
     if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
     if (url.pathname === "/api/voice/models")
-      return Promise.resolve(Response.json({ models: [model] }));
+      return Promise.resolve(
+        Response.json({
+          models: [
+            model,
+            {
+              ...model,
+              id: "both",
+              name: "Bilingual",
+              active: false,
+              languages: ["en", "fr"],
+              ...(url.searchParams.has("benchmarks")
+                ? {
+                    benchmark: {
+                      accuracy: {
+                        en: { grade: "A-", errorPercent: 4 },
+                        fr: { grade: "B+", errorPercent: 5.5 },
+                      },
+                      secondsPer30s: 2.1,
+                    },
+                  }
+                : {}),
+            },
+          ],
+        }),
+      );
     return fetch(input, init);
   });
   const transcript = "Keep this transcript.";
@@ -114,6 +138,14 @@ it("preserves the model test transcript when its model is filtered out", async (
           await userEvent.fill(search, "no matching model");
           await expect.element(screen.getByText("No matching models.")).toBeVisible();
           await userEvent.clear(search);
+          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
+          const french = screen.getByRole("button", { name: "French", exact: true });
+          await userEvent.click(french);
+          await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
+          await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
+          expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
+          await userEvent.click(french);
+          await expect.element(result).toBeVisible();
           await vi.waitFor(() =>
             expect(
               screen.container.querySelector('[aria-label="Test transcript"]')?.textContent,
@@ -162,7 +194,7 @@ it("recovers from a failed download progress poll without notifying, but reports
   };
   const unavailable = () => new Response(null, { status: 503 });
   const readModels = vi
-    .fn(unavailable)
+    .fn((_withBenchmarks: boolean) => unavailable())
     .mockImplementationOnce(() => Response.json({ models: [model] }))
     .mockImplementationOnce(unavailable)
     .mockImplementationOnce(() => Response.json({ models: [{ ...model, state: "installed" }] }));
@@ -170,7 +202,8 @@ it("recovers from a failed download progress poll without notifying, but reports
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
     if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
-    if (url.pathname === "/api/voice/models") return Promise.resolve(readModels());
+    if (url.pathname === "/api/voice/models")
+      return Promise.resolve(readModels(url.searchParams.has("benchmarks")));
     return fetch(input, init);
   });
   using notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
@@ -184,6 +217,11 @@ it("recovers from a failed download progress poll without notifying, but reports
       );
       await using screen = await render(panel("first"));
       await expect.element(screen.getByRole("button", { name: "Use model" })).toBeVisible();
+      expect(readModels.mock.calls.map(([withBenchmarks]) => withBenchmarks)).toEqual([
+        true,
+        false,
+        false,
+      ]);
       expect(notify).not.toHaveBeenCalled();
       await screen.rerender(panel("reopened"));
       await vi.waitFor(() =>
@@ -197,6 +235,7 @@ it("recovers from a failed download progress poll without notifying, but reports
 
 it.each([
   ["speech-models", "voice-transcription-destination"],
+  ["speech-hardware", "voice-transcription-destination"],
   ["transcription-test", "voice-transcription-destination"],
   ["speech-correction-word", "speech-post-processing"],
   ["speech-post-processing-model", "speech-post-processing"],
