@@ -631,10 +631,14 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 it.effect("a server with no desktop app attached marks its tabs headless", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { tabId } = yield* ready;
       const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const { tabId } = yield* ready;
+      let event = yield* PubSub.take(events);
+      while (event.type !== "opened") event = yield* PubSub.take(events);
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
 
+      expect(event.snapshot.headless).toBe(true);
       expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
     }),
   ).pipe(
