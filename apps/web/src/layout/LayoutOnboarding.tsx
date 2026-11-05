@@ -6,7 +6,7 @@ import {
   KeyboardIcon,
   PlusIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -83,6 +83,7 @@ export function LayoutLearningTips() {
 export function LayoutOnboarding() {
   const [completed, setCompleted] = useLocalStorage(TOUR_KEY, false, Schema.Boolean);
   const [step, setStep] = useState<number | null>(null);
+  const nextRef = useRef<HTMLButtonElement | null>(null);
   const keys = isMacPlatform(navigator.platform) ? "⌥⌘" : "Ctrl+Alt";
   const steps = [
     {
@@ -207,7 +208,7 @@ export function LayoutOnboarding() {
         align={step === 3 ? "end" : "start"}
         sideOffset={12}
         collisionAvoidance={{ side: "shift", align: "shift" }}
-        initialFocus={false}
+        initialFocus={nextRef}
       >
         <div className="flex flex-col gap-2" role="region" aria-label="Layout tour">
           {step === 0 ? (
@@ -231,6 +232,7 @@ export function LayoutOnboarding() {
               Skip
             </Button>
             <Button
+              ref={nextRef}
               size="standard"
               onClick={() => {
                 if (step === 4) finish();
