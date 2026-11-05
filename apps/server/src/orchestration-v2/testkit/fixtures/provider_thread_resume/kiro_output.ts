@@ -54,6 +54,20 @@ export function assertKiroProviderThreadResumeOutput(
     PROVIDER_THREAD_RESUME_SECOND_PROMPT,
   ]);
   assert.lengthOf(projection.providerThreads, 1, "resume must keep one provider thread");
+  assert.deepEqual(projection.providerThreads[0]?.contextUsage, {
+    usedTokens: 19_093,
+    maxTokens: 200_000,
+    compactsAutomatically: true,
+    autoCompactThreshold: 160_000,
+  });
+  const usages = result.domainEvents.flatMap((event) =>
+    event.type === "provider-thread.updated" ? [event.payload.contextUsage] : [],
+  );
+  assert.notInclude(
+    usages.slice(usages.findIndex((usage) => usage != null)),
+    null,
+    "the saved reading must survive a load that names no model",
+  );
   const answers = projection.turnItems.flatMap((item) =>
     item.type === "assistant_message" ? [item.text] : [],
   );
