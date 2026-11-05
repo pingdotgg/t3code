@@ -1047,10 +1047,7 @@ describe("AcpRuntimeModel", () => {
         data: { rawOutput: "Retained the implementation decisions." },
       },
     });
-    expect(idle.events[0]).toMatchObject({
-      _tag: "UsageUpdated",
-      usage: { usedTokens: 420 },
-    });
+    expect(idle.events).toEqual([]);
   });
 
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {
@@ -1366,6 +1363,20 @@ describe("extractMcpToolCallIdentity", () => {
         server: "t3-code",
         tool: "delegate_task",
       });
+    }
+  });
+
+  it("recovers T3 identity from Kiro's @-scoped titles", () => {
+    for (const tool of ["html_render", "t3_thread_read", "delegate_task"]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "kiro-1",
+        kind: "other",
+        title: `@t3-code/${tool}`,
+        status: "pending",
+        rawInput: { tool_id: `t3-code::${tool}`, arguments: { threadId: "thread-1" } },
+      });
+      expect(extractMcpToolCallIdentity(toolCall), tool).toEqual({ server: "t3-code", tool });
     }
   });
 
