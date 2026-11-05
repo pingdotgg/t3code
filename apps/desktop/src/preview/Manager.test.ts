@@ -615,11 +615,39 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect.each([
+    ["darwin", true, false, true],
+    ["darwin", false, true, false],
+    ["linux", false, true, true],
+    ["win32", true, false, false],
+  ] as const)(
+    "reloads the preview only on the platform refresh chord: %s meta=%s ctrl=%s",
+    ([platform, meta, control, expected]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_refresh");
+            yield* manager.registerWebview("tab_refresh", 42);
+            const preventDefault = vi.fn();
+            preview.listeners.get("before-input-event")!(
+              { preventDefault } as never,
+              { type: "keyDown", key: "r", meta, control, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).toHaveBeenCalledTimes(expected ? 1 : 0);
+            expect(preview.reload).toHaveBeenCalledTimes(expected ? 1 : 0);
+          }),
+        platform,
+      ),
+  );
+
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const send = vi.fn();
-        const host = { isDestroyed: () => false, send };
+        const focus = vi.fn();
+        const host = { isDestroyed: () => false, send, focus };
         const older = makeFaviconWebContents({ id: 42 });
         const newer = makeFaviconWebContents({ id: 43 });
         for (const tab of [older, newer]) Object.assign(tab.webContents, { hostWebContents: host });
@@ -648,6 +676,22 @@ describe("PreviewManager", () => {
         expect(preventDefault).toHaveBeenCalledOnce();
         expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "view.reopenClosed");
 
+        yield* manager.setForwardedShortcuts([
+          { command: "preview.focusUrl", shortcut: parseKeybindingShortcut("mod+l")! },
+        ]);
+        beforeInput({ preventDefault } as never, { ...key, key: "l", shift: false } as never);
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenLastCalledWith("desktop:menu-action", "preview.focusUrl");
+        expect(focus.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[1]!);
+        beforeInput(
+          { preventDefault } as never,
+          { ...key, key: "l", shift: false, isAutoRepeat: true } as never,
+        );
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledTimes(2);
+        send.mockClear();
+        yield* manager.setForwardedShortcuts([{ command: "view.reopenClosed", shortcut }]);
+
         Object.assign(newer.webContents, { focusedFrame: null });
         const agentInput = newer.listeners.get("before-input-event")!;
         const agentPreventDefault = vi.fn();
@@ -663,7 +707,7 @@ describe("PreviewManager", () => {
           { ...key, key: "T", shift: true } as never,
         );
         expect(agentPreventDefault).not.toHaveBeenCalled();
-        expect(send).toHaveBeenCalledOnce();
+        expect(send).not.toHaveBeenCalled();
       }),
     ),
   );

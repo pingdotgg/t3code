@@ -50,7 +50,10 @@ export interface ProjectFaviconStorage {
 
 async function readBounded(response: Response, maxBytes: number) {
   const declared = Number(response.headers.get("content-length"));
-  if (declared > maxBytes) throw new Error("Project icon is too large to decode.");
+  if (declared > maxBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error("Project icon is too large to decode.");
+  }
   if (!response.body) {
     const bytes = new Uint8Array<ArrayBuffer>(await response.arrayBuffer());
     if (bytes.byteLength > maxBytes) throw new Error("Project icon is too large to decode.");
