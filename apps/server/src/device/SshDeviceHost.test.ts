@@ -73,6 +73,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
           owners.push(/const owner = "([^"]+)"/.exec(script)?.[1] ?? "");
           output = JSON.stringify({
             nodePath: "/node",
+            hostPlatform: "darwin",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
             helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -195,14 +196,18 @@ it.effect("preserves installed status after probes and cleans failed agent activ
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect.each(["ios", "android"] as const)(
-  "discovers %s tools installed after connecting without repeating positive probes",
-  (platform) =>
+it.effect.each([
+  { platform: "ios", hostPlatform: "darwin" },
+  { platform: "android", hostPlatform: "darwin" },
+  { platform: "android", hostPlatform: "linux" },
+] as const)(
+  "discovers $platform tools on $hostPlatform without repeating positive probes",
+  ({ platform, hostPlatform }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped();
       const modes: string[] = [];
-      let platformInstalled = false;
+      let platformInstalled = hostPlatform !== "darwin";
       let otherPlatformInstalled = true;
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
@@ -231,10 +236,13 @@ it.effect.each(["ios", "android"] as const)(
                 ? "Pixel_8\n"
                 : JSON.stringify({
                     nodePath: "/node",
+                    hostPlatform,
                     platforms: [
                       {
                         platform: "ios",
-                        available: platform === "ios" ? platformInstalled : otherPlatformInstalled,
+                        available:
+                          hostPlatform === "darwin" &&
+                          (platform === "ios" ? platformInstalled : otherPlatformInstalled),
                       },
                       {
                         platform: "android",
@@ -297,6 +305,10 @@ it.effect.each(["ios", "android"] as const)(
         ),
       );
       const ready = yield* host.ensureReady(() => Effect.void);
+      if (hostPlatform !== "darwin") {
+        platformInstalled = false;
+        yield* host.inspect;
+      }
       const platformNames = ready.devices.list.pipe(
         Effect.map((list) =>
           list.devices

@@ -35,6 +35,7 @@ const Probe = Schema.Struct({
 });
 const Started = Schema.Struct({
   ...Probe.fields,
+  hostPlatform: Schema.String,
   hubPort: Schema.Int,
   daemonPort: Schema.optionalKey(Schema.Int),
   token: Schema.optionalKey(Schema.String),
@@ -327,7 +328,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             summary.platforms.some(
               (candidate) => candidate.platform === platform && candidate.available,
             );
-          if (!isAvailable("ios") || !isAvailable("android")) {
+          if (
+            !isAvailable("android") ||
+            (remote.hostPlatform === "darwin" && !isAvailable("ios"))
+          ) {
             const refreshed = yield* provide(probe(config, owner)).pipe(Effect.result);
             if (refreshed._tag === "Success") {
               summary = { ...summary, platforms: refreshed.success.platforms };
