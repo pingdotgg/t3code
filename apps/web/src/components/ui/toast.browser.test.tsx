@@ -26,6 +26,7 @@ describe("toastManager", () => {
       notifications.elements(),
       "only the corner toast viewport should be a Notifications landmark",
     ).toHaveLength(1);
+    await expect.element(notifications).toHaveAttribute("data-slot", "toast-viewport");
 
     const anchoredViewport = document.querySelector("[data-slot=toast-viewport-anchored]");
     expect(anchoredViewport).toHaveAttribute("aria-live", "polite");
