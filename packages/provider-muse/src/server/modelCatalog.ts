@@ -6,7 +6,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { MuseAccountState } from "./protocol.ts";
-import { createMuseSdkHost, createMuseSdkHostEffect, type MuseSdkHost } from "./sdk.ts";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  MuseSdkError,
+  type MuseSdkHost,
+} from "./sdk.ts";
 
 type MuseReasoningEffort = NonNullable<SendUserTurnOptions<never>["reasoningEffort"]>;
 
@@ -122,7 +127,10 @@ export const probeMuseHost = Effect.fn("probeMuseHost")(function* (
     (host: MuseSdkHost) => Effect.promise(() => host.close()),
     { interruptible: true },
   );
-  const result = yield* Effect.tryPromise(() => host.connection.request("model/list", {}));
+  const result = yield* Effect.tryPromise({
+    try: () => host.connection.request("model/list", {}),
+    catch: (cause) => new MuseSdkError({ operation: "model/list", cause }),
+  });
   const catalog = yield* decodeModelList(result);
   if (catalog.providerId !== "meta") {
     return yield* new MuseCatalogError({ detail: "Muse returned a catalog for another provider." });
@@ -150,10 +158,9 @@ export const probeMuseHost = Effect.fn("probeMuseHost")(function* (
   // and so does one that never answers: the models found above must not wait on it.
   // The timeout ends the wait, not the request; the probe's host closes right after,
   // which drops a late answer.
-  const account = yield* Effect.tryPromise(() => host.connection.request("account/read", {})).pipe(
-    Effect.flatMap(decodeAccountState),
-    Effect.timeout(2_000),
-    Effect.option,
-  );
+  const account = yield* Effect.tryPromise({
+    try: () => host.connection.request("account/read", {}),
+    catch: (cause) => new MuseSdkError({ operation: "account/read", cause }),
+  }).pipe(Effect.flatMap(decodeAccountState), Effect.timeout(2_000), Effect.option);
   return { models, account: Option.getOrUndefined(account) };
 });

@@ -72,29 +72,20 @@ describe("resolveThreadPrSource compatibility", () => {
   };
   const branchRef = { ...legacyRef, number: 2, url: "https://github.com/t3tools/t3code/pull/2" };
 
-  it("polls the legacy reference when only the older linking capability exists", () => {
+  it("polls the stored reference before the server config loads", () => {
     expect(
       resolveThreadPrSource(
         { pullRequests: [], linkedPullRequest: legacyRef, branchPullRequest: branchRef },
-        { threadPullRequestLinking: true },
+        false,
       ),
     ).toEqual({ linkedPresentation: null, pullRequestRef: legacyRef });
   });
 
-  it("ignores stale snapshots after reconnecting to a server without array support", () => {
-    expect(
-      resolveThreadPrSource(
-        { pullRequests: [linkedPr(3)], linkedPullRequest: legacyRef },
-        { threadPullRequestLinking: true, threadPullRequests: false },
-      ),
-    ).toEqual({ linkedPresentation: null, pullRequestRef: legacyRef });
-  });
-
-  it("uses snapshots without polling when both capabilities are advertised", () => {
+  it("uses snapshots without polling once the server config loads", () => {
     expect(
       resolveThreadPrSource(
         { pullRequests: [linkedPr(3)], linkedPullRequest: legacyRef, branchPullRequest: branchRef },
-        { threadPullRequestLinking: true, threadPullRequests: true },
+        true,
       ),
     ).toMatchObject({ linkedPresentation: { number: 3 }, pullRequestRef: null });
   });
@@ -103,7 +94,7 @@ describe("resolveThreadPrSource compatibility", () => {
     expect(
       resolveThreadPrSource(
         { pullRequests: [], linkedPullRequest: legacyRef, branchPullRequest: branchRef },
-        { threadPullRequests: true },
+        true,
       ),
     ).toEqual({ linkedPresentation: null, pullRequestRef: branchRef });
   });
@@ -116,7 +107,7 @@ describe("resolveThreadPrSource compatibility", () => {
           linkedPullRequest: legacyRef,
           branchPullRequest: branchRef,
         },
-        { threadPullRequests: true },
+        true,
       ),
     ).toMatchObject({ linkedPresentation: { number: 3, state: null }, pullRequestRef: null });
   });

@@ -19,6 +19,8 @@ const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
 
 export function sanitizeBranchFragment(raw: string): string {
   const normalized = raw
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
     .trim()
     .toLowerCase()
     .replace(/['"`]/g, "")
@@ -168,6 +170,29 @@ export function normalizeGitRemoteUrl(value: string): string {
   return repository === null ? lowerCaseRemote(value) : `${repository.host}/${repository.path}`;
 }
 
+function* gitConfigLines(configText: string) {
+  let pending = "";
+  let quoted = false;
+  for (const line of configText.split(/\r?\n/)) {
+    let continued = false;
+    if (line.endsWith("\\")) {
+      for (const [token] of line.matchAll(/\\[\s\S]?|["#;]/g)) {
+        if (token === '"') quoted = !quoted;
+        else if (!quoted && (token === "#" || token === ";")) break;
+        else if (token === "\\") continued = true;
+      }
+    }
+    if (continued) {
+      pending += line.slice(0, -1);
+      continue;
+    }
+    yield pending + line;
+    pending = "";
+    quoted = false;
+  }
+  if (pending.length > 0) yield pending;
+}
+
 function parseGitConfigValue(raw: string): string {
   let out = "";
   let quoted = false;
@@ -191,7 +216,7 @@ function parseGitConfigValue(raw: string): string {
 export function isBareGitConfig(configText: string): boolean {
   let inCore = false;
   let bare = false;
-  for (const rawLine of configText.split(/\r?\n/)) {
+  for (const rawLine of gitConfigLines(configText)) {
     let line = rawLine.trim();
     // Git accepts the first setting on the section header's own line.
     const header = /^\[\s*([^\]]*?)\s*\](.*)$/.exec(line);
@@ -214,15 +239,15 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   let firstRemoteUrl: string | null = null;
   const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
   for (const rawLine of joined.split(/\r?\n/)) {
-    const line = rawLine.trim();
+    let line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
-    // Git preserves case in quoted remote subsections but lowercases legacy dotted ones.
-    const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](?:\s*[#;].*)?$/i.exec(line);
+    // Git preserves case in quoted remote subsections but lowercases legacy dotted ones,
+    // and accepts the first setting on the section header's own line.
+    const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](.*)$/i.exec(line);
     if (header) {
       section = header[1] ?? header[2]?.toLowerCase() ?? null;
-      continue;
-    }
-    if (line.startsWith("[")) {
+      line = header[3]!.trim();
+    } else if (line.startsWith("[")) {
       section = null;
       continue;
     }

@@ -11,6 +11,7 @@ import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -47,6 +48,7 @@ import {
   useToggleEnvironmentModelFavorite,
 } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { ensureLocalApi } from "../../localApi";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
@@ -84,20 +86,16 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "../ui/number-field";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { useManagedPolicy } from "~/state/managedPolicy";
 import { ExpandableText } from "./ExpandableText";
+import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { useSecretSources } from "./SecretSourceInput";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -110,7 +108,6 @@ import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
   durationToSeconds,
-  normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
 } from "./SettingsPanels.logic";
 import {
@@ -131,6 +128,25 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
+
+function providerInstanceName(instance: ProviderInstanceConfig): string {
+  return (
+    instance.displayName?.trim() ||
+    providerClients.get(instance.driver)?.label ||
+    String(instance.driver)
+  );
+}
+
+async function confirmProviderInstanceRemoval(
+  question: string,
+  consequence = "",
+): Promise<boolean> {
+  const message = `${question}\nIts saved settings, including any custom binary path, will be removed.${consequence}`;
+  const confirmed = await settlePromise(() =>
+    ensureLocalApi().dialogs.confirm(message, { variant: "destructive" }),
+  );
+  return confirmed._tag === "Success" && confirmed.value;
+}
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
   const currentSet = new Set(current);
@@ -444,7 +460,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       ) : null}
 
       {selectedEnvironment ? (
-        <SelectedEnvironmentProviderSettings
+        <RemoteSessionGatedProviderSettings
           key={selectedEnvironment.environmentId}
           environment={selectedEnvironment}
           deviceTabs={deviceTabs}
@@ -458,27 +474,6 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
         />
       ) : null}
     </>
-  );
-}
-
-function SelectedEnvironmentProviderSettings({
-  environment,
-  deviceTabs,
-  targetInstanceId,
-  projectIds,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly deviceTabs?: ReactNode;
-  readonly targetInstanceId?: ProviderInstanceId | undefined;
-  readonly projectIds: readonly ProjectId[];
-}) {
-  return (
-    <RemoteSessionGatedProviderSettings
-      environment={environment}
-      deviceTabs={deviceTabs}
-      targetInstanceId={targetInstanceId}
-      projectIds={projectIds}
-    />
   );
 }
 
@@ -568,6 +563,10 @@ export function EnvironmentProviderSettings({
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
+  const managedPolicy = useManagedPolicy(environmentId);
+  // A policy that allows no provider leaves nothing to add.
+  const canAddProvider =
+    !readOnly && managedPolicy?.limits?.providers?.allowedDrivers?.length !== 0;
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -656,7 +655,7 @@ export function EnvironmentProviderSettings({
     void (async () => {
       const result = await refreshServerProviders({
         environmentId,
-        input: { refreshModels: true },
+        input: { refreshModels: true, reloadSecrets: true },
       });
       refreshingRef.current = false;
       setIsRefreshingProviders(false);
@@ -852,6 +851,10 @@ export function EnvironmentProviderSettings({
 
   const deleteInstance = useStableCallback(
     async (instanceId: ProviderInstanceId, instance: ProviderInstanceConfig) => {
+      const confirmed = await confirmProviderInstanceRemoval(
+        `Remove the ${providerInstanceName(instance)} provider instance?`,
+      );
+      if (!confirmed) return;
       const updateResult = await persistProviderInstance({
         operation: "remove",
         instanceId,
@@ -888,10 +891,17 @@ export function EnvironmentProviderSettings({
   );
 
   const resetDefaultInstance = useStableCallback(async (driverKind: ProviderDriverKind) => {
-    const result = await persistProviderInstance({
-      operation: "remove",
-      instanceId: defaultInstanceIdForDriver(driverKind),
-    });
+    const instanceId = defaultInstanceIdForDriver(driverKind);
+    const instance = settings.providerInstances?.[instanceId] ?? { driver: driverKind };
+    const turnsOff =
+      resolveProviderInstanceEnabled(instance) &&
+      !resolveProviderInstanceEnabled({ driver: driverKind });
+    const confirmed = await confirmProviderInstanceRemoval(
+      `Reset the ${providerInstanceName(instance)} provider to its defaults?`,
+      turnsOff ? " It will also be turned off." : "",
+    );
+    if (!confirmed) return;
+    const result = await persistProviderInstance({ operation: "remove", instanceId });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -982,7 +992,7 @@ export function EnvironmentProviderSettings({
         {...searchableSetting("providers")}
         variant="plain"
         titleAction={
-          !readOnly ? (
+          canAddProvider ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1001,8 +1011,8 @@ export function EnvironmentProviderSettings({
           ) : null
         }
         headerAction={
-          // The ghost button's padding would inset its label; the New design aligns the text to the card edge.
-          <div className="flex min-w-0 items-center gap-2 redesign:-me-2">
+          // The ghost button's padding would inset its label, so pull the text to the card edge.
+          <div className="-me-2 flex min-w-0 items-center gap-2">
             <ProviderUpdatesAction />
             <Tooltip>
               <TooltipTrigger
@@ -1057,7 +1067,7 @@ export function EnvironmentProviderSettings({
             >
               <div className="divide-y divide-border/50">
                 {rows.map((row) => renderProviderInstance(row, "list"))}
-                {!readOnly ? (
+                {canAddProvider ? (
                   <button
                     type="button"
                     className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
@@ -1075,7 +1085,7 @@ export function EnvironmentProviderSettings({
             {selectedRow ? (
               <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
                 {/* Flat sections run dividers edge to edge and inset text like the list beside them. */}
-                <div className="space-y-6 p-4 redesign:px-0">
+                <div className="space-y-6 py-4">
                   {renderProviderInstance(selectedRow, "editor")}
                 </div>
               </ScrollArea>
@@ -1143,32 +1153,22 @@ export function EnvironmentProviderSettings({
                 !canWriteSettings && "opacity-50 select-none",
               )}
             >
-              <NumberField
+              <IntervalSecondsField
+                label="provider health check interval"
                 value={providerHealthRefreshIntervalSeconds}
                 min={0}
                 step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
-                size="sm"
-                className="w-32"
-                onValueChange={(value) =>
+                onCommit={(seconds, options) =>
                   updateSettings(
                     backgroundActivityOverrideSettings(
                       settings.backgroundActivity,
                       resolvedBackgroundActivity,
-                      {
-                        providerHealthRefreshInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
-                        ),
-                      },
+                      { providerHealthRefreshInterval: Duration.seconds(seconds) },
                     ),
+                    options,
                   )
                 }
-              >
-                <NumberFieldGroup>
-                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
-                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
-                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
-                </NumberFieldGroup>
-              </NumberField>
+              />
               <span className="text-xs text-muted-foreground">seconds</span>
             </div>
           }
@@ -1268,6 +1268,7 @@ function ProviderInstanceRow({
   readonly actions: ProviderInstanceRowActions;
 }) {
   const allProjects = useProjects();
+  const secretSources = useSecretSources(environmentId);
   const acpProjects =
     mode === "editor" && liveProvider?.driver === "acpRegistry"
       ? allProjects.filter((project) => project.environmentId === environmentId)
@@ -1306,6 +1307,7 @@ function ProviderInstanceRow({
   return (
     <ProviderInstanceCard
       environmentId={environmentId}
+      secretSources={secretSources}
       acpProjects={acpProjects}
       projectOverride={projectOverride}
       onAcceptUrlAuth={
@@ -1406,10 +1408,8 @@ function ProviderInstanceRow({
       modelOrder={modelOrder}
       onHiddenModelsChange={(next, affectedModels) => {
         const hidden = new Set(next);
-        const models =
-          affectedModels ?? modelListChanges(hiddenModels, next).map((change) => change.model);
         void actions.updateModelPreferences({
-          setModelsHidden: models.map((model) => ({
+          setModelsHidden: affectedModels.map((model) => ({
             provider: instanceId,
             model,
             hidden: hidden.has(model),

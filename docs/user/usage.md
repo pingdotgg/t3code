@@ -17,17 +17,20 @@ Select a model under **Breakdown** to see its trend, cache hit rate, and cost pe
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
+Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
+the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
-Cursor reads account usage from Cursor's dashboard API using the CLI login saved on the server.
+Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
+`CURSOR_API_KEY`, or otherwise the CLI login saved on the server.
 This includes headless T3 sessions and desktop usage across machines; the same account counts
-once across connected environments. Without an accessible CLI login, T3 shows a
+once across connected environments. Without any of these, T3 shows a
 notice instead of incomplete local totals. T3 does not estimate missing tokens from conversation text.
-On macOS, choose **Enable Cursor usage** on Usage to allow T3 to read your existing CLI login
-from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
+On macOS without a T3 sign-in, choose **Enable Cursor usage** on Usage to allow T3 to read your
+existing CLI login from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
 you to allow access on the server Mac.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
@@ -42,6 +45,10 @@ known prices still contribute tokens and appear as unpriced; set custom prices t
 Use absolute paths or `~/` paths in the account's environment settings; relative environment paths
 depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
 sharing a history directory count once.
+
+The server saves its first hostname in `<T3 home>/usage-host-id`, so a recreated container keeps
+its usage identity when T3 home is persisted. Set `T3CODE_HOST_ID` to choose the identity
+explicitly.
 
 When your app and server support different providers, usage totals may cover only the providers
 your app understands. Update the app to include newly supported providers.
@@ -81,6 +88,30 @@ marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish
 without writing again to environments that already saved. Changes are not queued after you close
 the dialog.
 
+## Show only some models
+
+To count only some models, or to leave some out, add `usageModelFilter` to the server's
+`settings.json` in its `userdata` directory, such as `~/.t3/userdata/settings.json`:
+
+```json
+{
+  "usageModelFilter": {
+    "include": [{ "provider": "claude", "model": "orbit-1" }, { "model": "orbit-2" }],
+    "exclude": [{ "model": "drift-9" }]
+  }
+}
+```
+
+`include` keeps only the listed models and `exclude` leaves the listed models out. `provider` is
+one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, or `muse`; omit it
+to match a model ID from any provider. Use the model ID that Usage shows without **Map to**, such
+as a provider-prefixed ID for Pi. Filters apply before **Map to**, so a model you leave out is not
+counted under its mapped name. Usage applies each environment's own filter. Remove the setting to
+show every model again.
+
+If the setting is invalid, Usage ignores it and shows every model, and the next save of any other
+setting removes it from `settings.json`.
+
 ## Track subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
@@ -116,16 +147,24 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
+To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
+The bottom of the thread details card then shows how much is left in each limit window of the
+current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
+row to see when it resets and your pace. Turn on **Context window** to also show the thread's
+context use against the model's limit. A tick on the bar marks where the provider compacts
+automatically, when it reports that point.
+
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode Console connected
 in OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
 refresh provider status. Cursor reports
-its monthly allowance, including separate Auto and API usage, using the CLI login or
-`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
-usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
-a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
+its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
+otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`, otherwise for the CLI
+login. On macOS, this includes the default Keychain login after you enable Cursor usage. Sign-in, API key,
+and Keychain login report limits only with Cursor's default API endpoint. If you configure a custom
+Cursor endpoint, use an explicit token or file-based CLI login for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication

@@ -1,6 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import { useAudioPlayerStatus } from "expo-audio";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AppState, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../../lib/videoAudioSession";
@@ -16,18 +16,17 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
   const player = usePlaybackAudioPlayer(props.uri);
   const status = useAudioPlayerStatus(player);
   const [playbackRequested, setPlaybackRequested] = useState(false);
-  const playback = useMemo(
-    () => createAudioPlaybackSession(player, false, setPlaybackRequested),
-    [player],
-  );
+  const playback = createAudioPlaybackSession(player, false, setPlaybackRequested);
   const [seekError, setSeekError] = useState(false);
   // Video teardown deactivates the shared iOS session, which would stop this player.
   useMediaAudioSessionHold(status.playing);
   const fullscreenVideoOpen = useFullscreenVideoOpen();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared audio session in step with the native player status and fullscreen video
   useEffect(() => {
     if (fullscreenVideoOpen || status.didJustFinish || status.error) playback.pause();
     else playback.playingChanged(status.playing);
   }, [fullscreenVideoOpen, status.didJustFinish, status.error, status.playing, playback]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to pause playback in the background, and pauses on cleanup
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") playback.pause();

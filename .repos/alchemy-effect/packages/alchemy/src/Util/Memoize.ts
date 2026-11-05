@@ -21,9 +21,7 @@ import * as Scope from "effect/Scope";
  */
 export const cachedInScope =
   (scope: Scope.Scope) =>
-  <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<Effect.Effect<A, E>, never, R> =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<Effect.Effect<A, E>, never, R> =>
     Effect.gen(function* () {
       const context = yield* Effect.context<R>();
       const deferred = yield* Deferred.make<A, E>();
@@ -39,9 +37,7 @@ export const cachedInScope =
           // Not a child of the caller: the caller's interruption must not
           // reach it. The scope owns its lifetime instead.
           Effect.forkDetach,
-          Effect.flatMap((fiber) =>
-            Scope.addFinalizer(scope, Fiber.interrupt(fiber)),
-          ),
+          Effect.flatMap((fiber) => Scope.addFinalizer(scope, Fiber.interrupt(fiber))),
           Effect.andThen(Deferred.await(deferred)),
         );
       });

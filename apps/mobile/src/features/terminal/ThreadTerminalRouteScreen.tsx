@@ -13,19 +13,17 @@ import { AppBar } from "../../components/ui/AppBar";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
 import { hasNativeTerminalSurface, supportsNativeTerminalOutput } from "./nativeTerminalModule";
 import * as Clipboard from "expo-clipboard";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
   KeyboardController,
-  KeyboardEvents,
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
@@ -36,6 +34,7 @@ import {
   ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useSoftKeyboardShowing } from "../keyboard/useSoftKeyboardShowing";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -67,7 +66,6 @@ import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { TerminalSurface, type TerminalSurfaceHandle } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
-import { terminalDebugLog } from "./terminalDebugLog";
 import { useTerminalExitNavigation } from "./useTerminalExitNavigation";
 import {
   useInitialTerminalLaunchLocation,
@@ -341,7 +339,7 @@ function readLiveTerminalSessions(
 ): ReadonlyArray<TerminalMenuSession> {
   if (!readEnvironmentScope(environmentId, AuthTerminalReadScope)) return [];
   const result = appAtomRegistry.get(terminalEnvironment.metadata({ environmentId, input: null }));
-  const summaries = Option.getOrElse(AsyncResult.value(result), () => []);
+  const summaries = AsyncResult.getOrElse(result, () => []);
   return summaries
     .filter((summary) => summary.threadId === threadId)
     .map((summary) => ({
@@ -353,26 +351,6 @@ function readLiveTerminalSessions(
       updatedAt: summary.updatedAt,
     }));
 }
-
-// `useKeyboardState` only flips on willShow and didHide; the accessory must
-// leave as soon as the keyboard starts hiding, so it follows the will-events.
-let keyboardShowing = KeyboardController.isVisible();
-function subscribeKeyboardShowing(onChange: () => void) {
-  keyboardShowing = KeyboardController.isVisible();
-  const willShow = KeyboardEvents.addListener("keyboardWillShow", () => {
-    keyboardShowing = true;
-    onChange();
-  });
-  const willHide = KeyboardEvents.addListener("keyboardWillHide", () => {
-    keyboardShowing = false;
-    onChange();
-  });
-  return () => {
-    willShow.remove();
-    willHide.remove();
-  };
-}
-const getKeyboardShowing = () => keyboardShowing;
 
 function ThreadTerminal(props: {
   readonly params: ThreadTerminalRouteScreenProps["route"]["params"];
@@ -428,10 +406,8 @@ function ThreadTerminal(props: {
   } = useAppearancePreferences();
   const fontSize = appearance.terminalFontSize;
   const terminalKey = `${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`;
-  const activeKnownSession = useMemo(
-    () => knownSessions?.find((session) => session.target.terminalId === terminalId) ?? null,
-    [knownSessions, terminalId],
-  );
+  const activeKnownSession =
+    knownSessions?.find((session) => session.target.terminalId === terminalId) ?? null;
   const hasTerminalTarget = props.hasExplicitTerminalId || activeKnownSession !== null;
   const [pendingLaunch] = useState<PendingTerminalLaunch | null>(() =>
     takePendingTerminalLaunch({
@@ -476,7 +452,6 @@ function ThreadTerminal(props: {
         if (live) exitNavigation.restarted();
         pasteSession.reset(live);
       },
-      debugLog: terminalDebugLog,
     }),
   );
   const surfaceRef = useRef<TerminalSurfaceHandle>(null);
@@ -594,7 +569,8 @@ function ThreadTerminal(props: {
     height: state.height,
     isVisible: state.isVisible,
   }));
-  const keyboardShowing = useSyncExternalStore(subscribeKeyboardShowing, getKeyboardShowing);
+  // The accessory leaves as soon as the keyboard starts hiding.
+  const keyboardShowing = useSoftKeyboardShowing();
   // The accessory follows the keyboard, except that the dismiss and show
   // buttons flip it ahead of the keyboard animation.
   const [accessory, setAccessory] = useState({ keyboardShowing, dismissed: false });
@@ -613,31 +589,18 @@ function ThreadTerminal(props: {
     (keyboardState.isVisible ? keyboardState.height : 0) +
     (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
 
-  const terminalMenuSessions = useMemo<ReadonlyArray<TerminalMenuSession>>(
-    () =>
-      buildTerminalMenuSessions({
-        knownSessions: knownSessions ?? [],
-        workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
-        currentSession: {
-          terminalId,
-          cwd: cwd ?? null,
-          status: terminal.status,
-          hasRunningSubprocess: terminal.hasRunningSubprocess,
-          displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary),
-          updatedAt: terminal.updatedAt,
-        },
-      }),
-    [
-      cwd,
-      knownSessions,
-      selectedThreadProject?.workspaceRoot,
-      terminal.hasRunningSubprocess,
-      terminal.summary,
-      terminal.status,
-      terminal.updatedAt,
+  const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
+    knownSessions: knownSessions ?? [],
+    workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+    currentSession: {
       terminalId,
-    ],
-  );
+      cwd: cwd ?? null,
+      status: terminal.status,
+      hasRunningSubprocess: terminal.hasRunningSubprocess,
+      displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary),
+      updatedAt: terminal.updatedAt,
+    },
+  });
 
   const writeInput = async (data: string): Promise<boolean> => {
     if (
@@ -696,11 +659,6 @@ function ThreadTerminal(props: {
   };
 
   const handleResize = (size: { readonly cols: number; readonly rows: number }) => {
-    terminalDebugLog("native:onResize", {
-      cols: size.cols,
-      rows: size.rows,
-      terminalKey,
-    });
     if (routeEnvironmentId && routeThreadId) {
       cacheTerminalGridSize(
         {
@@ -961,6 +919,7 @@ function ThreadTerminal(props: {
                   buffer={terminal.version === 0 ? null : terminal.buffer}
                   output={terminal.version === 0 ? null : terminal.output}
                   fontSize={fontSize}
+                  grid={terminal.grid}
                   isRunning={isRunning}
                   keyboardFocusRequest={keyboardFocusRequest}
                   captureRequest={captureRequest}
@@ -998,7 +957,14 @@ function ThreadTerminal(props: {
                     KeyboardController.dismiss();
                     requestCapture();
                   }}
-                  className="px-4 py-2"
+                  className="px-4 pt-2"
+                  style={{
+                    paddingBottom:
+                      8 +
+                      (keyboardState.isVisible
+                        ? 0
+                        : (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom)),
+                  }}
                 >
                   <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
                 </Pressable>

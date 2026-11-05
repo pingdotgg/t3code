@@ -38,23 +38,18 @@ import {
 import { isNetworkPath } from "@t3tools/shared/path";
 import { MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../auth/utils.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
+import * as AssetSigner from "./AssetSigner.ts";
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -70,7 +65,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
-const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const HTML_ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
@@ -222,17 +216,6 @@ function decodeRelativePath(value: string): string | null {
   }
 }
 
-const optionOnNotFound = <A, R>(
-  effect: Effect.Effect<A, PlatformError.PlatformError, R>,
-): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
-  effect.pipe(
-    Effect.asSome,
-    Effect.catchTags({
-      PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
-    }),
-  );
-
 export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   // Allow space for stored CSP tags, but bound reads if the attachment grows after minting.
@@ -287,11 +270,15 @@ const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(funct
   filePath: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const canonicalFile = yield* optionOnNotFound(fileSystem.realPath(filePath));
+  const canonicalFile = yield* ProjectFaviconResolver.optionOnNotFound(
+    fileSystem.realPath(filePath),
+  );
   if (Option.isNone(canonicalFile)) return null;
 
-  const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
-  return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+  const info = yield* ProjectFaviconResolver.optionOnNotFound(fileSystem.stat(canonicalFile.value));
+  if (Option.isNone(info) || info.value.type !== "File") return null;
+  const isServerInternalPath = yield* makeIsServerInternalPath;
+  return (yield* isServerInternalPath(canonicalFile.value)) ? null : canonicalFile.value;
 });
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
@@ -307,8 +294,8 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     if (Option.isNone(resolved)) return null;
 
     const [canonicalRoot, canonicalFile] = yield* Effect.all([
-      optionOnNotFound(fileSystem.realPath(input.workspaceRoot)),
-      optionOnNotFound(fileSystem.realPath(resolved.value.absolutePath)),
+      ProjectFaviconResolver.optionOnNotFound(fileSystem.realPath(input.workspaceRoot)),
+      ProjectFaviconResolver.optionOnNotFound(fileSystem.realPath(resolved.value.absolutePath)),
     ]);
     if (Option.isNone(canonicalRoot) || Option.isNone(canonicalFile)) return null;
 
@@ -316,8 +303,12 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     const relative = path.relative(canonicalRoot.value, canonicalFile.value);
     if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
 
-    const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
-    return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+    const info = yield* ProjectFaviconResolver.optionOnNotFound(
+      fileSystem.stat(canonicalFile.value),
+    );
+    if (Option.isNone(info) || info.value.type !== "File") return null;
+    const isServerInternalPath = yield* makeIsServerInternalPath;
+    return (yield* isServerInternalPath(canonicalFile.value)) ? null : canonicalFile.value;
   },
 );
 
@@ -667,7 +658,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           ? inlinePreviewMimeTypeForExtension(extension)
           : undefined;
       if (!isGenericFile) {
-        imageDimensions = yield* readImageDimensionsFromHeader(attachmentPath);
+        imageDimensions = yield* fileSystem.realPath(attachmentPath).pipe(
+          Effect.flatMap(readImageDimensionsFromHeader),
+          Effect.orElseSucceed(() => null),
+        );
       }
       claims = {
         version: 1,
@@ -774,7 +768,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               expiresAt,
             };
       if (sourceFaviconPath && canonicalFaviconPath) {
-        const crypto = yield* Crypto.Crypto;
+        const digest = yield* Digest.Digest;
         const faviconBytes = yield* fileSystem.readFile(canonicalFaviconPath).pipe(
           Effect.mapError(
             (cause) =>
@@ -784,7 +778,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               }),
           ),
         );
-        const revision = yield* crypto.digest("SHA-256", faviconBytes).pipe(
+        const revision = yield* digest.digest(Digest.sha256, faviconBytes).pipe(
           Effect.map(Hex.encode),
           Effect.mapError(
             (cause) =>
@@ -848,16 +842,6 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     }
   }
 
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(
-    Effect.mapError(
-      (cause) =>
-        new AssetSigningKeyLoadError({
-          resource: input.resource,
-          cause,
-        }),
-    ),
-  );
   if (claims.kind === "project-favicon" || claims.kind === "project-favicon-external") {
     const issuedAt = yield* Clock.currentTimeMillis;
     expiresAt =
@@ -872,7 +856,13 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     claims = { ...claims, expiresAt };
   }
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
-  const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
+  const signer = yield* AssetSigner.AssetSigner;
+  const signature = yield* signer
+    .sign(encodedPayload)
+    .pipe(
+      Effect.mapError((cause) => new AssetSigningKeyLoadError({ resource: input.resource, cause })),
+    );
+  const token = `${encodedPayload}.${signature}`;
   return {
     relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(fileName)}`,
     expiresAt,
@@ -889,13 +879,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
 
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(
+  const signer = yield* AssetSigner.AssetSigner;
+  const verified = yield* signer.verify(encodedPayload, signature).pipe(
     Effect.tapError((cause) => Effect.logError("Failed to load the asset signing key.", { cause })),
-    Effect.orElseSucceed(() => null),
+    Effect.orElseSucceed(() => false),
   );
-  if (!signingSecret) return null;
-  if (!timingSafeEqualBase64Url(signature, signPayload(encodedPayload, signingSecret))) return null;
+  if (!verified) return null;
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
@@ -908,7 +897,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     });
     if (!attachmentPath) return null;
     const fileSystem = yield* FileSystem.FileSystem;
-    const info = yield* optionOnNotFound(fileSystem.stat(attachmentPath)).pipe(
+    const info = yield* ProjectFaviconResolver.optionOnNotFound(
+      fileSystem.stat(attachmentPath),
+    ).pipe(
       Effect.tapError((cause) =>
         Effect.logError("Failed to inspect attachment asset.", {
           attachmentId: claims.attachmentId,

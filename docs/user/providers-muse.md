@@ -1,6 +1,6 @@
 # Muse Code
 
-Muse Code is a beta integration and is disabled by default. Install
+Muse Code is disabled by default. Install
 [Muse Code](https://dev.meta.ai/docs/muse-code) on the machine hosting your
 environment, then run `muse login` as the account that runs T3 Code.
 
