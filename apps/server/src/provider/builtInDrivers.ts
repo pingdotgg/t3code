@@ -16,6 +16,7 @@ import type {
   ProviderUsageReaderEnv,
 } from "@t3tools/provider-core/server/driver";
 import { KiroDriver, type KiroDriverEnv } from "@t3tools/provider-kiro/server";
+import { VibeDriver, type VibeDriverEnv } from "@t3tools/provider-vibe/server";
 
 export type BuiltInDriversEnv =
   | AcpRegistryDriverEnv
@@ -26,6 +27,7 @@ export type BuiltInDriversEnv =
   | FxDriverEnv
   | GrokDriverEnv
   | KiroDriverEnv
+  | VibeDriverEnv
   | OpenCodeDriverEnv
   | PiDriverEnv
   | MuseDriverEnv;
@@ -39,6 +41,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   OpenCodeDriver,
   AntigravityDriver,
   KiroDriver,
+  VibeDriver,
   PiDriver,
   MuseDriver,
   AcpRegistryDriver,

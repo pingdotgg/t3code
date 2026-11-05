@@ -57,4 +57,7 @@ approvals for actions that support them.
 Kiro offers only **Supervised** and **Full access**. In **Supervised** Kiro also asks you to
 review a turn's file changes. See [Kiro permissions](./providers-kiro.md#permission-modes).
 
+Mistral Vibe offers no **Auto**. Each other mode runs the matching Vibe agent. See
+[Mistral Vibe permissions](./providers-vibe.md#permission-modes).
+
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.

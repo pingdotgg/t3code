@@ -15,6 +15,7 @@ import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { vibeClient } from "@t3tools/provider-vibe/client";
 
 export const providerClients = makeProviderClientRegistry([
   {
@@ -43,6 +44,7 @@ export const providerClients = makeProviderClientRegistry([
     settingsSchema: AntigravitySettings,
   },
   kiroClient,
+  vibeClient,
   museClient,
   piClient,
   acpRegistryClient,
