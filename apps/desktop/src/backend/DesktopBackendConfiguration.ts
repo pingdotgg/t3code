@@ -621,8 +621,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
   // wslhost loopback forwarding is unreliable on some Windows hosts, so NAT setups reach the
   // distro IP, which a loopback bind cannot serve. Elsewhere follow the network access setting.
+  const windowsUsesLoopback = usesSharedNetworkStack || Option.isNone(distroIp);
   const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
-  const wslBindHost = rendererHost === "127.0.0.1" ? exposureBindHost : "0.0.0.0";
+  const wslBindHost = windowsUsesLoopback ? exposureBindHost : "0.0.0.0";
 
   const bootstrap = {
     mode: "desktop" as const,

@@ -735,17 +735,30 @@ describe("DesktopBackendConfiguration", () => {
         prefix: "t3-desktop-backend-config-test-",
       });
       const cases = [
-        { exposureBindHost: "127.0.0.1", distroIp: Option.none(), expected: "127.0.0.1" },
+        {
+          exposureBindHost: "127.0.0.1",
+          distroIp: Option.none(),
+          url: "127.0.0.1",
+          bind: "127.0.0.1",
+        },
+        // Mirrored: the distro reports one of the host's own addresses, and loopback is one on every host.
+        {
+          exposureBindHost: "127.0.0.1",
+          distroIp: Option.some("127.0.0.1"),
+          url: "127.0.0.1",
+          bind: "127.0.0.1",
+        },
         // NAT: Windows reaches the backend at the distro IP, which loopback cannot serve.
         {
           exposureBindHost: "127.0.0.1",
           distroIp: Option.some("172.27.0.99"),
-          expected: "0.0.0.0",
+          url: "172.27.0.99",
+          bind: "0.0.0.0",
         },
-        { exposureBindHost: "0.0.0.0", distroIp: Option.none(), expected: "0.0.0.0" },
+        { exposureBindHost: "0.0.0.0", distroIp: Option.none(), url: "127.0.0.1", bind: "0.0.0.0" },
       ] as const;
 
-      for (const { exposureBindHost, distroIp, expected } of cases) {
+      for (const { exposureBindHost, distroIp, url, bind } of cases) {
         const config = yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
           return yield* configuration.resolveWsl({ port: 5050, distro: null });
@@ -766,10 +779,10 @@ describe("DesktopBackendConfiguration", () => {
             ),
           ),
         );
-        assert.equal(
-          config.bootstrap.host,
-          expected,
-          `${exposureBindHost} via ${config.httpBaseUrl}`,
+        assert.deepEqual(
+          { url: config.httpBaseUrl.hostname, bind: config.bootstrap.host },
+          { url, bind },
+          `network access bind ${exposureBindHost}, distro IP ${Option.getOrElse(distroIp, () => "none")}`,
         );
       }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
