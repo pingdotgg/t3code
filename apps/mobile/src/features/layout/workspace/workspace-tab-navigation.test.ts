@@ -101,6 +101,11 @@ describe("opening a workspace tab", () => {
       "Settings",
       "SettingsEnvironments",
     ]);
+    expect(
+      names(
+        workspaceTabNavigationState(state, "settings", { settings: "SettingsMicrophone" }, columns),
+      ),
+    ).toEqual(["Home", "Settings", "SettingsVoice"]);
   });
 
   it("keeps the route that is already open, so re-selecting a tab doesn't rebuild it", () => {
