@@ -25,11 +25,14 @@ function loadLocale(locale: string): Promise<void> {
   if (locale in loadedTranslations) return Promise.resolve();
   let load = pendingLoads.get(locale);
   if (!load) {
-    // A failed load resolves without an entry: English renders now and the next request retries.
+    // GT resolves a failed load to an empty catalog. Leave it uncached: English renders now
+    // and the next request retries.
     load = getTranslationsSnapshot(locale).then((loaded) => {
       pendingLoads.delete(locale);
       const translations = loaded[locale];
-      if (translations) loadedTranslations[locale] = translations;
+      if (translations && Object.keys(translations).length > 0) {
+        loadedTranslations[locale] = translations;
+      }
     });
     pendingLoads.set(locale, load);
   }
@@ -37,7 +40,10 @@ function loadLocale(locale: string): Promise<void> {
 }
 
 function activateLocale(locale: string): void {
-  if (requestedLocale !== locale || snapshot.locale === locale) return;
+  if (requestedLocale !== locale) return;
+  if (snapshot.locale === locale && snapshot.translations[locale] === loadedTranslations[locale]) {
+    return;
+  }
   snapshot = { locale, translations: { ...loadedTranslations } };
   document.documentElement.lang = locale;
   for (const listener of listeners) listener();
