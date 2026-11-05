@@ -15,7 +15,7 @@ import { useEffect, useRef } from "react";
 import { AccessibilityInfo, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -261,7 +261,7 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
           title: "Activity",
         }}
       />
-      {isAndroid ? <AndroidScreenHeader title="Activity" onBack={handleBack} /> : null}
+      {isAndroid ? <AppBar embedded title="Activity" onBack={handleBack} /> : null}
       {structure === null ? (
         // Before the thread loads there are no items and no run, which would read as "Stopped".
         <View className="flex-1 items-center justify-center px-4">
