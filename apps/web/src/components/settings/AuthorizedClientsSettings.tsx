@@ -380,11 +380,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 ) : null}
               </DialogPanel>
               <DialogFooter variant="bare">
-                <Button variant="secondary" onClick={() => setIsRevealDialogOpen(false)}>
+                <Button
+                  size="standard"
+                  variant="secondary"
+                  onClick={() => setIsRevealDialogOpen(false)}
+                >
                   Done
                 </Button>
                 {canCopyToClipboard ? (
-                  <Button variant="secondary" onClick={handleCopyCode}>
+                  <Button size="standard" variant="secondary" onClick={handleCopyCode}>
                     Copy code
                   </Button>
                 ) : null}
@@ -812,6 +816,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
+              size="standard"
               variant="secondary"
               disabled={isCreatingPairingLink}
               onClick={() => setDialogOpen(false)}
@@ -819,6 +824,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               Cancel
             </Button>
             <Button
+              size="standard"
               disabled={isCreatingPairingLink || selectedScopes.length === 0}
               onClick={() => void handleCreatePairingLink()}
             >
