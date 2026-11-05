@@ -1125,9 +1125,21 @@ export function LayoutSurfaceHost({
   // from this very frame. After the motion above, so they start where it does.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reposition external browser surfaces after committed pane geometry and transforms change.
   useLayoutEffect(() => kickBrowserSurfaceTracking({ now: true }));
-  const paneStyleById = new Map(
-    [...slotByTabId.values()].map(({ slot, style }) => [slot.paneId, style]),
-  );
+  const paneStyleById = new Map([
+    ...shown.workspaces.flatMap((candidate) => {
+      if (candidate.columns.length === 0) return [];
+      const own = selectShownSlots(
+        candidate,
+        { width: viewportWidth, whenNoRoom },
+        narrow,
+        maximizedTabId,
+      );
+      return own.slots.map(
+        (slot) => [slot.paneId, slotStyle(slot, own.stripWidth * viewportWidth)] as const,
+      );
+    }),
+    ...[...slotByTabId.values()].map(({ slot, style }) => [slot.paneId, style] as const),
+  ]);
   const renderedTabIds = [
     ...new Set([
       ...mountedTabIds,
