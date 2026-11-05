@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - drives real proxy, TLS and WebSocket sockets.
 import { assert, expect, it } from "@effect/vitest";
+import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { NodeWS } from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import { EnvironmentId, type DesktopRemotePreviewProxyStatus } from "@t3tools/contracts";
 import {
   REMOTE_PREVIEW_PROXY_GRANT_HEADER,
@@ -237,7 +238,7 @@ const makeProxy = Effect.gen(function* () {
   const context = yield* Layer.build(
     RemotePreviewProxy.layer.pipe(
       Layer.provide(NodeHttpClient.layerUndici),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, PlatformNodeCrypto.layer)),
     ),
   );
   const proxy = Context.get(context, RemotePreviewProxy.RemotePreviewProxy);

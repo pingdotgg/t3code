@@ -16,7 +16,7 @@ import {
 import type { Session } from "electron";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
@@ -124,7 +124,7 @@ export class RemotePreviewProxy extends Context.Service<
 >()("@t3tools/desktop/preview/RemotePreviewProxy") {}
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const clock = yield* Clock.Clock;
   const httpClient = yield* HttpClient.HttpClient;
   const renewals = yield* FiberMap.make<EnvironmentId>();
@@ -149,10 +149,9 @@ const make = Effect.gen(function* () {
     for (const listener of listeners) listener(status);
   };
 
-  const randomSecret = crypto.randomBytes(24).pipe(
-    Effect.orDie,
-    Effect.map((bytes) => Buffer.from(bytes).toString("base64url")),
-  );
+  const randomSecret = random
+    .randomBytes(24)
+    .pipe(Effect.map((bytes) => Buffer.from(bytes).toString("base64url")));
 
   const ensureEntry = Effect.fn("RemotePreviewProxy.ensureEntry")(function* (
     environmentId: EnvironmentId,

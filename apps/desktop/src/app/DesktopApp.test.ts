@@ -68,6 +68,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as RemotePreviewProxy from "../preview/RemotePreviewProxy.ts";
 
 it.effect(
   "starts the backend and window while Linux registration is stalled and cancels it on shutdown",
@@ -213,6 +214,9 @@ it.effect(
             }),
             FileSystem.layerNoop({}),
             Layer.mock(NetService.NetService, {}),
+            Layer.mock(RemotePreviewProxy.RemotePreviewProxy, {
+              embeddedCredentialForPort: () => null,
+            }),
             Path.layer,
             Layer.succeed(
               HttpClient.HttpClient,

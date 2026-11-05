@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Chromium needs a native HTTP proxy with CONNECT.
 // A loopback HTTP proxy for one environment. Loopback destinations travel through authenticated
 // byte tunnels to that environment and never fall back to this machine; other hosts go direct.
-import { NodeWS } from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import {
   REMOTE_PREVIEW_PROXY_GRANT_HEADER,
   REMOTE_PREVIEW_PROXY_TUNNEL_PATH,

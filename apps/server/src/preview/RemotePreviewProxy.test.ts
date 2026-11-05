@@ -1,5 +1,6 @@
 import { assert, expect, it } from "@effect/vitest";
-import { NodeWS } from "@effect/platform-node/NodeSocket";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthSessionId } from "@t3tools/contracts";
@@ -53,7 +54,7 @@ const setup = Effect.gen(function* () {
           port: SERVER_PORT,
         } as unknown as ServerConfig.ServerConfig["Service"]),
       ),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
   const proxy = Context.get(services, RemotePreviewProxy.RemotePreviewProxy);

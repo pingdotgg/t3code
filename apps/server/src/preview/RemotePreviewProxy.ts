@@ -11,7 +11,7 @@ import {
   isRemotePreviewProxyDialHost,
 } from "@t3tools/shared/remotePreviewProxy";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -24,14 +24,9 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as PayloadSigner from "../auth/PayloadSigner.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../auth/utils.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
 import * as ServerConfig from "../config.ts";
 
 const SIGNING_SECRET_NAME = "preview-proxy-signing-key";
@@ -71,9 +66,9 @@ export class RemotePreviewProxy extends Context.Service<
 >()("t3/preview/RemotePreviewProxy") {}
 
 const make = Effect.gen(function* () {
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const sessions = yield* SessionStore.SessionStore;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
   const config = yield* ServerConfig.ServerConfig;
   // Revocation only needs to outlive the grant's TTL, so memory is enough.
   const revoked = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
@@ -83,15 +78,14 @@ const make = Effect.gen(function* () {
     { readonly signal: Deferred.Deferred<void>; tunnels: number }
   >();
 
-  const secret = secrets
-    .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
-    .pipe(
-      Effect.mapError((cause) => new PreviewProxyGrantError({ reason: "issue-failed", cause })),
-    );
-
   const sign = Effect.fn("RemotePreviewProxy.sign")(function* (claims: GrantClaims) {
     const payload = base64UrlEncode(encodeClaims(claims));
-    return `${payload}.${signPayload(payload, yield* secret)}`;
+    const signature = yield* signer
+      .sign(payload)
+      .pipe(
+        Effect.mapError((cause) => new PreviewProxyGrantError({ reason: "issue-failed", cause })),
+      );
+    return `${payload}.${signature}`;
   });
 
   const toGrant = (claims: GrantClaims, grant: string): PreviewProxyGrant => ({
@@ -108,13 +102,7 @@ const make = Effect.gen(function* () {
     if (ports.includes(config.port)) {
       return yield* new PreviewProxyGrantError({ reason: "port-reserved", port: config.port });
     }
-    const gid = Hex.encode(
-      yield* crypto
-        .randomBytes(16)
-        .pipe(
-          Effect.mapError((cause) => new PreviewProxyGrantError({ reason: "issue-failed", cause })),
-        ),
-    );
+    const gid = Hex.encode(yield* random.randomBytes(16));
     const now = yield* DateTime.now;
     const claims: GrantClaims = {
       v: 1,
@@ -132,11 +120,10 @@ const make = Effect.gen(function* () {
     if (grant.length === 0 || grant.length > MAX_GRANT_LENGTH) return Option.none();
     const [payload, signature, extra] = grant.split(".");
     if (!payload || !signature || extra !== undefined) return Option.none();
-    const key = yield* secret.pipe(Effect.option);
-    if (Option.isNone(key)) return Option.none();
-    if (!timingSafeEqualBase64Url(signature, signPayload(payload, key.value))) {
-      return Option.none();
-    }
+    const verified = yield* signer
+      .verify(payload, signature)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!verified) return Option.none();
     const claims = (() => {
       try {
         return decodeClaims(base64UrlDecodeUtf8(payload));
