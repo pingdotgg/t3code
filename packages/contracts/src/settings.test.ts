@@ -312,10 +312,10 @@ describe("ClientSettings notifications", () => {
 });
 
 describe("ClientSettings usage icon action", () => {
-  it("defaults to the quick view and accepts the full Usage page", () => {
-    expect(decodeClientSettings({}).usageIconClickBehavior).toBe("quick-view");
-    expect(decodeClientSettingsPatch({ usageIconClickBehavior: "usage-page" })).toEqual({
-      usageIconClickBehavior: "usage-page",
+  it("defaults to the Usage page and accepts the quick view", () => {
+    expect(decodeClientSettings({}).usageIconClickBehavior).toBe("usage-page");
+    expect(decodeClientSettingsPatch({ usageIconClickBehavior: "quick-view" })).toEqual({
+      usageIconClickBehavior: "quick-view",
     });
   });
 });

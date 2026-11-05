@@ -297,7 +297,7 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("usage-icon-click-behavior")}
-          description="Choose whether the Usage icon below the thread list opens a quick view or the full Usage page."
+          description="Choose whether the Usage icon below the thread list opens the full Usage page or the optional quick view."
           resetAction={
             settings.usageIconClickBehavior !== DEFAULT_UNIFIED_SETTINGS.usageIconClickBehavior ? (
               <SettingResetButton
@@ -326,8 +326,8 @@ export function AppearanceSettingsPanel() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="quick-view">Quick view (default)</SelectItem>
-                  <SelectItem value="usage-page">Usage page</SelectItem>
+                  <SelectItem value="usage-page">Usage page (default)</SelectItem>
+                  <SelectItem value="quick-view">Quick view</SelectItem>
                 </SelectPopup>
               </Select>
             </div>

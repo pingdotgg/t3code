@@ -508,7 +508,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
   ),
   usageIconClickBehavior: UsageIconClickBehavior.pipe(
-    Schema.withDecodingDefault(Effect.succeed("quick-view" as const)),
+    Schema.withDecodingDefault(Effect.succeed("usage-page" as const)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
