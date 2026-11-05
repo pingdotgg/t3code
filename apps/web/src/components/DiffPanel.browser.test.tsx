@@ -87,7 +87,8 @@ vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
-import DiffPanel from "./DiffPanel";
+import DiffSidePanel from "~/panels/diff/DiffSidePanel";
+import { PanelHostContext } from "~/panels/panelHost";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 
 const cwd = "/project-worktree";
@@ -208,7 +209,17 @@ it.each([
     using context = setup(failedBaseRef);
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        <PanelHostContext
+          value={{
+            threadRef: context.threadRef,
+            composerDraftTarget: context.threadRef,
+            workspaceMutationId: null,
+            visible: true,
+            sendAnnotation: () => {},
+          }}
+        >
+          <DiffSidePanel />
+        </PanelHostContext>
       </RegistryContext.Provider>,
     );
     await expect.element(screen.getByText(errorMessage, { exact: true })).toBeVisible();
@@ -243,7 +254,17 @@ it.each([false, true])(
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
         <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+          <PanelHostContext
+            value={{
+              threadRef: context.threadRef,
+              composerDraftTarget: context.threadRef,
+              workspaceMutationId: null,
+              visible: true,
+              sendAnnotation: () => {},
+            }}
+          >
+            <DiffSidePanel />
+          </PanelHostContext>
         </div>
       </RegistryContext.Provider>,
     );

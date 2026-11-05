@@ -15,23 +15,14 @@ import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore"
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
-import {
-  PersistentThreadTerminalPanel,
-  type PersistentThreadTerminalPanelProps,
-} from "../PersistentThreadTerminals";
+import { type PersistentThreadTerminalPanelProps } from "~/panels/terminal/PersistentThreadTerminalDrawer";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
 
-const PreviewPanel = lazy(() =>
-  import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
-);
-const DiffPanel = lazy(() => import("../DiffPanel"));
-const DevicePanel = lazy(() =>
-  import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
-);
+import { RegisteredSidePanel } from "~/panels/bundledPanels";
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
 type RightPanelTerminalProps = Omit<
@@ -84,38 +75,16 @@ export function RightPanelSurfaceContent(props: {
   switch (surface.kind) {
     case "preview":
       return (
-        <Suspense fallback={null}>
-          <PreviewPanel
-            mode="embedded"
-            threadRef={threadRef}
-            tabId={surface.resourceId}
-            configuredUrls={props.configuredPreviewUrls}
-            visible={visible}
-            onSendAnnotation={props.onSendAnnotation}
-          />
-        </Suspense>
-      );
-    case "terminal":
-      return (
-        <PersistentThreadTerminalPanel
-          {...props.terminal}
-          visible={visible}
-          threadRef={threadRef}
-          surface={surface}
+        <RegisteredSidePanel
+          id="preview"
+          tabId={surface.resourceId}
+          configuredUrls={props.configuredPreviewUrls}
         />
       );
+    case "terminal":
+      return <RegisteredSidePanel id="terminal" {...props.terminal} surface={surface} />;
     case "diff":
-      return (
-        <Suspense fallback={null}>
-          <DiffPanel
-            key={scopedThreadKey(threadRef)}
-            mode="embedded"
-            composerDraftTarget={props.composerDraftTarget}
-            workspaceMutationId={props.workspaceMutationId}
-            visible={visible}
-          />
-        </Suspense>
-      );
+      return <RegisteredSidePanel key={scopedThreadKey(threadRef)} id="diff" />;
     case "pull-request": {
       const pullRequest = props.pullRequest;
       if (!pullRequest.capabilityKnown) return <PullRequestDetailGhost />;
@@ -181,19 +150,15 @@ export function RightPanelSurfaceContent(props: {
       );
     case "device":
       return (
-        <Suspense fallback={null}>
-          <DevicePanel
-            mode="embedded"
-            threadRef={threadRef}
-            key={surface.id}
-            surface={surface}
-            visible={visible}
-            onDismissSetup={() => {
-              props.onCloseSurface(surface);
-              useRightPanelStore.getState().show(threadRef);
-            }}
-          />
-        </Suspense>
+        <RegisteredSidePanel
+          id="device"
+          key={surface.id}
+          surface={surface}
+          onDismissSetup={() => {
+            props.onCloseSurface(surface);
+            useRightPanelStore.getState().show(threadRef);
+          }}
+        />
       );
     case "files":
     case "file": {
