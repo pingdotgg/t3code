@@ -1,7 +1,9 @@
 import {
   fileBasename,
   isAbsolutePath,
+  isUncPath,
   isWindowsAbsolutePath,
+  isWindowsDrivePath,
   stripSlashPrefixedWindowsDrive,
 } from "./path.ts";
 
@@ -62,6 +64,9 @@ export function joinPath(base: string, next: string, separator: "/" | "\\"): str
   if (separator === "\\") {
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
   }
+  if (isWindowsDrivePath(cleanBase)) {
+    return `${cleanBase.replaceAll("\\", "/")}/${next.replaceAll("\\", "/").replace(/^\/+/, "")}`;
+  }
   return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 
@@ -92,11 +97,11 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   if (path.startsWith("~/") || (isWindowsPathStyle(cwd) && path.startsWith("~\\"))) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
-      const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
+      const separator: "/" | "\\" = isUncPath(home) ? "\\" : "/";
       resolvedPath = joinPath(home, path.slice(2), separator);
     }
   } else if (!isAbsolutePath(path)) {
-    const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
+    const separator: "/" | "\\" = isUncPath(cwd) ? "\\" : "/";
     resolvedPath = joinPath(cwd, path, separator);
   }
 

@@ -1,5 +1,5 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { isWindowsAbsolutePath, isHostPath } from "@t3tools/shared/path";
+import { isHostPath, isUncPath, isWindowsDrivePath } from "@t3tools/shared/path";
 
 export interface FileBreadcrumb {
   label: string;
@@ -13,7 +13,7 @@ export interface FileBreadcrumbChild extends ProjectEntry {
 
 export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
   const hostPath = isHostPath(relativePath);
-  const separator = isWindowsAbsolutePath(relativePath) ? "\\" : "/";
+  const separator = isUncPath(relativePath) ? "\\" : "/";
   const parts = relativePath.split(/[\\/]/).filter(Boolean);
   const root = relativePath.startsWith("\\\\") ? "\\\\" : relativePath.startsWith("/") ? "/" : "";
   return [
@@ -22,9 +22,9 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
       const path = root + parts.slice(0, index + 1).join(separator);
       return {
         label: part,
-        // A bare drive (`C:`) means the drive's current directory; its root is `C:\`.
+        // A bare drive (`C:`) means the drive's current directory; its root is `C:/`.
         // A bare `~` is not a host path; the home folder is `~/`.
-        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : hostPath && path === "~" ? "~/" : path,
+        path: /^[A-Za-z]:$/.test(path) ? `${path}/` : hostPath && path === "~" ? "~/" : path,
         kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
       };
     }),
@@ -57,9 +57,14 @@ export function trailChildOf(folder: string, trail: string): string | null {
 }
 
 export function joinHostPath(folder: string, relativePath: string): string {
-  const separator = isWindowsAbsolutePath(folder) ? "\\" : "/";
-  const base = folder.endsWith(separator) ? folder : `${folder}${separator}`;
-  return base + relativePath.split("/").join(separator);
+  if (isUncPath(folder)) {
+    const base = folder.endsWith("\\") ? folder : `${folder}\\`;
+    return base + relativePath.split("/").join("\\");
+  }
+  const slashFolder = isWindowsDrivePath(folder) ? folder.replaceAll("\\", "/") : folder;
+  const base = slashFolder.endsWith("/") ? slashFolder : `${slashFolder}/`;
+  const child = isWindowsDrivePath(folder) ? relativePath.replaceAll("\\", "/") : relativePath;
+  return base + child;
 }
 
 export function fileBreadcrumbChildren(

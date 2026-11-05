@@ -1,6 +1,7 @@
 import {
   isNetworkPath,
   isWindowsAbsolutePath,
+  slashWindowsDrivePath,
   stripSlashPrefixedWindowsDrive,
   workspaceRelativeFilePath,
 } from "./path.ts";
@@ -175,7 +176,9 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const trimmed = codeText.trim();
   if (trimmed.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(trimmed)) return null;
 
-  const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
+  const candidate = slashWindowsDrivePath(
+    isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/"),
+  );
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
 
@@ -306,7 +309,9 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const source =
     (normalized.toLowerCase().startsWith("file:") ? parseFileUrlHref(normalized) : null) ??
     splitMarkdownLinkSearchAndHash(normalized);
-  const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim()));
+  const path = slashWindowsDrivePath(
+    stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim())),
+  );
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
