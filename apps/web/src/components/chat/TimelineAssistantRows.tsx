@@ -8,6 +8,7 @@ import { GitForkIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
+import { QuizCardTimelineCard } from "./QuizCard";
 import { McpAppFrame } from "./McpAppFrame";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -311,6 +312,20 @@ export function HtmlRenderTimelineRow({
             ? (excerpt) => ask(messageId, row.htmlRender.title, excerpt)
             : undefined
         }
+      />
+    </div>
+  );
+}
+
+export function QuizCardTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "quiz-card" }> }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div className="min-w-0 px-1">
+      <QuizCardTimelineCard
+        quizCard={row.quizCard}
+        seed={row.id}
+        answered={row.answered}
+        onSendMessage={ctx.onSendAppMessage}
       />
     </div>
   );

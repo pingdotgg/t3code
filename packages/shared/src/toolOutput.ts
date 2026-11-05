@@ -10,6 +10,7 @@ import {
   readHtmlRenderReference,
   type HtmlRenderReference,
 } from "./htmlRender.ts";
+import { QUIZ_CARD_TOOL_NAME, readQuizCard, type QuizCard } from "./quizCard.ts";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference, type McpAppReference } from "./mcpApp.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
@@ -41,6 +42,7 @@ interface CompactToolOutput {
   scheduledTaskId?: string;
   status?: "rolled_back";
   htmlRender?: HtmlRenderReference;
+  quizCard?: QuizCard;
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
@@ -132,6 +134,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     }
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
+    const quizCard = readQuizCard(data.quizCard);
+    if (quizCard !== undefined) output.quizCard = quizCard;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
     if (mcpApp !== undefined) output[MCP_APP_OUTPUT_KEY] = mcpApp;
     const nestedThreadId = Predicate.isObject(data.thread)
@@ -181,6 +185,15 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   }
   if (oversized()) delete output[MCP_APP_OUTPUT_KEY];
   return Object.keys(output).length === 0 ? undefined : output;
+}
+
+export function quizCardFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): QuizCard | undefined {
+  if (resolveT3McpToolId(item.toolName) !== QUIZ_CARD_TOOL_NAME) return undefined;
+  const output = compactDynamicToolOutput(item.output);
+  return output?.isError ? undefined : output?.quizCard;
 }
 
 export function htmlRenderFromToolItem(item: {

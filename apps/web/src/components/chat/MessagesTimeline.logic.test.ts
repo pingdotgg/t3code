@@ -4467,3 +4467,51 @@ it("anchors embeds to the closest finished assistant reply in the same run", () 
     previous,
   );
 });
+
+it("turns a completed quiz card into an answered row after a later user message", () => {
+  const at = "2026-01-01T00:00:00Z";
+  const quiz: TimelineEntry = {
+    kind: "quiz-card",
+    id: "quiz-1",
+    createdAt: at,
+    runId: null,
+    quizCard: {
+      answer: "A",
+      explanation: "Because",
+      level: "apply",
+      question: "Which?",
+      wrongOptions: [
+        { option: "B", wrongIdea: "Mistake" },
+        { option: "C", wrongIdea: "Another" },
+      ],
+    },
+  };
+  const input = {
+    timelineEntries: [quiz],
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
+  expect(deriveMessagesTimelineRows(input).find((row) => row.kind === "quiz-card")).toMatchObject({
+    answered: false,
+  });
+  const user: TimelineEntry = {
+    kind: "message",
+    id: "answer",
+    createdAt: at,
+    message: {
+      id: MessageId.make("answer"),
+      role: "user",
+      text: "Quiz answer",
+      runId: null,
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+    },
+  };
+  expect(
+    deriveMessagesTimelineRows({ ...input, timelineEntries: [quiz, user] }).find(
+      (row) => row.kind === "quiz-card",
+    ),
+  ).toMatchObject({ answered: true });
+});
