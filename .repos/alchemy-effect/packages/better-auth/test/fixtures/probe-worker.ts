@@ -4,7 +4,7 @@
  * effect. This pins the requirement-erasure design — if the Worker's `Req`
  * constraint ever rejects the shape, this file breaks the type-check.
  */
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
