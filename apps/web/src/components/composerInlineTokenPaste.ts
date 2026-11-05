@@ -20,9 +20,17 @@ import { readThreadShell } from "~/state/entities";
 
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 
+const plainTextPastes = new WeakSet<object>();
+
+/** Paste as Text keeps the clipboard's plain text, so it skips titled link recovery. */
+export function markPlainTextPaste(clipboardData: object): void {
+  plainTextPastes.add(clipboardData);
+}
+
 export function readPastedComposerLink(
   clipboardData: Pick<DataTransfer, "getData">,
 ): string | null {
+  if (plainTextPastes.has(clipboardData)) return null;
   const pastedText = clipboardData.getData("text/plain");
   const text = pastedText.trim();
   if (!text || /^[a-z][a-z\d+.-]*:\S+$/i.test(text)) return null;

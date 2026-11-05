@@ -25,7 +25,7 @@ import {
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditorTiptap";
 
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, markPlainTextPaste } from "./composerInlineTokenPaste";
 
 const babysit: ServerProviderSkill = {
   name: "babysit",
@@ -262,6 +262,14 @@ it.each([
     richText: true,
   },
   {
+    name: "a titled link with Paste as Text",
+    plain: "Example report",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "Example report",
+    richText: true,
+    asText: true,
+  },
+  {
     name: "a titled link in plain mode",
     plain: "Example report",
     html: '<a href="https://example.com/report">Example report</a>',
@@ -359,6 +367,7 @@ it.each([
     const clipboardData = new DataTransfer();
     clipboardData.setData("text/plain", fixture.plain);
     clipboardData.setData("text/html", fixture.html);
+    if (fixture.asText) markPlainTextPaste(clipboardData);
     expect(importPastedComposerText(clipboardData)).toBe(fixture.expected);
     editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
   });

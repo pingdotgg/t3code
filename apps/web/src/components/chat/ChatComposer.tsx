@@ -12,6 +12,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
   importPastedComposerText,
+  markPlainTextPaste,
   readPastedComposerContext,
   readPastedComposerLink,
 } from "../composerInlineTokenPaste";
@@ -2565,6 +2566,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+    if (bypassAutoAttachment) markPlainTextPaste(event.clipboardData);
     if (
       folders.length > 0 ||
       (activeThreadId &&
