@@ -16,7 +16,7 @@ index cdbd633..41a72bc 100644
  
    @objc func unmount() {
 diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
-index 545a5b2..ff4d4ae 100644
+index 545a5b2..fbdc984 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
 +++ b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
 @@ -8,6 +8,12 @@
@@ -32,7 +32,7 @@ index 545a5b2..ff4d4ae 100644
  
      let (duration, frame) = notification.keyboardMetaData()
      if let keyboardFrame = frame {
-@@ -36,8 +42,35 @@ extension KeyboardMovementObserver {
+@@ -36,8 +42,40 @@ extension KeyboardMovementObserver {
      }
    }
  
@@ -47,12 +47,17 @@ index 545a5b2..ff4d4ae 100644
 +    DispatchQueue.main.async(execute: task)
 +  }
 +
-+  // iPadOS floating and minimized keyboards are narrower than the screen or end above its bottom, so they
-+  // cover no app content; UIKit switches to them without willHide, so they must count as hidden.
++  // iPadOS floating and minimized keyboards are narrower than the screen or end above the app's bottom, so
++  // they cover no app content; UIKit switches to them without willHide, so they must count as hidden.
 +  private func isFloatingKeyboard(_ notification: Notification) -> Bool {
 +    guard let frame = notification.keyboardMetaData().1?.cgRectValue, !frame.isEmpty else { return false }
 +    let screen = (notification.object as? UIScreen ?? UIScreen.main).bounds
-+    return frame.width.rounded() < screen.width.rounded() || frame.maxY.rounded() < screen.height.rounded()
++    // in Slide Over a docked keyboard ends at the app window's bottom, above the screen's
++    let windowBottom = UIApplication.shared.activeWindow.map {
++      $0.convert($0.bounds, to: $0.screen.coordinateSpace).maxY
++    } ?? screen.height
++    let dockedBottom = min(screen.height, windowBottom)
++    return frame.width.rounded() < screen.width.rounded() || frame.maxY.rounded() < dockedBottom.rounded()
 +  }
 +
 +  private func hideIfKeyboardShown(_ notification: Notification) {
