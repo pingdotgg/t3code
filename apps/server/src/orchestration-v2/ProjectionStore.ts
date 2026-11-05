@@ -6479,17 +6479,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
         AND (i.run_id IS NULL OR r.status <> 'rolled_back')
         ${threadIds === undefined ? sql`` : sql`AND i.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
-      -- A finished delegate's result is committed before the continuation worker dispatches
-      -- the parent's wake, so its task holds the parent until the wake message exists.
+      -- A finished delegate's result commits before the continuation worker dispatches the
+      -- parent's wake run, so its task holds the parent until a newer run exists. Without an
+      -- owning instance it holds completion only, not the ended provider's caller access.
       UNION ALL
       SELECT i.thread_id, json_set(i.payload_json, '$.status', 'waiting') AS payload_json,
-        p.provider_instance_id AS owning_provider_instance_id
+        NULL AS owning_provider_instance_id
       FROM orchestration_v2_projection_subagents task
       INNER JOIN orchestration_v2_projection_runs r ON r.run_id = task.run_id
       INNER JOIN orchestration_v2_projection_turn_items i
         ON i.node_id = task.subagent_id AND i.thread_id = task.thread_id AND i.type = 'subagent'
-      LEFT JOIN orchestration_v2_projection_provider_threads p
-        ON p.provider_thread_id = i.provider_thread_id
       WHERE task.completion_delivery_state = 'claimed'
         AND task.origin = 'app_owned'
         ${threadIds === undefined ? sql`` : sql`AND task.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
@@ -6499,8 +6498,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHERE owed.value = task.subagent_id
         )
         AND NOT EXISTS (
-          SELECT 1 FROM orchestration_v2_projection_messages wake
-          WHERE wake.message_id = json_extract(r.payload_json, '$.delegatedCompletion.delivery.messageId')
+          SELECT 1 FROM orchestration_v2_projection_runs newer
+          WHERE newer.thread_id = r.thread_id AND newer.ordinal > r.ordinal
         )
       ${
         activeRunIds.length === 0
