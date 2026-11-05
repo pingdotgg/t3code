@@ -54,6 +54,30 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
   expect(items.map((item) => item.thread.threadId)).toEqual(["word", "newer-mid-word"]);
 });
 
+it("leaves both kinds of side chat out of thread mentions", () => {
+  const items = matchComposerThreadItems({
+    shells: [
+      shell("lesson-side-chat", "Model review", {
+        sideChat: {} as never,
+      }),
+      shell("upstream-side-chat", "Model review", {
+        lineage: {
+          rootThreadId: ThreadId.make("lesson"),
+          parentThreadId: ThreadId.make("lesson"),
+          relationshipToParent: "fork",
+          sideChat: true,
+        },
+      }),
+    ],
+    environmentId,
+    linkedEnvironments: new Map(),
+    excludeThreadId: null,
+    query: "model",
+    now: Date.parse("2026-10-23T00:00:00.000Z"),
+  });
+  expect(items).toEqual([]);
+});
+
 it("also offers threads on linked machines, naming the machine, but no other machine's", () => {
   const vps = EnvironmentId.make("env-vps");
   const items = matchComposerThreadItems({

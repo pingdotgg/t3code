@@ -1,4 +1,5 @@
 import {
+  isAnySideChatThread,
   isListedThreadLineage,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -13,7 +14,7 @@ import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearc
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
 
 export type ComposerThreadCandidate = ThreadSearchShell &
-  Pick<EnvironmentThreadShell, "archivedAt" | "lineage">;
+  Pick<EnvironmentThreadShell, "archivedAt" | "lineage" | "sideChat">;
 
 export interface ComposerThreadItem {
   readonly id: string;
@@ -47,7 +48,8 @@ export function matchComposerThreadItems(input: {
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      isListedThreadLineage(shell.lineage),
+      isListedThreadLineage(shell.lineage) &&
+      !isAnySideChatThread(shell),
   );
   return rankSearchItems(candidates, (shell, options) =>
     scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {

@@ -2313,7 +2313,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("lists only active subagent IDs without loading shell data", () =>
+it.effect("lists only active transcript-quiet IDs without loading shell data", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
@@ -2321,6 +2321,7 @@ it.effect("lists only active subagent IDs without loading shell data", () =>
     for (const [id, relationship, archivedAt, deletedAt] of [
       ["parent", null, null, null],
       ["active-subagent", "subagent", null, null],
+      ["active-side-chat", "side-chat", null, null],
       ["archived-subagent", "subagent", createdAt, null],
       ["deleted-subagent", "subagent", null, createdAt],
     ] as const) {
@@ -2331,45 +2332,18 @@ it.effect("lists only active subagent IDs without loading shell data", () =>
         ) VALUES (
           ${id}, 'project:test', ${id}, 'codex', 'full-access', 'default',
           ${createdAt}, ${createdAt}, ${archivedAt}, ${deletedAt},
-          ${JSON.stringify({ lineage: { relationshipToParent: relationship }, archivedAt })}
+          ${JSON.stringify({
+            lineage: { relationshipToParent: relationship === "side-chat" ? "fork" : relationship },
+            ...(relationship === "side-chat" ? { sideChat: { lessonThreadId: "lesson" } } : {}),
+            archivedAt,
+          })}
         )
       `;
     }
 
     assert.sameMembers(
       [...(yield* store.listActiveSubagentThreadIds())],
-      [ThreadId.make("active-subagent")],
-    );
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("lists only active side chat IDs without loading shell data", () =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const sql = yield* SqlClient.SqlClient;
-    const createdAt = "2026-01-05T00:00:00.000Z";
-    const sideChat = { lessonThreadId: "lesson" };
-    for (const [id, chat, archivedAt, deletedAt] of [
-      ["lesson", null, null, null],
-      ["active-side-chat", sideChat, null, null],
-      ["archived-side-chat", sideChat, createdAt, null],
-      ["deleted-side-chat", sideChat, null, createdAt],
-    ] as const) {
-      yield* sql`
-        INSERT INTO orchestration_v2_projection_threads (
-          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
-          created_at, updated_at, archived_at, deleted_at, payload_json
-        ) VALUES (
-          ${id}, 'project:test', ${id}, 'codex', 'full-access', 'default',
-          ${createdAt}, ${createdAt}, ${archivedAt}, ${deletedAt},
-          ${JSON.stringify({ lineage: { relationshipToParent: "fork" }, archivedAt, ...(chat === null ? {} : { sideChat: chat }) })}
-        )
-      `;
-    }
-
-    assert.sameMembers(
-      [...(yield* store.listActiveSideChatThreadIds())],
-      [ThreadId.make("active-side-chat")],
+      [ThreadId.make("active-subagent"), ThreadId.make("active-side-chat")],
     );
   }).pipe(Effect.provide(layerTest)),
 );

@@ -1296,10 +1296,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         return yield* fromSnapshot;
       }
 
-      transcriptQuietThreadIds = new Set([
-        ...(yield* threadManagement.listActiveSubagentThreadIds()),
-        ...(yield* threadManagement.listActiveSideChatThreadIds()),
-      ]);
+      transcriptQuietThreadIds = new Set(yield* threadManagement.listActiveSubagentThreadIds());
 
       const loaded = yield* loadProjectMetadataSnapshot(highWater);
       // Read before replying: the range is budgeted above, and a prune pass during the read

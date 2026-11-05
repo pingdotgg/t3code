@@ -610,6 +610,20 @@ export function isSideChatThread(thread: { readonly sideChat?: unknown }): boole
   return thread.sideChat != null;
 }
 
+export function isAnySideChatThread(thread: {
+  readonly lineage: { readonly sideChat?: unknown };
+  readonly sideChat?: unknown;
+}): boolean {
+  return thread.lineage.sideChat === true || isSideChatThread(thread);
+}
+
+export function isTranscriptQuietThread(thread: {
+  readonly lineage: { readonly relationshipToParent?: unknown };
+  readonly sideChat?: unknown;
+}): boolean {
+  return thread.lineage.relationshipToParent === "subagent" || isSideChatThread(thread);
+}
+
 /** The one derivation every thread shell builder uses for its slim side chat. */
 export function threadShellSideChatOf(
   sideChat: OrchestrationV2SideChat,

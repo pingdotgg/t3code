@@ -15,7 +15,7 @@ import {
   isListedThreadLineage,
   isLiveSubagentShell,
   isOlderSettledThreadShell,
-  isSideChatThread,
+  isTranscriptQuietThread,
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
 } from "@t3tools/contracts";
@@ -98,11 +98,11 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const transcriptQuietThreadIds = new Set<string>();
   const settledTimes: Array<number> = [];
   for (const row of rows) {
-    if (row.lineage.relationshipToParent === "subagent") {
+    if (isTranscriptQuietThread(row)) {
       transcriptQuietThreadIds.add(row.id);
-      if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
-    } else if (isSideChatThread(row)) {
-      transcriptQuietThreadIds.add(row.id);
+      if (row.lineage.relationshipToParent === "subagent" && row.lineage.parentThreadId) {
+        subagentParentIds.add(row.lineage.parentThreadId);
+      }
     } else if (
       isListedThreadLineage(row.lineage) &&
       row.settledOverride === "settled" &&
@@ -424,10 +424,7 @@ export function shouldPublishShellApplicationEvent(
   if ("aggregateKind" in stored) return true;
   const { event } = stored;
   if (event.type === "thread.created") {
-    if (
-      event.payload.lineage.relationshipToParent === "subagent" ||
-      isSideChatThread(event.payload)
-    ) {
+    if (isTranscriptQuietThread(event.payload)) {
       quietThreadIds.add(event.threadId);
     }
     return true;

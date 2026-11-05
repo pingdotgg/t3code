@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   isListedThreadLineage,
+  isAnySideChatThread,
   isProviderNativeSubagentThread,
   isSideChatThread,
   OrchestrationV2ThreadShell,
@@ -161,9 +162,7 @@ export function childThreadInputsTitle(
 ): string {
   const approvals = children.filter((child) => child.hasPendingApprovals).length;
   const need = approvals === 0 ? "input" : approvals === children.length ? "approval" : "you";
-  const sideChats = children.filter(
-    (child) => child.lineage.sideChat === true || isSideChatThread(child),
-  ).length;
+  const sideChats = children.filter((child) => isAnySideChatThread(child)).length;
   const noun =
     sideChats === children.length ? "side chat" : sideChats === 0 ? "subagent" : "thread";
   return children.length === 1
@@ -266,7 +265,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       let byParent: Map<ThreadId, OrchestrationV2ThreadShell[]> | undefined;
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parentId = thread.lineage.parentThreadId;
-        if (thread.lineage.sideChat !== true || parentId === null) continue;
+        if (!isAnySideChatThread(thread) || parentId === null) continue;
         byParent ??= new Map();
         const siblings = byParent.get(parentId);
         if (siblings) siblings.push(thread);
@@ -461,9 +460,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           const parent = thread.lineage.parentThreadId;
           if (
             parent !== null &&
-            (thread.lineage.relationshipToParent === "subagent" ||
-              thread.lineage.sideChat === true ||
-              isSideChatThread(thread))
+            (thread.lineage.relationshipToParent === "subagent" || isAnySideChatThread(thread))
           ) {
             addChild({ environmentId, threadId: parent }, environmentId, thread);
           } else if (thread.delegatedFrom !== undefined) {

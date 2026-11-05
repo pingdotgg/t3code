@@ -24,6 +24,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isAnySideChatThread,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -57,7 +58,6 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
-  isSideChatThread,
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
@@ -471,10 +471,6 @@ export interface OrchestratorV2Shape {
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: () => Effect.Effect<
-    ReadonlyArray<ThreadId>,
-    OrchestratorV2Error
-  >;
-  readonly listActiveSideChatThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     OrchestratorV2Error
   >;
@@ -14675,10 +14671,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       const source = yield* findThread(command.sourceThreadId);
       const target = yield* findThread(command.targetThreadId);
-      return yield* source === null ||
-      source.lineage.sideChat === true ||
-      isSideChatThread(source) ||
-      target !== null
+      return yield* source === null || isAnySideChatThread(source) || target !== null
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
@@ -15120,13 +15113,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       function () {
         return projectionStore
           .listActiveSubagentThreadIds()
-          .pipe(Effect.mapError(shellProjectionError));
-      },
-    ),
-    listActiveSideChatThreadIds: Effect.fn("OrchestratorV2.listActiveSideChatThreadIds")(
-      function () {
-        return projectionStore
-          .listActiveSideChatThreadIds()
           .pipe(Effect.mapError(shellProjectionError));
       },
     ),

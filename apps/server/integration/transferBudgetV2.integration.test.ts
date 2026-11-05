@@ -120,8 +120,6 @@ const layerManagement = Layer.unwrap(
       listActiveShellIndex: () => projections.listActiveShellIndex().pipe(Effect.orDie),
       listActiveSubagentThreadIds: () =>
         projections.listActiveSubagentThreadIds().pipe(Effect.orDie),
-      listActiveSideChatThreadIds: () =>
-        projections.listActiveSideChatThreadIds().pipe(Effect.orDie),
       readShellSnapshot: (options) =>
         projections.readShellSnapshot(options).pipe(Effect.map(Effect.orDie), Effect.orDie),
       streamStoredEventsFrom: (input) =>

@@ -1,6 +1,6 @@
 import {
   GitCommandError,
-  isSideChatThread,
+  isAnySideChatThread,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
 } from "@t3tools/contracts";
@@ -208,9 +208,7 @@ function worktreeOwner<
     while (current.id !== owner.id) {
       if (
         seen.has(current.id) ||
-        (current.lineage.relationshipToParent !== "subagent" &&
-          current.lineage.sideChat !== true &&
-          !isSideChatThread(current)) ||
+        (current.lineage.relationshipToParent !== "subagent" && !isAnySideChatThread(current)) ||
         current.lineage.rootThreadId !== owner.lineage.rootThreadId
       )
         return undefined;
