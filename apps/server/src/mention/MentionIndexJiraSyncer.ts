@@ -73,15 +73,16 @@ const make = Effect.gen(function* () {
             const tool = names.has("search") ? "search" : "jira_search";
             payload = yield* session.callTool(tool, { jql, maxResults: MAX_ROWS });
           } else {
-            return yield* Effect.fail(
-              new MentionIndexMcpError(
+            return yield* new MentionIndexMcpError({
+              detail:
                 "Jira MCP server has no searchable issue tool (expected searchJiraIssuesUsingJql, search, or jira_search)",
-              ),
-            );
+            });
           }
 
           if (asRecord(payload)?.isError === true) {
-            return yield* Effect.fail(new MentionIndexMcpError("Jira MCP tool returned isError"));
+            return yield* new MentionIndexMcpError({
+              detail: "Jira MCP tool returned isError",
+            });
           }
 
           const now = yield* Clock.currentTimeMillis;

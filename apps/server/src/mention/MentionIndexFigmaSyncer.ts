@@ -74,11 +74,10 @@ const make = Effect.gen(function* () {
           const tools = yield* session.listTools();
           const names = new Set(tools.map((tool) => tool.name));
           if (!names.has("list_teams")) {
-            return yield* Effect.fail(
-              new MentionIndexMcpError(
+            return yield* new MentionIndexMcpError({
+              detail:
                 "Figma MCP has no list_teams tool. Use a REST-based Figma MCP (e.g. figma-rest-mcp).",
-              ),
-            );
+            });
           }
           const payload = yield* session.callTool("list_teams", {});
           return extractNamedIds(payload, ["teams", "team"]).slice(0, 100);
@@ -114,11 +113,10 @@ const make = Effect.gen(function* () {
           const tools = yield* session.listTools();
           const names = new Set(tools.map((tool) => tool.name));
           if (!names.has("list_projects")) {
-            return yield* Effect.fail(
-              new MentionIndexMcpError(
+            return yield* new MentionIndexMcpError({
+              detail:
                 "Figma MCP has no list_projects tool. Use a REST-based Figma MCP (e.g. figma-rest-mcp).",
-              ),
-            );
+            });
           }
           const payload = yield* session.callTool("list_projects", { team_id: input.teamId });
           return extractNamedIds(payload, ["projects", "project"]).slice(0, 200);
@@ -189,11 +187,10 @@ const make = Effect.gen(function* () {
                   ? "list_project_files"
                   : null;
               if (listTool === null) {
-                return yield* Effect.fail(
-                  new MentionIndexMcpError(
+                return yield* new MentionIndexMcpError({
+                  detail:
                     "Figma MCP cannot list project files (needs list_files or list_project_files).",
-                  ),
-                );
+                });
               }
               for (const project of configuredProjects) {
                 const listed = yield* Effect.result(
@@ -261,9 +258,9 @@ const make = Effect.gen(function* () {
             }
 
             if (rows.length === 0) {
-              return yield* Effect.fail(
-                new MentionIndexMcpError("Figma MCP returned no files for configured projects"),
-              );
+              return yield* new MentionIndexMcpError({
+                detail: "Figma MCP returned no files for configured projects",
+              });
             }
             return rows;
           }),

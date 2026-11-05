@@ -1,5 +1,5 @@
 // Short-lived MCP sessions for mention indexing; JSON-RPC payloads stay opaque.
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalJsonInEffect:off globalErrorInEffectFailure:off globalErrorInEffectCatch:off globalFetchInEffect:off tryCatchInEffectGen:off effectFnOpportunity:off
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalJsonInEffect:off globalErrorInEffectFailure:off globalErrorInEffectCatch:off globalFetchInEffect:off tryCatchInEffectGen:off effectFnOpportunity:off processEnvInEffect:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeReadline from "node:readline";
 
@@ -32,8 +32,13 @@ function parseJsonOrNull(raw: string): unknown | null {
   }
 }
 
-export class MentionIndexMcpError extends Error {
-  readonly _tag = "MentionIndexMcpError";
+export class MentionIndexMcpError extends Schema.TaggedError<MentionIndexMcpError>()(
+  "MentionIndexMcpError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
 }
 
 export type MentionMcpKind = "jira" | "figma";
