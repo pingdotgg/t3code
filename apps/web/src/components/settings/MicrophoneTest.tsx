@@ -3,6 +3,7 @@ import { CheckIcon, MicIcon, PauseIcon, PlayIcon, RotateCcwIcon, XIcon } from "l
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import workletUrl from "../../speech/pcmWorklet.ts?worker&url";
 import { VoiceInputErrorPill } from "../chat/VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "../chat/VoiceInputPill";
 import { Button } from "../ui/button";
@@ -15,8 +16,9 @@ type Capture = {
   stream?: MediaStream;
   recorder?: MediaRecorder;
   context?: AudioContext;
+  worklet?: AudioWorkletNode;
   timer?: ReturnType<typeof setTimeout>;
-  meter?: ReturnType<typeof setInterval>;
+  elapsedTimer?: ReturnType<typeof setInterval>;
   startedAt?: number;
 };
 
@@ -39,7 +41,9 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
     if (!current) return;
     capture.current = null;
     clearTimeout(current.timer);
-    clearInterval(current.meter);
+    clearInterval(current.elapsedTimer);
+    current.worklet?.disconnect();
+    current.worklet?.port.close();
     if (current.recorder && current.recorder.state !== "inactive") current.recorder.stop();
     current.stream?.getTracks().forEach((track) => track.stop());
     void current.context?.close().catch(() => undefined);
@@ -66,7 +70,11 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
     setLevel(0);
     setElapsed(0);
     setPhase("starting");
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    if (
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined" ||
+      typeof AudioWorkletNode === "undefined"
+    ) {
       setError("Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.");
       setPhase("idle");
       return;
@@ -104,13 +112,14 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
         setRecording({ url: recordingUrl.current, duration });
         setPhase("ready");
       });
-      recorder.addEventListener("error", () => {
+      const onRecordingError = () => {
         if (capture.current !== current) return;
         releaseCapture();
         setLevel(0);
         setError("Could not record microphone audio. Try again.");
         setPhase("idle");
-      });
+      };
+      recorder.addEventListener("error", onRecordingError);
       for (const track of stream.getAudioTracks()) {
         track.addEventListener(
           "ended",
@@ -124,23 +133,28 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
       }
       const context = new AudioContext();
       current.context = context;
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 256;
-      context.createMediaStreamSource(stream).connect(analyser);
+      await context.audioWorklet.addModule(workletUrl);
+      if (capture.current !== current) return;
+      const worklet = new AudioWorkletNode(context, "t3-pcm-capture", {
+        channelCount: 1,
+        processorOptions: { meterOnly: true },
+      });
+      current.worklet = worklet;
+      worklet.port.onmessage = ({ data }: MessageEvent<number | "stopped">) => {
+        if (capture.current === current && typeof data === "number") setLevel(data);
+      };
+      worklet.onprocessorerror = onRecordingError;
+      context.createMediaStreamSource(stream).connect(worklet);
+      worklet.connect(context.destination);
       await context.resume();
       if (capture.current !== current) return;
-      const samples = new Float32Array(analyser.fftSize);
       const startedAt = performance.now();
       current.startedAt = startedAt;
-      current.meter = setInterval(() => {
+      current.elapsedTimer = setInterval(() => {
         setElapsed(Math.min(LOOPBACK_SECONDS, Math.floor((performance.now() - startedAt) / 1_000)));
-        analyser.getFloatTimeDomainData(samples);
-        const rms = Math.sqrt(
-          samples.reduce((sum, value) => sum + value * value, 0) / samples.length,
-        );
-        setLevel(Math.min(1, rms * 5));
       }, 100);
       recorder.start();
+      worklet.port.postMessage("start");
       setPhase("recording");
       current.timer = setTimeout(() => {
         if (recorder.state !== "inactive") recorder.stop();
