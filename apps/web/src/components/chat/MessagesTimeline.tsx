@@ -511,6 +511,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   // The open history belongs to the prompt that opened it; sending closes it.
   const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
+  const [workingHistoryCollapsing, setWorkingHistoryCollapsing] = useState(false);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
@@ -1251,6 +1252,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     onToggleWorkingHistory,
+    onWorkingHistoryCollapsing: setWorkingHistoryCollapsing,
     onFocusComposer: onFocusComposer ?? null,
     workGroupViewState,
   };
@@ -1566,7 +1568,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
                 fullscreenAppRowId !== null ||
-                workingHistoryOpen
+                workingHistoryOpen ||
+                workingHistoryCollapsing
                   ? false
                   : isWorking && !prefersReducedMotion && settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
