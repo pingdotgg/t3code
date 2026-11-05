@@ -46,6 +46,18 @@ moves and the agent keeps working in the same place. Other threads in that folde
 move with it. Rename the project in its settings, and use **Initialize Git** to
 get branch and diff controls.
 
+## Change an existing thread's workspace
+
+On web and desktop, open thread details and use **Change workspace** to choose a
+project or an existing worktree in the same environment. On mobile, use **Change
+workspace** in the Git menu; load the worktrees, then reopen the menu to choose one.
+Add a newly created folder as a project before selecting it. Use the branch picker
+or Git inspector to change branches in the selected checkout.
+
+Stop the current turn and cancel queued turns before switching. The conversation
+stays in the same thread, and the next turn runs in the selected workspace.
+Changing projects starts from that project's checkout. Files stay where they are.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
