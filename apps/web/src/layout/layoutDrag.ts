@@ -23,7 +23,7 @@ import {
   type LayoutTabDestination,
 } from "./layoutModel";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
-import { notePaneDrop } from "../motion/paneMotion";
+import { notePaneDrop } from "../motion/paneDrop";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 export type LayoutDragSource =
