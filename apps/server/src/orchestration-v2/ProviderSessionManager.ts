@@ -932,6 +932,7 @@ export const layerWithOptions = (
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
+          readonly onlyIfRuntime?: LiveSessionEntry["runtime"];
           readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
           const key = sessionKey(input.providerSessionId);
@@ -944,6 +945,9 @@ export const layerWithOptions = (
               const existing = current.get(key);
               if (existing !== candidate) {
                 return [existing === undefined ? "gone" : "changed", current] as const;
+              }
+              if (input.onlyIfRuntime !== undefined && existing.runtime !== input.onlyIfRuntime) {
+                return ["kept", current] as const;
               }
               if (
                 input.onlyIfIdleGeneration !== undefined &&
@@ -1019,6 +1023,7 @@ export const layerWithOptions = (
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfRuntime?: LiveSessionEntry["runtime"];
         readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         readonly gracefulSubscribers?: boolean;
       }) =>
@@ -2413,6 +2418,8 @@ export const layerWithOptions = (
                 reason: "idle_timeout",
                 detail: input.detail ?? "Delegated task finished.",
                 onlyIfIdleGeneration: generations.get(entry)!,
+                // A replacement reuses the session id and restarts the generation count.
+                onlyIfRuntime: entry.runtime,
               }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
             }
           },

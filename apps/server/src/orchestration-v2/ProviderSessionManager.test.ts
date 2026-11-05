@@ -4129,3 +4129,78 @@ it.effect.each<{
     assert.equal(result.openCount, 1);
   }),
 );
+
+it.effect(
+  "ProviderSessionManagerV2 a finished child's release leaves a replacement session alone",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const probing = yield* Deferred.make<void>();
+      const replaced = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-delegate-replacement",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-delegate-replacement",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId,
+              now,
+              projectId,
+              delegatedBy: ThreadId.make("thread-provider-session-manager-parent"),
+            }),
+            yield* finishedDelegateRunEvent({
+              idAllocator,
+              threadId,
+              ordinal: 1,
+              status: "completed",
+              now,
+            }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        const release = yield* manager
+          .releaseFinishedDelegate({ threadId })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(probing);
+        // The replacement takes the same id and reaches the same idle generation.
+        yield* manager.close(providerSessionId);
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* Deferred.succeed(replaced, undefined);
+        yield* Fiber.join(release);
+
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        const { openCount, closeCount } = yield* Ref.get(state);
+        assert.equal(openCount, 2);
+        assert.equal(closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60 * 60_000,
+            capabilities: ExclusiveCapabilities,
+            hasPendingBackgroundWork: Deferred.succeed(probing, undefined).pipe(
+              Effect.andThen(Deferred.await(replaced)),
+              Effect.as(false),
+            ),
+          }),
+        ),
+      );
+    }),
+);
