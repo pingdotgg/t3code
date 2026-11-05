@@ -1729,6 +1729,7 @@ function ThreadDetailBody(
                       >
                         {props.activePendingApproval ? (
                           <Animated.ScrollView
+                            key={props.activePendingApproval.requestId}
                             style={approvalHeightStyle}
                             keyboardShouldPersistTaps="handled"
                             nestedScrollEnabled
