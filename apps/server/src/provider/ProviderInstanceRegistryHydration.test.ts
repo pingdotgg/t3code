@@ -149,51 +149,64 @@ describe("seedDevReplayInstance", () => {
 });
 
 describe("layerSettingsWatcher", () => {
+  const provider = (label: string) => ({
+    [SecretProviderId.make("personal")]: {
+      kind: SecretProviderKind.make("one_password"),
+      label,
+      config: { account: "my" },
+    },
+  });
+
+  const watch = (initial: ServerSettings | undefined) =>
+    Effect.gen(function* () {
+      const changes = yield* Queue.unbounded<ServerSettings>();
+      const reconciled = yield* Queue.unbounded<void>();
+      const calls: Array<"reconcile" | "reloadSecrets"> = [];
+      const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
+        reconcile: () =>
+          Effect.suspend(() => {
+            calls.push("reconcile");
+            return Queue.offer(reconciled, undefined);
+          }),
+        reloadSecrets: () => Effect.sync(() => void calls.push("reloadSecrets")),
+      });
+      yield* Layer.build(
+        layerSettingsWatcher(Stream.fromQueue(changes), initial).pipe(Layer.provide(mutator)),
+      );
+      return {
+        calls,
+        change: (settings: ServerSettings) =>
+          Queue.offer(changes, settings).pipe(Effect.andThen(Queue.take(reconciled))),
+      };
+    });
+
   effectIt.effect(
     "retries unreadable secrets when a secret provider changes, not when it is renamed",
     () =>
       Effect.gen(function* () {
         const settings = yield* ServerSettingsService;
-        const changes = yield* Queue.unbounded<ServerSettings>();
-        const calls: Array<"reconcile" | "reloadSecrets"> = [];
-        const reconciled = yield* Queue.unbounded<void>();
-        const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
-          reconcile: () =>
-            Effect.suspend(() => {
-              calls.push("reconcile");
-              return Queue.offer(reconciled, undefined);
-            }),
-          reloadSecrets: () => Effect.sync(() => void calls.push("reloadSecrets")),
-        });
-        yield* Layer.build(
-          layerSettingsWatcher(Stream.fromQueue(changes)).pipe(Layer.provide(mutator)),
-        );
+        const { calls, change } = yield* watch(yield* settings.getSettings);
 
-        const next = yield* settings.updateSettings({
-          secretProviders: {
-            [SecretProviderId.make("personal")]: {
-              kind: SecretProviderKind.make("one_password"),
-              label: "Personal",
-              config: { account: "my" },
-            },
-          },
-        });
-        yield* Queue.offer(changes, next);
-        yield* Queue.take(reconciled);
-        const relabeled = yield* settings.updateSettings({
-          secretProviders: {
-            [SecretProviderId.make("personal")]: {
-              kind: SecretProviderKind.make("one_password"),
-              label: "Renamed",
-              config: { account: "my" },
-            },
-          },
-        });
-        yield* Queue.offer(changes, relabeled);
-        yield* Queue.take(reconciled);
+        yield* change(yield* settings.updateSettings({ secretProviders: provider("Personal") }));
+        yield* change(yield* settings.updateSettings({ secretProviders: provider("Renamed") }));
 
         // A label is not read by any vault, so renaming a provider retries nothing.
         expect(calls).toEqual(["reconcile", "reloadSecrets", "reconcile"]);
+      }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
+  );
+
+  effectIt.effect(
+    "compares a change queued during startup with the settings the registry started from",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsService;
+        const started = yield* settings.getSettings;
+        const saved = yield* settings.updateSettings({ secretProviders: provider("Personal") });
+        const { calls, change } = yield* watch(started);
+
+        yield* change(saved);
+
+        expect(calls).toEqual(["reconcile", "reloadSecrets"]);
       }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
   );
 });
