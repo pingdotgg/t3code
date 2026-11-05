@@ -421,6 +421,7 @@ export interface ThreadManagementServiceShape {
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
   readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
+  readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
   /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
@@ -1536,6 +1537,7 @@ const make = Effect.gen(function* () {
         );
       },
     ),
+    getThreadTitles: orchestrator.getThreadTitles,
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,
