@@ -29,6 +29,7 @@ import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
+import * as AssetSigner from "../assets/AssetSigner.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -922,6 +923,7 @@ it.effect("HTTP tool discovery only advertises monitors to monitoring credential
         McpSessionRegistry.layer,
         PreviewAutomationBroker.layer,
         MonitorSession.layer,
+        Layer.mock(AssetSigner.AssetSigner)({}),
         Layer.mock(DeviceService.DeviceService)({}),
         Layer.mock(PreviewBrowser.PreviewBrowser)({}),
         // Every toolkit's dependencies; discovery never calls them.
@@ -1458,8 +1460,7 @@ it.effect(
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-              resolve: () => Effect.succeed(undefined),
+              resolve: () => Effect.undefined,
             }),
           ),
           Layer.provide(

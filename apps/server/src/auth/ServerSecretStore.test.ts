@@ -165,17 +165,13 @@ const layerConcurrentReadMissFileSystem = Layer.effect(
                     yield* Deferred.succeed(readBarrier, void 0);
                   }
                   yield* Deferred.await(readBarrier);
-                  return yield* Effect.failCause(
-                    Cause.fail(
-                      PlatformError.systemError({
-                        _tag: "NotFound",
-                        module: "FileSystem",
-                        method: "readFile",
-                        pathOrDescriptor: String(path),
-                        description: "Secret file does not exist yet.",
-                      }),
-                    ),
-                  );
+                  return yield* PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFile",
+                    pathOrDescriptor: String(path),
+                    description: "Secret file does not exist yet.",
+                  });
                 });
               }),
             )

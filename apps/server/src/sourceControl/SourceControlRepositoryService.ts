@@ -492,7 +492,7 @@ export const make = Effect.gen(function* () {
           args: ["rev-parse", "--verify", "HEAD"],
         })
         .pipe(
-          Effect.map(() => true),
+          Effect.as(true),
           Effect.orElseSucceed(() => false),
         );
       if (!hasCommits) {

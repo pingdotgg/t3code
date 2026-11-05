@@ -694,6 +694,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated branch name prefix namespace t3code"],
   },
   {
+    id: "ghq-clone-layout",
+    title: "Clone into host folders",
+    to: "/settings/connections",
+    targetId: "environment-directories",
+    environmentOnly: true,
+    searchTerms: ["ghq clone destination host owner repository root layout"],
+  },
+  {
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",

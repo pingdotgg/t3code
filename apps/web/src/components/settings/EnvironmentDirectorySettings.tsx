@@ -7,6 +7,7 @@ import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hook
 import type { EnvironmentPresentation } from "../../state/environments";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
+import { Switch } from "../ui/switch";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 
 /**
@@ -66,6 +67,28 @@ export function EnvironmentDirectoryRows({
             placeholder={defaults?.repositories ?? "~"}
             spellCheck={false}
             aria-label="Repositories directory"
+          />
+        }
+      />
+      <SettingsRow
+        title="Clone into host folders"
+        description="Clones go to github.com/owner/repo under the repositories directory, like ghq."
+        status={disabledReason}
+        aria-disabled={disabled || undefined}
+        resetAction={
+          !disabled && settings.ghqCloneLayout ? (
+            <SettingResetButton
+              label="clone into host folders"
+              onClick={() => updateSettings({ ghqCloneLayout: false })}
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            checked={settings.ghqCloneLayout}
+            onCheckedChange={(checked) => updateSettings({ ghqCloneLayout: Boolean(checked) })}
+            disabled={disabled}
+            aria-label="Clone into host folders"
           />
         }
       />

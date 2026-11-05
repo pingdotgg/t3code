@@ -638,7 +638,10 @@ describe("relay managed tunnel recovery", () => {
         }),
       );
       expect(wrongAction).toMatchObject({ _tag: "Unauthorized" });
-    }).pipe(Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings)),
+    }).pipe(
+      Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings),
+      Effect.provide(NodeCryptoLayer.layerSignature),
+    ),
   );
 
   it.effect("rejects a signed registration proof for a different origin", () =>
@@ -680,7 +683,10 @@ describe("relay managed tunnel recovery", () => {
       );
 
       expect(error).toMatchObject({ _tag: "Unauthorized" });
-    }).pipe(Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings)),
+    }).pipe(
+      Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings),
+      Effect.provide(NodeCryptoLayer.layerSignature),
+    ),
   );
 
   it.effect("registers recovery for an existing tunnel without provisioning it", () => {
@@ -1459,7 +1465,7 @@ describe("relay routing fallback", () => {
         })),
       );
       expect(verified.map((input) => input.threadId)).toEqual(threadIds);
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(NodeCryptoLayer.layerSignature)),
   );
 });
 

@@ -619,10 +619,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     // remote update, and terminating the launcher first would interrupt the
     // very thing it is guarding.
     const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
-    if (
-      Option.isSome(previousStateText) &&
-      serviceStateHasPendingUpdate(previousStateText.value)
-    ) {
+    if (Option.isSome(previousStateText) && serviceStateHasPendingUpdate(previousStateText.value)) {
       return yield* new BootService.BootServiceUpdatePendingError();
     }
     // Same downgrade guard as the systemd/launchd path (upstream #5302): an
@@ -649,7 +646,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     yield* Effect.gen(function* () {
       yield* writeDurably(
         statePath,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
+        // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
         `${JSON.stringify(
           {
             protocol: SERVICE_LAUNCHER_PROTOCOL,

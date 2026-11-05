@@ -262,10 +262,10 @@ describe("DesktopBackendConfiguration", () => {
         );
         assert.equal(
           first.bootstrap.desktopBootstrapToken,
-          currentDesktopBootstrapToken(
+          yield* currentDesktopBootstrapToken(
             first.bootstrap.desktopBootstrapSecret ?? "",
             yield* Clock.currentTimeMillis,
-          ),
+          ).pipe(Effect.provide(NodeCrypto.layerMac)),
         );
         assert.equal(
           yield* configuration.currentBootstrapToken,
