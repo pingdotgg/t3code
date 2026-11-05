@@ -1,6 +1,7 @@
 import * as Duration from "effect/Duration";
 import * as Redacted from "effect/Redacted";
 import { isResource } from "../Resource.ts";
+import { base64ToBytes, bytesToBase64 } from "../Util/base64.ts";
 
 /**
  * JSON marker used to tag a `Redacted<T>` value when writing state.
@@ -27,6 +28,14 @@ export const DURATION_MARKER = "__duration__";
  */
 export const DATE_MARKER = "__date__";
 
+/**
+ * JSON marker used to tag a byte array (`Uint8Array`) when writing state.
+ * The reviver rebuilds a real `Uint8Array`, so a byte-valued prop (a WAF
+ * byte-match string, a zip) read back out of persisted state is the same
+ * value the program declares — instead of an index-keyed object.
+ */
+export const BYTES_MARKER = "__bytes__";
+
 const decodeDate = (encoded: unknown): Date | undefined => {
   if (typeof encoded !== "string") return undefined;
   const date = new Date(encoded);
@@ -38,9 +47,7 @@ const decodeDate = (encoded: unknown): Date | undefined => {
  * `{_id,_tag,millis?,nanos?}` shape. Shared by state persistence and the
  * RPC sidecar — that JSON is not a valid `Duration.Input`.
  */
-export const decodeDuration = (
-  encoded: unknown,
-): Duration.Duration | undefined => {
+export const decodeDuration = (encoded: unknown): Duration.Duration | undefined => {
   if (encoded === null || typeof encoded !== "object") return undefined;
   const json = encoded as {
     _tag?: "Millis" | "Nanos" | "Infinity" | "NegativeInfinity";
@@ -49,13 +56,9 @@ export const decodeDuration = (
   };
   switch (json._tag) {
     case "Millis":
-      return json.millis !== undefined
-        ? Duration.millis(json.millis)
-        : undefined;
+      return json.millis !== undefined ? Duration.millis(json.millis) : undefined;
     case "Nanos":
-      return json.nanos !== undefined
-        ? Duration.nanos(BigInt(json.nanos))
-        : undefined;
+      return json.nanos !== undefined ? Duration.nanos(BigInt(json.nanos)) : undefined;
     case "Infinity":
       return Duration.infinity;
     case "NegativeInfinity":
@@ -86,7 +89,7 @@ export const encodeState = (value: unknown): unknown => {
     return value;
   if (Redacted.isRedacted(value)) {
     return {
-      [REDACTED_MARKER]: encodeState(Redacted.value(value)),
+      [REDACTED_MARKER]: value.pipe(Redacted.value, encodeState),
     };
   }
   if (Duration.isDuration(value)) {
@@ -108,6 +111,9 @@ export const encodeState = (value: unknown): unknown => {
   // compares as equal to a live Date, so legacy rows never churn either.
   if (value instanceof Date) {
     return { [DATE_MARKER]: value.toJSON() };
+  }
+  if (value instanceof Uint8Array) {
+    return { [BYTES_MARKER]: bytesToBase64(value) };
   }
   if (isResource(value)) {
     return {
@@ -150,6 +156,13 @@ export const reviveState = (_key: string, value: unknown): unknown => {
       const decoded = decodeDate(obj[DATE_MARKER]);
       if (decoded !== undefined) return decoded;
     }
+    if (
+      BYTES_MARKER in obj &&
+      Object.keys(obj).length === 1 &&
+      typeof obj[BYTES_MARKER] === "string"
+    ) {
+      return base64ToBytes(obj[BYTES_MARKER]);
+    }
   }
   return value;
 };
@@ -176,6 +189,9 @@ export const reviveStateRecursive = (value: unknown): unknown => {
   if (keys.length === 1 && keys[0] === DATE_MARKER) {
     const decoded = decodeDate(obj[DATE_MARKER]);
     if (decoded !== undefined) return decoded;
+  }
+  if (keys.length === 1 && keys[0] === BYTES_MARKER && typeof obj[BYTES_MARKER] === "string") {
+    return base64ToBytes(obj[BYTES_MARKER]);
   }
   const result: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {

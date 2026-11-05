@@ -27,8 +27,7 @@ const API_PREFIX = /^\/api\//;
  * The git smart-HTTP wire endpoints: `/:owner/:repo[.git]/info/refs`,
  * `git-upload-pack`, `git-receive-pack`.
  */
-const WIRE_PATH =
-  /^\/[^/]+\/[^/]+\/(?:info\/refs$|git-upload-pack$|git-receive-pack$)/;
+const WIRE_PATH = /^\/[^/]+\/[^/]+\/(?:info\/refs$|git-upload-pack$|git-receive-pack$)/;
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {

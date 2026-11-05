@@ -6,7 +6,7 @@ import {
   type ServerConfig,
   sessionGrantsScope,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -26,8 +26,9 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 
 /** @public Required to name the error in consumers' inferred session results. */
-export class SessionHttpClientUnavailable extends Data.TaggedError(
+export class SessionHttpClientUnavailable extends Schema.TaggedError<SessionHttpClientUnavailable>()(
   "SessionHttpClientUnavailable",
+  {},
 ) {}
 
 function initialConfigOption<E>(
