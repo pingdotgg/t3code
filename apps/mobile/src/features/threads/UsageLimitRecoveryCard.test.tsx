@@ -12,8 +12,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 type ButtonProps = { label: string; disabled?: boolean; onPress: () => void };
 
 vi.mock("react-native", () => ({
+  Linking: { openURL: vi.fn() },
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
+vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn() }));
+vi.mock("../../components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
@@ -31,40 +34,45 @@ import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function failedThread(resetAt: string | null, lastErrorCode?: string): EnvironmentThreadShell {
+function failedThread(
+  resetAt: string | null,
+  lastErrorCode?: string,
+  lastErrorClass = "usage_limit",
+): EnvironmentThreadShell {
   return {
     id: "thread-1",
     updatedAt: new Date(0).toISOString(),
     snoozedUntil: null,
     latestRun: { runId: "run-1", completedAt: new Date(0).toISOString() },
     limitRecovery: null,
-    runtime: {
-      status: "failed",
-      lastErrorClass: "usage_limit",
-      lastErrorCode,
-      usageLimitResetAt: resetAt,
-    },
+    runtime: { status: "failed", lastErrorClass, lastErrorCode, usageLimitResetAt: resetAt },
   } as unknown as EnvironmentThreadShell;
 }
 
 describe("UsageLimitRecoveryCard", () => {
-  it.each([CHATGPT_USAGE_LIMIT_CODE, CHATGPT_WORKSPACE_USAGE_LIMIT_CODE])(
-    "leaves the %s limit to the ChatGPT notice",
-    (code) => {
-      const container = document.createElement("div");
-      const root = createRoot(container);
-      using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-      act(() =>
-        root.render(
-          <UsageLimitRecoveryCard
-            thread={failedThread(null, code)}
-            environmentId={"env-1" as EnvironmentId}
-          />,
-        ),
-      );
-      expect(container.textContent).toBe("");
-    },
-  );
+  // Servers before #25341 report sharing limits as provider errors.
+  it.each([
+    [CHATGPT_USAGE_LIMIT_CODE, "usage_limit", "Manage usage"],
+    [CHATGPT_WORKSPACE_USAGE_LIMIT_CODE, "usage_limit", "Copy request for admin"],
+    [CHATGPT_USAGE_LIMIT_CODE, "provider_error", "Manage usage"],
+  ])("shows one ChatGPT notice for %s (%s)", (code, errorClass, action) => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    act(() =>
+      root.render(
+        <UsageLimitRecoveryCard
+          thread={failedThread(null, code, errorClass)}
+          environmentId={"env-1" as EnvironmentId}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("ChatGPT usage limit reached");
+    expect(container.textContent).not.toContain("did not report a reset time");
+    expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      action,
+    ]);
+  });
 
   it("keeps reset controls for a ChatGPT limit stored with a reset time", () => {
     const container = document.createElement("div");

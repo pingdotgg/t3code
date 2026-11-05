@@ -5,11 +5,15 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
+  CHATGPT_USAGE_URL,
+  CHATGPT_WORKSPACE_ADMIN_REQUEST,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
+import * as Clipboard from "expo-clipboard";
 import { useState } from "react";
-import { View } from "react-native";
+import { Linking, View } from "react-native";
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useDeadlinePassed } from "../../lib/clock";
 import { threadEnvironment } from "../../state/threads";
@@ -34,16 +38,20 @@ export function UsageLimitRecoveryCard({
   const recovery = thread.limitRecovery;
   const scheduled =
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
+  const [copied, setCopied] = useState(false);
   const code = thread.runtime?.lastErrorCode;
+  const workspaceLimit = code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
+  const chatGptLimit = workspaceLimit || code === CHATGPT_USAGE_LIMIT_CODE;
   if (
     thread.runtime?.status !== "failed" ||
-    thread.runtime.lastErrorClass !== "usage_limit" ||
-    !runId ||
-    // Without a reset there is nothing to schedule, and ChatGptUsageLimitNotice covers it.
-    (resetAt === null &&
-      (code === CHATGPT_USAGE_LIMIT_CODE || code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE))
+    // Servers before #25341 report sharing limits as provider errors.
+    (thread.runtime.lastErrorClass !== "usage_limit" && !chatGptLimit) ||
+    !runId
   )
     return null;
+  const resetText = resetAt
+    ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+    : null;
   const snoozed =
     recovery?.snooze === true &&
     recovery.runId === runId &&
@@ -78,25 +86,71 @@ export function UsageLimitRecoveryCard({
   }
   return (
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
-      <Text className="text-sm text-warning-foreground">
-        {resetAt
-          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
-          : "The provider did not report a reset time. Retry manually when your limit is available."}
-      </Text>
-      {canSchedule ? (
+      {chatGptLimit ? (
+        // OpenAI's partner guidelines specify this ChatGPT notice and its action.
+        <>
+          <View className="flex-row items-center gap-2">
+            <ProviderIcon provider="codex" size={16} />
+            <Text className="text-sm font-t3-medium text-warning-foreground">
+              ChatGPT usage limit reached
+            </Text>
+          </View>
+          <Text className="text-sm text-warning-foreground">
+            {workspaceLimit
+              ? copied
+                ? "Request copied. Send it to your workspace admin."
+                : "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
+              : (resetText ?? "Review your usage settings in ChatGPT.")}
+          </Text>
+        </>
+      ) : (
+        <Text className="text-sm text-warning-foreground">
+          {resetText ??
+            "The provider did not report a reset time. Retry manually when your limit is available."}
+        </Text>
+      )}
+      {canSchedule || chatGptLimit ? (
         <View className="flex-row flex-wrap gap-2">
-          <Button
-            label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
-            tone="secondary"
-            disabled={pending}
-            onPress={() => void toggle("resume")}
-          />
-          <Button
-            label={snoozed ? "Wake now" : "Snooze until reset"}
-            tone="secondary"
-            disabled={pending || (!snoozed && resetPassed)}
-            onPress={() => void toggle("snooze")}
-          />
+          {canSchedule ? (
+            <>
+              <Button
+                label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
+                tone="secondary"
+                disabled={pending}
+                onPress={() => void toggle("resume")}
+              />
+              <Button
+                label={snoozed ? "Wake now" : "Snooze until reset"}
+                tone="secondary"
+                disabled={pending || (!snoozed && resetPassed)}
+                onPress={() => void toggle("snooze")}
+              />
+            </>
+          ) : null}
+          {workspaceLimit ? (
+            <Button
+              label="Copy request for admin"
+              tone="secondary"
+              size="compact"
+              onPress={() =>
+                void Clipboard.setStringAsync(CHATGPT_WORKSPACE_ADMIN_REQUEST).then(
+                  () => setCopied(true),
+                  () => setError("Could not copy the request. Try again."),
+                )
+              }
+            />
+          ) : chatGptLimit ? (
+            <Button
+              label="Manage usage"
+              tone="secondary"
+              size="compact"
+              onPress={() =>
+                void Linking.openURL(CHATGPT_USAGE_URL).catch(() =>
+                  setError("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."),
+                )
+              }
+            />
+          ) : null}
         </View>
       ) : null}
       {error ? (
