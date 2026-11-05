@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
 import {
+  type AgentControlGroups,
   AgentScope,
   agentScopeCommand,
   type AgentScopeShape,
@@ -376,6 +377,43 @@ export const make = Effect.gen(function* () {
     return killed._tag === "Some" && killed.value.code === 0;
   });
 
+  let sliceControlGroup: string | undefined;
+  const controlGroups: AgentScopeShape["controlGroups"] = Effect.gen(function* () {
+    const scope = yield* systemd;
+    if (scope === undefined) return undefined;
+    if (sliceControlGroup === undefined) {
+      const shown = yield* run(scope.systemctl, [
+        "--user",
+        "show",
+        AGENT_SLICE,
+        "--property=ControlGroup",
+      ]);
+      const controlGroup =
+        shown._tag === "Some" ? parseKeyValues(shown.value.stdout).get("ControlGroup") : undefined;
+      // Empty until the first agent starts the slice.
+      if (controlGroup === undefined || controlGroup.length === 0) return undefined;
+      sliceControlGroup = controlGroup;
+    }
+    const ownedControlGroup = path.join(sliceControlGroup, ownedSlice);
+    const entries = yield* fileSystem
+      .readDirectory(path.join("/sys/fs/cgroup", ownedControlGroup))
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const threadByUnit = new Map(
+      [...scopeByThread].flatMap(([threadId, tracked]) =>
+        tracked.shared ? [] : [[tracked.unit, threadId] as const],
+      ),
+    );
+    return {
+      slice: sliceControlGroup,
+      scopes: entries.flatMap((unit) => {
+        const agent = /^t3code-(.+)-[0-9a-f]{8}\.scope$/.exec(unit)?.[1];
+        return agent === undefined
+          ? []
+          : [{ path: path.join(ownedControlGroup, unit), threadId: threadByUnit.get(unit), agent }];
+      }),
+    } satisfies AgentControlGroups;
+  });
+
   const clear: AgentScopeShape["clear"] = Effect.fn("agentScope.clear")(function* (threadId) {
     if (!scopeByThread.has(threadId)) return;
     const scope = yield* systemd;
@@ -423,6 +461,7 @@ export const make = Effect.gen(function* () {
     oomKilled,
     stop,
     kill,
+    controlGroups,
     clear,
   } satisfies AgentScopeShape;
 });

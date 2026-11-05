@@ -3315,6 +3315,16 @@ export const layerWsRpc = (
                       })),
                     )
                   : Stream.empty;
+              const memoryPressureUpdates =
+                input.memoryPressure === true
+                  ? hostResources.memoryPressure.pipe(
+                      Stream.map((payload) => ({
+                        version: 1 as const,
+                        type: "memoryPressureUpdated" as const,
+                        payload,
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) =>
                   ServerSettings.redactServerSettingsForClient(settings, settingsClient),
@@ -3332,7 +3342,10 @@ export const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, memoryPressureUpdates),
+                    ),
                   ),
                 ),
               );

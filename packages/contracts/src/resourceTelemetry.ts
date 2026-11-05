@@ -1,10 +1,29 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
 import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
+
+export const HostMemoryPressureLevel = Schema.Literals(["none", "elevated", "severe"]);
+export type HostMemoryPressureLevel = typeof HostMemoryPressureLevel.Type;
+
+export const HostMemoryPressureAgent = Schema.Struct({
+  /** Null for a process several threads share, such as a Codex app-server. */
+  threadId: Schema.NullOr(ThreadId),
+  /** What launched it, such as `claude` or `codex`. */
+  agent: TrimmedNonEmptyString,
+  memoryBytes: NonNegativeInt,
+});
+export type HostMemoryPressureAgent = typeof HostMemoryPressureAgent.Type;
+
+export const HostMemoryPressure = Schema.Struct({
+  level: HostMemoryPressureLevel,
+  /** The largest agents by memory, largest first; empty while the level is `none`. */
+  heaviestAgents: Schema.Array(HostMemoryPressureAgent),
+});
+export type HostMemoryPressure = typeof HostMemoryPressure.Type;
 
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
@@ -12,6 +31,7 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  memoryPressure: Schema.optionalKey(HostMemoryPressure),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 
@@ -141,6 +161,13 @@ export const ResourceMonitorReadHistoryCommand = Schema.Struct({
 });
 export type ResourceMonitorReadHistoryCommand = typeof ResourceMonitorReadHistoryCommand.Type;
 
+export const ResourceMonitorMemoryPressureCommand = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("memoryPressure"),
+  requestId: TrimmedNonEmptyString,
+});
+export type ResourceMonitorMemoryPressureCommand = typeof ResourceMonitorMemoryPressureCommand.Type;
+
 export const ResourceMonitorShutdownCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("shutdown"),
@@ -155,6 +182,7 @@ export const ResourceMonitorCommand = Schema.Union([
   ResourceMonitorSampleNowCommand,
   ResourceMonitorProcessTableCommand,
   ResourceMonitorReadHistoryCommand,
+  ResourceMonitorMemoryPressureCommand,
   ResourceMonitorShutdownCommand,
 ]);
 export type ResourceMonitorCommand = typeof ResourceMonitorCommand.Type;
@@ -209,6 +237,15 @@ export const ResourceMonitorHistoryChunkEvent = Schema.Struct({
 });
 export type ResourceMonitorHistoryChunkEvent = typeof ResourceMonitorHistoryChunkEvent.Type;
 
+export const ResourceMonitorMemoryPressureEvent = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("memoryPressure"),
+  requestId: TrimmedNonEmptyString,
+  /** macOS `kern.memorystatus_vm_pressure_level`: 1 normal, 2 warning, 4 critical. */
+  level: Schema.NullOr(PositiveInt),
+});
+export type ResourceMonitorMemoryPressureEvent = typeof ResourceMonitorMemoryPressureEvent.Type;
+
 export const ResourceMonitorErrorEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("error"),
@@ -223,6 +260,7 @@ export const ResourceMonitorEvent = Schema.Union([
   ResourceMonitorSnapshotEvent,
   ResourceMonitorProcessTableEvent,
   ResourceMonitorHistoryChunkEvent,
+  ResourceMonitorMemoryPressureEvent,
   ResourceMonitorErrorEvent,
 ]);
 export type ResourceMonitorEvent = typeof ResourceMonitorEvent.Type;
