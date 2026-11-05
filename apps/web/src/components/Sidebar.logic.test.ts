@@ -1010,7 +1010,7 @@ describe("Working shelf (beta)", () => {
   });
 
   it("keeps pending guest requests outside the shelves", () => {
-    const thread = { ...idle, runtime, environmentId: localEnvironmentId };
+    const thread = { ...idle, runtime, pendingGuestMessageCount: 0 };
     const shelve = (enabled = true) =>
       belongsInSidebarWorkingShelf(thread, { enabled, isWorking: isSidebarThreadWorking });
 
