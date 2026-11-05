@@ -984,6 +984,8 @@ it("names each failing secret check and requires a declared consumer's read", ()
   };
   const fill = { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" };
   assert.deepEqual(failed(run([plainLogin, fill, { ...bash(`cat ${EMAIL}`), id: "c" }])), []);
+  const homeEmail = `~/.t3/userdata/secrets/files/${EMAIL.slice(-32)}`;
+  assert.deepEqual(failed(run([plainLogin, fill, { ...bash(`cat ${homeEmail}`), id: "c" }])), []);
   assert.include(
     failed(run([plainLogin, fill, { ...bash(`cat ${F}`), id: "c" }])),
     'secret.fileUse print: "cat <file>"',
@@ -1048,6 +1050,26 @@ it.each<[string, Run["calls"], boolean]>([
     true,
   ],
   ["a path variable", [saved(), bash(`f=${F}; adb pair 192.168.1.42:37099 < "$f"`)], true],
+  [
+    "a join on a name later pointed elsewhere",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\nd = pathlib.Path('/home/user/.t3/userdata/secrets/files')\nd = pathlib.Path('/tmp')\ncode = (d / '${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    false,
+  ],
+  [
+    "a join on another home's secrets directory",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\ncode = (pathlib.Path('/tmp/.t3/userdata/secrets/files') / '${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    false,
+  ],
   [
     "a file outside the secrets directory that shares the id",
     [

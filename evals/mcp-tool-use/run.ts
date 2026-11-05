@@ -1498,7 +1498,9 @@ export const shellOutput = (content: ReadonlyArray<Block>) => {
 
 /** A shell mock's output, when the command is one simple command that the mock matches. */
 export const mockOutput = (sample: Sample, command: string) =>
-  /&&|\|\||[;|\n]/.test(command.trim())
+  // A file for a `secret: false` field holds an ordinary value, not what a secret's mock prints.
+  /&&|\|\||[;|\n]/.test(command.trim()) ||
+  sample.plainFiles.some(({ file }) => command.includes(file.slice(-32)))
     ? undefined
     : sample.testCase.setup.shellMocks?.find((mock) => new RegExp(mock.match).test(command))
         ?.output;

@@ -1529,12 +1529,19 @@ export const classifyFileUse = (
       for (const name of saved[i]!) vars.add(name);
     });
   };
-  // A program that joins a quoted id to the secrets directory, as in
-  // `(Path('…/secrets/files') / 'id').read_text()` or `os.path.join(d, 'id')` for such a `d`.
-  const SECRETS_DIR = `(?:pathlib\\.)?Path\\(\\s*['"][^'"\\n]*/\\.t3/userdata/secrets/files/?['"]\\s*\\)|['"][^'"\\n]*/\\.t3/userdata/secrets/files/?['"]`;
-  const dirNames = [
+  // A program that joins a quoted id to the saved files' own directory, as in
+  // `(Path('<dir>') / 'id').read_text()` or `os.path.join(d, 'id')`, where `d` is only ever
+  // assigned that directory: a reassigned name may no longer point there.
+  const dirs = [...new Set(files.map((file) => escape(file.slice(0, -33))))].join("|");
+  const SECRETS_DIR = `(?:pathlib\\.)?Path\\(\\s*['"](?:${dirs})/?['"]\\s*\\)|['"](?:${dirs})/?['"]`;
+  const assigned = (name: string) =>
+    command.match(new RegExp(`(?<![\\w.])${name}\\s*=(?!=)`, "g"))?.length ?? 0;
+  const dirAssignments = [
     ...command.matchAll(new RegExp(`(?<![\\w.])([A-Za-z_]\\w*)\\s*=\\s*(?:${SECRETS_DIR})`, "g")),
   ].map((match) => match[1]!);
+  const dirNames = [...new Set(dirAssignments)].filter(
+    (name) => assigned(name) === dirAssignments.filter((other) => other === name).length,
+  );
   const dirExpr = [SECRETS_DIR, ...dirNames.map((name) => `(?<![\\w.])${name}(?!\\w)`)].join("|");
   const joins =
     ids.length > 0
@@ -1984,8 +1991,8 @@ export const secretFiles = (run: SecretRun) => {
   for (const call of run.calls)
     for (const [, text] of leaves(call.input))
       for (const match of text.matchAll(SECRET_FILE)) files.add(match[0]);
-  const plain = plainFiles(run);
-  return [...files].filter((file) => !plain.has(file));
+  const plain = new Set([...plainFiles(run)].map(fileId));
+  return [...files].filter((file) => !plain.has(fileId(file)));
 };
 
 export type SecretFileUse = FileUse & {
