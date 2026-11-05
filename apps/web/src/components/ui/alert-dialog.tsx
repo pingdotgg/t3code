@@ -1,3 +1,4 @@
+import { tooltipSafeFinalFocus } from "./focus-return";
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
 import { cn } from "~/lib/utils";
@@ -67,6 +68,7 @@ function AlertDialogPopup({
           data-slot="alert-dialog-popup"
           render={renderRetainedPopup}
           {...props}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus)}
         />
       </AlertDialogViewport>
     </AlertDialogPortal>

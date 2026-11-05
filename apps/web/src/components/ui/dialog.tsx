@@ -1,3 +1,4 @@
+import { tooltipSafeFinalFocus } from "./focus-return";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import { type ComponentProps, createContext, type ReactNode, use, useState } from "react";
@@ -134,6 +135,7 @@ function DialogPopup({
           data-slot="dialog-popup"
           render={renderRetainedPopup}
           {...props}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus)}
         >
           {children}
           {showCloseButton && (

@@ -1,3 +1,4 @@
+import { tooltipSafeFinalFocus } from "./focus-return";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
@@ -81,6 +82,7 @@ function MenuPopup({
           )}
           data-slot="menu-popup"
           {...props}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus)}
         >
           <div
             className={cn(
