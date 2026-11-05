@@ -64,6 +64,10 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedError<Works
     cause: Schema.Defect(),
   },
 ) {
+  get pathMissing(): boolean {
+    return (this.cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+  }
+
   override get message(): string {
     const cwd = this.cwd ? ` from '${this.cwd}'` : "";
     return `Failed to read workspace directory '${this.parentPath}' while browsing '${this.partialPath}'${cwd}.`;
