@@ -1,0 +1,132 @@
+{
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        "effectFn": ["span", "inferred-span", "suggested-span"],
+        "diagnosticSeverity": {
+          "abortControllerInEffect": "error",
+          "runEffectInsideEffect": "error",
+          "flatMapConditionalToFilterOrFail": "error",
+          "catchConditionalRefailToCatchIf": "error",
+          "tryCatchInEffectGen": "error",
+          "schemaStructWithTag": "error",
+          "preferTypedSchemaDecoder": "error",
+          "catchUnfailableEffect": "error",
+          "raceFirstWithSleepToTimeout": "error",
+          "redundantMapError": "error",
+          "optionMatchToFromOption": "error",
+          "catchToIgnore": "error",
+          "unnecessaryEffectGen": "error",
+          "allOfMapToForEach": "error",
+          "catchToOrElseSucceed": "error",
+          "unnecessaryFailYieldableError": "error",
+          "preferSucceedSomeOrNone": "error",
+          "effectSucceedWithVoid": "error",
+          "provideLayerSucceedToProvideService": "error",
+          "flatMapIgnoredParamToAndThen": "error",
+          "mapSomeToAsSome": "error",
+          "unnecessaryPipeChain": "error",
+          "returnEffectInGen": "off",
+          "effectFnOpportunity": "error",
+          "anyUnknownInErrorContext": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "instanceOfSchema": "error",
+          "deterministicKeys": "error",
+          "strictEffectProvide": "off",
+          // We use Effect's unstable modules (http, sql) on purpose. These rules
+          // also make effect-tsgo 0.47+ report false TS2790 errors on `delete`.
+          "unstableApiUsage": "off",
+          "experimentalApiUsage": "off",
+          "missingEffectServiceDependency": "error",
+          "leakingRequirements": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "unknownInEffectCatch": "error",
+          "strictBooleanExpressions": "off",
+          "lazyEffect": "off",
+          "globalJsonInEffect": "error",
+          "schemaSyncInEffect": "error",
+          "cryptoRandomUUID": "error",
+          "cryptoRandomUUIDInEffect": "error",
+          "nodeBuiltinImport": "error",
+          "globalDate": "error",
+          "globalDateInEffect": "error",
+          "globalConsole": "error",
+          "globalConsoleInEffect": "error",
+          "globalRandom": "error",
+          "globalRandomInEffect": "error",
+          "globalTimers": "error",
+          "globalTimersInEffect": "error",
+          "globalFetch": "error",
+          "globalFetchInEffect": "error",
+          "acquireReleaseDisposable": "error",
+          "catchAllTagDispatchToCatchTag": "error",
+          "catchAllToMapError": "error",
+          "catchChainToFirstSuccessOf": "error",
+          "catchDieToOrDie": "error",
+          "catchIfTagToCatchTag": "error",
+          "catchRefailToTapError": "error",
+          "catchTagToCatchReason": "error",
+          "effectMapFlatten": "error",
+          "effectMapVoid": "error",
+          "effectSleepZeroToYieldNow": "error",
+          "effectSucceedWithUndefined": "error",
+          "errorPayloadShadowsName": "error",
+          "failCauseToConstructor": "error",
+          "flatMapIdentityToFlatten": "error",
+          "flatMapToMap": "error",
+          "flatMapToTap": "error",
+          "manualMetricTapToTrack": "error",
+          "mapConstToAs": "error",
+          "mapSomeCatchNoSuchElement": "error",
+          "matchBooleanToIsSuccess": "error",
+          "matchEffectToMapBoth": "error",
+          "matchEffectToMatch": "error",
+          "matchToResultOrOption": "error",
+          "multipleCatchTag": "error",
+          "preferUnsafeConstructor": "error",
+          "redundantOrDie": "error",
+          "redundantSchemaTagIdentifier": "error",
+          "resultMatchToFromResult": "error",
+          "runOfExitToRunExit": "error",
+          "suspendFailToFailSync": "error",
+          "syncToSucceed": "error",
+          "timeoutCatchTagToTimeoutOrElse": "error",
+          "unnecessaryPipe": "error",
+          "unnecessaryTypeofType": "error",
+          "processEnvInEffect": "error",
+          "schemaNumber": "off"
+        },
+        "overrides": [
+          {
+            "include": ["**/*.test.ts", "**/*.test.tsx"],
+            "options": {
+              "diagnosticSeverity": {
+                "globalJsonInEffect": "off",
+                "effectFnOpportunity": "off"
+              }
+            }
+          },
+          {
+            "include": [
+              "**/*.spec.ts",
+              "**/*.spec.tsx",
+              "**/*.testkit.ts",
+              "**/*.testkit.tsx",
+              "**/test/**/*",
+              "**/tests/**/*",
+              "**/testkit/**/*",
+              "**/testing/**/*",
+              "**/fixtures/**/*",
+              "**/integration/**/*",
+              "packages/provider-testing/**/*"
+            ],
+            "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
+          }
+        ]
+      }
+    ]
+  }
+}
