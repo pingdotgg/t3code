@@ -135,7 +135,7 @@ function PendingSecretRequestForm(props: {
         label="Save securely"
         tone="primary"
         fullWidth
-        disabled={submitting || secret.trim().length === 0}
+        disabled={submitting || secret.length === 0}
         onPress={() => void send({ type: "save", secret })}
       />
       <View className="flex-row items-center justify-between gap-2">
