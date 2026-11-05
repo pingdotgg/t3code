@@ -1480,6 +1480,19 @@ it.effect("marks the model switch on a promoted message that restarts the turn",
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadId = yield* startFirstTurn;
+        const savedModes = { runtimeMode: "approval-required", interactionMode: "plan" } as const;
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("queue-runtime"),
+          threadId,
+          runtimeMode: savedModes.runtimeMode,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("queue-interaction"),
+          threadId,
+          interactionMode: savedModes.interactionMode,
+        });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("queued"),
@@ -1496,6 +1509,18 @@ it.effect("marks the model switch on a promoted message that restarts the turn",
           (run) => run.status === "queued",
         )!;
         yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("later-runtime"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("later-interaction"),
+          threadId,
+          interactionMode: "default",
+        });
+        yield* orchestrator.dispatch({
           type: "queued-message.promote-to-steer",
           commandId: CommandId.make("promote"),
           threadId,
@@ -1504,6 +1529,8 @@ it.effect("marks the model switch on a promoted message that restarts the turn",
         });
         yield* worker.drain();
 
+        assert.equal(started[1]?.message.text, "queued");
+        assert.containsSubset(started[1]?.runtimePolicy, savedModes);
         const promoted = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
           (item) => item.type === "user_message" && item.messageId === "message:queued",
         );

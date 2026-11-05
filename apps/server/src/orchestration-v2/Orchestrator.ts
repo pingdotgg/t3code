@@ -4791,6 +4791,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | "turnItems"
     >;
     readonly modelSelection: ModelSelection;
+    readonly executionModes?: OrchestrationV2Run["executionModes"];
     readonly targetRunId: OrchestrationV2Run["id"];
     readonly messageId: OrchestrationV2ConversationMessage["id"];
     readonly text: string;
@@ -5287,8 +5288,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         replacementProviderSessionId: nextProviderSessionId,
       };
     }
+    const executionModes = input.executionModes ?? {
+      runtimeMode: input.projection.thread.runtimeMode,
+      interactionMode: input.projection.thread.interactionMode,
+    };
     const resolvedRuntimePolicy = yield* runtimePolicy
-      .resolve({ thread: input.projection.thread, modelSelection: input.modelSelection })
+      .resolve({
+        thread: { ...input.projection.thread, ...executionModes },
+        modelSelection: input.modelSelection,
+      })
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -5323,10 +5331,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     const restartedRun: OrchestrationV2Run = {
       ...targetRun,
-      executionModes: {
-        runtimeMode: input.projection.thread.runtimeMode,
-        interactionMode: input.projection.thread.interactionMode,
-      },
+      executionModes,
       providerInstanceId: input.modelSelection.instanceId,
       modelSelection: input.modelSelection,
       providerThreadId: restartProviderThread.id,
@@ -9730,6 +9735,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects,
       projection,
       modelSelection: queuedRun.modelSelection,
+      executionModes: queuedRun.executionModes,
       targetRunId: command.targetRunId,
       messageId: queuedMessage.id,
       text: queuedMessage.text,
