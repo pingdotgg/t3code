@@ -122,7 +122,7 @@ export const seedDevReplayInstance = Effect.fn(
   });
 });
 
-const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
+export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;

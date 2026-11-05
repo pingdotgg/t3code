@@ -3,12 +3,16 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  SecretProviderId,
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -16,8 +20,10 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import {
   DEV_REPLAY_INSTANCE_ID,
   deriveProviderInstanceConfigMap,
+  layerSettingsWatcher,
   seedDevReplayInstance,
 } from "./ProviderInstanceRegistryHydration.ts";
+import { ProviderInstanceRegistryMutator } from "./ProviderInstanceRegistryMutator.ts";
 
 const projectId = ProjectId.make("project-a");
 const instanceId = ProviderInstanceId.make("codex_work");
@@ -139,5 +145,43 @@ describe("seedDevReplayInstance", () => {
         });
       }),
     ),
+  );
+});
+
+describe("layerSettingsWatcher", () => {
+  effectIt.effect("retries unreadable secrets when a secret provider changes", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsService;
+      const changes = yield* Queue.unbounded<ServerSettings>();
+      const calls: Array<"reconcile" | "reloadSecrets"> = [];
+      const reconciled = yield* Deferred.make<void>();
+      let reconciles = 0;
+      const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
+        reconcile: () =>
+          Effect.suspend(() => {
+            calls.push("reconcile");
+            return ++reconciles === 2 ? Deferred.succeed(reconciled, undefined) : Effect.void;
+          }),
+        reloadSecrets: () => Effect.sync(() => void calls.push("reloadSecrets")),
+      });
+      yield* Layer.build(
+        layerSettingsWatcher(Stream.fromQueue(changes)).pipe(Layer.provide(mutator)),
+      );
+
+      const next = yield* settings.updateSettings({
+        secretProviders: {
+          [SecretProviderId.make("personal")]: {
+            kind: "one_password",
+            label: "Personal",
+            config: { account: "my" },
+          },
+        },
+      });
+      yield* Queue.offer(changes, next);
+      yield* Queue.offer(changes, next);
+      yield* Deferred.await(reconciled);
+
+      expect(calls).toEqual(["reconcile", "reloadSecrets", "reconcile"]);
+    }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
   );
 });
