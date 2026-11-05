@@ -202,12 +202,20 @@ describe("limits refresh cooldown", () => {
   it("runs a fresh check after an in-flight check when settings change", async () => {
     const id = EnvironmentId.make("limits-after-enable");
     const oldCheck = Promise.withResolvers<string>();
-    const first = refreshUsageLimits(id, () => oldCheck.promise, true);
+    const first = refreshUsageLimits(id, () => oldCheck.promise, true, false, "cursor");
+    const otherProviders = refreshUsageLimits(
+      id,
+      async () => "claude limits",
+      false,
+      false,
+      "claude",
+    );
     const newCheck = vi.fn(async () => "new limits");
-    const afterEnable = refreshUsageLimits(id, newCheck, false, true);
+    const afterEnable = refreshUsageLimits(id, newCheck, false, true, "cursor");
     expect(newCheck).not.toHaveBeenCalled();
     oldCheck.resolve("old limits");
     expect(await first).toBe("old limits");
+    expect(await otherProviders).toBe("claude limits");
     expect(await afterEnable).toBe("new limits");
     expect(newCheck).toHaveBeenCalledTimes(1);
   });

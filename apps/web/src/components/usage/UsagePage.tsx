@@ -16,7 +16,10 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { cursorKeychainAccessEnvironments } from "@t3tools/client-runtime/state/usage";
+import {
+  cursorKeychainAccessEnvironments,
+  refreshUsageLimits,
+} from "@t3tools/client-runtime/state/usage";
 import {
   updatingProvidersLabel,
   usageEnvironmentProgress,
@@ -248,24 +251,31 @@ export function UsagePage() {
     if (nextMetric === "limits") setLimitsNow(Date.now());
     updatePreferences({ metric: nextMetric });
   };
-  const refreshLimits = () =>
+  const refreshLimits = (afterPending = false) =>
     // Settled so the timestamp still advances when a refresh throws.
     settlePromise(() =>
       Promise.all(
         Array.from(presentationsWithProviders, ([environmentId, presentation]) => {
           if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            return refreshProviders({
+            return refreshUsageLimits(
               environmentId,
-              input: {
-                usage: true,
-                usageProviders: PROVIDER_ORDER.filter(
-                  (provider) => !hiddenProviders.has(provider),
-                ).map((provider) =>
-                  ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
-                ),
-              },
-            });
+              () =>
+                refreshProviders({
+                  environmentId,
+                  input: {
+                    usage: true,
+                    usageProviders: PROVIDER_ORDER.filter(
+                      (provider) => !hiddenProviders.has(provider),
+                    ).map((provider) =>
+                      ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
+                    ),
+                  },
+                }),
+              false,
+              afterPending,
+              JSON.stringify([...hiddenProviders].sort()),
+            );
           }
         }),
       ),
@@ -536,7 +546,7 @@ export function UsagePage() {
                       environments={cursorAccessEnvironments}
                       onEnabled={() => {
                         void refresh();
-                        void refreshLimits();
+                        void refreshLimits(true);
                       }}
                     />
                   ) : null
@@ -569,7 +579,7 @@ export function UsagePage() {
                 showChatGptSharing={showChatGptSharing}
                 onCursorEnabled={() => {
                   void refresh();
-                  void refreshLimits();
+                  void refreshLimits(true);
                 }}
                 onSelectModel={selectUsageModel}
               />

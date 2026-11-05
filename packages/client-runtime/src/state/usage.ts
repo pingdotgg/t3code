@@ -52,36 +52,38 @@ export function usageSummaryInput(
   return modelFilter === undefined ? input : { ...input, modelFilter };
 }
 
-const limitsRefreshAfter = new Map<EnvironmentId, number>();
-const limitsRefreshes = new Map<EnvironmentId, Promise<unknown>>();
+const limitsRefreshAfter = new Map<string, number>();
+const limitsRefreshes = new Map<string, Promise<unknown>>();
 
 export async function refreshUsageLimits<A>(
   environmentId: EnvironmentId,
   refresh: () => Promise<A>,
   automatic = false,
   afterPending = false,
+  selectionKey = "",
 ): Promise<A | undefined> {
-  const pending = limitsRefreshes.get(environmentId);
+  const key = JSON.stringify([environmentId, selectionKey]);
+  const pending = limitsRefreshes.get(key);
   if (pending !== undefined) {
     if (afterPending) {
       try {
         await pending;
       } catch {}
-      return refreshUsageLimits(environmentId, refresh, false, true);
+      return refreshUsageLimits(environmentId, refresh, false, true, selectionKey);
     }
     return automatic ? undefined : ((await pending) as A);
   }
-  const refreshAfter = limitsRefreshAfter.get(environmentId) ?? 0;
+  const refreshAfter = limitsRefreshAfter.get(key) ?? 0;
   // @effect-diagnostics-next-line globalDate:off
   if (automatic && Date.now() < refreshAfter) return;
   const current = Promise.resolve()
     .then(refresh)
     .finally(() => {
-      limitsRefreshes.delete(environmentId);
+      limitsRefreshes.delete(key);
       // @effect-diagnostics-next-line globalDate:off
-      limitsRefreshAfter.set(environmentId, Date.now() + 5 * 60_000);
+      limitsRefreshAfter.set(key, Date.now() + 5 * 60_000);
     });
-  limitsRefreshes.set(environmentId, current);
+  limitsRefreshes.set(key, current);
   return await current;
 }
 
