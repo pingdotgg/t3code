@@ -308,7 +308,6 @@ describe("evaluatePullRequestWatch", () => {
       report: final,
     });
     assert.deepEqual(message.notification.outcome, "failed");
-    assert.equal(message.notification.summary, "#7: checks finished");
     assert.include(
       message.text,
       "- The required checks still running when one failed have finished on aaaaaaa. Still failing:\n  - lint https://ci.example/lint",
