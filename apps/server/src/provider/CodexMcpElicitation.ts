@@ -212,6 +212,7 @@ export function toMcpElicitationResponse(
         ? mcpElicitationPersistenceDecision(option.value) === decision
         : (ONE_TIME_APPROVAL_CHOICE.test(option.value.trim()) ||
             (responseOptions?.acceptConfirmationChoices === true &&
+              !isMcpElicitationPersistenceField(key, field) &&
               ONE_TIME_CONFIRMATION_CHOICE.test(option.value.trim()))) &&
           mcpElicitationPersistenceDecision(option.value) === null,
     );
