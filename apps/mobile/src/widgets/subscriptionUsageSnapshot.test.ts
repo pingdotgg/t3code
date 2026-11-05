@@ -131,7 +131,7 @@ describe("subscription widget snapshots", () => {
     });
     const snapshot = buildSubscriptionUsageSnapshot(input, deepLink);
     expect(snapshot.providers[0]?.detail).toBe("Subscription remaining");
-    expect(snapshot.providers[0]?.windows[0]?.remaining).toBe(20);
+    expect(snapshot.providers[0]?.windows[0]).toMatchObject({ remaining: 20, used: 80 });
   });
 });
 

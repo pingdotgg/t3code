@@ -56,7 +56,13 @@ describe("filterSettingsSections", () => {
       query: "accounts",
       expected: [["Server settings", ["Provider accounts"]]],
     },
-    { query: "usage", expected: [[null, ["Usage"]]] },
+    {
+      query: "usage",
+      expected: [
+        [null, ["Usage"]],
+        ["Interface", ["Appearance"]],
+      ],
+    },
     { query: "zzzz", expected: [] },
   ])("$query", ({ query, expected }) => {
     expect(visible(query)).toEqual(expected);

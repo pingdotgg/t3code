@@ -9,8 +9,8 @@ import {
   formatDuration,
   type LimitPace,
   limitsNotice,
+  meterPercent,
   paceOf,
-  remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import type { ReactNode } from "react";
 
@@ -39,7 +39,7 @@ export interface ThreadDetailsUsageInput {
 
 type UsageTone = "error" | "warning" | null;
 
-/** The selected provider's limit windows. Each row reads as room left. */
+/** The selected provider's limit windows, as room left or as used per the usage meter setting. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -146,20 +146,22 @@ function LimitRow({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const left = remainingPercent(window);
+  const display = usePrimarySettings((settings) => settings.usageDisplay);
+  const left = meterPercent(window.usedPercent, "left");
+  const shown = meterPercent(window.usedPercent, display);
   const pace = paceOf(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
       label={window.label}
-      fill={left}
+      fill={shown}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
-      value={`${left}%`}
-      ariaValue={`${left}% left`}
+      value={`${shown}%`}
+      ariaValue={`${shown}% ${display}`}
       tooltip={
         <>
           <span className="text-foreground">
-            {window.label}: {left}% left
+            {window.label}: {shown}% {display}
           </span>
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">

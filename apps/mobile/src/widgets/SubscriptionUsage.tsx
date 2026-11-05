@@ -53,6 +53,10 @@ function SubscriptionUsage(
     !accessory && !monochrome && widgetEnvironment.showsContainerBackground !== false
       ? props.theme?.[appearance]
       : undefined;
+  const countUp = props.usageDisplay === "used";
+  const percentOf = (window: { remaining: number; used: number }) =>
+    countUp ? window.used : window.remaining;
+  const word = countUp ? "used" : "left";
   const primary = palette?.foreground ?? "primary";
   const secondary = palette?.secondary ?? "secondary";
   const providers = props.providers ?? [
@@ -109,7 +113,7 @@ function SubscriptionUsage(
             accessibilityElement("ignore"),
             accessibilityLabel(
               tightest
-                ? `${provider.name}, ${tightest.label}, ${tightest.remaining} percent remaining. ${tightest.reset}. ${provider.detail}.`
+                ? `${provider.name}, ${tightest.label}, ${percentOf(tightest)} percent ${countUp ? "used" : "remaining"}. ${tightest.reset}. ${provider.detail}.`
                 : `${provider.name}. ${detail}.`,
             ),
           ]}
@@ -135,14 +139,14 @@ function SubscriptionUsage(
               ]}
             >
               {tightest
-                ? `${tightest.remaining}% left`
+                ? `${percentOf(tightest)}% ${word}`
                 : period !== "auto" && !stale && provider.windows.length > 0
                   ? "N/A"
                   : "Open T3"}
             </Text>
           </HStack>
           {tightest ? (
-            <ProgressView value={tightest.remaining / 100} modifiers={barModifiers} />
+            <ProgressView value={percentOf(tightest) / 100} modifiers={barModifiers} />
           ) : null}
         </VStack>
       );
@@ -181,7 +185,7 @@ function SubscriptionUsage(
             modifiers={[
               accessibilityElement("ignore"),
               accessibilityLabel(
-                `${provider.name}, ${window.label}, ${window.remaining} percent remaining. ${window.reset}. ${provider.detail}.`,
+                `${provider.name}, ${window.label}, ${percentOf(window)} percent ${countUp ? "used" : "remaining"}. ${window.reset}. ${provider.detail}.`,
               ),
             ]}
           >
@@ -212,10 +216,10 @@ function SubscriptionUsage(
                   ),
                 ]}
               >
-                {window.remaining}% left
+                {percentOf(window)}% {word}
               </Text>
             </HStack>
-            <ProgressView value={window.remaining / 100} modifiers={barModifiers} />
+            <ProgressView value={percentOf(window) / 100} modifiers={barModifiers} />
             {!compact ? (
               <Text modifiers={[font({ size: 10 }), foregroundStyle(secondary), lineLimit(1)]}>
                 {window.reset}

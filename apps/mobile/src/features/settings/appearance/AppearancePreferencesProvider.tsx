@@ -20,6 +20,7 @@ import {
 import { appAtomRegistry } from "../../../state/atom-registry";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import type { Preferences } from "../../../persistence/mobile-preferences";
+import type { UsageDisplay } from "@t3tools/contracts/settings";
 import {
   isSystemColorsAvailable,
   readSystemColorPalettes,
@@ -72,6 +73,8 @@ interface AppearancePreferencesContextValue {
   readonly setCodeWordBreak: (value: boolean) => void;
   readonly mathRenderingEnabled: boolean;
   readonly setMathRenderingEnabled: (value: boolean) => void;
+  readonly usageDisplay: UsageDisplay;
+  readonly setUsageDisplay: (value: UsageDisplay) => void;
 }
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
@@ -293,6 +296,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const setMathRenderingEnabled = (value: boolean) =>
     updatePreferences({ mathRenderingEnabled: value });
 
+  const usageDisplay = storedPreferences?.usageDisplay ?? "left";
+  const setUsageDisplay = (value: UsageDisplay) => updatePreferences({ usageDisplay: value });
+
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
       appearance,
@@ -317,6 +323,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setCodeWordBreak,
       mathRenderingEnabled,
       setMathRenderingEnabled,
+      usageDisplay,
+      setUsageDisplay,
     }),
     [
       appearance,
@@ -340,6 +348,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setCodeWordBreak,
       mathRenderingEnabled,
       setMathRenderingEnabled,
+      usageDisplay,
+      setUsageDisplay,
     ],
   );
 

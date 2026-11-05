@@ -24,6 +24,7 @@ export function SubscriptionUsageCoordinator() {
     themeMode,
     themeAppearance,
     themeVariablesByAppearance,
+    usageDisplay,
     isReady: appearanceReady,
   } = useAppearancePreferences();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -37,6 +38,7 @@ export function SubscriptionUsageCoordinator() {
         publishSubscriptionUsage({
           ...snapshot,
           theme: createWidgetTheme(themeMode, themeVariablesByAppearance),
+          usageDisplay,
         }),
       )
       .catch((error: unknown) => {
@@ -48,6 +50,7 @@ export function SubscriptionUsageCoordinator() {
     snapshot,
     themeMode,
     themeVariablesByAppearance,
+    usageDisplay,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Android stores resolved colors; System appearance changes must republish them.
     androidAppearance,
   ]);

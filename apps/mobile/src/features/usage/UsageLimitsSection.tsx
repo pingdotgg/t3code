@@ -14,9 +14,9 @@ import {
   formatDuration,
   formatResetsIn,
   limitsNotice,
+  meterPercent,
+  paceMarkPercent,
   paceOf,
-  paceRemainingPercent,
-  remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -29,6 +29,7 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNowMinuteMs } from "../../lib/clock";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   environmentIdsKey,
   limitsAutoRefreshSetAtom,
@@ -53,15 +54,17 @@ function WindowRow(props: {
   readonly now: number;
 }) {
   const { window, now } = props;
-  const remaining = remainingPercent(window);
-  const timeLeft = paceRemainingPercent(window, now);
+  const { usageDisplay } = useAppearancePreferences();
+  const remaining = meterPercent(window.usedPercent, "left");
+  const percent = meterPercent(window.usedPercent, usageDisplay);
+  const mark = paceMarkPercent(window, now, usageDisplay);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
-    timeLeft === null || barWidth < 6
+    mark === null || barWidth < 6
       ? null
-      : Math.min(Math.max((barWidth * timeLeft) / 100, 3), barWidth - 3);
+      : Math.min(Math.max((barWidth * mark) / 100, 3), barWidth - 3);
   const bar = (
     <View
       className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle"
@@ -76,11 +79,11 @@ function WindowRow(props: {
               : "h-full rounded-full bg-foreground"
         }
         style={[
-          { flex: remaining },
+          { flex: percent },
           remaining > 30 && props.color ? { backgroundColor: props.color } : null,
         ]}
       />
-      <View style={{ flex: 100 - remaining }} />
+      <View style={{ flex: 100 - percent }} />
     </View>
   );
   return (
@@ -88,7 +91,7 @@ function WindowRow(props: {
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground">{window.label}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-          {remaining}% left
+          {percent}% {usageDisplay}
         </Text>
       </View>
       <View
