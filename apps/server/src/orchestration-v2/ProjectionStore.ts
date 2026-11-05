@@ -4377,6 +4377,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           runtimeRequests,
           messages,
           plans,
+          artifacts,
           checkpointScopes,
           checkpoints,
           contextHandoffs,
