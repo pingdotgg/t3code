@@ -45,6 +45,7 @@ import {
   settlePullRequestOverrides,
   comparePullRequestsByRecency,
   largestPullRequestReadCount,
+  pullRequestListNotices,
 } from "./pullRequestList.logic";
 import {
   pullRequestListPreferences,
@@ -1133,6 +1134,26 @@ export function PullRequestsPage() {
       {panelToggleControls}
     </div>
   );
+  // A search or a later page can fail for a repository the baseline read; both are this scope's.
+  const noticeSources = [baselineQuery.data, answered].filter((answer) => answer != null);
+  const listNotices = pullRequestListNotices(
+    {
+      unreadableHosts: Object.fromEntries(
+        noticeSources.flatMap((answer) => Object.entries(answer.unreadableHosts)),
+      ),
+      errors: noticeSources.flatMap((answer) => answer.errors),
+    },
+    projects,
+    capableEnvironments.length > 1 ? environmentLabels : null,
+  );
+  const unreadNotice =
+    listNotices.length > 0 ? (
+      <div className="flex flex-col gap-1 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
+        {listNotices.map((notice) => (
+          <span key={notice.key}>{notice.text}</span>
+        ))}
+      </div>
+    ) : null;
   const carriedToNothing =
     shownCount === 0 &&
     typedQuery.length === 0 &&
@@ -1157,39 +1178,45 @@ export function PullRequestsPage() {
       ) : carriedToNothing ? (
         <PullRequestListGhost rows={7} />
       ) : shownCount === 0 ? (
-        <PullRequestListEmptyState
-          hasProjects={!projectsKnown || projects.length > 0}
-          refreshing={refreshing}
-          onRefresh={() => void refreshFromHost()}
-          query={typedQuery}
-          filtered={
-            menuFiltered ||
-            search.state !== "open" ||
-            search.involvement !== "all" ||
-            scopedProjectId !== undefined ||
-            search.host !== undefined
-          }
-          searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
-          canLoadMore={listData?.truncated === true && (canContinue || pageSize < MAX_PAGE_SIZE)}
-          loadingMore={loadingMore}
-          onClearQuery={() => updateListScope({ q: undefined })}
-          onLoadMore={loadMore}
-        />
+        <>
+          {unreadNotice}
+          <PullRequestListEmptyState
+            hasProjects={!projectsKnown || projects.length > 0}
+            refreshing={refreshing}
+            onRefresh={() => void refreshFromHost()}
+            query={typedQuery}
+            filtered={
+              menuFiltered ||
+              search.state !== "open" ||
+              search.involvement !== "all" ||
+              scopedProjectId !== undefined ||
+              search.host !== undefined
+            }
+            searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
+            canLoadMore={listData?.truncated === true && (canContinue || pageSize < MAX_PAGE_SIZE)}
+            loadingMore={loadingMore}
+            onClearQuery={() => updateListScope({ q: undefined })}
+            onLoadMore={loadMore}
+          />
+        </>
       ) : (
-        <PullRequestListGroups
-          groups={displayGroups}
-          environmentLabels={capableEnvironments.length > 1 ? environmentLabels : null}
-          query={typedParsed.text}
-          selected={selected}
-          showProvider={showProvider}
-          statsRef={registerStatsRow}
-          onSelect={selectEntry}
-          hostActionsOf={hostActionsOf}
-          onActed={onSpeedAction}
-          closingKeys={closingKeys}
-          sweepingKeys={closeSweepKeys}
-          onCloseSweepStart={startCloseSweep}
-        />
+        <>
+          {unreadNotice}
+          <PullRequestListGroups
+            groups={displayGroups}
+            environmentLabels={capableEnvironments.length > 1 ? environmentLabels : null}
+            query={typedParsed.text}
+            selected={selected}
+            showProvider={showProvider}
+            statsRef={registerStatsRow}
+            onSelect={selectEntry}
+            hostActionsOf={hostActionsOf}
+            onActed={onSpeedAction}
+            closingKeys={closingKeys}
+            sweepingKeys={closeSweepKeys}
+            onCloseSweepStart={startCloseSweep}
+          />
+        </>
       )}
 
       {listQuery.error && shownCount > 0 ? (

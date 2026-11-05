@@ -4,6 +4,7 @@ import type {
   ProjectId,
   PullRequestAction,
   PullRequestListEntry,
+  PullRequestListResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -35,6 +36,7 @@ import {
   applyPullRequestOverrides,
   reusePullRequestEntries,
   settlePullRequestOverrides,
+  pullRequestListNotices,
 } from "./pullRequestList.logic";
 import {
   readPullRequestListPreferences,
@@ -475,6 +477,100 @@ describe("merging the environments' own listings", () => {
         detail: null,
       },
     ]);
+  });
+});
+
+describe("what the list could not read", () => {
+  const project = (environmentId: EnvironmentId, id: string, canonicalKey: string) => ({
+    id,
+    environmentId,
+    repositoryIdentity: {
+      canonicalKey,
+      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+      provider: SourceControlProviderKind.make(canonicalKey.split(".")[0]!),
+    },
+  });
+  const provider = (host: string, detail: string | null) => ({
+    host,
+    kind: SourceControlProviderKind.make(host.split(".")[0]!),
+    searchesOnHost: true,
+    projectCount: 1,
+    configured: detail === null,
+    detail,
+  });
+  const answer = (
+    providers: PullRequestListResult["providers"],
+    errors: Array<readonly [string, string, string]>,
+  ): PullRequestListResult => ({
+    viewers: {},
+    providers,
+    entries: [],
+    errors: errors.map(([projectId, projectTitle, message]) => ({
+      projectId: projectId as ProjectId,
+      projectTitle,
+      message,
+    })),
+    truncated: false,
+    nextCursors: {},
+  });
+  const projects = [
+    project(ENV_1, "p1", "github.com/pingdotgg/t3code"),
+    project(ENV_1, "p2", "github.com/pingdotgg/uploadthing"),
+    project(ENV_1, "p3", "gitlab.com/team/service"),
+    project(ENV_2, "p4", "github.com/pingdotgg/t3code"),
+  ];
+
+  it("names an unreadable host once with its reason, and a failed repository by itself", () => {
+    const merged = mergePullRequestLists([
+      [
+        ENV_1,
+        answer(
+          [
+            provider("github.com", "No GitHub credential on the server."),
+            provider("gitlab.com", null),
+          ],
+          [
+            ["p1", "t3code", "pingdotgg/t3code could not be read."],
+            ["p2", "uploadthing", "pingdotgg/uploadthing could not be read."],
+            ["p3", "service", "team/service could not be read."],
+          ],
+        ),
+      ],
+    ])!;
+
+    expect(pullRequestListNotices(merged, projects, null).map((notice) => notice.text)).toEqual([
+      "github.com could not be read. No GitHub credential on the server.",
+      "service: team/service could not be read.",
+    ]);
+  });
+
+  it("keeps the reason of the server that cannot read a host another server reads", () => {
+    const labels = new Map([
+      [ENV_1, "Laptop"],
+      [ENV_2, "Box"],
+    ]);
+    const unreadable = [
+      ENV_1,
+      answer(
+        [provider("github.com", "No GitHub credential on the server.")],
+        [
+          ["p1", "t3code", "pingdotgg/t3code could not be read."],
+          ["p2", "uploadthing", "pingdotgg/uploadthing could not be read."],
+        ],
+      ),
+    ] as const;
+    const readable = [ENV_2, answer([provider("github.com", null)], [])] as const;
+
+    for (const answers of [
+      [readable, unreadable],
+      [unreadable, readable],
+    ]) {
+      const merged = mergePullRequestLists(answers)!;
+
+      expect(pullRequestListNotices(merged, projects, labels).map((notice) => notice.text)).toEqual(
+        ["Laptop: github.com could not be read. No GitHub credential on the server."],
+      );
+    }
   });
 });
 
