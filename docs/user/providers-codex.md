@@ -25,6 +25,33 @@ T3 Code can use your installed Codex and its existing login. Run `codex login`
 on the environment's machine to sign in. [Provider setup](./install.md#providers)
 covers installation and custom configuration.
 
+## Generate images
+
+Codex can generate images directly in a T3 Code thread when your Codex version,
+model, and account support native image generation.
+
+If Codex reports that its image tool is unavailable, image generation may be
+disabled in its configuration. In **Settings → Providers**, edit your existing
+Codex provider and add this to **Launch arguments**, keeping any other arguments:
+
+```text
+-c features.image_generation=true
+```
+
+This enables the feature for that T3 Code provider without changing your shared
+Codex configuration. You do not need another provider instance or a separate image
+API key. The flag does not add image support to an unsupported model or account.
+
+Launch arguments apply when a new Codex process starts. Wait for all work on that
+server to finish, including other providers and terminals, then restart the T3
+Code server on the machine running Codex. For the
+desktop app's local server, quit and reopen the app; for a
+[background service](./background-service.md), use `t3 service restart`. Opening a
+new thread alone can reuse the existing Codex process and its old settings.
+
+After restarting, start a thread with the same Codex provider and ask it to
+generate an image. The completed image appears in the thread.
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account
