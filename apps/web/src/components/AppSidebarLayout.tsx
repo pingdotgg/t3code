@@ -38,6 +38,7 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
+import { registerDoomCommands } from "./chat/doom/doomFrame";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
@@ -302,6 +303,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
     registerNavigationHistoryCommands(router),
     registerWorkspaceFocusCommands(router),
     registerPullRequestsEscapeCommand(router),
+    registerDoomCommands(),
     registerMenuAction("open-settings", () => {
       if (!/^\/settings(\/|$)/.test(router.state.location.pathname))
         void router.navigate({ to: "/settings" });

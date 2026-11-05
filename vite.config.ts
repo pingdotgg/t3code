@@ -159,6 +159,8 @@ export default defineConfig({
     ignorePatterns: [
       ".repos/**",
       "infra/task-cache/vendor/**",
+      // Compiled Doom (Emscripten output) and its Freedoom data.
+      "apps/web/public/doom/**",
       // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
       ".alchemy",
@@ -194,6 +196,7 @@ export default defineConfig({
       ".repos",
       ".repos/**",
       "infra/task-cache/vendor/**",
+      "apps/web/public/doom/**",
       "dist",
       "dist-electron",
       "node_modules",

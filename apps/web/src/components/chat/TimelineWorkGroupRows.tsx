@@ -54,6 +54,7 @@ import {
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { DoomSlot } from "./doom/DoomSlot";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -305,6 +306,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
       </div>
+      <DoomSlot />
     </div>
   );
 }

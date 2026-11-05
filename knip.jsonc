@@ -96,6 +96,8 @@
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
       // fixtures run under node.
       "entry": ["scripts/warm-dep-cache.ts", "test/fixtures/**/*.mjs"],
+      // Compiled Doom, loaded by public/doom/index.html inside an iframe.
+      "ignore": ["public/doom/**"],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.

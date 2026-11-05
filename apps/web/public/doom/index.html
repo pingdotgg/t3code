@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Doom</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+      }
+      body {
+        font: 12px ui-monospace, monospace;
+        color: #bbb;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain;
+        image-rendering: pixelated;
+        outline: none;
+      }
+      #veil {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgb(0 0 0 / 0.55);
+        cursor: pointer;
+        user-select: none;
+      }
+      body.playing #veil {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+    <div id="veil">Loading…</div>
+    <script>
+      // Host page for t3code's inline Doom. The chat window drives it through window.t3doom
+      // (same origin) and hears back through postMessage.
+      const veil = document.getElementById("veil");
+      const post = (event, detail = {}) =>
+        window.parent.postMessage({ type: "t3doom", event, ...detail }, location.origin);
+      let ready = false;
+      let running = false;
+      let playMs = 0;
+      let resumedAt = 0;
+
+      function pause() {
+        if (!ready || !running) return;
+        running = false;
+        playMs += performance.now() - resumedAt;
+        Module._t3_set_paused(1);
+        Module.SDL2?.audioContext?.suspend();
+        document.body.classList.remove("playing");
+        veil.textContent = "Paused. Click to play.";
+      }
+
+      function resume() {
+        if (!ready || running) return;
+        running = true;
+        resumedAt = performance.now();
+        Module._t3_set_paused(0);
+        Module.SDL2?.audioContext?.resume();
+        document.body.classList.add("playing");
+      }
+
+      window.t3doom = {
+        pause,
+        resume,
+        focus: () => window.focus(),
+        stats: () => ({
+          kills: ready ? Module._t3_kills() : 0,
+          playMs: playMs + (running ? performance.now() - resumedAt : 0),
+        }),
+      };
+
+      // Runs only while it has keyboard focus; clicking back into the chat pauses it.
+      window.addEventListener("focus", resume);
+      window.addEventListener("blur", pause);
+      veil.addEventListener("click", () => window.focus());
+
+      var Module = {
+        noInitialRun: true,
+        canvas: document.getElementById("canvas"),
+        preRun: [
+          () => {
+            Module.FS.createPreloadedFile("/", "freedoom1.wad", "freedoom1.wad", true, true);
+            Module.FS.createPreloadedFile("/", "default.cfg", "default.cfg", true, true);
+          },
+        ],
+        onRuntimeInitialized: () => {
+          Module.callMain([
+            "-iwad", "freedoom1.wad",
+            "-config", "default.cfg",
+            "-window", "-nogui", "-nomusic",
+            "-skill", "3", "-warp", "1", "1",
+          ]);
+        },
+        onExit: () => post("exit"),
+        // callMain returns at the first async sleep, so the main loop's own log line marks "ready".
+        print: (text) => {
+          if (ready || !text.includes("emscripten_set_main_loop")) return;
+          setTimeout(() => {
+            ready = true;
+            running = true;
+            resumedAt = performance.now();
+            if (document.hasFocus()) document.body.classList.add("playing");
+            else pause();
+            post("ready");
+          });
+        },
+        printErr: (text) => console.warn("[doom]", text),
+      };
+    </script>
+    <script src="websockets-doom.js"></script>
+  </body>
+</html>
