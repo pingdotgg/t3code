@@ -181,6 +181,35 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
       );
     }),
   );
+
+  it.effect("refuses to resume a queue whose next message was sent in modes above the limit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:limit-queue-resume");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("raise-queue-resume"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* orchestrator.dispatch(sendMessage(threadId, "queue-resume-running"));
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "queue-resume-waiting"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower-queue-resume"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const refused = yield* orchestrator
+        .dispatch({ type: "queue.resume", commandId: CommandId.make("resume-queue"), threadId })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+      assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
+    }),
+  );
 });
 
 const layerPolicyDatabase = SqlitePersistence.layerMemory;

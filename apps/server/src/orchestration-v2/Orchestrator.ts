@@ -873,6 +873,41 @@ function sessionsWithoutRuntimeModeSwitch(
     .map((session) => session.id);
 }
 
+// A session that cannot switch modes keeps the mode of the latest run started on it: any other
+// mode change goes through thread.runtime-mode.set, which detaches it.
+function sessionsOpenedInOtherRuntimeMode(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "providerThreads" | "providerSessions"
+  >,
+  providerInstanceId: ProviderInstanceId,
+  runtimeMode: RuntimeMode,
+): ReadonlyArray<ProviderSessionId> {
+  return sessionsWithoutRuntimeModeSwitch(
+    projection.providerSessions.filter(
+      (session) => session.providerInstanceId === providerInstanceId,
+    ),
+  ).filter((sessionId) => {
+    const providerThreadIds = new Set(
+      projection.providerThreads
+        .filter((providerThread) => providerThread.providerSessionId === sessionId)
+        .map((providerThread) => providerThread.id),
+    );
+    const opener = projection.runs
+      .filter(
+        (run) =>
+          run.providerThreadId !== null &&
+          providerThreadIds.has(run.providerThreadId) &&
+          (run.startedAt !== null || run.status === "starting"),
+      )
+      .reduce<OrchestrationV2Run | undefined>(
+        (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+        undefined,
+      );
+    return (opener?.runtimeMode ?? projection.thread.runtimeMode) !== runtimeMode;
+  });
+}
+
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
@@ -1906,9 +1941,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               )
           : null;
       const runtimeModeRestartIds = new Set(
-        modes.runtimeMode === projection.thread.runtimeMode
-          ? []
-          : sessionsWithoutRuntimeModeSwitch(projection.providerSessions),
+        sessionsOpenedInOtherRuntimeMode(
+          projection,
+          queuedRun.providerInstanceId,
+          modes.runtimeMode,
+        ),
       );
       const releasableSessions = projection.providerSessions.filter(
         (session) =>
@@ -2296,37 +2333,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               },
             ]
           : [];
-      const startedThread = {
-        ...projection.thread,
-        ...modes,
-        providerInstanceId: queuedRun.providerInstanceId,
-        modelSelection: queuedRun.modelSelection,
-        updatedAt: now,
-      };
-      const threadEventTypes = [
-        ...(selectionChanged
-          ? [
-              queuedRun.providerInstanceId === projection.thread.providerInstanceId
-                ? ("thread.model-selection-updated" as const)
-                : ("thread.provider-switched" as const),
-            ]
-          : []),
-        ...(modes.runtimeMode === projection.thread.runtimeMode
-          ? []
-          : ["thread.runtime-mode-updated" as const]),
-        ...(modes.interactionMode === projection.thread.interactionMode
-          ? []
-          : ["thread.interaction-mode-updated" as const]),
-      ];
       yield* writeSystemEvents(
         [
-          ...threadEventTypes.map((type) => ({
-            type,
-            threadId,
-            providerInstanceId: queuedRun.providerInstanceId,
-            occurredAt: now,
-            payload: startedThread,
-          })),
+          ...(selectionChanged
+            ? [
+                {
+                  type:
+                    queuedRun.providerInstanceId === projection.thread.providerInstanceId
+                      ? ("thread.model-selection-updated" as const)
+                      : ("thread.provider-switched" as const),
+                  threadId,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: {
+                    ...projection.thread,
+                    providerInstanceId: queuedRun.providerInstanceId,
+                    modelSelection: queuedRun.modelSelection,
+                    updatedAt: now,
+                  },
+                },
+              ]
+            : []),
           ...(handoff === null || transferId === null || latestHandoffRun === undefined
             ? []
             : [
@@ -5194,7 +5221,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (providerInstanceChanged && !canResumeAcrossInstances) ||
       selectionTransition?.type === "create_with_handoff";
     const requiresProviderSessionRestart =
-      canResumeAcrossInstances || selectionTransition?.type === "restart_session";
+      canResumeAcrossInstances ||
+      selectionTransition?.type === "restart_session" ||
+      sessionsOpenedInOtherRuntimeMode(
+        input.projection,
+        targetRun.providerInstanceId,
+        input.projection.thread.runtimeMode,
+      ).includes(providerSessionId);
     if (requiresProviderThreadHandoff) {
       const targetAdapter = yield* providerAdapters.get(input.modelSelection.instanceId).pipe(
         Effect.mapError(
@@ -5374,6 +5407,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...targetRun,
       providerInstanceId: input.modelSelection.instanceId,
       modelSelection: input.modelSelection,
+      runtimeMode: input.projection.thread.runtimeMode,
+      interactionMode: input.projection.thread.interactionMode,
       providerThreadId: restartProviderThread.id,
       rootNodeId: nextRootNodeId,
       activeAttemptId: nextAttemptId,
@@ -6439,12 +6474,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       isProviderSwitch &&
       activeProviderThread.nativeThreadRef !== null &&
       providerSwitchPlan?.transition.type === "restart_and_resume";
+    const runtimeModeRestartIds = sessionsOpenedInOtherRuntimeMode(
+      projection,
+      modelSelection.instanceId,
+      projection.thread.runtimeMode,
+    );
     const sessionsToDetach = projection.providerSessions.filter(
       (session) =>
-        providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
+        (providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) ||
+          runtimeModeRestartIds.includes(session.id)) &&
         session.status !== "stopped" &&
         session.status !== "error",
     );
+    const emitSessionDetaches = Effect.fn("Orchestrator.detachDispatchSessions")(function* (
+      now: DateTime.Utc,
+    ) {
+      for (const session of sessionsToDetach) {
+        const detail = runtimeModeRestartIds.includes(session.id)
+          ? "Runtime mode changed."
+          : canResumeAcrossInstances
+            ? "Provider account changed; continuing the native thread."
+            : "Provider or model selection changed.";
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "provider-session.detached",
+          threadId: command.threadId,
+          driver: session.driver,
+          providerInstanceId: session.providerInstanceId,
+          occurredAt: now,
+          payload: { providerSessionId: session.id, detachedAt: now, reason: detail },
+        });
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: { type: "provider-session.detach", providerSessionId: session.id, detail },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+      }
+    });
     for (const detaching of sessionsToDetach) {
       if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
         return yield* new OrchestratorDispatchError({
@@ -6562,6 +6634,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ordinal,
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
+        runtimeMode: projection.thread.runtimeMode,
+        interactionMode: projection.thread.interactionMode,
         providerThreadId,
         userMessageId: command.messageId,
         rootNodeId,
@@ -6780,6 +6854,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: preparationTurnItem,
         });
       }
+      yield* emitSessionDetaches(now);
       const pendingEffect = {
         id: `effect:${command.commandId}:provider-turn.start:${runId}`,
         commandId: command.commandId,
@@ -7312,6 +7387,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ordinal,
       providerInstanceId: modelSelection.instanceId,
       modelSelection,
+      runtimeMode: projection.thread.runtimeMode,
+      interactionMode: projection.thread.interactionMode,
       providerThreadId: providerThread.id,
       userMessageId: command.messageId,
       rootNodeId,
@@ -7766,36 +7843,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    const detachDetail = canResumeAcrossInstances
-      ? "Provider account changed; continuing the native thread."
-      : "Provider or model selection changed.";
-    for (const session of sessionsToDetach) {
-      yield* emitEvent({
-        type: "provider-session.detached",
-        threadId: command.threadId,
-        driver: session.driver,
-        providerInstanceId: session.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          providerSessionId: session.id,
-          detachedAt: now,
-          reason: detachDetail,
-        },
-      });
-      yield* Ref.update(effects, (existing) => [
-        ...existing,
-        {
-          id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
-          commandId: command.commandId,
-          threadId: command.threadId,
-          request: {
-            type: "provider-session.detach",
-            providerSessionId: session.id,
-            detail: detachDetail,
-          },
-        } satisfies PendingOrchestrationEffectV2,
-      ]);
-    }
+    yield* emitSessionDetaches(now);
     const pendingEffect = {
       id: `effect:${command.commandId}:provider-turn.start:${runId}`,
       commandId: command.commandId,
@@ -13672,18 +13720,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A queued run starts in the modes it was sent with, which can be above the thread's now.
       if (
         shell !== null &&
-        (command.type === "queued-run.edit" || command.type === "queued-run.start")
+        (command.type === "queued-run.edit" ||
+          command.type === "queued-run.start" ||
+          command.type === "queue.resume")
       ) {
-        const { runs } = yield* projectionStore
-          .getThreadRecords(threadId, ["runs"], { runIds: [command.runId] })
+        const records = yield* projectionStore
+          .getThreadRecords(
+            threadId,
+            ["runs", "messages"],
+            command.type === "queue.resume"
+              ? { runStatuses: ["queued"], messageRoles: ["user"] }
+              : { runIds: [command.runId], messageIds: [] },
+          )
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-        const run = runs.find((candidate) => candidate.id === command.runId);
-        // Both commands refuse automatic deliveries, the only runs that follow the current modes.
+        const run =
+          command.type === "queue.resume"
+            ? queuedRunsInDeliveryOrder(records)[0]
+            : records.runs.find((candidate) => candidate.id === command.runId);
         if (run !== undefined) {
+          // Edit and start refuse automatic deliveries, the only runs that follow the current modes.
+          const followsCurrent = followsCurrentConversation(
+            records.messages.find((message) => message.id === run.userMessageId),
+          );
           yield* refuseAboveDispatchModeLimit(
             command,
             threadId,
-            queuedRunModes(shell, run, false, runtimeModeCeiling?.maxRuntimeMode),
+            queuedRunModes(shell, run, followsCurrent, runtimeModeCeiling?.maxRuntimeMode),
           );
         }
       }

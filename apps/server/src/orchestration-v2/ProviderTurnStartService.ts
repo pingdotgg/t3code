@@ -699,7 +699,7 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus } = runControls;
 
-      // A queued run keeps the modes it started in; a later send may change the thread's.
+      // A run keeps the modes it was sent with; a later send may change the thread's.
       const runThread = {
         ...projection.thread,
         runtimeMode: run.runtimeMode ?? projection.thread.runtimeMode,
