@@ -46,6 +46,8 @@ export function DevicePanel(props: {
   readonly threadRef: ScopedThreadRef;
   readonly surface: Extract<RightPanelSurface, { kind: "device" }>;
   readonly visible: boolean;
+  /** Whether this surface is the selected one; only it may raise the setup dialog. */
+  readonly selected?: boolean;
   readonly onDismissSetup: () => void;
 }) {
   const { environmentId, threadId } = props.threadRef;
@@ -190,7 +192,7 @@ export function DevicePanel(props: {
   if (loaded && (!state.onboardingCompleted || hostDisabled)) {
     return (
       <Dialog
-        open={props.visible}
+        open={props.visible && props.selected !== false}
         onOpenChange={(isOpen) => {
           if (!isOpen) props.onDismissSetup();
         }}
