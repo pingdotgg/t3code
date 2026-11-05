@@ -4856,11 +4856,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
   );
-  // Results report the window Claude Code compacts against; outside the catalog it is the only source.
+  // Results report the window Claude Code enforces, which outranks the catalog: user settings
+  // such as CLAUDE_CODE_DISABLE_1M_CONTEXT shrink it, and outside the catalog it is the only source.
   const reportedContextWindows = new Map<string, number>();
   const claudeContextWindow = (modelSelection: ModelSelection): number | null =>
-    resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) ??
     reportedContextWindows.get(compileClaudeModelSelection(modelSelection).apiModelId) ??
+    resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) ??
     null;
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
