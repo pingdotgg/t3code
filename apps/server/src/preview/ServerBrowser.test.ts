@@ -1637,9 +1637,9 @@ const realSelectPage = (html: string) =>
     const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
     yield* viewer.input({ type: "takeControl" });
     yield* Queue.clear(viewer.output);
-    const click = (x: number, y: number) =>
+    const click = (x: number, y: number, modifiers = 0) =>
       Effect.gen(function* () {
-        const press = { type: "mouse", button: "left", x, y, clickCount: 1 };
+        const press = { type: "mouse", button: "left", x, y, clickCount: 1, modifiers };
         yield* viewer.input({ ...press, action: "down", buttons: 1 });
         yield* viewer.input({ ...press, action: "up", buttons: 0 });
       });
@@ -1660,7 +1660,7 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
           #custom, #custom::picker(select) { appearance: base-select }
           #half { appearance: base-select }
           iframe { position: absolute; left: 300px; top: 20px; width: 400px; height: 200px; border: 0;
-            transform: scale(0.5); transform-origin: 0 0 }
+            transform: rotate(180deg) }
         </style>
         <select id="relayed" style="top: 20px"><option>One</option><option>Two</option></select>
         <select id="readonly" style="top: 80px" onmousedown="return false">
@@ -1668,6 +1668,9 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
         </select>
         <select id="custom" style="top: 140px"><option>One</option><option>Two</option></select>
         <select id="half" style="top: 200px"><option>One</option><option>Two</option></select>
+        <select id="shift" style="top: 260px" onmousedown="if (event.shiftKey) event.preventDefault()">
+          <option>One</option><option>Two</option>
+        </select>
         <iframe srcdoc="<select style='position: absolute; left: 0; top: 0; width: 200px; height: 30px'><option>One</option></select>"></iframe>
         <script>
           for (const select of document.querySelectorAll("select"))
@@ -1714,7 +1717,10 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
         "the real press reaches it",
       ).toContain("mousedown!");
 
-      yield* click(350, 27);
+      yield* click(140, 275, 8);
+      expect(yield* output("selectMenu"), "the page sees the press's modifier keys").toEqual([]);
+
+      yield* click(650, 205);
       expect(
         yield* output("selectMenu"),
         "a transformed frame keeps the real press rather than guess a select",
@@ -1781,7 +1787,7 @@ it.live("navigating away withdraws an offered select menu", () =>
 
       yield* Effect.promise(() =>
         page.setContent(
-          `<iframe style="position: absolute; left: 40px; top: 20px; border: 0"
+          `<iframe style="position: absolute; left: 20px; top: 0; padding: 20px; border: 0"
             srcdoc="<body style='margin: 0'><select style='width: 200px; height: 30px'><option>One</option></select>"></iframe>`,
         ),
       );

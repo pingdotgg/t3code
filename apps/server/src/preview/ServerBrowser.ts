@@ -132,7 +132,14 @@ const SELECT_MENU_LABEL_LIMIT = 150;
  * and returns `{ select, x, y, pressed }`, or null where the real press should land instead.
  * The events are synthetic: they run page handlers but can never open the native popup.
  */
-const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
+const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, modifiers, optionLimit) => {
+  const transformed = (element) => {
+    for (let node = element; node; node = node.parentElement ?? node.getRootNode().host) {
+      const style = node.ownerDocument.defaultView.getComputedStyle(node);
+      if (style.transform !== "none" || style.rotate !== "none" || style.scale !== "none") return true;
+    }
+    return false;
+  };
   let root = document;
   for (;;) {
     let element = root.elementFromPoint(x, y);
@@ -142,11 +149,12 @@ const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
       element = inner;
     }
     if (element && (element.tagName === "IFRAME" || element.tagName === "FRAME") && element.contentDocument) {
-      const box = element.getBoundingClientRect();
       // A transformed frame maps points in ways this walk does not model; it keeps the real press.
-      if (Math.abs(box.width - element.offsetWidth) > 1 || Math.abs(box.height - element.offsetHeight) > 1) return null;
-      x -= box.left + element.clientLeft;
-      y -= box.top + element.clientTop;
+      if (transformed(element)) return null;
+      const box = element.getBoundingClientRect();
+      const style = element.ownerDocument.defaultView.getComputedStyle(element);
+      x -= box.left + element.clientLeft + parseFloat(style.paddingLeft);
+      y -= box.top + element.clientTop + parseFloat(style.paddingTop);
       root = element.contentDocument;
       continue;
     }
@@ -161,23 +169,26 @@ const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
     )
       return null;
     if (element.options.length > optionLimit) return null;
-    const init = { bubbles: true, cancelable: true, composed: true, view, clientX: x, clientY: y, button: 0, buttons: 1 };
+    const keys = { altKey: (modifiers & 1) !== 0, ctrlKey: (modifiers & 2) !== 0, metaKey: (modifiers & 4) !== 0, shiftKey: (modifiers & 8) !== 0 };
+    const init = { bubbles: true, cancelable: true, composed: true, view, clientX: x, clientY: y, button: 0, buttons: 1, ...keys };
     const pressed =
       element.dispatchEvent(new view.PointerEvent("pointerdown", { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true })) &&
       element.dispatchEvent(new view.MouseEvent("mousedown", { ...init, detail: 1 }));
-    return { select: element, x, y, pressed };
+    return { select: element, x, y, keys, pressed };
   }
 }`;
 /** Describes a pressed select in top-level viewport CSS px and keeps the offered options. */
-const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit) {
-  if (!this.pressed) return null;
+const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
   const select = this.select;
+  // Page handlers ran in between and may have added options.
+  if (!this.pressed || select.options.length > optionLimit) return null;
   let { left, top, width, height } = select.getBoundingClientRect();
   for (let view = select.ownerDocument.defaultView; view && view.frameElement; view = view.parent) {
     const frame = view.frameElement;
     const box = frame.getBoundingClientRect();
-    left += box.left + frame.clientLeft;
-    top += box.top + frame.clientTop;
+    const style = view.parent.getComputedStyle(frame);
+    left += box.left + frame.clientLeft + parseFloat(style.paddingLeft);
+    top += box.top + frame.clientTop + parseFloat(style.paddingTop);
   }
   select.focus({ preventScroll: true });
   const view = select.ownerDocument.defaultView;
@@ -198,10 +209,10 @@ const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit) {
   };
 }`;
 const RELEASE_SELECT_PRESS_SCRIPT = `function () {
-  const { select, x, y } = this;
+  const { select, x, y, keys } = this;
   const view = select.ownerDocument.defaultView;
   if (!view) return;
-  const init = { bubbles: true, cancelable: true, composed: true, view, clientX: x, clientY: y, button: 0, buttons: 0 };
+  const init = { bubbles: true, cancelable: true, composed: true, view, clientX: x, clientY: y, button: 0, buttons: 0, ...keys };
   select.dispatchEvent(new view.PointerEvent("pointerup", { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true }));
   select.dispatchEvent(new view.MouseEvent("mouseup", { ...init, detail: 1 }));
   select.dispatchEvent(new view.MouseEvent("click", { ...init, detail: 1 }));
@@ -2547,9 +2558,15 @@ const make = Effect.gen(function* () {
 
   // Chromium draws a select's popup outside the page, where the screencast never sees it, and on
   // a desktop host it is a native menu CDP cannot dismiss, so the real press must not reach it.
-  const pressSelect = async (session: CDPSession, viewer: ViewerState, x: number, y: number) => {
+  const pressSelect = async (
+    session: CDPSession,
+    viewer: ViewerState,
+    x: number,
+    y: number,
+    modifiers: number,
+  ) => {
     const { result } = await session.send("Runtime.evaluate", {
-      expression: `(${PRESS_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${SELECT_MENU_OPTION_LIMIT})`,
+      expression: `(${PRESS_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${modifiers}, ${SELECT_MENU_OPTION_LIMIT})`,
     });
     const objectId = result.objectId;
     if (!objectId) return false;
@@ -2559,7 +2576,7 @@ const make = Effect.gen(function* () {
       .send("Runtime.callFunctionOn", {
         objectId,
         functionDeclaration: OFFER_SELECT_MENU_SCRIPT,
-        arguments: [{ value: SELECT_MENU_LABEL_LIMIT }],
+        arguments: [{ value: SELECT_MENU_LABEL_LIMIT }, { value: SELECT_MENU_OPTION_LIMIT }],
         returnByValue: true,
       })
       .catch(() => null);
@@ -2602,9 +2619,13 @@ const make = Effect.gen(function* () {
           if (action === "up") return;
         }
         if (message.button === "left" && action === "down" && !tab.dialog) {
-          const pressed = await pressSelect(session, viewer, num(message.x), num(message.y)).catch(
-            () => false,
-          );
+          const pressed = await pressSelect(
+            session,
+            viewer,
+            num(message.x),
+            num(message.y),
+            modifiers,
+          ).catch(() => false);
           if (pressed) return;
         }
         const type =
