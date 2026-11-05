@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-02T21:16:47Z",
+  "updatedAt": "2026-11-02T23:47:11Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -25,7 +25,7 @@
     {
       "driver": "claudeAgent",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=2.1.280",
+      "recommendedRange": ">=2.1.301",
       "ranges": [
         { "range": ">=2.1.280", "status": "supported" },
         { "range": ">=2.1.111 <2.1.280", "status": "graceful" },
