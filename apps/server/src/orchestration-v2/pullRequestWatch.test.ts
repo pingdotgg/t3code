@@ -390,6 +390,10 @@ describe("evaluatePullRequestWatch", () => {
     for (const text of [wake("checks"), wake("feedback"), start("checks"), start("feedback")]) {
       assert.include(text, "not authorized to merge");
     }
+    for (const text of [wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+      assert.include(text, "babysit");
+    }
+    assert.notInclude(wake(), "babysit");
     assert.include(wake("checks"), "Leave review comments to the user");
     assert.include(wake(), "act on it as your task requires");
   });

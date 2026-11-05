@@ -255,7 +255,7 @@ export function pullRequestAgentMergeMessage(input: {
   readonly agentMerge: ThreadPullRequestAgentMerge;
 }): { readonly text: string; readonly notification: OrchestrationV2Notification } {
   return {
-    text: `The user started agent merge on pull request #${input.number} (${input.url}). See where it stands now and act on what you find. ${AGENT_MERGE_TASK[input.agentMerge]} ${WATCH_CLOSING}`,
+    text: `The user started agent merge on pull request #${input.number} (${input.url}) and wants you to babysit it. See where it stands now and act on what you find. ${AGENT_MERGE_TASK[input.agentMerge]} ${WATCH_CLOSING}`,
     notification: {
       source: { kind: "monitor" },
       outcome: "updated",
@@ -283,7 +283,7 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : `${input.agentMerge === undefined ? "Look into each item and act on it as your task requires." : `Agent merge is on. ${AGENT_MERGE_TASK[input.agentMerge]}`} ${WATCH_CLOSING}`,
+      : `${input.agentMerge === undefined ? "Look into each item and act on it as your task requires." : `Agent merge is on, so keep babysitting this pull request. ${AGENT_MERGE_TASK[input.agentMerge]}`} ${WATCH_CLOSING}`,
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",
