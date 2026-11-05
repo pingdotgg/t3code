@@ -616,13 +616,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             onResize: setSidebarWidth,
           }}
           className={cn(overviewStaged && "z-35")}
+          data-overview-zoom={overviewStaged ? overviewPhase : undefined}
           style={
             overviewStaged
               ? {
                   ...windowControlsInsetStyle,
                   ...overviewZoomTransition(),
-                  transitionProperty: "opacity",
-                  ...(overviewShown && { opacity: 0, pointerEvents: "none" }),
+                  ...(overviewShown && { pointerEvents: "none" }),
                 }
               : windowControlsInsetStyle
           }

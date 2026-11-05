@@ -1722,6 +1722,31 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   }
 }
 
+/* While the overview zooms, the sidebar sits above the stage. Its chrome stays
+   opaque and only the inner layer fades, so panes zooming under it never show
+   through. Once the overview is open the whole sidebar is gone. */
+@media (width >= 48rem) {
+  [data-overview-zoom]:not([data-overview-zoom="open"]) {
+    background-color: var(--sidebar);
+  }
+
+  [data-overview-zoom] > [data-slot="sidebar-inner"] {
+    transition-property: opacity;
+    transition-duration: inherit;
+    transition-timing-function: inherit;
+  }
+
+  :is([data-overview-zoom="opening"], [data-overview-zoom="open"]) > [data-slot="sidebar-inner"] {
+    opacity: 0;
+  }
+
+  [data-chrome-art] [data-overview-zoom] > [data-slot="sidebar-inner"] {
+    background: var(--chrome-art-paint);
+    background-attachment: fixed;
+    background-blend-mode: var(--chrome-art-blend, normal);
+  }
+}
+
 @keyframes live-tool-shine {
   from {
     background-position:
