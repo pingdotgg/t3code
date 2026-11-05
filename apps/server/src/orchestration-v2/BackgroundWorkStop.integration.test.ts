@@ -11,6 +11,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
@@ -520,6 +521,81 @@ const stopEarlierBackgroundWork = ({
           });
         const { threadId: reviewerThreadId, rootId: reviewerRootId } =
           yield* subagentThread("reviewer");
+        const childRoot = (yield* orchestrator.getThreadProjection(reviewerThreadId)).nodes.find(
+          (node) => node.id === reviewerRootId,
+        )!;
+        for (const userRun of [false, true]) {
+          const suffix = userRun ? ":user" : "";
+          const questionNodeId = NodeId.make(`node:child-question${suffix}`);
+          const questionRequestId = RuntimeRequestId.make(`request:child-question${suffix}`);
+          const questionItemId = TurnItemId.make(`item:child-question${suffix}`);
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`child-question-node${suffix}`),
+                type: "node.updated",
+                threadId: reviewerThreadId,
+                occurredAt: now,
+                payload: {
+                  ...childRoot,
+                  id: questionNodeId,
+                  runId: userRun ? RunId.make("run:user-question") : null,
+                  parentNodeId: reviewerRootId,
+                  kind: "user_input_request",
+                  status: "waiting",
+                  runtimeRequestId: questionRequestId,
+                },
+              },
+              {
+                id: EventId.make(`child-question-request${suffix}`),
+                type: "runtime-request.updated",
+                threadId: reviewerThreadId,
+                occurredAt: now,
+                payload: {
+                  id: questionRequestId,
+                  nodeId: questionNodeId,
+                  providerTurnId: null,
+                  nativeRequestRef: { driver, nativeId: "child-question", strength: "strong" },
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: first.providerThread.providerSessionId!,
+                  },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+              {
+                id: EventId.make(`child-question-item${suffix}`),
+                type: "turn-item.updated",
+                threadId: reviewerThreadId,
+                occurredAt: now,
+                payload: {
+                  id: questionItemId,
+                  threadId: reviewerThreadId,
+                  runId: userRun ? RunId.make("run:user-question") : null,
+                  nodeId: questionNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 2,
+                  status: "waiting",
+                  title: null,
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                  type: "user_input_request",
+                  requestId: questionRequestId,
+                  questions: [
+                    { id: "choice", header: "Choice", question: "Which option?", options: [] },
+                  ],
+                },
+              },
+            ],
+          });
+        }
         const tester = yield* subagentThread("tester");
         const nestedSubagentId = NodeId.make("subagent:nested");
         const nestedItemId = TurnItemId.make("turn-item:nested-subagent");
@@ -987,8 +1063,25 @@ const stopEarlierBackgroundWork = ({
         );
         assert.equal(after.subagents[0]?.status, "interrupted");
         const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
-        assert.equal(reviewerThread.nodes[0]?.status, "interrupted");
+        assert.equal(
+          reviewerThread.nodes.find((node) => node.id === reviewerRootId)?.status,
+          "interrupted",
+        );
         assert.equal(reviewerThread.subagents[0]?.status, "interrupted");
+        for (const [suffix, statuses] of [
+          ["", ["cancelled", "interrupted", "interrupted"]],
+          [":user", ["pending", "waiting", "waiting"]],
+        ] as const) {
+          const actual = [
+            reviewerThread.runtimeRequests.find(
+              (request) => request.id === `request:child-question${suffix}`,
+            )?.status,
+            reviewerThread.nodes.find((node) => node.id === `node:child-question${suffix}`)?.status,
+            reviewerThread.turnItems.find((item) => item.id === `item:child-question${suffix}`)
+              ?.status,
+          ];
+          assert.deepEqual(actual, [...statuses]);
+        }
         if (workflowMember) {
           assert.isUndefined(reviewerThread.turnItems.find((item) => item.id === nestedItemId));
           assert.equal(
