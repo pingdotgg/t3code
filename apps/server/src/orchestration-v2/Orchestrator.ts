@@ -113,6 +113,7 @@ import {
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
+  contextBoundaryOrdinal,
   readForkHistoryItems,
   readInheritedHandoffItems,
   visibleConversationItems,
@@ -997,29 +998,6 @@ function appendContextHandoffId(
   handoffId: OrchestrationV2ContextHandoff["id"] | null,
 ): OrchestrationV2ProviderThread["handoffIds"] {
   return handoffId === null ? handoffIds : Array.from(new Set([...handoffIds, handoffId]));
-}
-
-/** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
-function contextBoundaryOrdinal(
-  runs: ReadonlyArray<
-    Pick<
-      OrchestrationV2Run,
-      "ordinal" | "freshContext" | "status" | "startedAt" | "restartContinuationOfRunId"
-    >
-  >,
-): number {
-  let boundary = 0;
-  for (const run of runs) {
-    if (
-      run.freshContext === true &&
-      run.status !== "queued" &&
-      !cancelledBeforeStart(run) &&
-      run.ordinal > boundary
-    ) {
-      boundary = run.ordinal;
-    }
-  }
-  return boundary;
 }
 
 /** Threads with no started run (imported, or reserved by another queued run) never cross it. */

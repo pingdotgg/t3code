@@ -2799,13 +2799,18 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  it.live.each(["immediately", "behind a running turn"] as const)(
+  it.live.each([
+    "immediately",
+    "behind a running turn",
+    "and recovers it after it breaks",
+  ] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const queued = variant !== "immediately";
-          const key = queued ? "queued" : "immediate";
+          const queued = variant === "behind a running turn";
+          const broken = variant === "and recovers it after it breaks";
+          const key = queued ? "queued" : broken ? "broken" : "immediate";
           const cwd = yield* checkpointWorkspace(`fresh-context-${key}`);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -2826,6 +2831,17 @@ describe("orchestration v2 provider switching", () => {
               nativeThreadGeneration: yield* Ref.make(0),
               ...(queued
                 ? { holdFirstTurn: started, releaseFirstTurn: release, holdRunOrdinal: 2 }
+                : {}),
+              ...(broken
+                ? {
+                    failedRunOrdinals: new Set([3]),
+                    brokenRunOrdinals: new Set([3]),
+                    failure: makeProviderFailure({
+                      message: "Invalid thinking signature",
+                      class: "provider_error",
+                      code: "INVALID_THINKING_SIGNATURE",
+                    }),
+                  }
                 : {}),
             }),
             makeTestAdapter({
@@ -2920,6 +2936,11 @@ describe("orchestration v2 provider switching", () => {
             // Claude hosts one native thread per session, so an idle old one is closed.
             assert.deepEqual(yield* Ref.get(closedSessions), queued ? [] : [firstSession.id]);
             yield* Ref.set(backgroundWork, false);
+            if (broken) {
+              yield* send("epsilon", CLAUDE_MODEL_SELECTION);
+              yield* worker.drain();
+              yield* waitForIdle(freshThreadId);
+            }
             yield* send("delta", CODEX_MODEL_SELECTION);
             yield* worker.drain();
             yield* waitForIdle(freshThreadId);
@@ -2947,6 +2968,23 @@ describe("orchestration v2 provider switching", () => {
             assert.equal(turnFor("beta").text, "Prompt beta");
             if (queued) {
               assert.equal(turnFor("gamma").providerThreadId, turnFor("beta").providerThreadId);
+            }
+            if (broken) {
+              const recovered = turnFor("epsilon");
+              assert.equal(recovered.providerThreadId, turnFor("beta").providerThreadId);
+              assert.notEqual(recovered.nativeThreadId, turnFor("beta").nativeThreadId);
+              assert.include(recovered.text, "Prompt beta");
+              assert.notInclude(recovered.text, "Prompt alpha");
+              assert.notInclude(recovered.text, "Prompt zero");
+              const recoveredRun = projection.runs.find(
+                (run) => run.userMessageId === `message:fresh-context:${key}:epsilon`,
+              )!;
+              assert.equal(
+                projection.contextHandoffs.find(
+                  (handoff) => handoff.targetRunId === recoveredRun.id,
+                )!.coveredRunOrdinals.from,
+                3,
+              );
             }
             const codexTurn = turnFor("delta");
             assert.notEqual(codexTurn.providerThreadId, turnFor("zero").providerThreadId);
