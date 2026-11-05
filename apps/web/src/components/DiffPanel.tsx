@@ -322,16 +322,23 @@ export default function DiffPanel({
       : selectedTurn?.runId === latestTurn?.runId
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
-  const reviewSectionId = selectedTurn ? `turn:${selectedTurn.runId}` : selectedGitScope;
+  const reviewSectionId = selectedTurn
+    ? `turn:${selectedTurn.runId}`
+    : selectedRepoWorktree === null
+      ? selectedGitScope
+      : `${selectedGitScope}:${selectedRepoWorktree.worktreePath}`;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
+  // Review comments carry this title, so it names the repository their paths belong to.
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
-    : selectedGitScope === "unstaged"
-      ? "Uncommitted"
-      : "Changes";
+    : `${selectedGitScope === "unstaged" ? "Uncommitted" : "Changes"}${
+        selectedRepoWorktree === null
+          ? ""
+          : ` in ${selectedRepoWorktree.repository} · ${selectedRepoWorktree.branch}`
+      }`;
   const selectedCheckpointRange = useMemo(
     () =>
       typeof selectedCheckpointTurnCount === "number"

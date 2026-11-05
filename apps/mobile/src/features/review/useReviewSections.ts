@@ -51,7 +51,10 @@ export function useReviewSections(input: {
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
   // Changes come from the repository worktree chosen for Git; turn diffs cover all of them.
-  const { sourceControlCwd: selectedThreadCwd } = useSelectedThreadSourceControl();
+  const { sourceControlCwd: selectedThreadCwd, repoWorktree } = useSelectedThreadSourceControl();
+  // Review comments carry the section title, so it names the repository their paths belong to.
+  const gitSectionSuffix =
+    repoWorktree === null ? "" : ` in ${repoWorktree.repository} · ${repoWorktree.branch}`;
   const diffPreview = useEnvironmentQuery(
     canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({
@@ -86,12 +89,19 @@ export function useReviewSections(input: {
     [readyCheckpoints],
   );
   const reviewSections = useMemo(() => {
+    const gitSections =
+      canReadFiles || fileAccess.isPending
+        ? (diffPreview.data?.sources ?? reviewCache.gitSections)
+        : [];
     const sections = buildReviewSectionItems({
       checkpoints: readyCheckpoints,
       gitSections:
-        canReadFiles || fileAccess.isPending
-          ? (diffPreview.data?.sources ?? reviewCache.gitSections)
-          : [],
+        gitSectionSuffix === ""
+          ? gitSections
+          : gitSections.map((section) => ({
+              ...section,
+              title: `${section.title}${gitSectionSuffix}`,
+            })),
       turnDiffById: reviewCache.turnDiffById,
       loadingTurnIds,
       loadingGitSections: fileAccess.isPending || diffPreview.isPending,
@@ -107,6 +117,7 @@ export function useReviewSections(input: {
     diffPreview.data?.sources,
     diffPreview.isPending,
     fileAccess.isPending,
+    gitSectionSuffix,
     loadingTurnIds,
     readyCheckpoints,
     reviewCache.gitSections,

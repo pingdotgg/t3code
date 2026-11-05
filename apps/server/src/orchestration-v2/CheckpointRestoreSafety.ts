@@ -224,7 +224,17 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
   dependencies: RestoreSafetyDependencies,
 ) {
   const targetOrdinal = input.checkpoint.ordinalWithinScope;
-  const repositories = participatingRepositories({ ...input, targetOrdinal });
+  // The workspace snapshot covers a checkout the thread attached under another spelling.
+  const realPathOr = (target: string) =>
+    dependencies.fileSystem
+      .realPath(target)
+      .pipe(Effect.orElseSucceed(() => dependencies.path.resolve(target)));
+  const workspaceCwd = yield* realPathOr(input.scope.cwd);
+  const repositories = yield* Effect.filter(
+    participatingRepositories({ ...input, targetOrdinal }),
+    (repository) =>
+      realPathOr(repository.worktreePath).pipe(Effect.map((real) => real !== workspaceCwd)),
+  );
   const workspaceReady = checkpointWorkspaceStatus(input.checkpoint) === "ready";
   const isolation = yield* restoreIsolation(
     input.thread,

@@ -39,7 +39,7 @@ vi.mock("../../state/use-thread-detail", () => ({
   useSelectedThreadProjection: () => ({ projection: {} }),
 }));
 vi.mock("../../state/use-selected-thread-worktree", () => ({
-  useSelectedThreadSourceControl: () => ({ sourceControlCwd: "/repo" }),
+  useSelectedThreadSourceControl: () => ({ sourceControlCwd: "/repo", repoWorktree: null }),
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
