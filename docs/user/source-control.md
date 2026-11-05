@@ -10,6 +10,16 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
+commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit
+shows its changes against its first parent.
+
+A commit link from a supported code host opens in the Diff pane when the thread's repository has
+that commit locally, on any branch. Otherwise a pull request commit link opens the pull request. Other
+commit links follow your **Open links in** setting; on web, when that opens a new tab, T3 Code first
+shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**
+setting in **Settings → Diffs**.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote
@@ -138,6 +148,11 @@ toast or from the banner above the composer. When the host refuses the machine's
 clones over HTTPS with Git's credentials for that host instead, and the project's remote uses the
 HTTPS URL.
 
+To lay clones out like [ghq](https://github.com/x-motemen/ghq), turn on **Clone into host folders**
+under **Settings → Threads** (or **Source control** on mobile). Clones then default to
+`<host>/<owner>/<repo>` under **Add project starts in**, so set that to `~/ghq` to share ghq's
+folders. You can still change the destination before cloning.
+
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
@@ -159,6 +174,8 @@ uses the project's instructions and recent commit subjects.
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
+Where you can edit a description, you can also tick its checkboxes from the Summary tab
+(the Overview tab on mobile).
 GitLab calls these merge requests.
 
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
@@ -183,7 +200,7 @@ Press **Escape** before releasing to cancel. Failed closes stay in the list so y
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
-Pull request sharing is off by default. In Settings → Connections → Pull request sharing (Pull
+Pull request sharing is off by default. In Settings → Environments → Pull request sharing (Pull
 request routing under Environments on mobile), choose **Read PRs** or **Read and act** for each
 environment you trust to share its source control access.
 Enable both the original environment and the environment answering its requests on this client.
@@ -270,7 +287,7 @@ pull request link in the conversation. Creating a pull request from Git actions 
 and so does an agent creating one with `gh pr create` or `glab mr create`. Agents can link other
 pull requests with the `link_pull_request` tool.
 
-Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
+Use **Link pull request to thread** in the command palette to keep a pull request with the thread. From a review
 on the Pull requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.
 

@@ -1,9 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type {
-  ExecutionEnvironmentCapabilities,
-  ThreadPullRequestLink,
-  VcsStatusResult,
-} from "@t3tools/contracts";
+import type { ThreadPullRequestLink, VcsStatusResult } from "@t3tools/contracts";
 import {
   sourceControlClients,
   type ChangeRequestTerminology,
@@ -109,11 +105,9 @@ export function presentThreadLinkedPullRequests(
 
 export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
-  capabilities:
-    | Pick<ExecutionEnvironmentCapabilities, "threadPullRequests" | "threadPullRequestLinking">
-    | undefined,
+  /** False until the server config loads; the stored references serve until then. */
+  supportsSnapshots: boolean,
 ) {
-  const supportsSnapshots = capabilities?.threadPullRequests === true;
   const linkedPresentation = supportsSnapshots
     ? presentThreadLinkedPullRequests(thread.pullRequests)
     : null;
@@ -130,4 +124,21 @@ export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation) {
   return pr.kind === "stack" || pr.others > 0
     ? { kind: "list" as const, accessibilityLabel: `Show ${pr.accessibilityLabel}` }
     : { kind: "open" as const, accessibilityLabel: `Open ${pr.accessibilityLabel}` };
+}
+
+/** Records `value` as the newest entry, evicting the least recently answered beyond `limit`. */
+export function rememberBounded<V>(
+  current: ReadonlyMap<string, V>,
+  key: string,
+  value: V,
+  limit: number,
+): ReadonlyMap<string, V> {
+  const next = new Map(current);
+  next.delete(key);
+  next.set(key, value);
+  for (const oldest of next.keys()) {
+    if (next.size <= limit) break;
+    next.delete(oldest);
+  }
+  return next;
 }

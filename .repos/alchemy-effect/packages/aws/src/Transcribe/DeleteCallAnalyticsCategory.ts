@@ -1,0 +1,37 @@
+import type * as transcribe from "@distilled.cloud/aws/transcribe";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `transcribe:DeleteCallAnalyticsCategory` — delete a Call Analytics category.
+ *
+ * Amazon Transcribe batch actions have no resource-level IAM; the host is
+ * granted `transcribe:DeleteCallAnalyticsCategory` on `*`.
+ *
+ * ### Call Analytics Categories
+ * **Example:** Delete a Call Analytics Category
+ * ```typescript
+ * // init
+ * const deleteCallAnalyticsCategory = yield* AWS.Transcribe.DeleteCallAnalyticsCategory();
+ *
+ * // runtime
+ * yield* deleteCallAnalyticsCategory({ CategoryName: "long-silence" });
+ * ```
+ *
+ * @binding
+ */
+export interface DeleteCallAnalyticsCategory extends Binding.Service<
+  DeleteCallAnalyticsCategory,
+  "AWS.Transcribe.DeleteCallAnalyticsCategory",
+  () => Effect.Effect<
+    (
+      request: transcribe.DeleteCallAnalyticsCategoryRequest,
+    ) => Effect.Effect<
+      transcribe.DeleteCallAnalyticsCategoryResponse,
+      transcribe.DeleteCallAnalyticsCategoryError
+    >
+  >
+> {}
+export const DeleteCallAnalyticsCategory = Binding.Service<DeleteCallAnalyticsCategory>(
+  "AWS.Transcribe.DeleteCallAnalyticsCategory",
+);

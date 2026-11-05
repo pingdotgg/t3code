@@ -2,6 +2,7 @@ import type {
   GitCommandError,
   ServerSettings,
   ServerSettingsError,
+  ServerSettingsPatch,
   VcsError,
   VcsListRemotesResult,
   VcsProcessExitFailureKind,
@@ -67,6 +68,16 @@ export class SourceControlHost extends Context.Service<
     readonly settings: {
       /** Read fresh on each call to pick up credential changes. */
       readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
+      /**
+       * Like `get`, with each secret provider reference in one host kind's credentials replaced
+       * by the secret it names. An unreadable reference reads as unset. Only a reader of that
+       * kind should call it: resolving can wait on a secret provider.
+       */
+      readonly getWithSecrets: (kind: string) => Effect.Effect<ServerSettings, ServerSettingsError>;
+      /** For credentials the host obtains itself, such as a sign-in it refreshes. */
+      readonly update: (
+        patch: ServerSettingsPatch,
+      ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     };
     readonly process: {
       readonly run: (
@@ -109,6 +120,20 @@ export class SourceControlHost extends Context.Service<
       readonly setBranchUpstream: (
         input: SourceControlGitRemoteBranch & { readonly branch: string },
       ) => Effect.Effect<void, GitCommandError>;
+      /**
+       * Writes to .git/config, which every worktree shares, go through these rather than
+       * `execute`: the host serializes them per repository.
+       */
+      readonly createBranch: (input: {
+        readonly cwd: string;
+        readonly branch: string;
+        readonly startPoint: string;
+      }) => Effect.Effect<void, GitCommandError>;
+      readonly writeConfigValue: (input: {
+        readonly cwd: string;
+        readonly key: string;
+        readonly value: string;
+      }) => Effect.Effect<void, GitCommandError>;
       readonly switchRef: (
         input: VcsSwitchRefInput,
       ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;

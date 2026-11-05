@@ -78,6 +78,7 @@ export function PullRequestGuideTab({
   const guide = data?.guide ?? null;
   const tourShown = active && guide !== null;
   const reportTourShown = useEffectEvent(() => onTourShown?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the parent once the loaded guide tour is on screen, which data arrival can cause
   useEffect(() => {
     if (tourShown) reportTourShown();
   }, [tourShown]);
@@ -103,18 +104,24 @@ export function PullRequestGuideTab({
       );
     }
     return (
-      <div className="flex min-h-48 flex-col items-center justify-center gap-2 px-4 py-10 text-center">
+      <div className="scrollbar-gutter-both flex h-full flex-col items-center justify-center-safe gap-2 overflow-y-auto px-4 py-10 text-center">
         <p className="text-sm font-medium text-foreground">
-          {running ? "Writing a review guide" : "No review guide yet"}
+          {running
+            ? "Writing a review guide"
+            : failure === null
+              ? "No review guide yet"
+              : "Could not write a review guide"}
         </p>
         <p className="max-w-md text-xs text-muted-foreground">
-          {failure ??
-            query.error ??
-            (running
-              ? "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready."
-              : "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")}
+          {running
+            ? "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready."
+            : failure === null
+              ? (query.error ??
+                "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")
+              : FAILURE_HINT}
         </p>
         {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
+        {failure === null || running ? null : <FailureDetails detail={failure} />}
       </div>
     );
   }
@@ -124,9 +131,16 @@ export function PullRequestGuideTab({
       <Alert variant={running ? "info" : "warning"}>
         {running ? <Spinner /> : <TriangleAlertIcon />}
         <AlertDescription>
-          {running
-            ? "Rewriting this guide. You will be told when the new one is ready."
-            : (failure ?? "Written before the latest push.")}
+          {running ? (
+            "Rewriting this guide. You will be told when the new one is ready."
+          ) : failure === null ? (
+            "Written before the latest push."
+          ) : (
+            <>
+              {`Could not rewrite this guide. ${FAILURE_HINT}`}
+              <FailureDetails detail={failure} />
+            </>
+          )}
         </AlertDescription>
         {!running && canWrite ? <AlertAction>{writeButton("Rewrite", "xs")}</AlertAction> : null}
       </Alert>
@@ -153,5 +167,20 @@ export function PullRequestGuideTab({
         onOpenFile={onOpenFile}
       />
     </GuideProseContext>
+  );
+}
+
+const FAILURE_HINT = "Check the review guide model in Settings → Source control.";
+
+function FailureDetails({ detail }: { detail: string }) {
+  return (
+    <details className="w-full max-w-lg text-xs text-muted-foreground">
+      <summary className="cursor-pointer rounded-sm -outline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+        Technical details
+      </summary>
+      <pre className="scrollbar-gutter-both mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-left font-mono text-xs">
+        {detail}
+      </pre>
+    </details>
   );
 }

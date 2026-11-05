@@ -43,6 +43,9 @@ describe("appendTerminalOutput", () => {
     const first = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "red: \u001b[3");
     expect(first.text).toBe("red: ");
     expect(feed(["red: \u001b[3", "1mR\u001b[0m"]).text).toBe("red: \u001b[0;31mR\u001b[0m");
+    expect(
+      terminalOutputSpans(feed(["\u001b[38:2::12:", "34:56mR"]).text, TERMINAL_PALETTES.dark),
+    ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
   });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
@@ -52,6 +55,9 @@ describe("appendTerminalOutput", () => {
     expect(state.text.length).toBeLessThanOrEqual(1_000);
     expect(state.text.startsWith("line ")).toBe(true);
     expect(state.text.endsWith("line 1999")).toBe(true);
+    // A newline a quarter of the budget past the cut is too far to start on.
+    expect(feed(["abcdefgh\nij\nklmnop"], 8).text).toBe("klmnop");
+    expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
   });
 
   it("stays bounded across many appends of huge output, including one endless line", () => {
@@ -81,6 +87,16 @@ describe("appendTerminalOutput", () => {
 });
 
 describe("appendTerminalOutput edge cases from review", () => {
+  it("leaves the screen and cursor alone for unsupported erase modes", () => {
+    for (const sequence of ["3K", "4J", "99K", "99J"]) {
+      const input = `a\nb\nc\u001b[${sequence}X`;
+      expect(feed([input]).text).toBe("a\nb\ncX");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\nb\ncX");
+      }
+    }
+  });
+
   it("clears only scrollback on ESC[3J", () => {
     const lines = Array.from({ length: 70 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines, "\u001b[3J"]);
@@ -102,11 +118,26 @@ describe("appendTerminalOutput edge cases from review", () => {
 });
 
 describe("appendTerminalOutput under adversarial output", () => {
+  it("ignores unsupported cursor-control parameters without corrupting the screen", () => {
+    for (const sequence of ["1.5A", "1.5G", "1$K", "1$J", ">1A", "?25l", "1:2A", "1:2K", "1:2J"]) {
+      const input = `a\nb\nc\u001b[${sequence}X`;
+      expect(feed([input]).text).toBe("a\nb\ncX");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\nb\ncX");
+      }
+    }
+  });
+
   it("gives the same result however the output is split into chunks", () => {
-    const input = "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n";
-    const whole = feed([input], 3).text;
-    for (let cut = 1; cut < input.length; cut += 1) {
-      expect(feed([input.slice(0, cut), input.slice(cut)], 3).text).toBe(whole);
+    const input =
+      "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
+      "\u001b[1;31mbold red\u001b[mplain\u001b[38:2::12:34:56mrgb\u001b[0m\n" +
+      "\u001b[1;31mbold red again\u001b[mplain again\u001b[38:2::12:34:56mrgb again\u001b[0m";
+    for (const maxChars of [3, 1_024]) {
+      const whole = feed([input], maxChars).text;
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)], maxChars).text).toBe(whole);
+      }
     }
     expect(feed(["abcdef", "\rX"], 3).text).toBe(feed(["abcdef\rX"], 3).text);
   });
