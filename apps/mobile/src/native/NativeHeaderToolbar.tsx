@@ -42,6 +42,7 @@ type NativeStackHeaderVisibilityPriority = Extract<
   NativeStackHeaderItem,
   { type: "button" }
 >["visibilityPriority"];
+type NativeStackHeaderBadge = Extract<NativeStackHeaderItem, { type: "button" }>["badge"];
 type NativeToolbarItem = NativeStackHeaderItem | HeaderBarButtonSearchBarPlacementItem;
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
   unstable_headerToolbarItems?: () => NativeToolbarItem[];
@@ -164,6 +165,7 @@ function convertToolbarChild(
       onPress: register(child.props.onPress),
       sharesBackground: !child.props.separateBackground,
       tintColor: child.props.tintColor as ColorValue | undefined,
+      badge: child.props.badge as NativeStackHeaderBadge,
       variant:
         child.props.variant === "done" || child.props.variant === "prominent"
           ? child.props.variant
@@ -289,6 +291,7 @@ function NativeHeaderToolbarRoot(props: {
 
 function NativeHeaderToolbarButton(_props: {
   readonly accessibilityLabel?: string;
+  readonly badge?: NativeStackHeaderBadge;
   readonly axisBehavior?: NativeStackHeaderAxisBehavior;
   readonly disabled?: boolean;
   readonly icon?: string | Extract<NativeStackHeaderIcon, { type: "image" }>;

@@ -38,6 +38,8 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   }
   var selectedTab = "threads" { didSet { updateSelection() } }
   var selectedColor: UIColor = .systemBlue { didSet { tabBar.tintColor = selectedColor } }
+  var chatsBadgeColor: UIColor? { didSet { updateBadge() } }
+  var chatsAccessibilityLabel = "Chats" { didSet { updateBadge() } }
   var compact = false {
     didSet {
       tabBarTrailing.constant = showsCompose ? (compact ? -64 : -76) : 0
@@ -151,9 +153,23 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   }
 
   private func updateSelection() {
+    updateBadge()
     guard let item = itemsByTab[selectedTab], tabBar.items?.contains(item) == true else { return }
     guard tabBar.selectedItem !== item else { return }
     tabBar.selectedItem = item
+  }
+
+  private func updateBadge() {
+    let item = itemsByTab["threads"]
+    let appearance = tabBar.standardAppearance
+    for layout in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
+      layout.normal.badgeBackgroundColor = chatsBadgeColor
+      layout.selected.badgeBackgroundColor = chatsBadgeColor
+    }
+    tabBar.standardAppearance = appearance
+    item?.badgeColor = chatsBadgeColor
+    item?.badgeValue = selectedTab != "threads" && chatsBadgeColor != nil ? " " : nil
+    item?.accessibilityLabel = chatsAccessibilityLabel
   }
 
   func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {

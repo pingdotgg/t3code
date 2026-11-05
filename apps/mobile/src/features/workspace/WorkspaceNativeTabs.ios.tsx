@@ -28,6 +28,7 @@ import { useDeviceType } from "../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
+import { useChatsStatus } from "./useChatsStatus";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
@@ -95,6 +96,18 @@ export function WorkspaceNativeTabs(props: {
   const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
+  const chats = useChatsStatus(
+    workspace.state.selectedTab === "threads" && !workspace.settingsOpen,
+  );
+  // UIKit takes unselected-item appearance from the selected destination's controller.
+  const badgeItemAppearance = {
+    normal: { tabBarItemBadgeBackgroundColor: chats.color ?? undefined },
+  };
+  const badgeAppearance = {
+    stacked: badgeItemAppearance,
+    inline: badgeItemAppearance,
+    compactInline: badgeItemAppearance,
+  };
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
   const request = {
@@ -133,8 +146,12 @@ export function WorkspaceNativeTabs(props: {
               key={slot}
               screenKey={slot}
               title=""
-              tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
+              badgeValue={!settings && tab === "threads" && chats.color !== null ? " " : undefined}
+              tabBarItemAccessibilityLabel={
+                settings ? "Settings" : tab === "threads" ? chats.label : WORKSPACE_TAB_LABELS[tab]
+              }
               ios={{
+                standardAppearance: badgeAppearance,
                 icon: settings
                   ? { type: "sfSymbol", name: "gearshape" }
                   : tab === "pullRequests"

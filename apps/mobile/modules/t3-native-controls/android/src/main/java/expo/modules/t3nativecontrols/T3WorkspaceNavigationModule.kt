@@ -22,7 +22,10 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -56,6 +59,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import expo.modules.kotlin.AppContext
@@ -71,6 +75,12 @@ class T3WorkspaceNavigationModule : Module() {
       Prop("tabs") { view: T3WorkspaceNavigationView, value: List<String> -> view.tabs = value }
       Prop("selectedTab") { view: T3WorkspaceNavigationView, value: String ->
         view.selectedTab = value
+      }
+      Prop("chatsBadgeColor") { view: T3WorkspaceNavigationView, value: Int ->
+        view.chatsBadgeColor = value
+      }
+      Prop("chatsAccessibilityLabel") { view: T3WorkspaceNavigationView, value: String ->
+        view.chatsAccessibilityLabel = value
       }
       Prop("floating") { view: T3WorkspaceNavigationView, value: Boolean ->
         view.floating = value
@@ -128,6 +138,8 @@ class T3WorkspaceNavigationView(
   private val onOverlayChange by EventDispatcher()
   var tabs by mutableStateOf(listOf("threads", "pullRequests", "usage", "settings"))
   var selectedTab by mutableStateOf("threads")
+  var chatsBadgeColor by mutableStateOf(0)
+  var chatsAccessibilityLabel by mutableStateOf("Chats")
   var rail by mutableStateOf(false)
   var floating by mutableStateOf(false)
   var dark by mutableStateOf(false)
@@ -187,9 +199,12 @@ class T3WorkspaceNavigationView(
               ) {
                 tabs.forEach { tab ->
                   NavigationBarItem(
+                    modifier = Modifier.semantics {
+                      contentDescription = tabAccessibilityTitle(tab)
+                    },
                     selected = selectedTab == tab,
                     onClick = { onTabSelected(mapOf("tab" to tab)) },
-                    icon = { Icon(tabIconPainter(tab), contentDescription = null) },
+                    icon = { tabIcon(tab) },
                     label = { Text(tabTitle(tab), fontSize = (12 * textScale).sp) },
                     colors = NavigationBarItemDefaults.colors(
                       selectedIconColor = Color(selectedColor),
@@ -234,17 +249,12 @@ class T3WorkspaceNavigationView(
                 role = Role.Tab,
                 onClick = { onTabSelected(mapOf("tab" to tab)) },
               )
-              .semantics { contentDescription = expandedTabTitle(tab) }
+              .semantics { contentDescription = tabAccessibilityTitle(tab) }
               .padding(4.dp)
               .background(if (selected) Color(indicatorColor) else Color.Transparent, CircleShape),
             contentAlignment = Alignment.Center,
           ) {
-            Icon(
-              tabIconPainter(tab),
-              contentDescription = null,
-              modifier = Modifier.size((24 * textScale).dp),
-              tint = tint,
-            )
+            tabIcon(tab, tint, (24 * textScale).dp)
           }
         }
       }
@@ -392,13 +402,13 @@ class T3WorkspaceNavigationView(
         .clip(CircleShape)
         .background(if (selected) Color(indicatorColor) else Color.Transparent)
         .selectable(selected = selected, role = Role.Tab, onClick = onClick)
-        .semantics { contentDescription = title },
+        .semantics { contentDescription = tabAccessibilityTitle(tab) },
     ) {
       Row(
         Modifier.fillMaxHeight().padding(start = (ITEM_HEIGHT - ICON_SIZE) / 2).clipToBounds(),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Icon(tabIconPainter(tab), contentDescription = null, tint = tint)
+        tabIcon(tab, tint)
         Text(
           title,
           Modifier.padding(start = 12.dp).alpha(labelAlpha(fraction)).clearAndSetSemantics {},
@@ -421,6 +431,25 @@ class T3WorkspaceNavigationView(
 
   private fun expandedTabTitle(tab: String) =
     if (tab == "pullRequests") "Pull Requests" else tabTitle(tab)
+
+  private fun tabAccessibilityTitle(tab: String) =
+    if (tab == "threads") chatsAccessibilityLabel else expandedTabTitle(tab)
+
+  @Composable
+  private fun tabIcon(tab: String, tint: Color = LocalContentColor.current, size: Dp = ICON_SIZE) {
+    BadgedBox(badge = {
+      if (tab == "threads" && selectedTab != "threads" && chatsBadgeColor != 0) {
+        Badge(containerColor = Color(chatsBadgeColor))
+      }
+    }) {
+      Icon(
+        tabIconPainter(tab),
+        contentDescription = null,
+        tint = tint,
+        modifier = Modifier.size(size)
+      )
+    }
+  }
 
   @Composable
   private fun tabIconPainter(tab: String) = painterResource(
