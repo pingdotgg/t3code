@@ -30,6 +30,7 @@ import {
   snapShotSetupError,
   type SnapShotSetupError,
 } from "../../state/desktopSnapShot";
+import { ManagedNotice } from "../ManagedPolicy";
 import { toastManager } from "../ui/toast";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { commandLabel } from "./KeybindingsSettings.logic";
@@ -367,16 +368,19 @@ export function SnapShotSettings() {
           <SettingsRow
             {...searchableSetting("snap-shot-enabled")}
             description={snapShotDescription(state)}
+            managed={policyDenial}
             status={
-              bridge
-                ? policyDenial !== undefined
-                  ? policyDenial
-                  : setupBusy && !wizard
-                    ? "Updating capture settings…"
-                    : refreshError
-                      ? `${refreshError.title}. ${refreshError.message}`
-                      : snapShotStatus(state, enabled)
-                : undefined
+              bridge ? (
+                policyDenial !== undefined ? (
+                  <ManagedNotice>{policyDenial}</ManagedNotice>
+                ) : setupBusy && !wizard ? (
+                  "Updating capture settings…"
+                ) : refreshError ? (
+                  `${refreshError.title}. ${refreshError.message}`
+                ) : (
+                  snapShotStatus(state, enabled)
+                )
+              ) : undefined
             }
             control={
               <>
