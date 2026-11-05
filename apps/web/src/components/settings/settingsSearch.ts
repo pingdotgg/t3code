@@ -72,6 +72,7 @@ export interface SettingsSearchItem {
   readonly requiresThreadAutoSettlement?: boolean;
   readonly requiresSideChats?: boolean;
   readonly requiresChatSync?: boolean;
+  readonly requiresKnowledgeMap?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -85,6 +86,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly hasSideChats?: boolean;
   readonly hasChatSync?: boolean;
+  readonly hasKnowledgeMap?: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
 }
@@ -270,6 +272,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["copy chats sync T3 Learn"],
     environmentOnly: true,
     requiresChatSync: true,
+  },
+  {
+    id: "knowledge-map",
+    title: "What you know",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["knowledge map topics explained back prerequisites"],
+    environmentOnly: true,
+    requiresKnowledgeMap: true,
   },
   {
     id: "project-defaults",
@@ -1313,6 +1324,7 @@ export function getSettingsSearchTargetScope(targetId: string) {
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
         ...(item.requiresSideChats ? { requiresSideChats: true } : {}),
         ...(item.requiresChatSync ? { requiresChatSync: true } : {}),
+        ...(item.requiresKnowledgeMap ? { requiresKnowledgeMap: true } : {}),
       }
     : null;
 }
@@ -1394,6 +1406,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.requiresSideChats || availability.hasSideChats) &&
       (!item.requiresChatSync || availability.hasChatSync === true) &&
+      (!item.requiresKnowledgeMap || availability.hasKnowledgeMap === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
   );

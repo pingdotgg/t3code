@@ -281,6 +281,7 @@ export const make = Effect.gen(function* () {
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
       serverBrowser: true,
       lessonSideChats: true,
+      knowledgeMap: true,
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,

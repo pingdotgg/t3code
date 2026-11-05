@@ -188,6 +188,7 @@ import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecr
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as ChatSync from "./chatSync.ts";
+import * as KnowledgeMap from "./knowledgeMap.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -1464,6 +1465,9 @@ export const layerWsRpc = (
       const chatSync = yield* Effect.serviceOption(ChatSync.ChatSync).pipe(
         Effect.map((service) => Option.getOrElse(service, () => ChatSync.unavailable)),
       );
+      const knowledgeMap = yield* Effect.serviceOption(KnowledgeMap.KnowledgeMap).pipe(
+        Effect.map((service) => Option.getOrElse(service, () => KnowledgeMap.unavailable)),
+      );
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
@@ -2624,6 +2628,8 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverStartChatSync]: () => chatSync.start,
         [WS_METHODS.serverGetChatSyncStatus]: () => chatSync.status,
+        [WS_METHODS.knowledgeList]: () => knowledgeMap.list,
+        [WS_METHODS.knowledgeRemove]: (input) => knowledgeMap.remove(input.topic),
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),

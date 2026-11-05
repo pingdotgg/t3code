@@ -361,6 +361,7 @@ import {
   ServerSettingsError,
   ServerSettingsPatch,
 } from "./settings.ts";
+import { KnowledgeMapEntries, KnowledgeMapError, KnowledgeMapRemoveInput } from "./knowledgeMap.ts";
 import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
@@ -511,6 +512,8 @@ export const WS_METHODS = {
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverStartChatSync: "server.startChatSync",
   serverGetChatSyncStatus: "server.getChatSyncStatus",
+  knowledgeList: "knowledge.list",
+  knowledgeRemove: "knowledge.remove",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   peerLinksList: "peerLinks.list",
   peerLinksLink: "peerLinks.link",
@@ -802,6 +805,16 @@ const WsServerGetChatSyncStatusRpc = Rpc.make(WS_METHODS.serverGetChatSyncStatus
   payload: Schema.Struct({}),
   success: ChatSyncStatus,
   error: Schema.Union([ChatSyncError, EnvironmentAuthorizationError]),
+});
+const WsKnowledgeListRpc = Rpc.make(WS_METHODS.knowledgeList, {
+  payload: Schema.Struct({}),
+  success: KnowledgeMapEntries,
+  error: Schema.Union([KnowledgeMapError, EnvironmentAuthorizationError]),
+});
+const WsKnowledgeRemoveRpc = Rpc.make(WS_METHODS.knowledgeRemove, {
+  payload: KnowledgeMapRemoveInput,
+  success: KnowledgeMapEntries,
+  error: Schema.Union([KnowledgeMapError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStorage, {
@@ -2031,6 +2044,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetStorageCleanupReportRpc,
   WsServerStartChatSyncRpc,
   WsServerGetChatSyncStatusRpc,
+  WsKnowledgeListRpc,
+  WsKnowledgeRemoveRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,

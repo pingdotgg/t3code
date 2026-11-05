@@ -82,6 +82,9 @@ import { AnimationToolkit } from "./toolkits/animation/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as KnowledgeHandlers from "./toolkits/knowledge/handlers.ts";
+import { KnowledgeToolkit } from "./toolkits/knowledge/tools.ts";
+import * as KnowledgeMap from "../knowledgeMap.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -1097,6 +1100,10 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
+const layerKnowledgeToolkit = toolkitRegistration(KnowledgeToolkit, KnowledgeHandlers.layer).pipe(
+  Layer.provide(KnowledgeMap.layer),
+);
+
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
@@ -1211,6 +1218,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerKnowledgeToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

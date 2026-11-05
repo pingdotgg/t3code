@@ -9,3 +9,7 @@ Side chats work in the web and desktop apps. The mobile app doesn't support them
 ## Settings
 
 Open **Settings → Threads → Side chats** to choose the model for new side chats, change how they explain things, and attach skills. Skills are added when a side chat starts where its provider supports them; a few providers can only see the skill name.
+
+## What you know
+
+T3 Learn keeps a per-environment map of topics you have explained back correctly. In a lesson, say `mark X done` and explain the topic in your own words. Review or remove entries in Settings → Threads → What you know. Mobile does not show this map yet.

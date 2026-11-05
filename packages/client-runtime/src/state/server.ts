@@ -1199,6 +1199,17 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduler: configScheduler,
     concurrency: configConcurrency,
   });
+  const knowledgeMap = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:knowledge-map",
+    tag: WS_METHODS.knowledgeList,
+  });
+  const removeKnowledge = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:knowledge-remove",
+    tag: WS_METHODS.knowledgeRemove,
+    onSuccess: ({ environmentId }, registry) =>
+      Effect.sync(() => registry.refresh(knowledgeMap({ environmentId, input: {} }))),
+  });
+
   const chatSyncStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:server:chat-sync-status",
     tag: WS_METHODS.serverGetChatSyncStatus,
@@ -1222,6 +1233,8 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     startChatSync,
     chatSyncStatus,
+    knowledgeMap,
+    removeKnowledge,
     prepareTriage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:prepare-triage",
       tag: WS_METHODS.serverPrepareTriage,
