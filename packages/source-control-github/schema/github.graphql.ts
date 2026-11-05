@@ -396,6 +396,14 @@ export declare namespace Typename {
   export type RepositoryOwner = "Organization" | "User"
   /** Every possible `__typename` of union `RequestedReviewer`. */
   export type RequestedReviewer = "Bot" | "EnterpriseTeam" | "Mannequin" | "Team" | "User"
+  /** Every possible `__typename` of union `RuleParameters`. */
+  export type RuleParameters =
+    | "BranchNamePatternParameters" | "CodeCoverageParameters" | "CodeQualityParameters" | "CodeScanningParameters"
+    | "CommitAuthorEmailPatternParameters" | "CommitMessagePatternParameters" | "CommitterEmailPatternParameters"
+    | "CopilotCodeReviewParameters" | "FileExtensionRestrictionParameters" | "FilePathRestrictionParameters"
+    | "MaxFilePathLengthParameters" | "MaxFileSizeParameters" | "MergeQueueParameters" | "PullRequestParameters"
+    | "RequiredDeploymentsParameters" | "RequiredStatusChecksParameters" | "TagNamePatternParameters"
+    | "UpdateParameters" | "WorkflowsParameters"
   /** Every possible `__typename` of union `SearchResultItem`. */
   export type SearchResultItem =
     | "App" | "Discussion" | "Issue" | "MarketplaceListing" | "Organization" | "PullRequest" | "Repository" | "User"

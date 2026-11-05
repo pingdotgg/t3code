@@ -42,6 +42,10 @@ const refusedReviewer = {
   message: "Resource not accessible by integration",
   path: ["repository", "pullRequest", "reviewRequests", "nodes", 0, "requestedReviewer"],
 };
+const refusedRules = {
+  ...refusedReviewer,
+  path: ["repository", "pullRequest", "baseRef", "rules"],
+};
 const pullRequestInput = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
 type PullRequestRead = (
   input: typeof pullRequestInput,
@@ -3272,6 +3276,31 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { name: "alone", errors: [refusedRules], requestedReviewers: 100 },
+    {
+      name: "with a reviewer refusal",
+      errors: [refusedRules, refusedReviewer],
+      requestedReviewers: 0,
+    },
+  ])("reads the detail without base branch rules refused $name", ({ errors, requestedReviewers }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(encodeJson({ ...coreResponse(), errors }))),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const detail = yield* cli.getPullRequestDetail(pullRequestInput);
+      expect(detail.number).toBe(7);
+      expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({
+        required: true,
+        requiredRules: false,
+        requestedReviewers,
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+    }),
+  );
+
   it.effect.each([false, true])(
     "keeps thread cursors and reviewers after a refusal (later page: %s)",
     (later) =>
@@ -3421,6 +3450,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
             output(
               encodeJson(
                 coreResponse({
+                  baseRef: {
+                    compare: null,
+                    refUpdateRule: { requiredStatusCheckContexts: ["Done"] },
+                  },
                   commits: {
                     nodes: [
                       {
@@ -3469,12 +3502,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks).toHaveLength(2);
+        expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+          ["last", "failure"],
+          ["first", "success"],
+          ["Done", "pending"],
+        ]);
         expect(detail.checksState).toBe("failing");
         expect(detail.checksTruncated).toBe(false);
         // The whole rollup is walked from its start, so no check is counted twice or skipped.
-        expect(variablesOf("CheckContexts")).toEqual([expect.objectContaining({ number: 7 })]);
-        expect(variablesOf("CheckContexts")[0]).not.toHaveProperty("after");
+        expect(variablesOf("PullRequestCheckContexts")).toEqual([
+          expect.objectContaining({ number: 7 }),
+        ]);
+        expect(variablesOf("PullRequestCheckContexts")[0]).not.toHaveProperty("after");
         expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
 
         if (refused) {

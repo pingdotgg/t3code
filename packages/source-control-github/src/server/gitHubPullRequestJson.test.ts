@@ -510,6 +510,74 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
+  it.each([
+    ["branch protection", { refUpdateRule: { requiredStatusCheckContexts: ["Done"] } }],
+    [
+      "a ruleset",
+      {
+        refUpdateRule: null,
+        rules: {
+          nodes: [
+            {
+              type: "REQUIRED_STATUS_CHECKS",
+              parameters: {
+                __typename: "RequiredStatusChecksParameters",
+                requiredStatusChecks: [{ context: "Done" }],
+              },
+            },
+          ],
+        },
+      },
+    ],
+  ])("waits for a check %s requires that has not started yet", (_source, rules) => {
+    const detail = detailOf(
+      [check({ name: "lint", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true })],
+      { baseRef: { compare: null, ...rules } },
+    );
+
+    expect(detail.checks).toEqual([
+      { name: "lint", status: "success", description: null, url: null, required: true },
+      { name: "Done", status: "pending", description: null, url: null, required: true },
+    ]);
+    expect(detail.checksState).toBe("pending");
+  });
+
+  it("counts a required check as started when workflows share its name", () => {
+    const detail = detailOf(
+      ["linux", "windows"].map((workflowName) =>
+        inWorkflow({ workflowName, name: "build", status: "COMPLETED", conclusion: "SUCCESS" }),
+      ),
+      { baseRef: { compare: null, refUpdateRule: { requiredStatusCheckContexts: ["build"] } } },
+    );
+
+    expect(detail.checks.map((check) => check.name)).toEqual(["linux / build", "windows / build"]);
+    expect(detail.checksState).toBe("passing");
+  });
+
+  it("waits for a required check that only a check GitHub calls not required shares a name with", () => {
+    const detail = detailOf(
+      [
+        check({ name: "lint", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true }),
+        check({ name: "Done", status: "COMPLETED", conclusion: "SUCCESS", isRequired: false }),
+      ],
+      { baseRef: { compare: null, refUpdateRule: { requiredStatusCheckContexts: ["Done"] } } },
+    );
+
+    expect(detail.checks.filter((entry) => entry.required)).toEqual([
+      { name: "lint", status: "success", description: null, url: null, required: true },
+      { name: "Done", status: "pending", description: null, url: null, required: true },
+    ]);
+  });
+
+  it("adds no required check to a head no check has reported on", () => {
+    const detail = detailOf([], {
+      baseRef: { compare: null, refUpdateRule: { requiredStatusCheckContexts: ["Done"] } },
+    });
+
+    expect(detail.checks).toEqual([]);
+    expect(detail.checksState).toBeNull();
+  });
+
   it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,

@@ -58,6 +58,7 @@ query PullRequestCore(
   $number: Int!
   $headRef: String!
   $required: Boolean!
+  $requiredRules: Boolean!
   $requestedReviewers: Int!
 ) {
   repository(owner: $owner, name: $name) {
@@ -114,9 +115,25 @@ query PullRequestCore(
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch
+      # Required checks of branch protection and rulesets, on github.com only like `isRequired`. A
+      # required check not created on the head yet (a `needs:` job) is in no rollup context.
       baseRef {
         compare(headRef: $headRef) {
           behindBy
+        }
+        refUpdateRule @include(if: $requiredRules) {
+          requiredStatusCheckContexts
+        }
+        rules(first: 100) @include(if: $requiredRules) {
+          nodes {
+            parameters {
+              ... on RequiredStatusChecksParameters {
+                requiredStatusChecks {
+                  context
+                }
+              }
+            }
+          }
         }
       }
       reviewRequests(first: $requestedReviewers) {
