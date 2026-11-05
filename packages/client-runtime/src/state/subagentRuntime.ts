@@ -1,6 +1,7 @@
 import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import type {
+  ModelSelection,
   OrchestrationV2AppThread,
   OrchestrationV2Subagent,
   OrchestrationV2SubagentWorkflow,
@@ -184,6 +185,21 @@ function promptTitle(prompt: string): string {
     end -= 1;
   }
   return `${prompt.slice(0, end)}...`;
+}
+
+export function workflowMemberModelSelection(
+  member: Pick<RuntimeSubagent, "model" | "effort" | "speed">,
+  instanceId: ModelSelection["instanceId"],
+): ModelSelection | undefined {
+  if (!member.model) return undefined;
+  return {
+    instanceId,
+    model: member.model,
+    options: [
+      ...(member.effort ? [{ id: "effort", value: member.effort }] : []),
+      ...(member.speed ? [{ id: "fastMode", value: member.speed === "fast" }] : []),
+    ],
+  };
 }
 
 export function projectedSubagentsToRuntime(

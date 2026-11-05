@@ -1,44 +1,32 @@
 ---
 title: Nuxt
-description: Deploy a Nuxt app to AWS with AWS.Website.Nuxt — nitro's aws-lambda preset on a streaming Lambda Function URL, S3 assets behind CloudFront, and Nuxt's own dev server under alchemy dev.
+description: Deploy a Nuxt app to AWS with AWS.Website.Nuxt — the nitro server on a Lambda Web Function, S3 assets behind CloudFront, and Nuxt's own dev server under alchemy dev.
 sidebar:
   order: 10
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `AWS.Website.Nuxt` deploys a [Nuxt](https://nuxt.com) app to AWS. It
 builds the app through your project's own `@nuxt/kit` with nitro's
-`aws-lambda` preset: the nitro server runs on a Lambda Function URL
-with response streaming, and client assets plus prerendered pages are
-served from a private S3 bucket through CloudFront. A CloudFront
-Function routes each request at the edge — uploaded files go to S3,
-everything else streams from the Lambda. There is no `nitro.preset`
+`node` preset: the nitro server runs on a
+[Lambda Web Function](/aws/compute/web-functions) and streams its
+responses, and client assets plus prerendered pages are served from a
+private S3 bucket through CloudFront. A CloudFront Function routes each
+request at the edge — uploaded files go to S3, everything else streams
+from the server. There is no `nitro.preset`
 to edit and no build command to run.
 
 ## Install
 
 The build integration is not bundled with alchemy. Install
 `@alchemy.run/frontend-frameworks`; the resource loads its `/nuxt` and
-`/nuxt/aws` exports from your project at deploy time. It is only used
+`/nuxt/node` exports from your project at deploy time. It is only used
 at build time, so a dev dependency is enough:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Configure Nuxt
 
@@ -55,9 +43,9 @@ export default defineNuxtConfig({
 });
 ```
 
-Don't set `nitro.preset` — the AWS deploy target owns the preset
-(`aws-lambda` with streaming enabled), and a foreign preset is a hard
-error.
+Don't set `nitro.preset` — the deploy target owns the preset (`node`,
+or `aws-lambda` with streaming enabled for `server: "function"`), and a
+foreign preset is a hard error.
 
 ## Deploy-time overrides
 
@@ -88,7 +76,7 @@ Stack):
 
 ```typescript
 // alchemy.run.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 export const Website = AWS.Website.Nuxt("Website");
 ```
@@ -127,21 +115,21 @@ values, or outputs from other resources in the Stack:
 ```diff lang="typescript"
 // alchemy.run.ts
 export const Website = AWS.Website.Nuxt("Website", {
-+  memorySize: 2048,
 +  env: {
 +    NUXT_PUBLIC_API_BASE: api.url,
 +  },
 });
 ```
 
-`env` values are set on the Lambda on deploy and injected into
+`env` values are set on the server on deploy and injected into
 the dev server's process environment under `alchemy dev`, so server
 code reads the same values in both modes. Sibling props tune the
-Lambda itself (`memorySize`, `timeout`, `architecture`, `runtime`).
+server itself (`timeout`, `maxConcurrencyPerEnvironment`,
+`maxEnvironments`).
 
 ## Read the environment in server code
 
-On AWS the nitro server runs in a plain Node Lambda, so server routes
+On AWS the nitro server is a plain Node server, so server routes
 and SSR read the environment from `process.env` — or, the more
 idiomatic Nuxt way, through `runtimeConfig` overridden by
 `NUXT_`-prefixed environment variables:
@@ -170,10 +158,26 @@ export default defineNuxtConfig({
 ```
 
 Nitro's `isr` route rule is implemented only by the Vercel and
-Netlify presets. On AWS Lambda it is silently ignored at build time,
-and the route renders on demand in the Lambda like any other SSR
+Netlify presets. On AWS it is silently ignored at build time,
+and the route renders on demand on the server like any other SSR
 route. Use `prerender` for build-time static routes, or `cache` route
 rules for runtime caching.
+
+## Run on a Lambda Function
+
+Web Functions run in a subset of Regions. Elsewhere, set
+`server: "function"`: the app builds with nitro's `aws-lambda` preset
+(from the `/nuxt/aws` export) and runs on a Lambda Function behind a
+streaming Function URL, tuned with `memorySize`, `architecture`, and
+`runtime`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Nuxt("Website", {
++  server: "function",
++  memorySize: 2048,
+});
+```
 
 ## Local dev
 

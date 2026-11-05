@@ -547,10 +547,21 @@ export function decodeDiscussionsJson(
     const notes = (discussion.value.notes ?? []).filter((note) => note.system !== true);
     const root = notes[0];
     const position = root?.position;
-    if (root === undefined || !position || position.position_type !== "text") continue;
-    const side = position.new_line === null || position.new_line === undefined ? "left" : "right";
-    const path = trimmed(side === "left" ? position.old_path : position.new_path);
-    const line = side === "left" ? position.old_line : position.new_line;
+    if (root === undefined || !position) continue;
+    let side: "left" | "right";
+    let path: string | null;
+    let line: number | null | undefined;
+    if (position.position_type === "text") {
+      side = position.new_line === null || position.new_line === undefined ? "left" : "right";
+      path = trimmed(side === "left" ? position.old_path : position.new_path);
+      line = side === "left" ? position.old_line : position.new_line;
+    } else if (position.position_type === "file" || position.position_type === "image") {
+      side = "right";
+      path = trimmed(position.new_path) ?? trimmed(position.old_path);
+      line = null;
+    } else {
+      continue;
+    }
     if (path === null) continue;
     threads.push({
       id: discussion.value.id,
@@ -724,6 +735,8 @@ function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestP
       ...(value.deleted_file === true ? [`deleted file mode ${value.a_mode ?? "100644"}`] : []),
       ...(value.renamed_file === true
         ? [
+            // GitLab has no similarity score; Pierre needs this header to keep the rename.
+            `similarity index ${hunks.length > 0 || value.too_large === true || value.collapsed === true ? 0 : 100}%`,
             `rename from ${quoteGitPatchPath(value.old_path)}`,
             `rename to ${quoteGitPatchPath(value.new_path)}`,
           ]
@@ -995,6 +1008,56 @@ export function decodeRepositoryBlobsJson(
     blobs.set(path, oid);
   }
   return Result.succeed(blobs);
+}
+
+export const MERGE_MESSAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) { title squashOnMerge defaultMergeCommitMessage defaultSquashCommitMessage }
+  }
+}`;
+
+const RawMergeMessagesSchema = Schema.Struct({
+  // A field that errored reads as null, which must not pass for an absent template.
+  errors: Schema.optionalKey(Schema.Never),
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequest: Schema.NullOr(
+          Schema.Struct({
+            title: Schema.optional(Schema.NullOr(Schema.String)),
+            squashOnMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
+            defaultMergeCommitMessage: Schema.optional(Schema.NullOr(Schema.String)),
+            defaultSquashCommitMessage: Schema.optional(Schema.NullOr(Schema.String)),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeMergeMessages = decodeJsonResult(RawMergeMessagesSchema);
+
+export interface GitLabMergeMessages {
+  readonly title: string | null;
+  readonly merge: string | null;
+  readonly squash: string | null;
+  /** GitLab squashes when the project always does or the merge request asks to. */
+  readonly squashOnMerge: boolean;
+}
+
+/** The messages GitLab would write from the project's merge and squash templates. */
+export function decodeMergeMessagesJson(
+  raw: string,
+): Result.Result<GitLabMergeMessages, DecodeFailure> {
+  return Result.map(decodeMergeMessages(raw), (decoded) => {
+    const mergeRequest = decoded.data.project?.mergeRequest;
+    return {
+      title: mergeRequest?.title ?? null,
+      merge: mergeRequest?.defaultMergeCommitMessage ?? null,
+      squash: mergeRequest?.defaultSquashCommitMessage ?? null,
+      squashOnMerge: mergeRequest?.squashOnMerge === true,
+    };
+  });
 }
 
 export const REVIEW_DECISIONS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
