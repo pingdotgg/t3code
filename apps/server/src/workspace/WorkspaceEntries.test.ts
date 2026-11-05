@@ -410,6 +410,41 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(images.truncated).toBe(false);
       }),
     );
+
+    // On Windows `\` is a separator, so these names cannot exist there.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "keeps a backslash in an indexed file name as part of the name",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir();
+          yield* writeTextFile(cwd, "src/weird\\name.txt", "needle\n");
+
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const listed = yield* workspaceEntries.list({ cwd });
+          expect(listed.entries).toEqual([
+            { path: "src", kind: "directory" },
+            { path: "src/weird\\name.txt", kind: "file" },
+          ]);
+
+          const searched = yield* searchWorkspaceEntries({
+            cwd,
+            query: "weird",
+            limit: 10,
+            kind: "file",
+          });
+          expect(searched.entries).toEqual([{ path: "src/weird\\name.txt", kind: "file" }]);
+
+          const contents = yield* workspaceEntries.searchContents({
+            cwd,
+            query: "needle",
+            limit: 10,
+            caseSensitive: false,
+            wholeWord: false,
+            useRegex: false,
+          });
+          expect(contents.matches.map((match) => match.path)).toEqual(["src/weird\\name.txt"]);
+        }),
+    );
   });
 
   describe("listIgnoredFiles", () => {

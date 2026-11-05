@@ -9,6 +9,8 @@ import { afterEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { vi } from "vite-plus/test";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 afterEach(() => {
@@ -136,6 +138,30 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       });
       expect(grep).toHaveBeenCalledTimes(2);
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
+    }),
+  ),
+);
+
+it.effect("turns Windows separators into forward slashes on Windows hosts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const items = [fileItem("src\\nested\\file.ts")];
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        fileSearch: vi.fn(() => ({
+          ok: true as const,
+          value: { items, scores: [], totalMatched: items.length, totalFiles: items.length },
+        })),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("C:\\workspace\\project").pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+      );
+      const result = yield* searchIndex.search("file", 10, "file");
+
+      expect(result.entries).toEqual([{ kind: "file", path: "src/nested/file.ts" }]);
     }),
   ),
 );
