@@ -1,5 +1,6 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -37,19 +38,23 @@ describe("HtmlRenderDocument", () => {
 
   it("restores form input when the page mounts again, as after a thread switch", async () => {
     // The page reports its fields on load and after every edit, including restored ones. Its
-    // startup input event must not erase saved input, and its note handler rebuilds a later field.
+    // startup input event must not erase saved input, its note handler rebuilds a later field, a
+    // native pick fills a later field silently, and ticking "more" adds a field before itself.
     const html = injectHtmlRenderBootstrap(`<!doctype html><html><body>
       <textarea name="note"></textarea>
       <input name="extra">
       <select name="tags" multiple><option>x</option><option>y</option><option>z</option></select>
-      <input type="radio" name="pick" value="a" checked>
-      <input type="radio" name="pick" value="b">
+      <input type="radio" name="pick" value="a" aria-label="Pick a" checked>
+      <input type="radio" name="pick" value="b" aria-label="Pick b">
       <input name="choice" value="a">
+      <div id="more-slot"></div>
+      <input type="checkbox" name="more">
       <output id="echo"></output>
       <script>
         var note = document.querySelector("textarea");
         var tags = document.querySelector("select");
         var extra = function() { return document.querySelector('input[name="extra"]'); };
+        var detail = function() { return document.querySelector('input[name="detail"]'); };
         note.addEventListener("input", function() {
           document.getElementById("echo").textContent = note.value;
           extra().replaceWith(extra().cloneNode());
@@ -59,8 +64,13 @@ describe("HtmlRenderDocument", () => {
           if (event.target.name === "pick") {
             document.querySelector('input[name="choice"]').value = event.target.value;
           }
+          if (event.target.name === "more" && event.target.checked && !detail()) {
+            document.getElementById("more-slot").innerHTML = '<input name="detail">';
+          }
         });
-        function report() {
+        // Deferred like the bootstrap's own report, so the host has the snapshot before the test sees this.
+        function report() { setTimeout(send); }
+        function send() {
           window.parent.postMessage({
             type: "fields",
             note: note.value,
@@ -68,6 +78,8 @@ describe("HtmlRenderDocument", () => {
             tags: Array.from(tags.selectedOptions, function(option) { return option.value; }),
             pick: document.querySelector('input[name="pick"]:checked').value,
             choice: document.querySelector('input[name="choice"]').value,
+            more: document.querySelector('input[name="more"]').checked,
+            detail: detail() ? detail().value : null,
             echo: document.getElementById("echo").textContent
           }, "*");
         }
@@ -82,9 +94,11 @@ describe("HtmlRenderDocument", () => {
           tags.options[1].selected = true;
           tags.options[2].selected = true;
           tags.dispatchEvent(new Event("change", { bubbles: true }));
-          var pick = document.querySelector('input[value="b"]');
-          pick.checked = true;
-          pick.dispatchEvent(new Event("change", { bubbles: true }));
+          var more = document.querySelector('input[name="more"]');
+          more.checked = true;
+          more.dispatchEvent(new Event("change", { bubbles: true }));
+          detail().value = "shown";
+          detail().dispatchEvent(new Event("input", { bubbles: true }));
         });
         note.dispatchEvent(new Event("input", { bubbles: true }));
       </script></body></html>`);
@@ -107,6 +121,8 @@ describe("HtmlRenderDocument", () => {
       tags: ["y", "z"],
       pick: "b",
       choice: "b",
+      more: true,
+      detail: "shown",
       echo: "keep this",
     };
 
@@ -122,11 +138,16 @@ describe("HtmlRenderDocument", () => {
           tags: [],
           pick: "a",
           choice: "a",
+          more: false,
+          detail: null,
           echo: "",
         }),
       );
       const frame = screen.getByTitle("Form").element() as HTMLIFrameElement;
       frame.contentWindow?.postMessage({ type: "edit" }, "*");
+      await vi.waitFor(() => expect(fields).toEqual({ ...edited, pick: "a", choice: "a" }));
+      // Native input runs microtasks between listeners, unlike a scripted dispatchEvent.
+      await page.frameLocator(screen.getByTitle("Form")).getByLabelText("Pick b").click();
       await vi.waitFor(() => expect(fields).toEqual(edited));
     }
 
