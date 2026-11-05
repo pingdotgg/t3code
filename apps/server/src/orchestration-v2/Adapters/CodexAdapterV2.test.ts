@@ -120,6 +120,27 @@ describe("CodexAdapterV2 context usage", () => {
     });
   });
 
+  it("omits a configured limit Codex would clamp to 90% of the full window", () => {
+    const usage = {
+      totalTokens: 1_000,
+      inputTokens: 1_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+    };
+    const tokenUsage = { total: usage, last: usage, modelContextWindow: 258_400 };
+    const at = "2026-08-29T00:00:00.000Z";
+
+    assert.notProperty(
+      CodexAdapterV2.codexProviderTurnTokenUsage(tokenUsage, at, 256_000),
+      "autoCompactThreshold",
+    );
+    assert.equal(
+      CodexAdapterV2.codexProviderTurnTokenUsage(tokenUsage, at, 100_000).autoCompactThreshold,
+      100_000,
+    );
+  });
+
   it.effect("reports the auto-compaction limit Codex resolves for the thread's cwd", () =>
     Effect.gen(function* () {
       const scenario = "auto-compact-threshold";
@@ -128,10 +149,20 @@ describe("CodexAdapterV2 context usage", () => {
       const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
       const emit = (frame: unknown) =>
         Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+      const configRead = yield* Deferred.make<{ readonly id: number; readonly cwd: unknown }>();
+      let configReplied = false;
+      let turnStartedBeforeConfigReply = false;
       const turnCompleted = yield* Deferred.make<void>();
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
-      // Codex only reports the limit through `config/read`, resolved per cwd (project layers, `-c`).
+      const usage = {
+        totalTokens: 25_025,
+        inputTokens: 25_000,
+        cachedInputTokens: 0,
+        outputTokens: 25,
+        reasoningOutputTokens: 0,
+      };
+      // Like Codex, usage follows turn/start at once; the config/read reply is held by the test.
       const respond = (frame: {
         readonly id?: number;
         readonly method?: string;
@@ -140,16 +171,7 @@ describe("CodexAdapterV2 context usage", () => {
         if (frame.id === undefined) return Effect.void;
         if (frame.method === "config/read") {
           const cwd = Predicate.hasProperty(frame.params, "cwd") ? frame.params.cwd : undefined;
-          return emit({
-            id: frame.id,
-            result: {
-              config:
-                cwd === CODEX_TEST_RUNTIME_POLICY.cwd
-                  ? { model_auto_compact_token_limit: 256_000 }
-                  : {},
-              origins: {},
-            },
-          });
+          return Deferred.succeed(configRead, { id: frame.id, cwd });
         }
         const response = preamble.find(
           (entry) =>
@@ -159,9 +181,43 @@ describe("CodexAdapterV2 context usage", () => {
             "id" in entry.frame,
         );
         const reply = response === undefined ? undefined : withReplayRequestId(response, frame.id);
-        return reply?.type === "emit_inbound"
-          ? emit(reply.frame)
-          : emit({ id: frame.id, error: { code: -32601, message: `${frame.method} unsupported` } });
+        if (reply?.type !== "emit_inbound") {
+          return emit({
+            id: frame.id,
+            error: { code: -32601, message: `${frame.method} unsupported` },
+          });
+        }
+        if (frame.method !== "turn/start") return emit(reply.frame);
+        turnStartedBeforeConfigReply ||= !configReplied;
+        return Effect.forEach(
+          [
+            reply.frame,
+            {
+              method: "turn/started",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+              },
+            },
+            {
+              method: "thread/tokenUsage/updated",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                tokenUsage: { total: usage, last: usage, modelContextWindow: 828_000 },
+              },
+            },
+            {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          ],
+          emit,
+          { discard: true },
+        );
       };
       const outbound = new TextDecoder();
       const client = yield* CodexClient.make(
@@ -219,44 +275,31 @@ describe("CodexAdapterV2 context usage", () => {
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
-      yield* runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId,
-          providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make(`attempt-${scenario}`),
-          text: "work",
-        }),
-      );
-      const usage = {
-        totalTokens: 25_025,
-        inputTokens: 25_000,
-        cachedInputTokens: 0,
-        outputTokens: 25,
-        reasoningOutputTokens: 0,
-      };
+      const startTurn = yield* runtime
+        .startTurn(
+          makeCodexTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "work",
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      // Codex only reports the limit through `config/read`, resolved per cwd (project layers, `-c`).
+      const request = yield* Deferred.await(configRead);
+      configReplied = true;
       yield* emit({
-        method: "turn/started",
-        params: {
-          threadId: nativeThreadId,
-          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+        id: request.id,
+        result: {
+          config:
+            request.cwd === CODEX_TEST_RUNTIME_POLICY.cwd
+              ? { model_auto_compact_token_limit: 256_000 }
+              : {},
+          origins: {},
         },
       });
-      yield* emit({
-        method: "thread/tokenUsage/updated",
-        params: {
-          threadId: nativeThreadId,
-          turnId: nativeTurnId,
-          tokenUsage: { total: usage, last: usage, modelContextWindow: 258_400 },
-        },
-      });
-      yield* emit({
-        method: "turn/completed",
-        params: {
-          threadId: nativeThreadId,
-          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-        },
-      });
+      yield* Fiber.join(startTurn);
       yield* Deferred.await(turnCompleted);
 
       const tokenUsage = events
@@ -266,7 +309,8 @@ describe("CodexAdapterV2 context usage", () => {
             : [],
         )
         .at(-1);
-      assert.equal(tokenUsage?.maxTokens, 258_400);
+      assert.isFalse(turnStartedBeforeConfigReply, "usage must not race the config/read reply");
+      assert.equal(tokenUsage?.maxTokens, 828_000);
       assert.equal(
         tokenUsage?.autoCompactThreshold,
         256_000,
@@ -489,6 +533,33 @@ describe("CodexAdapterV2 native protocol logging", () => {
           },
         },
       });
+
+      yield* protocolLogger({
+        direction: "outgoing",
+        stage: "decoded",
+        payload: { id: 7, method: "config/read", params: { includeLayers: false, cwd: "/repo" } },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          id: 7,
+          result: {
+            config: {
+              model_providers: {
+                x: {
+                  http_headers: { "X-Custom": "dummy-secret" },
+                  env: { CUSTOM_VALUE: "dummy-env-secret" },
+                },
+              },
+            },
+            origins: {},
+          },
+        },
+      });
+      const written = JSON.stringify(writes);
+      assert.notInclude(written, "dummy-secret");
+      assert.notInclude(written, "dummy-env-secret");
     }),
   );
 });
@@ -955,11 +1026,12 @@ describe("CodexAdapterV2 process exit", () => {
                       Predicate.isObject(entry.frame) &&
                       "id" in entry.frame,
                   );
+                  if (frame.id === undefined) return Effect.void;
                   const reply =
-                    response === undefined || frame.id === undefined
-                      ? undefined
-                      : withReplayRequestId(response, frame.id);
-                  return reply?.type === "emit_inbound" ? emit(reply.frame) : Effect.void;
+                    response === undefined ? undefined : withReplayRequestId(response, frame.id);
+                  return reply?.type === "emit_inbound"
+                    ? emit(reply.frame)
+                    : emit({ id: frame.id, error: { code: -32601, message: "unsupported" } });
                 },
                 { discard: true },
               ),

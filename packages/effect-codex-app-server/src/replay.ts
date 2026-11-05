@@ -341,16 +341,14 @@ function normalizeLegacyInboundFrame(value: unknown): unknown {
   return normalized;
 }
 
-// Transcripts recorded before the client sent these optional reads omit them; answer as an old Codex.
-const UNSCRIPTED_OPTIONAL_REQUESTS: ReadonlySet<unknown> = new Set(["config/read"]);
-
-function unscriptedOptionalRequestReply(
+// Transcripts recorded before the client read config omit `config/read`; answer as an old Codex.
+function unscriptedConfigReadReply(
   expected: CodexAppServerReplayEntry | undefined,
   actual: unknown,
 ): unknown {
   if (typeof actual !== "object" || actual === null) return undefined;
   const { id, method } = actual as Record<string, unknown>;
-  if (id === undefined || !UNSCRIPTED_OPTIONAL_REQUESTS.has(method)) return undefined;
+  if (id === undefined || method !== "config/read") return undefined;
   const expectedFrame = expected?.type === "expect_outbound" ? expected.frame : undefined;
   if (
     typeof expectedFrame === "object" &&
@@ -359,7 +357,7 @@ function unscriptedOptionalRequestReply(
   ) {
     return undefined;
   }
-  return { id, error: { code: -32601, message: `${String(method)} is not scripted` } };
+  return { id, error: { code: -32601, message: "config/read is not scripted" } };
 }
 
 function encodeInboundFrame(frame: unknown): Uint8Array {
@@ -420,7 +418,7 @@ const makeReplayClientWithState = Effect.fn(
   const state = driver.state;
   const outboundRemainder = yield* Ref.make("");
   const decoder = new TextDecoder();
-  // Each unscripted optional read shifts later request ids past the recorded ones.
+  // Each unscripted config read shifts later request ids past the recorded ones.
   let unscriptedRequests = 0;
   const liveRequestIds = new Map<number, number>();
   const toRecordedRequest = (actual: unknown) => {
@@ -502,7 +500,7 @@ const makeReplayClientWithState = Effect.fn(
           }
 
           const entry = transcript.entries[current.cursor];
-          const unscriptedReply = unscriptedOptionalRequestReply(entry, actual);
+          const unscriptedReply = unscriptedConfigReadReply(entry, actual);
           if (unscriptedReply !== undefined) {
             unscriptedRequests += 1;
             yield* Queue.offer(input, encodeInboundFrame(unscriptedReply));
