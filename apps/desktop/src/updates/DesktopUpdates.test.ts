@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Fixtures hash cached packages the way electron-updater does.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
@@ -24,33 +27,40 @@ import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
+const sha512Of = (bytes: string) => NodeCrypto.createHash("sha512").update(bytes).digest("base64");
+const x64Package = "T3 Code 1.2.4 x64";
+
 // What electron-updater leaves in `<cache>/<updaterCacheDirName>/pending` after a verified download.
 const pendingDownloadCache = Effect.fn("test.pendingDownloadCache")(function* (cache: {
-  readonly sha512: string;
+  readonly packageBytes: string;
+  readonly sha512?: string;
   readonly packageFile?: boolean;
   readonly updateInfo?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-updater-pending-" });
   if (cache.packageFile !== false) {
-    yield* fs.writeFileString(`${directory}/T3-Code-1.2.4-mac.zip`, "package");
+    yield* fs.writeFileString(`${directory}/T3-Code-1.2.4-mac.zip`, cache.packageBytes);
   }
   if (cache.updateInfo !== false) {
     yield* fs.writeFileString(
       `${directory}/update-info.json`,
-      JSON.stringify({ fileName: "T3-Code-1.2.4-mac.zip", sha512: cache.sha512 }),
+      JSON.stringify({
+        fileName: "T3-Code-1.2.4-mac.zip",
+        sha512: cache.sha512 ?? sha512Of(cache.packageBytes),
+      }),
     );
   }
   return directory;
 });
 
-const relaunchedUpdateInfo = {
+const relaunchedUpdateInfo = (x64Url = "T3-Code-1.2.4-mac.zip") => ({
   version: "1.2.4",
   files: [
-    { url: "T3-Code-1.2.4-arm64-mac.zip", sha512: "sha-1.2.4-arm64" },
-    { url: "T3-Code-1.2.4-mac.zip", sha512: "sha-1.2.4" },
+    { url: "T3-Code-1.2.4-arm64-mac.zip", sha512: sha512Of("T3 Code 1.2.4 arm64") },
+    { url: x64Url, sha512: sha512Of(x64Package) },
   ],
-};
+});
 
 describe("DesktopUpdates", () => {
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
@@ -139,14 +149,17 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("restores a verified cached download after quitting without installing", () =>
+  it.effect.each([
+    { name: "", url: "T3-Code-1.2.4-mac.zip" },
+    { name: " from a URL with a query string", url: "T3-Code-1.2.4-mac.zip?download=1" },
+  ])("restores a verified cached download after quitting without installing$name", ({ url }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const directory = yield* pendingDownloadCache({ sha512: "sha-1.2.4" });
+        const directory = yield* pendingDownloadCache({ packageBytes: x64Package });
         const harness = makeHarness({
           pendingDownloadDirectory: directory,
           checkForUpdates: Effect.sync(() =>
-            harness.emit("update-available", relaunchedUpdateInfo),
+            harness.emit("update-available", relaunchedUpdateInfo(url)),
           ),
           // electron-updater satisfies the download from its verified cache.
           downloadUpdate: Effect.sync(() =>
@@ -174,11 +187,16 @@ describe("DesktopUpdates", () => {
   );
 
   it.effect.each([
-    { name: "a cached package for another release", sha512: "sha-1.2.3" },
+    { name: "a cached package for another release", packageBytes: "T3 Code 1.2.3 x64" },
     // The harness is an Intel Mac, so electron-updater would fetch the x64 zip instead.
-    { name: "a cached package for another architecture", sha512: "sha-1.2.4-arm64" },
-    { name: "a missing cached package", sha512: "sha-1.2.4", packageFile: false },
-    { name: "a cache without update-info.json", sha512: "sha-1.2.4", updateInfo: false },
+    { name: "a cached package for another architecture", packageBytes: "T3 Code 1.2.4 arm64" },
+    {
+      name: "a cached package whose bytes are damaged",
+      packageBytes: "T3 Code 1.2.4 x6",
+      sha512: sha512Of(x64Package),
+    },
+    { name: "a missing cached package", packageBytes: x64Package, packageFile: false },
+    { name: "a cache without update-info.json", packageBytes: x64Package, updateInfo: false },
   ])("keeps the update click-to-download with $name", (cache) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -186,7 +204,7 @@ describe("DesktopUpdates", () => {
         const harness = makeHarness({
           pendingDownloadDirectory: directory,
           checkForUpdates: Effect.sync(() =>
-            harness.emit("update-available", relaunchedUpdateInfo),
+            harness.emit("update-available", relaunchedUpdateInfo()),
           ),
           downloadUpdate: Effect.sync(() =>
             harness.emit("update-downloaded", { version: "1.2.4" }),

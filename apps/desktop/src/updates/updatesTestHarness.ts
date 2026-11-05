@@ -255,10 +255,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       const disk = yield* FileSystem.FileSystem;
       const missing = FileSystem.makeNoop({});
       return FileSystem.makeNoop({
-        exists: (path) => (isPendingDownloadPath(path) ? disk.exists(path) : missing.exists(path)),
-        stat: (path) => (isPendingDownloadPath(path) ? disk.stat(path) : missing.stat(path)),
-        readFile: (path) =>
-          isPendingDownloadPath(path) ? disk.readFile(path) : missing.readFile(path),
+        stream: (path, options) =>
+          isPendingDownloadPath(path) ? disk.stream(path, options) : missing.stream(path, options),
         readFileString: (path) => {
           if (isPendingDownloadPath(path)) return disk.readFileString(path);
           const installRecord = isInstallRecord(path)

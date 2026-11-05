@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - `node:crypto` hashes cached update packages the way
+// electron-updater does; Effect has no streaming sha512.
+import * as NodeCrypto from "node:crypto";
+
 import {
   DESKTOP_UPDATE_RESTART_MARKER_FILE,
   DesktopUpdateChannelSchema,
@@ -379,11 +383,19 @@ function selectUpdateFile(
   isDebPackage: boolean,
   runtimeInfo: DesktopRuntimeInfo,
 ): ReleaseFile | undefined {
-  let candidates = files;
+  const resolved: Array<{ readonly file: ReleaseFile; readonly pathname: string }> = [];
+  for (const file of files) {
+    const pathname = URL.parse(file.url, "file:///")?.pathname;
+    if (pathname === undefined) return undefined;
+    resolved.push({ file, pathname });
+  }
+  const mentions = ({ file, pathname }: (typeof resolved)[number], text: string) =>
+    pathname.includes(text) || file.url.includes(text);
+  let candidates = resolved;
   if (platform === "darwin") {
-    const isArm64File = (file: ReleaseFile) => file.url.includes("arm64");
-    const preferArm64 = runtimeInfo.hostArch === "arm64" && files.some(isArm64File);
-    candidates = files.filter((file) => isArm64File(file) === preferArm64);
+    const isArm64File = (candidate: (typeof resolved)[number]) => mentions(candidate, "arm64");
+    const preferArm64 = runtimeInfo.hostArch === "arm64" && resolved.some(isArm64File);
+    candidates = resolved.filter((candidate) => isArm64File(candidate) === preferArm64);
   }
   const extension =
     platform === "darwin"
@@ -393,8 +405,12 @@ function selectUpdateFile(
         : isDebPackage
           ? ".deb"
           : ".appimage";
-  const packageFiles = candidates.filter((file) => file.url.toLowerCase().endsWith(extension));
-  return packageFiles.find((file) => file.url.includes(runtimeInfo.appArch)) ?? packageFiles[0];
+  const packageFiles = candidates.filter((candidate) =>
+    candidate.pathname.toLowerCase().endsWith(extension),
+  );
+  return (
+    packageFiles.find((candidate) => mentions(candidate, runtimeInfo.appArch)) ?? packageFiles[0]
+  )?.file;
 }
 
 /** @public */
@@ -709,10 +725,19 @@ export const make = Effect.gen(function* () {
       .readFileString(environment.path.join(pendingDirectory.value, "update-info.json"))
       .pipe(Effect.flatMap(decodeCachedDownloadInfo), Effect.option);
     if (Option.isNone(cached) || cached.value.sha512 !== sha512) return;
-    const hasPackage = yield* fileSystem
-      .exists(environment.path.join(pendingDirectory.value, cached.value.fileName))
-      .pipe(Effect.orElseSucceed(() => false));
-    if (!hasPackage || (yield* Ref.get(desktopState.quitting)) || !(yield* isOffered)) return;
+    // Damaged bytes would make downloadUpdate discard the cache and fetch the package again.
+    const packageSha512 = yield* Effect.suspend(() => {
+      const hash = NodeCrypto.createHash("sha512");
+      return fileSystem
+        .stream(environment.path.join(pendingDirectory.value, cached.value.fileName))
+        .pipe(
+          Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),
+          Effect.map(() => hash.digest("base64")),
+          Effect.option,
+        );
+    });
+    if (Option.getOrUndefined(packageSha512) !== sha512) return;
+    if ((yield* Ref.get(desktopState.quitting)) || !(yield* isOffered)) return;
 
     yield* logUpdaterInfo("restoring cached update download", { version });
     yield* downloadAvailableUpdate;
