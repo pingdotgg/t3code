@@ -26,9 +26,7 @@ export function basename(path: string): string {
 
 export function resolveWorkspaceFilePath(cwd: string, relativePath: string): string {
   if (isAbsolutePath(relativePath)) {
-    return /^[A-Za-z]:[\\/]/.test(relativePath)
-      ? relativePath.replaceAll("\\", "/")
-      : relativePath;
+    return /^[A-Za-z]:[\\/]/.test(relativePath) ? relativePath.replaceAll("\\", "/") : relativePath;
   }
 
   const separator: "/" | "\\" = cwd.startsWith("\\\\") ? "\\" : "/";

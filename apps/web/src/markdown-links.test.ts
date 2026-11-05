@@ -103,10 +103,10 @@ describe("chat file chip paths", () => {
     });
 
     expect(markdownFileEditorTarget(meta, hostPath)).toBe(
-      String.raw`C:\Users\alice\project\src\discord\events\user.ts:261:7`,
+      "C:/Users/alice/project/src/discord/events/user.ts:261:7",
     );
     expect(markdownFileCopyPaths(meta, hostPath, cwd)).toEqual({
-      fullPath: String.raw`C:\Users\alice\project\src\discord\events\user.ts:261:7`,
+      fullPath: "C:/Users/alice/project/src/discord/events/user.ts:261:7",
       relativePath: "src/discord/events/user.ts:261:7",
     });
   });

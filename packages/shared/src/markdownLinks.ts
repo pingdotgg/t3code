@@ -309,9 +309,7 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const source =
     (normalized.toLowerCase().startsWith("file:") ? parseFileUrlHref(normalized) : null) ??
     splitMarkdownLinkSearchAndHash(normalized);
-  const path = slashWindowsDrivePath(
-    stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim())),
-  );
+  const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim()));
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
