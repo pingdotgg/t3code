@@ -350,6 +350,76 @@ describe("provider projection", () => {
     expect(projected).not.toMatch(/https?:/);
   });
 
+  it("puts real URLs back inline for jira, figma, issue, and pull-request chips", () => {
+    const projected = projectComposerContextForProvider({
+      text: [
+        "See [APP-1](t3-context://v1/jira/jira_1),",
+        "[Checkout](t3-context://v1/figma/figma_1),",
+        "[#9 title](t3-context://v1/issue/issue_1),",
+        "and [PR #42](t3-context://v1/pull-request/pr_1).",
+      ].join(" "),
+      records: [
+        {
+          version: 1,
+          kind: "jira",
+          contextId: ctx("jira_1"),
+          label: "APP-1",
+          key: "APP-1",
+          summary: "Fix login",
+          url: "https://acme.atlassian.net/browse/APP-1",
+        },
+        {
+          version: 1,
+          kind: "figma",
+          contextId: ctx("figma_1"),
+          label: "Checkout",
+          fileKey: "abc",
+          name: "Checkout",
+          url: "https://www.figma.com/design/abc/Checkout",
+        },
+        {
+          version: 1,
+          kind: "issue",
+          contextId: ctx("issue_1"),
+          label: "#9 title",
+          number: 9,
+          title: "title",
+          url: "https://github.com/acme/app/issues/9",
+          repository: "acme/app",
+          state: "open",
+        },
+        {
+          version: 1,
+          kind: "pull-request",
+          contextId: ctx("pr_1"),
+          label: "PR #42",
+          number: 42,
+          title: "Fix checkout",
+          url: "https://github.com/acme/app/pull/42",
+          headBranch: "fix",
+          baseBranch: "main",
+          state: "open",
+          isDraft: false,
+        },
+      ],
+    });
+    const [body, envelope] = projected.split('\n\n<t3_context version="1">\n');
+    expect(body).toBe(
+      [
+        "See [APP-1](https://acme.atlassian.net/browse/APP-1),",
+        "[Checkout](https://www.figma.com/design/abc/Checkout),",
+        "[#9 title](https://github.com/acme/app/issues/9),",
+        "and [PR #42](https://github.com/acme/app/pull/42).",
+      ].join(" "),
+    );
+    expect(envelope).toContain("url: https://acme.atlassian.net/browse/APP-1");
+    expect(envelope).toContain("url: https://www.figma.com/design/abc/Checkout");
+    expect(envelope).toContain("url: https://github.com/acme/app/issues/9");
+    expect(envelope).toContain("url: https://github.com/acme/app/pull/42");
+    expect(body).not.toContain("t3-context://");
+    expect(body).not.toContain("; ref=");
+  });
+
   it("marks duplicate identities unavailable instead of choosing one payload", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/terminal/ctx_t)",
