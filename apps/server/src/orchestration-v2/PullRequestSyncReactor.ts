@@ -17,11 +17,13 @@ import {
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -33,6 +35,7 @@ import * as Stream from "effect/Stream";
 import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { resolvePermanentPullRequestRedirect } from "../pullRequest/permanentRedirect.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -338,6 +341,10 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const random = yield* SecureRandom.SecureRandom;
 
+  const redirects = yield* Cache.makeWith(resolvePermanentPullRequestRedirect, {
+    capacity: 2_000,
+    timeToLive: () => Duration.minutes(15),
+  });
   const lastSyncedAt = new Map<string, number>();
   const requested = new Set<string>();
   // Requests arriving during a host read wait for the next sweep.
@@ -471,6 +478,34 @@ export const make = Effect.gen(function* () {
       }
     }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
+    const resolveEntries = Effect.fn("PullRequestSyncReactor.resolveEntries")(function* (
+      entries: ReadonlyArray<LinkEntry>,
+    ) {
+      // Resolve before routing: the old host may no longer have a provider or checkout.
+      return yield* Effect.forEach(entries, (entry) =>
+        Effect.gen(function* () {
+          const url = yield* Cache.get(redirects, entry.link.url);
+          const target = sourceControlDefinitions.parseChangeRequestUrl(url)?.link ?? null;
+          if (url === entry.link.url || target === null) return entry;
+          const uuid = yield* random.randomUUIDv4();
+          yield* engine
+            .dispatch({
+              type: "thread.pull-request.link",
+              commandId: CommandId.make(`server:pr-redirect:${entry.thread.id}:${uuid}`),
+              threadId: entry.thread.id,
+              host: target.host,
+              repository: target.repository,
+              number: target.number,
+              url,
+              source: entry.link.source,
+              redirectFrom: { ...normalizeThreadPullRequestKey(entry.link), url: entry.link.url },
+            })
+            .pipe(persistence.withPermits(1));
+          return { ...entry, link: { ...entry.link, ...target, url } };
+        }),
+      );
+    });
+
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
       const ref = {
@@ -479,6 +514,9 @@ export const make = Effect.gen(function* () {
         repository: first.link.repository,
         number: first.link.number,
       };
+      // Redirect probes yield to other groups; one of them may have paused this host meanwhile.
+      const routedPauseKey = `${ref.projectId}\0${ref.host}`;
+      if ((pausedUntil.get(routedPauseKey) ?? 0) > (yield* Clock.currentTimeMillis)) return;
       const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
@@ -597,22 +635,26 @@ export const make = Effect.gen(function* () {
       );
     yield* Effect.forEach(
       groups,
-      ([key, entries]) => {
-        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
-          return Effect.void;
-        }
-        const first = entries[0]!;
-        const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-        // Check pauses at each read so changes during the sweep apply immediately.
-        return Clock.currentTimeMillis.pipe(
-          Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-              ? Effect.void
-              : readGroup(key, entries, pauseKey),
-          ),
-        );
-      },
-      // Match summary batch width so GitHub reads coalesce into one request.
+      ([key, entries]) =>
+        Effect.gen(function* () {
+          if (scope !== "all" && !requested.has(key)) return;
+          // Even terminal links need their browser URLs repaired; only host snapshots stop syncing.
+          const resolvedEntries = yield* resolveEntries(entries);
+          if (!isDue(key, entries, nowMs)) return;
+          const first = resolvedEntries[0]!;
+          const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
+          // Checked against the clock as each read starts, so a pause found earlier in this sweep
+          // holds the rest, and one that ends during the sweep lets the rest through.
+          return yield* Clock.currentTimeMillis.pipe(
+            Effect.flatMap((startedAtMs) =>
+              (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
+                ? Effect.void
+                : readGroup(key, resolvedEntries, pauseKey),
+            ),
+          );
+        }).pipe(Effect.catchCause(logSkipped("pull request redirect sync failed", { key }))),
+      // As wide as one batched summary read, so the sweep's reads on a host arrive together and
+      // GitHub answers them in one request rather than one `gh pr view` apiece.
       { concurrency: 25, discard: true },
     );
     for (const [reason, { count, key }] of skips) {

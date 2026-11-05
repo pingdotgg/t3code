@@ -1,5 +1,6 @@
 import * as NodeV8 from "node:v8";
 
+import { FetchHttpClient } from "effect/http";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import {
@@ -162,6 +163,7 @@ function makeSummary(
 }
 
 interface HarnessOptions {
+  readonly fetch?: typeof fetch;
   readonly invalidate?: PullRequestService.PullRequestService["Service"]["invalidate"];
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
@@ -218,6 +220,10 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   };
 
   const layerDependencies = Layer.mergeAll(
+    Layer.succeed(
+      FetchHttpClient.Fetch,
+      options.fetch ?? (async () => new Response(null, { status: 200 })),
+    ),
     Layer.mock(PullRequestService.PullRequestService)({
       withSharedProjectReads: (effect) => effect,
       summary,
@@ -1852,3 +1858,46 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 });
+
+it.effect.each([false, true])("repairs stored MR links before routing (merged: %s)", (merged) =>
+  Effect.gen(function* () {
+    const oldUrl = "http://git.sewobe.local/jobagent/manager/-/merge_requests/11122";
+    const url = "https://git.sewobe.de/jobagent/manager/-/merge_requests/11122";
+    const fixture = yield* makeHarness({
+      fetch: async (input) =>
+        String(input) === oldUrl
+          ? new Response(null, { status: 301, headers: { location: url } })
+          : new Response(null, { status: 200 }),
+      snapshot: makeSnapshot([
+        makeThread("redirect", {
+          pullRequests: [
+            makeLink(11122, merged ? { state: "merged" } : null, {
+              host: "git.sewobe.local",
+              repository: "jobagent/manager",
+              url: oldUrl,
+            }),
+          ],
+        }),
+      ]),
+      summary: (ref) =>
+        ref.host === "git.sewobe.de"
+          ? Effect.succeed(makeSummary(ref, { url }))
+          : Effect.fail(
+              new PullRequestOperationError({
+                operation: "summary",
+                detail: "Change requests cannot be browsed for this project's host yet.",
+              }),
+            ),
+    });
+    yield* Effect.gen(function* () {
+      yield* startAndSweep(fixture);
+      const links = yield* Ref.get(fixture.linkCommands);
+      assert.equal(links.length, 1);
+      assert.equal(links[0]?.url, url);
+      assert.equal(links[0]?.redirectFrom?.url, oldUrl);
+      const syncs = yield* Ref.get(fixture.syncCommands);
+      assert.equal(syncs.length, merged ? 0 : 1);
+      if (!merged) assert.equal(syncs[0]?.host, "git.sewobe.de");
+    }).pipe(Effect.provide(fixture.layer));
+  }),
+);

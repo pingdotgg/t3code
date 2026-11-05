@@ -1,11 +1,11 @@
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Effect from "effect/Effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
 /** Resolve only permanent PR/MR moves, without following sign-in redirects or sending credentials. */
 export const resolvePermanentPullRequestRedirect = Effect.fn("resolvePermanentPullRequestRedirect")(
   function* (url: string) {
-    if (parseChangeRequestUrl(url) === null) return url;
+    if (sourceControlDefinitions.parseChangeRequestUrl(url) == null) return url;
     const client = yield* HttpClient.HttpClient;
     let current = url;
     const seen = new Set([url]);
@@ -17,7 +17,7 @@ export const resolvePermanentPullRequestRedirect = Effect.fn("resolvePermanentPu
       if (
         next.username ||
         next.password ||
-        parseChangeRequestUrl(next.href) === null ||
+        sourceControlDefinitions.parseChangeRequestUrl(next.href) == null ||
         seen.has(next.href)
       )
         break;
