@@ -112,7 +112,11 @@ it.effect.each([
         command === "xcrun" && args.join(" ") === "simctl help io" && help
           ? Effect.succeed({ code: 0, stdout: "", stderr: help })
           : command === "sh" && args.at(-1) === "phone" && capture
-            ? Effect.succeed(capture)
+            ? Effect.sync(() => {
+                expect(args[1]).toContain('simctl io "$1" screenshot ');
+                expect(args[1]).not.toContain("--display");
+                return capture;
+              })
             : Effect.die(`Unexpected command: ${command} ${args.join(" ")}`),
       platformAvailable: () => Effect.succeed(false),
     });
