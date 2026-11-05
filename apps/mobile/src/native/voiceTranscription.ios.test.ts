@@ -121,7 +121,10 @@ describe("getLocalVoiceTranscriber", () => {
     mocks.streamingAvailable = true;
     mocks.isAvailable.mockReturnValue(false);
     mocks.prepareStreaming.mockRejectedValueOnce(
-      new VoiceTranscriptionError("unavailable", "Live voice transcription is unavailable."),
+      new VoiceTranscriptionError({
+        code: "unavailable",
+        message: "Live voice transcription is unavailable.",
+      }),
     );
 
     const error = await (await getLocalVoiceTranscriber())!

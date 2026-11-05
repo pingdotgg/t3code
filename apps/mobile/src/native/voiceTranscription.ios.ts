@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import AppleTranscription from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { File } from "expo-file-system";
 
@@ -17,6 +18,8 @@ import {
   startVoiceStreaming,
 } from "./voiceStreaming.ios";
 
+const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
+
 function getDeviceLocale(): string {
   return Intl.DateTimeFormat().resolvedOptions().locale;
 }
@@ -26,11 +29,11 @@ function wrapError(
   message: string,
   cause: unknown,
 ): VoiceTranscriptionError {
-  if (cause instanceof VoiceTranscriptionError) {
+  if (isVoiceTranscriptionError(cause)) {
     return cause;
   }
 
-  return new VoiceTranscriptionError(code, message, { cause });
+  return new VoiceTranscriptionError({ code, message, cause });
 }
 
 export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
@@ -72,10 +75,10 @@ async function prepareFileVoiceTranscription(
 ): Promise<PreparedVoiceTranscription> {
   throwIfVoiceTranscriptionAborted(signal);
   if (!AppleTranscription.isAvailable(locale)) {
-    throw new VoiceTranscriptionError(
-      "unavailable",
-      "Voice transcription requires a supported device with iOS 26 or later.",
-    );
+    throw new VoiceTranscriptionError({
+      code: "unavailable",
+      message: "Voice transcription requires a supported device with iOS 26 or later.",
+    });
   }
 
   try {
@@ -95,14 +98,14 @@ function mapPreparationError(error: unknown): VoiceTranscriptionError {
   const code =
     typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
   if (code === "AppleTranscriptionUnsupportedLocale") {
-    return new VoiceTranscriptionError(
-      "unsupported-locale",
-      "Voice transcription does not support this device language.",
-      { cause: error },
-    );
+    return new VoiceTranscriptionError({
+      code: "unsupported-locale",
+      message: "Voice transcription does not support this device language.",
+      cause: error,
+    });
   }
   const nativeError = mapNativeVoiceError(error, "preparation");
-  if (nativeError instanceof VoiceTranscriptionError) return nativeError;
+  if (isVoiceTranscriptionError(nativeError)) return nativeError;
   return wrapError(
     "preparation-failed",
     "Voice transcription could not prepare this language.",

@@ -1,4 +1,5 @@
 import { requireOptionalNativeModule } from "expo";
+import * as Schema from "effect/Schema";
 import {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
@@ -6,6 +7,8 @@ import {
   type VoiceStreamingSession,
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
+
+const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 type VoiceEvent = {
   readonly sessionId: string;
@@ -33,20 +36,21 @@ const nativeErrorMessages: Readonly<Record<string, string>> = {
 
 /** Maps the native module's exception codes to stable transcription errors. */
 export function mapNativeVoiceError(error: unknown, phase: "preparation" | "transcription") {
-  if (error instanceof VoiceTranscriptionError) return error;
+  if (isVoiceTranscriptionError(error)) return error;
   const code =
     typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
   const message = typeof code === "string" ? nativeErrorMessages[code] : undefined;
   if (!message) return error;
-  return new VoiceTranscriptionError(
-    code === "ERR_VOICE_UNAVAILABLE"
-      ? "unavailable"
-      : phase === "preparation"
-        ? "preparation-failed"
-        : "transcription-failed",
+  return new VoiceTranscriptionError({
+    code:
+      code === "ERR_VOICE_UNAVAILABLE"
+        ? "unavailable"
+        : phase === "preparation"
+          ? "preparation-failed"
+          : "transcription-failed",
     message,
-    { cause: error },
-  );
+    cause: error,
+  });
 }
 
 const native = requireOptionalNativeModule<NativeVoiceStreaming>("T3VoiceInput");
@@ -64,7 +68,10 @@ export async function prepareVoiceStreaming(
 ): Promise<string> {
   throwIfVoiceTranscriptionAborted(signal);
   if (!native) {
-    throw new VoiceTranscriptionError("unavailable", "Live voice transcription is unavailable.");
+    throw new VoiceTranscriptionError({
+      code: "unavailable",
+      message: "Live voice transcription is unavailable.",
+    });
   }
   let supportedLocale: string | null;
   try {
@@ -75,10 +82,10 @@ export async function prepareVoiceStreaming(
   }
   throwIfVoiceTranscriptionAborted(signal);
   if (!supportedLocale) {
-    throw new VoiceTranscriptionError(
-      "unsupported-locale",
-      "Voice transcription does not support this device language.",
-    );
+    throw new VoiceTranscriptionError({
+      code: "unsupported-locale",
+      message: "Voice transcription does not support this device language.",
+    });
   }
   return supportedLocale;
 }
@@ -90,7 +97,10 @@ export async function startVoiceStreaming(
 ): Promise<VoiceStreamingSession> {
   throwIfVoiceTranscriptionAborted(options.signal);
   if (!native) {
-    throw new VoiceTranscriptionError("unavailable", "Live voice transcription is unavailable.");
+    throw new VoiceTranscriptionError({
+      code: "unavailable",
+      message: "Live voice transcription is unavailable.",
+    });
   }
   const module = native;
   const sessionId = `voice-${++sessionSequence}`;
@@ -132,7 +142,7 @@ export async function startVoiceStreaming(
     await module.start(sessionId, locale, limitSeconds);
     throwIfVoiceTranscriptionAborted(options.signal);
     if (startupError !== null)
-      throw new VoiceTranscriptionError("transcription-failed", startupError);
+      throw new VoiceTranscriptionError({ code: "transcription-failed", message: startupError });
     started = true;
     options.signal.addEventListener("abort", onAbort, { once: true });
   } catch (error) {

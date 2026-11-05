@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
 import {
@@ -6,6 +7,8 @@ import {
   type VoiceStreamingSession,
   type VoiceTranscriber,
 } from "./transcription.ts";
+
+const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -174,7 +177,7 @@ function preparationErrorMessage(error: unknown): string {
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
   }
-  return error instanceof VoiceTranscriptionError
+  return isVoiceTranscriptionError(error)
     ? error.message
     : "Could not prepare voice transcription.";
 }
@@ -183,9 +186,7 @@ function transcriptionErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message === "voice-operation-busy") {
     return "Voice transcription is still finishing. Try again shortly.";
   }
-  return error instanceof VoiceTranscriptionError
-    ? error.message
-    : "Could not transcribe this recording.";
+  return isVoiceTranscriptionError(error) ? error.message : "Could not transcribe this recording.";
 }
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -536,9 +537,7 @@ export class VoiceInputController {
       // Words already in the draft stay; recording again would duplicate them.
       if (heardSpeech || !transcription.prepareFileFallback || !this.draftIsUnchanged()) {
         this.setError(
-          error instanceof VoiceTranscriptionError
-            ? error.message
-            : "Could not start voice recording.",
+          isVoiceTranscriptionError(error) ? error.message : "Could not start voice recording.",
           "retry",
         );
         return null;
