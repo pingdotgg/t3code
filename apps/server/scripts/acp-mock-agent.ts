@@ -1848,6 +1848,11 @@ const program = Effect.gen(function* () {
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
     }
+    if (method === "_test/emit-update") {
+      return agent.client
+        .sessionUpdate(params as AcpSchema.SessionNotification)
+        .pipe(Effect.as({}));
+    }
     if (method === "_test/startup-metadata") {
       return Effect.gen(function* () {
         for (const [metadataSessionId, commandName, modeId] of [
