@@ -27,10 +27,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowSegments } from "./ContextWindowMeter";
-import {
-  contextWindowSegments,
-  formatContextWindowCompactionMessage,
-} from "./ContextWindowMeter.logic";
+import { contextWindowSegments } from "./ContextWindowMeter.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 // The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
@@ -121,7 +118,13 @@ export function ThreadDetailsContext({
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
       <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
-        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
+        {/* The trailing column shrinks to the compact button so it sits flush right. */}
+        <div
+          className={cn(
+            USAGE_ROW_CLASS,
+            "h-8 grid-cols-[1rem_3.625rem_minmax(0,1fr)_1.875rem_1.5rem]",
+          )}
+        >
           <CollapsibleTrigger
             render={<ThreadDetailsControl part="usage" />}
             aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
@@ -176,11 +179,6 @@ export function ThreadDetailsContext({
                   </dd>
                 </div>
               </dl>
-              {usage.compactsAutomatically ? (
-                <p className="px-2.5 py-2 text-pretty text-caption text-muted-foreground">
-                  {formatContextWindowCompactionMessage(null, usage.autoCompactThreshold)}
-                </p>
-              ) : null}
               {compactDisabled && compactDisabledReason ? (
                 <p className="px-2.5 py-2 text-pretty text-caption text-muted-foreground">
                   {compactDisabledReason}

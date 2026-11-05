@@ -32,7 +32,6 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
-  formatDuration,
   isStreamingMessageTextUpdate,
   isStreamingTurnItemTextUpdate,
   timelineEntryIsPersistentResourceCard,
@@ -77,6 +76,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { formatWorkingDuration } from "./TimelineWorkGroupRows.logic";
 import {
   EMPTY_SLASH_COMMAND_CATALOG,
   parseSlashCommandMessage,
@@ -998,6 +998,17 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
   return null;
 }
 
+function runlessTurnFoldRunId(promptEntryId: string): RunId {
+  return RunId.make(`runless:${promptEntryId}`);
+}
+
+export function liveRunlessTurnFoldRunId(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): RunId | null {
+  const prompt = timelineEntries.findLast(timelineEntryStartsResponse);
+  return prompt && responseBoundaryRunId(prompt) === null ? runlessTurnFoldRunId(prompt.id) : null;
+}
+
 // Group promptless restarts under the initiating prompt until settled.
 function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
   return timelineEntries.findLastIndex(timelineEntryStartsResponse);
@@ -1213,7 +1224,7 @@ function deriveTurnFolds(input: {
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
         : null;
       const boundaryRunId = responseBoundaryRunId(entry);
-      runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
+      runlessKey = boundaryRunId == null ? runlessTurnFoldRunId(entry.id) : null;
       responseKey = boundaryRunId ?? runlessKey;
       continue;
     }
@@ -1414,7 +1425,7 @@ function deriveTurnFolds(input: {
 }
 
 function turnFoldLabel(ending: TurnFoldEnding, elapsedMs: number | null): string {
-  const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+  const duration = elapsedMs !== null ? formatWorkingDuration(elapsedMs) : null;
   switch (ending) {
     case "stopped":
       return duration ? `Stopped at ${duration}` : "Stopped";

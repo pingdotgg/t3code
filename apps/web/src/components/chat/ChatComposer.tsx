@@ -1345,7 +1345,7 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const addComposerFilesToDraft = (files: ComposerFileAttachment[]) =>
     addComposerDraftFiles(attachmentDraftTarget, files, {
-      appendReference: false,
+      appendReference: questionAttachmentTarget === null,
     });
 
   const removeComposerImageFromDraft = (imageId: string) => {
@@ -1680,7 +1680,6 @@ export function ChatComposer(props: ChatComposerProps) {
       return;
     }
     onTypingGuardDraftChange();
-    const previousReferencedContextIds = new Set(collectInlineContextIds(promptRef.current));
     promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     if (promptHistoryPositionRef.current?.position.recalled !== nextPrompt) {
@@ -1770,7 +1769,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
     const attachmentChanges = reconcileAttachmentContextReferences({
       referencedContextIds: referenced,
-      previousReferencedContextIds,
       files: composerFiles,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
@@ -2608,6 +2606,7 @@ export function ChatComposer(props: ChatComposerProps) {
       pendingUserInputs,
       supportsQuestionAttachments,
       isLiteralPendingAnswer,
+      projectSelectionRequired,
       questionAttachmentTarget,
       attachmentTargetKey,
       fileStagingLimit,
@@ -3594,7 +3593,7 @@ export function ChatComposer(props: ChatComposerProps) {
                 {composerAttachmentFileList}
               </div>
 
-              <div className="composer-prompt-editor relative min-w-0 py-1.5 [grid-area:prompt]">
+              <div className="relative min-w-0 py-1.5 [grid-area:prompt]">
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
@@ -3654,6 +3653,7 @@ export function ChatComposer(props: ChatComposerProps) {
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : COMPOSER_PROMPT_PLACEHOLDER
                     }
+                    // The placeholder stays clear of the inline buttons, like typed text.
                     placeholderClassName="truncate"
                     narrowPlaceholder={
                       !isComposerApprovalState &&
