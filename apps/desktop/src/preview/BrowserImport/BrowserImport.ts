@@ -96,12 +96,12 @@ export class BrowserCookieWriteError extends Schema.TaggedError<BrowserCookieWri
   "BrowserCookieWriteError",
   {
     url: Schema.String,
-    name: Schema.String,
+    cookieName: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Could not write imported cookie ${this.name} for ${this.url}.`;
+    return `Could not write imported cookie ${this.cookieName} for ${this.url}.`;
   }
 }
 
@@ -167,7 +167,8 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
           sameSite: cookie.sameSite,
           ...(cookie.expirationDate === undefined ? {} : { expirationDate: cookie.expirationDate }),
         }),
-      catch: (cause) => new BrowserCookieWriteError({ url: cookie.url, name: cookie.name, cause }),
+      catch: (cause) =>
+        new BrowserCookieWriteError({ url: cookie.url, cookieName: cookie.name, cause }),
     }).pipe(
       Effect.as(true),
       Effect.tapError((error) => Effect.logDebug(error.message, { cause: error.cause })),

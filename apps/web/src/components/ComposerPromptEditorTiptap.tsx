@@ -12,7 +12,6 @@ import {
 } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
@@ -60,6 +59,11 @@ import {
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
 import {
+  collapseShownMarkdownSource,
+  ComposerMarkdownSourceExtension,
+} from "~/composer-markdown-source";
+import { MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
+import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
 } from "~/composer-editor-mentions";
@@ -69,7 +73,6 @@ import {
   ComposerCodeBlockExtension,
   ComposerListExtensions,
   buildTiptapContent,
-  caretTakesMarksBefore,
   ComposerBoldSelectionOnlyExtension,
   convertBulletItemToTask,
   ComposerCodeExtension,
@@ -524,46 +527,6 @@ function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   );
 }
 
-type StyledRange = {
-  from: number;
-  to: number;
-  markers: { at: number; side: number; text: string }[];
-};
-
-function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
-  const ranges: StyledRange[] = [];
-  const map = serializeEditorDoc(doc);
-  let range: StyledRange | null = null;
-  let openLength = 0;
-  for (const run of map.runs) {
-    if (run.nodeName === "codeBlock") continue;
-    if (run.openLen > 0) {
-      range ??= { from: run.pmPos, to: run.pmPos, markers: [] };
-      range.markers.push({
-        at: run.pmPos,
-        side: -1,
-        text: map.value.slice(run.mdStart, run.mdStart + run.openLen),
-      });
-    }
-    if (range === null) continue;
-    range.to = run.pmPos + run.docLen;
-    if (run.closeLen > 0) {
-      const end = run.mdStart + run.mdLen;
-      range.markers.push({
-        at: range.to,
-        side: -2,
-        text: map.value.slice(end - run.closeLen, end),
-      });
-    }
-    openLength += run.openLen - run.closeLen;
-    if (openLength === 0) {
-      ranges.push(range);
-      range = null;
-    }
-  }
-  return ranges;
-}
-
 /** Wait for a character after '- ' so task markers reach their input rule before becoming bullets. */
 function listMarkerInputRule(find: RegExp, listType: "bulletList" | "orderedList"): InputRule {
   return new InputRule({
@@ -684,74 +647,40 @@ function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
 }
 
-const MarkerPluginKey = new PluginKey("composer-rich-markers");
+const ChipSelectionPluginKey = new PluginKey<DecorationSet>("composer-chip-range-selection");
 
-const ComposerMarkerPlugin = new Plugin({
-  key: MarkerPluginKey,
-  state: {
-    init: (_, state) => decorationsForSelection(state),
-    apply: (tr, old, _, state) =>
-      tr.docChanged || tr.selectionSet || tr.storedMarksSet ? decorationsForSelection(state) : old,
-  },
-  props: {
-    decorations(state) {
-      return MarkerPluginKey.getState(state);
-    },
+/** Highlights chips inside a text selection; their node views draw no native highlight. */
+const ComposerChipSelectionExtension = Extension.create({
+  name: "composer-chip-range-selection",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<DecorationSet>({
+        key: ChipSelectionPluginKey,
+        state: {
+          init: (_, state) => chipSelectionDecorations(state),
+          apply: (tr, old, _, state) =>
+            tr.docChanged || tr.selectionSet ? chipSelectionDecorations(state) : old,
+        },
+        props: {
+          decorations: (state) => ChipSelectionPluginKey.getState(state),
+        },
+      }),
+    ];
   },
 });
 
-function decorationsForSelection(state: EditorState): DecorationSet {
-  const { doc, selection } = state;
-  const caretSide = caretTakesMarksBefore(state) ? 3 : 0;
-  const rtl = caretLineDirection(state) === "rtl";
+function chipSelectionDecorations({ doc, selection }: EditorState): DecorationSet {
+  if (selection.empty) return DecorationSet.empty;
   const decorations: Decoration[] = [];
-  if (!selection.empty) {
-    doc.nodesBetween(selection.from, selection.to, (node, pos) => {
-      if (node.type.name.startsWith("composer-")) {
-        decorations.push(
-          Decoration.node(pos, pos + node.nodeSize, { class: "composer-chip-range-selected" }),
-        );
-        return false;
-      }
-      return true;
-    });
-  }
-  for (const range of collectStyledRanges(doc)) {
-    const active = selection.empty
-      ? selection.from >= range.from && selection.from <= range.to
-      : selection.from < range.to && selection.to > range.from;
-    if (!active) continue;
-    for (const { at, side: baseSide, text } of range.markers) {
-      const side = selection.empty && at === selection.from ? baseSide + caretSide : baseSide;
-      const marker = document.createElement("span");
-      marker.className = "composer-rich-marker";
-      marker.textContent = text;
-      marker.setAttribute("aria-hidden", "true");
-      // Inline code is isolated left to right. In a right-to-left line its
-      // opening backtick joins the closing one inside the isolate, or the line
-      // would put both on the same side of the code.
-      const codeMarks =
-        rtl && baseSide === -1 && /^`+$/.test(text)
-          ? doc.resolve(at).nodeAfter?.marks.filter((mark) => mark.type.spec.code)
-          : undefined;
-      decorations.push(
-        Decoration.widget(at, marker, {
-          side,
-          key: `marker-${at}-${side}-${marker.textContent}`,
-          ...(codeMarks?.length ? { marks: codeMarks } : {}),
-        }),
-      );
-    }
-  }
+  doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+    if (!node.type.name.startsWith("composer-")) return true;
+    decorations.push(
+      Decoration.node(pos, pos + node.nodeSize, { class: "composer-chip-range-selected" }),
+    );
+    return false;
+  });
   return DecorationSet.create(doc, decorations);
 }
-
-const ComposerMarkersExtension = Extension.create({
-  name: "composer-rich-markers",
-  addProseMirrorPlugins() {
-    return [ComposerMarkerPlugin];
-  },
-});
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
@@ -842,9 +771,10 @@ function createComposerExtensions(richText: boolean) {
     ComposerSkillExtension,
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
-    ComposerMarkersExtension,
+    ComposerChipSelectionExtension,
     ...(richText
       ? [
+          ComposerMarkdownSourceExtension,
           ComposerBoldSelectionOnlyExtension,
           ComposerItalicExtension,
           ComposerBoldExtension,
@@ -1291,7 +1221,11 @@ function ComposerPromptEditorTiptapInner(
               return true;
             }
             event.preventDefault();
-            if ((isTaskItem || isListItem) && instance && splitOrLiftListItem(instance)) {
+            if (
+              (isTaskItem || isListItem) &&
+              instance &&
+              splitOrLiftListItem(instance, collapseShownMarkdownSource)
+            ) {
               return true;
             }
             if (
@@ -1302,6 +1236,15 @@ function ComposerPromptEditorTiptapInner(
               instance.commands.lift("blockquote")
             ) {
               return true;
+            }
+            // Parse shown Markdown first, or the split leaves each half with one delimiter.
+            if (instance) {
+              return instance
+                .chain()
+                .command(collapseShownMarkdownSource)
+                .command(({ state, dispatch }) => splitBlockKeepMarks(state, dispatch))
+                .scrollIntoView()
+                .run();
             }
             return splitBlockKeepMarks(view.state, (tr) => {
               view.dispatch(tr.scrollIntoView());
@@ -1330,11 +1273,12 @@ function ComposerPromptEditorTiptapInner(
             return false;
           }
           // Do not wrap chips, atoms, or styled text; default replacement preserves marks.
+          // Shown Markdown source is plain text, so typed delimiters wrap it.
           let touchesSpecial = false;
           view.state.doc.nodesBetween(from, to, (node) => {
             if (
               (node.isAtom && node.isInline && !node.isText) ||
-              (node.isText && node.marks.length > 0)
+              (node.isText && node.marks.some((mark) => mark.type.name !== MARKDOWN_SOURCE_MARK))
             ) {
               touchesSpecial = true;
               return false;
@@ -1363,6 +1307,22 @@ function ComposerPromptEditorTiptapInner(
             view.dispatch(
               markAsClipboardEdit(
                 view.state.tr.insertText(pastedText, from, to),
+                "paste",
+              ).scrollIntoView(),
+            );
+            return true;
+          }
+          // Shown Markdown source is parsed when the caret leaves, so paste one line into it as text.
+          const sourceType = view.state.schema.marks[MARKDOWN_SOURCE_MARK];
+          const { from: pasteFrom, to: pasteTo, $from: $pasteFrom } = view.state.selection;
+          if (
+            sourceType?.isInSet($pasteFrom.marks()) &&
+            !pastedText.includes("\n") &&
+            collectComposerPromptInlineTokens(`${pastedText}\n`).length === 0
+          ) {
+            view.dispatch(
+              markAsClipboardEdit(
+                view.state.tr.insertText(pastedText, pasteFrom, pasteTo),
                 "paste",
               ).scrollIntoView(),
             );
@@ -1408,6 +1368,8 @@ function ComposerPromptEditorTiptapInner(
                     markAsClipboardEdit(tr, "paste");
                     return true;
                   })
+                  // Pasted chips and lines would split shown Markdown, so parse it first.
+                  .command(collapseShownMarkdownSource)
                   .insertContent(content)
                   .command(({ tr }) => {
                     // Move after a pasted rule so the next keystroke cannot replace it; add a trailing line
@@ -1562,9 +1524,8 @@ function ComposerPromptEditorTiptapInner(
         },
       );
     }
+    selectMarkdownOffset(editor, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
-    const flat = markdownToFlat(map, normalizedExpandedCursor);
-    editor.commands.setTextSelection(flatToPm(map, flat));
     if (isFocused) scrollTiptapCaretIntoView(editor);
     if (pendingCitation) {
       citationRequestRef.current = null;
@@ -1633,8 +1594,7 @@ function ComposerPromptEditorTiptapInner(
     const boundedCursor = clampEditorCursor(snapshotRef.current.value, nextCursor);
     const expandedCursor =
       exactExpandedCursor ?? expandEditorCursor(snapshotRef.current.value, boundedCursor);
-    const map = serializeEditorDoc(editor.state.doc);
-    editor.commands.setTextSelection(flatToPm(map, markdownToFlat(map, expandedCursor)));
+    selectMarkdownOffset(editor, expandedCursor);
     scrollTiptapCaretIntoView(editor);
     if (boundedCursor === snapshotRef.current.cursor) return;
     snapshotRef.current = {
@@ -1850,6 +1810,17 @@ function insertMarkdownParagraphs(
     return;
   }
   insertContent(blocks as JSONContent[]);
+}
+
+/** Placing the caret can show Markdown markers, so place it again in the shown source. */
+function selectMarkdownOffset(editor: TiptapEditor, offset: number): void {
+  for (let pass = 0; pass < 2; pass += 1) {
+    const map = serializeEditorDoc(editor.state.doc);
+    const pos = flatToPm(map, markdownToFlat(map, offset));
+    const { selection } = editor.state;
+    if (pass > 0 && selection.empty && selection.from === pos) return;
+    editor.commands.setTextSelection(pos);
+  }
 }
 
 /** Native scrolling follows only real input; explicitly reveal programmatically placed carets. */
