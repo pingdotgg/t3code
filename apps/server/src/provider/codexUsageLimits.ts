@@ -220,7 +220,7 @@ export function reconcileCodexRateLimitsRead(
   if (!current || current === sent) return read;
   const { limitId, planType, rateLimitReachedType, primary, secondary, individualLimit } = current;
   const notifiedPlan = planType !== sent?.planType && planType !== undefined;
-  const readPlan = !notifiedPlan || planType === read.planType;
+  if (notifiedPlan && planType !== read.planType) return current;
   return mergeCodexRateLimits(read, {
     ...(limitId !== sent?.limitId && limitId !== undefined ? { limitId } : {}),
     ...(notifiedPlan ? { planType } : {}),
@@ -234,7 +234,7 @@ export function reconcileCodexRateLimitsRead(
           primary: laterWindow(
             primary,
             read.primary,
-            readPlan && sent?.primary?.resetsAt == null && !notifiedResets.has("primary"),
+            sent?.primary?.resetsAt == null && !notifiedResets.has("primary"),
           ),
         }
       : {}),
@@ -245,7 +245,7 @@ export function reconcileCodexRateLimitsRead(
           secondary: laterWindow(
             secondary,
             read.secondary,
-            readPlan && sent?.secondary?.resetsAt == null && !notifiedResets.has("secondary"),
+            sent?.secondary?.resetsAt == null && !notifiedResets.has("secondary"),
           ),
         }
       : {}),
