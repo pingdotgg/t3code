@@ -78,7 +78,10 @@ function ConfiguredConnectOnboardingDialog() {
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController(primaryEnvironmentId);
-  const hostLabel = controller.linkState.target?.label ?? "this host";
+  const linkTargetId = controller.linkState.target?.environmentId;
+  const hostLabel =
+    environments.find((environment) => environment.environmentId === linkTargetId)?.label ??
+    "this host";
   const stepLabels: Record<OnboardingStep, string> = {
     publish: `Share ${hostLabel}`,
     devices: "Connect devices",
