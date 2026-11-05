@@ -738,12 +738,22 @@ export const make = Effect.gen(function* () {
 
     yield* logUpdaterInfo("restoring cached update download", { version });
     const state = yield* Ref.get(updateStateRef);
-    const claimedFromCheck = yield* Ref.modify(activeUpdateActionRef, (activeAction) =>
-      Option.isSome(activeAction) && activeAction.value === "check"
-        ? ([true, Option.some<UpdateAction>("download")] as const)
-        : ([false, activeAction] as const),
+    // An interrupt between the handover and the download's own release would strand the reservation.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Ref.modify(activeUpdateActionRef, (activeAction) =>
+        Option.isSome(activeAction) && activeAction.value === "check"
+          ? ([true, Option.some<UpdateAction>("download")] as const)
+          : ([false, activeAction] as const),
+      ).pipe(
+        Effect.flatMap((claimedFromCheck) =>
+          claimedFromCheck
+            ? restore(downloadReservedUpdate(state)).pipe(
+                Effect.ensuring(finishUpdateAction("download")),
+              )
+            : Effect.void,
+        ),
+      ),
     );
-    if (claimedFromCheck) yield* downloadReservedUpdate(state);
   }).pipe(Effect.withSpan("desktop.updates.resumeCachedDownload"));
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
