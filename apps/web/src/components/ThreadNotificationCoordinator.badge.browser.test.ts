@@ -347,6 +347,24 @@ it("does not toast a side chat open in its parent's right panel", async () => {
   expect(state.toast).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["closed", () => useRightPanelStore.getState().close(parentRef)],
+  ["showing another tab", () => useRightPanelStore.getState().open(parentRef, "files")],
+])("toasts a side chat when its parent's right panel is %s", async (_, hideSideChat) => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  app.route.params = { environmentId: "one", threadId: "thread" };
+  useRightPanelStore.getState().openSideChat(parentRef, "side" as never);
+  hideSideChat();
+  state.shells.set("one", withSideChat({}));
+  app.start();
+  state.shells.set("one", withSideChat({ latestTurn: completedTurn }));
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Side chat completed", description: "Side chat" }),
+  );
+});
+
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies for offline completion and %s once across reconnects",
   async (flag) => {
