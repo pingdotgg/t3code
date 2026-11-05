@@ -358,61 +358,72 @@ it.layer(
   Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
 )("ProviderRegistry", (it) => {
   describe("checkCodexProviderStatus", () => {
-    it.effect("uses the app-server account and model list for provider status", () =>
-      Effect.gen(function* () {
-        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
-          Effect.succeed(
-            makeCodexProbeSnapshot({
-              skills: [
-                {
-                  name: "github:gh-fix-ci",
-                  path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
-                  enabled: true,
-                  displayName: "CI Debug",
-                  shortDescription: "Debug failing GitHub Actions checks",
-                },
-              ],
-            }),
-          ),
-        );
-        assert.strictEqual(status.status, "ready");
-        assert.strictEqual(status.installed, true);
-        assert.strictEqual(status.version, "1.0.0");
-        assert.strictEqual(status.auth.status, "authenticated");
-        assert.strictEqual(status.auth.type, "chatgpt");
-        assert.strictEqual(status.auth.label, "ChatGPT Pro 200 Subscription");
-        assert.strictEqual(status.auth.email, "test@example.com");
-        assert.deepStrictEqual(status.setup, { canAuthenticate: false, canInstall: false });
-        assert.deepStrictEqual(status.models, [
-          {
-            slug: "gpt-live-codex",
-            name: "GPT Live Codex",
-            isCustom: false,
-            capabilities: codexModelCapabilities,
-          },
-        ]);
-        assert.deepStrictEqual(status.skills, [
-          {
-            name: "github:gh-fix-ci",
-            path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
-            enabled: true,
-            displayName: "CI Debug",
-            shortDescription: "Debug failing GitHub Actions checks",
-          },
-        ]);
-        assert.deepStrictEqual(status.slashCommands.slice(1), [
-          {
-            name: "goal",
-            description: "Set a goal Codex keeps working toward until it is done",
-            input: { hint: "Objective, or pause, resume, clear" },
-          },
-          {
-            name: "feedback",
-            description: "Send this thread and Codex logs to OpenAI",
-            input: { hint: "Describe the issue (optional)" },
-          },
-        ]);
-      }),
+    it.effect.each([false, true])(
+      "uses the app-server account and model list with skipUsage=%s",
+      (skipUsage) =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            (input) => {
+              assert.strictEqual(input.skipNativeUsage, skipUsage ? true : undefined);
+              return Effect.succeed(
+                makeCodexProbeSnapshot({
+                  skills: [
+                    {
+                      name: "github:gh-fix-ci",
+                      path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+                      enabled: true,
+                      displayName: "CI Debug",
+                      shortDescription: "Debug failing GitHub Actions checks",
+                    },
+                  ],
+                }),
+              );
+            },
+            undefined,
+            undefined,
+            skipUsage,
+          );
+          if (skipUsage) assert.strictEqual(status.usageLimits, undefined);
+          else assert.strictEqual(status.usageLimits?.unavailable?.reason, "probeFailed");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.version, "1.0.0");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "chatgpt");
+          assert.strictEqual(status.auth.label, "ChatGPT Pro 200 Subscription");
+          assert.strictEqual(status.auth.email, "test@example.com");
+          assert.deepStrictEqual(status.setup, { canAuthenticate: false, canInstall: false });
+          assert.deepStrictEqual(status.models, [
+            {
+              slug: "gpt-live-codex",
+              name: "GPT Live Codex",
+              isCustom: false,
+              capabilities: codexModelCapabilities,
+            },
+          ]);
+          assert.deepStrictEqual(status.skills, [
+            {
+              name: "github:gh-fix-ci",
+              path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+              enabled: true,
+              displayName: "CI Debug",
+              shortDescription: "Debug failing GitHub Actions checks",
+            },
+          ]);
+          assert.deepStrictEqual(status.slashCommands.slice(1), [
+            {
+              name: "goal",
+              description: "Set a goal Codex keeps working toward until it is done",
+              input: { hint: "Objective, or pause, resume, clear" },
+            },
+            {
+              name: "feedback",
+              description: "Send this thread and Codex logs to OpenAI",
+              input: { hint: "Describe the issue (optional)" },
+            },
+          ]);
+        }),
     );
 
     it.effect("labels the plan the usage read reports over the cached login plan", () =>
