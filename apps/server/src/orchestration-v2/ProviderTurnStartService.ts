@@ -733,6 +733,9 @@ export const layer: Layer.Layer<
           modelSelectionsEqual(evidence.modelSelection, run.modelSelection)
             ? yield* gitWorkflow.inspectCheckout(cwd).pipe(Effect.result)
             : null;
+        if (inspected?._tag === "Failure" && input.willRetry === true) {
+          return yield* inspected.failure;
+        }
         if (
           evidence === undefined ||
           inspected === null ||
