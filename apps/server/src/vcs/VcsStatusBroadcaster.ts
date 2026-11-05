@@ -540,15 +540,7 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const cached = yield* getCachedStatus(cwd);
           if (!cached?.local || cached.remote?.value === null) return null;
-          const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
-          const demandCwds = poller ? [...(yield* Ref.get(poller.demandCwds)).keys()] : [rawCwd];
-          const shouldRefresh = (yield* Effect.forEach(
-            demandCwds,
-            (demandCwd) =>
-              backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: demandCwd }),
-            { concurrency: "unbounded" },
-          )).some(Boolean);
-          if (!shouldRefresh) return null;
+          // Turn completion must update divergence even when background polling is paused.
           const remoteRead = yield* readRemoteStatus(cwd, {
             refreshUpstream: false,
             refreshMissingPullRequest: true,
