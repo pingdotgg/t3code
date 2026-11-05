@@ -3,6 +3,10 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
+import {
+  deriveAvailableInstanceId,
+  deriveInstanceId,
+} from "@t3tools/client-runtime/provider-instance-ids";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 import {
@@ -43,7 +47,6 @@ import {
   ADD_PROVIDER_WIZARD_STEPS,
   ACP_REGISTRY_WIZARD_STEPS,
   LOCAL_ACP_WIZARD_STEPS,
-  deriveAvailableInstanceId,
   resolveAcpRegistryWizardNavigation,
   resolveWizardNavigation,
   updateProviderIdentityDraft,
@@ -58,21 +61,6 @@ import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
-
-/** Limit the slug to 48 chars so the composed ProviderInstanceId fits its 64-char cap. */
-function slugifyLabel(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 48);
-}
-
-function deriveInstanceId(driver: ProviderDriverKind, label: string): string {
-  const slug = slugifyLabel(label);
-  return slug ? `${driver}_${slug}` : "";
-}
 
 const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
