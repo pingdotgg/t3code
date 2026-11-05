@@ -189,6 +189,29 @@ it.each([
     "`https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote%20client%20disconnects%20while%20the%20server%20stays%20healthy`",
     true,
   ],
+  ...["xdg-open", "open", "cmd.exe /c start", "python3 -m webbrowser"].map(
+    (launcher) =>
+      [
+        "triage-unauthenticated-browser-control",
+        [
+          "gh auth status --hostname github.com",
+          `${launcher} 'https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+client+disconnects+while+the+server+stays+healthy'`,
+        ],
+        "https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+client+disconnects+while+the+server+stays+healthy",
+        false,
+      ] as const,
+  ),
+  ...["xdg-open", "open"].map(
+    (launcher) =>
+      [
+        "triage-unauthenticated-browser-control",
+        [
+          `gh auth status --hostname github.com\n${launcher} 'https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+client+disconnects+while+the+server+stays+healthy'`,
+        ],
+        "https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml&title=Remote+client+disconnects+while+the+server+stays+healthy",
+        false,
+      ] as const,
+  ),
   [
     "triage-unauthenticated-browser-control",
     ["gh auth status --hostname github.com", "gh api graphql --input /tmp/request.json"],
