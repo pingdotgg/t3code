@@ -14,10 +14,10 @@
     "astro": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
-    "@alchemy.run/frontend-frameworks": "workspace:*",
     "@alchemy.run/cloudflare-runtime": "workspace:*",
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
     "@effect/platform-node": "catalog:",
     "@playwright/test": "catalog:",
     "effect": "catalog:",

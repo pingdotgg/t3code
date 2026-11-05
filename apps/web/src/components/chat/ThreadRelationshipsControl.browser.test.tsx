@@ -1,10 +1,25 @@
+import * as DateTime from "effect/DateTime";
 import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-const state = vi.hoisted(() => ({ projection: null as unknown, commandSucceeds: false }));
+const state = vi.hoisted(() => ({
+  projection: null as unknown,
+  commandSucceeds: false,
+  relatedShells: [] as unknown[],
+  threadTitles: {} as Record<string, string>,
+  archivedThreads: [] as unknown[],
+}));
+
+vi.mock(import("../../state/query"), async (original) => ({
+  ...(await original()),
+  useEnvironmentQuery: ((atom: unknown) =>
+    atom === null
+      ? { data: null, isSuccess: false, isPending: false }
+      : { data: state.threadTitles, isSuccess: true, isPending: false }) as never,
+}));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
@@ -16,15 +31,21 @@ vi.mock(import("../../state/entities"), () => ({
   useThreadProjection: ((ref: unknown) =>
     ref === null ? null : { projection: state.projection }) as never,
   useThreadRelationshipShells: (() =>
-    state.projection === null ? [] : [(state.projection as { thread: unknown }).thread]) as never,
+    state.projection === null
+      ? []
+      : [(state.projection as { thread: unknown }).thread, ...state.relatedShells]) as never,
   useProjects: (() => []) as never,
+  useHiddenThreadKeys: (() => new Set()) as never,
+  useAnyEnvironmentHiding: (() => false) as never,
 }));
 vi.mock(import("../../state/environments"), () => ({
   useEnvironment: (() => null) as never,
   useEnvironmentProviders: (() => new Map()) as never,
 }));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
-  useArchivedThreadSnapshots: (() => ({ snapshots: [] })) as never,
+  useArchivedThreadSnapshots: (() => ({
+    snapshots: [{ environmentId: "environment", snapshot: { threads: state.archivedThreads } }],
+  })) as never,
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: (() => async () =>
@@ -43,6 +64,9 @@ const threadId = ThreadId.make("fork");
 
 function setup() {
   state.commandSucceeds = false;
+  state.relatedShells = [];
+  state.threadTitles = { source: "Source" };
+  state.archivedThreads = [];
   state.projection = {
     thread: {
       id: threadId,
@@ -182,4 +206,190 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/local/omitted-child"),
   );
+});
+
+it("shows a lineage thread's full title in its tooltip", async () => {
+  setup();
+  const longTitle = "Compare the lineage tooltip against a title that the row truncates";
+  const sourceThread = {
+    ...(state.projection as { thread: Record<string, unknown> }).thread,
+    id: "source",
+    title: longTitle,
+    lineage: { parentThreadId: null, relationshipToParent: null },
+  };
+  state.relatedShells = [sourceThread];
+  await using _screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await userEvent.hover(page.getByText(longTitle, { exact: true }));
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
+  );
+});
+
+it("shows a side chat's full title in its tooltip", async () => {
+  setup();
+  const longTitle = "Side chat question with a title that the side chat row truncates";
+  state.relatedShells = [
+    {
+      id: "side",
+      title: longTitle,
+      lineage: {
+        parentThreadId: threadId,
+        relationshipToParent: "fork",
+        rootThreadId: threadId,
+        sideChat: true,
+      },
+    },
+  ];
+  await using _screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage={false}
+      showSideChats
+    />,
+  );
+
+  await userEvent.hover(page.getByText(longTitle, { exact: true }));
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
+  );
+});
+
+it("shows a remote subagent's full title in its tooltip even when its environment is unavailable", async () => {
+  setup();
+  const longTitle = "Investigate a remote subagent issue across linked environments";
+  const remoteEnvId = EnvironmentId.make("remote-env");
+  const remoteThreadId = ThreadId.make("remote-thread");
+  const now = DateTime.makeUnsafe("2026-10-31T20:00:00.000Z");
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    subagents: [
+      {
+        id: NodeId.make("remote-agent"),
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "codex",
+        providerInstanceId: "provider",
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Run remote task",
+        title: longTitle,
+        model: null,
+        status: "completed",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: now,
+        remoteChild: {
+          environmentId: remoteEnvId,
+          threadId: remoteThreadId,
+          label: "Remote VM",
+        },
+      },
+    ],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+    { router: "/environment/fork" },
+  );
+
+  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  await userEvent.hover(row);
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
+  );
+  expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
+    "Runs on Remote VM. Connect to it to open the thread there.",
+  );
+
+  await row.click({ force: true });
+  expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+});
+
+it("shows a delegated-from thread's full title in its tooltip even when its environment is unavailable", async () => {
+  setup();
+  const longTitle = "Parent task delegated from another machine that has a long description";
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    thread: {
+      ...(state.projection as { thread: Record<string, unknown> }).thread,
+      delegatedFrom: {
+        environmentId: EnvironmentId.make("parent-env"),
+        threadId: ThreadId.make("parent-thread"),
+        title: longTitle,
+      },
+    },
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+    { router: "/environment/fork" },
+  );
+
+  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  await userEvent.hover(row);
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
+  );
+  expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
+    "Delegated from a linked environment. Connect to it to open the parent thread.",
+  );
+
+  await row.click({ force: true });
+  expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+});
+
+it("hides a deleted fork and keeps unloaded and archived forks with their current titles", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.threadTitles = { "unloaded-fork": "Unloaded fork", "archived-fork": "Archived fork" };
+  state.archivedThreads = [
+    {
+      ...projection.thread,
+      id: ThreadId.make("archived-fork"),
+      title: "Old archived title",
+      archivedAt: projection.thread.updatedAt,
+      lineage: { parentThreadId: projection.thread.id, relationshipToParent: "fork" },
+    },
+  ];
+  state.projection = {
+    ...projection,
+    contextTransfers: ["deleted-fork", "unloaded-fork", "archived-fork"].map((id) => ({
+      sourceThreadId: projection.thread.id,
+      targetThreadId: ThreadId.make(id),
+      status: "pending",
+    })),
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+  await expect.element(screen.getByText("Unloaded fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
 });
