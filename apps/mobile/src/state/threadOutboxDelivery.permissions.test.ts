@@ -151,6 +151,7 @@ vi.mock("./use-composer-drafts", async () => {
       state.draftText += `\n${input.text}`;
     }),
     replaceComposerDraftAttachments: vi.fn(),
+    setFreshSessionPending: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
     updateComposerDraftSettings: vi.fn(),
     waitForComposerDraftsLoaded: vi.fn(),
