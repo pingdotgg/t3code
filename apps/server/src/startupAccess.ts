@@ -74,7 +74,7 @@ export const acceptsPrivateNetworkConnection = (socket: {
     (address) => address !== undefined && isPrivateNetworkAddress(address),
   );
 
-const CLOSED_CONNECTION_LOG_INTERVAL_MS = 60_000;
+const CLOSED_CONNECTION_LOG_INTERVAL_NANOS = 60_000_000_000n;
 
 /**
  * Closing is silent to the client, so closed connections are logged with both
@@ -86,7 +86,7 @@ export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
   server: NodeHttp.Server,
 ) {
   const runSync = Effect.runSyncWith(yield* Effect.context<never>());
-  let nextLogAt = 0;
+  let nextLogAt: bigint | undefined;
   let closedSinceLastLog = 0;
   server.on("connection", (socket) => {
     if (acceptsPrivateNetworkConnection(socket)) return;
@@ -95,12 +95,13 @@ export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
     socket.destroy();
     runSync(
       Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        if (now < nextLogAt) {
+        // Monotonic: a wall clock set backwards must not silence the warnings.
+        const now = yield* Clock.monotonicTimeNanos;
+        if (nextLogAt !== undefined && now < nextLogAt) {
           closedSinceLastLog += 1;
           return;
         }
-        nextLogAt = now + CLOSED_CONNECTION_LOG_INTERVAL_MS;
+        nextLogAt = now + CLOSED_CONNECTION_LOG_INTERVAL_NANOS;
         yield* Effect.logWarning("closed a connection outside the private network", {
           ...addresses,
           ...(closedSinceLastLog > 0 ? { closedSinceLastLog } : {}),
