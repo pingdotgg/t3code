@@ -39,6 +39,11 @@ import {
   useSelectedThreadWorktree,
 } from "./use-selected-thread-worktree";
 
+interface SourceControlTarget {
+  /** Where commits and pushes go, which may be a repository worktree, not the thread's workspace. */
+  readonly sourceControl?: boolean;
+}
+
 function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error ? error.message : "Failed to refresh git status.";
@@ -219,11 +224,17 @@ export function useSelectedThreadGitActions() {
     return result.value;
   };
 
-  const refreshSelectedThreadBranches = async (): Promise<ReadonlyArray<VcsRef> | null> => {
-    if (branchTarget.environmentId === null || branchTarget.cwd === null) return null;
+  const refreshSelectedThreadBranches = async (
+    options?: SourceControlTarget,
+  ): Promise<ReadonlyArray<VcsRef> | null> => {
+    const cwd =
+      options?.sourceControl === true && repoWorktree !== null
+        ? sourceControlCwd
+        : branchTarget.cwd;
+    if (branchTarget.environmentId === null || cwd === null) return null;
     const result = await readRefs({
       environmentId: branchTarget.environmentId,
-      input: { cwd: branchTarget.cwd, limit: 100, refresh: true },
+      input: { cwd, limit: 100, refresh: true },
     });
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
@@ -283,7 +294,9 @@ export function useSelectedThreadGitActions() {
     );
   };
 
-  const onCreateSelectedThreadBranch = async (branch: string) => {
+  const onCreateSelectedThreadBranch = async (branch: string, options?: SourceControlTarget) => {
+    // A repository worktree's new branch is not the thread's branch.
+    const threadWorkspace = options?.sourceControl !== true || repoWorktree === null;
     return runSelectedThreadGitMutation(
       "create_ref",
       "Creating branch",
@@ -293,6 +306,10 @@ export function useSelectedThreadGitActions() {
           input: { cwd, refName: branch, switchRef: true },
         });
         if (AsyncResult.isFailure(result)) {
+          return result;
+        }
+        if (!threadWorkspace) {
+          await refreshSelectedThreadGitStatus({ quiet: true, cwd });
           return result;
         }
         const syncResult = await syncSelectedThreadBranchState({
@@ -305,7 +322,7 @@ export function useSelectedThreadGitActions() {
         });
         return AsyncResult.isFailure(syncResult) ? AsyncResult.failure(syncResult.cause) : result;
       },
-      { changesThreadBranch: true, threadWorkspace: true },
+      threadWorkspace ? { changesThreadBranch: true, threadWorkspace: true } : undefined,
     );
   };
 
