@@ -40,17 +40,20 @@ import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerE
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
+const NO_RESET = () => 0;
 
 type NativeEditorEvent = NativeSyntheticEvent<{
   readonly value: string;
   readonly selection: ComposerEditorSelection;
   readonly eventCount: number;
+  readonly resetGeneration: number;
 }>;
 
 type NativeSelectionEvent = NativeSyntheticEvent<{
   readonly value: string;
   readonly selection: ComposerEditorSelection;
   readonly eventCount: number;
+  readonly resetGeneration: number;
 }>;
 
 type NativePasteImagesEvent = NativeSyntheticEvent<{
@@ -60,6 +63,7 @@ type NativePasteImagesEvent = NativeSyntheticEvent<{
 type NativePasteTextEvent = NativeSyntheticEvent<{
   readonly value: string;
   readonly eventCount: number;
+  readonly resetGeneration: number;
   readonly text: string;
   readonly selection: ComposerEditorSelection;
 }>;
@@ -138,12 +142,15 @@ export function ComposerEditor({
   onSubmit,
   onContentSizeChange,
   contentInsetVertical = 0,
+  readResetGeneration = NO_RESET,
   ...props
 }: ComposerEditorProps) {
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
   const [, forceNativeEventRender] = useState(0);
+  // Native stamps every event with the reset generation it had applied.
+  const nativeResetGenerationRef = useRef(0);
   // Start history empty so restored drafts or recycled views receive a non-echo controlled payload.
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([]);
   // Tokens advance from the previous committed value; render-phase state keeps
@@ -215,12 +222,17 @@ export function ComposerEditor({
   // the native revision and rejected by the editor instead of re-applying a
   // stale caret or stale text mid-typing.
   /* oxlint-disable react/refs -- Native controlled edits must reconcile against the last acknowledged native event before sending the next payload. */
-  const controlledEventCount = resolveComposerControlledEventCount(
-    props.value,
-    selection ?? null,
-    mostRecentEventCount,
-    nativeEventSnapshotsRef.current,
-  );
+  const resetGeneration = readResetGeneration();
+  // Native restarts its revision at a reset's stamp, so stamp it at the latest acknowledged event.
+  const controlledEventCount =
+    resetGeneration > nativeResetGenerationRef.current
+      ? mostRecentEventCount
+      : resolveComposerControlledEventCount(
+          props.value,
+          selection ?? null,
+          mostRecentEventCount,
+          nativeEventSnapshotsRef.current,
+        );
   const acknowledgesLatestNativeEvent = isComposerNativeEcho(
     props.value,
     selection ?? null,
@@ -236,6 +248,7 @@ export function ComposerEditor({
     tokensJson,
     mostRecentEventCount: controlledEventCount,
     isNativeEcho,
+    resetGeneration,
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes native editor event snapshots once a committed payload acknowledges them
   useEffect(() => {
@@ -264,23 +277,27 @@ export function ComposerEditor({
     nativeEventSnapshotsRef,
   ]);
   const acceptNativeEvent = useCallback(
-    (eventCount: number, value: string, nextSelection: ComposerEditorSelection) => {
+    (event: NativeEditorEvent["nativeEvent"]) => {
+      // Read at delivery: a send can clear the draft in the same batch, before this view re-renders.
       const acknowledgedEventCount = acknowledgeComposerNativeEvent(
         mostRecentEventCountRef.current,
-        eventCount,
+        event.eventCount,
+        readResetGeneration(),
+        event.resetGeneration,
       );
       if (acknowledgedEventCount === null) {
         return false;
       }
       mostRecentEventCountRef.current = acknowledgedEventCount;
+      nativeResetGenerationRef.current = event.resetGeneration;
       nativeEventSnapshotsRef.current.push({
         eventCount: acknowledgedEventCount,
-        value,
-        selection: nextSelection,
+        value: event.value,
+        selection: event.selection,
       });
       return acknowledgedEventCount;
     },
-    [nativeEventSnapshotsRef],
+    [nativeEventSnapshotsRef, readResetGeneration],
   );
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
@@ -318,11 +335,7 @@ export function ComposerEditor({
       maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
       style={style as StyleProp<ViewStyle>}
       onComposerChange={(event) => {
-        const acknowledgedEventCount = acceptNativeEvent(
-          event.nativeEvent.eventCount,
-          event.nativeEvent.value,
-          event.nativeEvent.selection,
-        );
+        const acknowledgedEventCount = acceptNativeEvent(event.nativeEvent);
         if (acknowledgedEventCount === false) return;
         onChangeText(event.nativeEvent.value);
         onSelectionChange?.(event.nativeEvent.selection);
@@ -330,11 +343,7 @@ export function ComposerEditor({
         forceNativeEventRender((sequence) => sequence + 1);
       }}
       onComposerSelectionChange={(event) => {
-        const acknowledgedEventCount = acceptNativeEvent(
-          event.nativeEvent.eventCount,
-          event.nativeEvent.value,
-          event.nativeEvent.selection,
-        );
+        const acknowledgedEventCount = acceptNativeEvent(event.nativeEvent);
         if (acknowledgedEventCount === false) return;
         // Selection events may carry post-edit text; publish it with its revision or stale drafts can overwrite native text.
         if (event.nativeEvent.value !== props.value) {
@@ -348,11 +357,7 @@ export function ComposerEditor({
       onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}
       onComposerPasteContext={(event) => {
         const paste = event.nativeEvent;
-        const acknowledgedEventCount = acceptNativeEvent(
-          paste.eventCount,
-          paste.value,
-          paste.selection,
-        );
+        const acknowledgedEventCount = acceptNativeEvent(paste);
         if (acknowledgedEventCount === false) return;
         onChangeText(paste.value);
         onSelectionChange?.(paste.selection);
@@ -362,11 +367,7 @@ export function ComposerEditor({
       }}
       onComposerPasteText={(event) => {
         const paste = event.nativeEvent;
-        const acknowledgedEventCount = acceptNativeEvent(
-          paste.eventCount,
-          paste.value,
-          paste.selection,
-        );
+        const acknowledgedEventCount = acceptNativeEvent(paste);
         if (acknowledgedEventCount === false) return;
         // Sync before capturing async paste targets; props may lag the last native keystroke.
         onChangeText(paste.value);

@@ -189,7 +189,7 @@ The mapping created by `pair --tailscale` persists across restarts. Remove its
 default-port mapping with:
 
 ```bash
-tailscale serve --https=443 off
+tailscale serve --https=443 --set-path=/ off
 ```
 
 If that port is already in use, choose another with
@@ -368,6 +368,10 @@ On the host, **Settings → Sharing & access** lets authorized administrators cr
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `t3 auth --help`.
+
+When the app connects to more than one environment, choose one at the top of the
+page. A desktop app with **Local environment** off can manage a background
+service on the same machine this way, including its T3 Connect link.
 
 A session with an open connection stays listed after its access credential
 expires.

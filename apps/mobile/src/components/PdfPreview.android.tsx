@@ -31,7 +31,10 @@ const preparedPdfAtom = Atom.family((uri: string) =>
         },
         catch: (cause) => (cause instanceof Error ? cause.message : "The PDF could not be loaded."),
       }).pipe(
-        Effect.flatMap((file) => (file === null ? Effect.interrupt : Effect.succeed(file))),
+        Effect.filterOrElse(
+          (file) => file !== null,
+          () => Effect.interrupt,
+        ),
         Effect.interruptible,
       ),
       (file) => Effect.sync(file.dispose),
