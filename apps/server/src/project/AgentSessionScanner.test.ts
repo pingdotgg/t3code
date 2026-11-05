@@ -1782,6 +1782,49 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports a Claude transcript whose discarded records exceed the record limit", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-bookkeeping-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-bookkeeping-codex-");
+        const workspace = yield* makeTempDir("t3code-bookkeeping-workspace-");
+        const record = (fields: Record<string, unknown>) =>
+          encodeTranscriptRecord({ sessionId: "bookkeeping-session", ...fields });
+        const bookkeeping = [record({ type: "attachment" }), record({ type: "last-prompt" })];
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "bookkeeping-session.jsonl"),
+          contents: [
+            record({
+              type: "user",
+              cwd: workspace,
+              message: { role: "user", content: "First prompt" },
+            }),
+            ...Array.from({ length: 100_001 }, (_, index) => bookkeeping[index % 2]),
+            record({ type: "user", message: { role: "user", content: "Latest prompt" } }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads).toMatchObject([
+          {
+            providerSessionId: "bookkeeping-session",
+            messages: [
+              { role: "user", text: "First prompt" },
+              { role: "user", text: "Latest prompt" },
+            ],
+          },
+        ]);
+      }),
+    );
+
     it.effect("skips growth during reading without exceeding the reserved bytes", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
