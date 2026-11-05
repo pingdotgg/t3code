@@ -132,7 +132,11 @@ export function QueuedRunsControl({
       serverIndex,
       text,
       // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
+      // Parked automatic deliveries show in a done side chat but can't be edited.
+      editable:
+        context?.guest === undefined &&
+        message?.notification === undefined &&
+        message?.delegatedCompletion === undefined,
       attachments,
       thumbnails: attachments
         .filter((attachment) => attachment.type === "image")

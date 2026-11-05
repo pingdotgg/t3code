@@ -14272,8 +14272,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           if (
             selectedRun === undefined ||
             selectedMessage === undefined ||
-            selectedMessage.delegatedCompletion !== undefined ||
-            selectedMessage.notification !== undefined ||
+            (projection.thread.sideChat?.done == null &&
+              (selectedMessage.delegatedCompletion !== undefined ||
+                selectedMessage.notification !== undefined)) ||
             projection.runs.some(isActiveRun)
           ) {
             return yield* new OrchestratorDispatchError({
@@ -14298,6 +14299,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "Continue the limited thread before resuming its queue.",
           });
         }
+        // Send now or Resume is the learner's own action, so it reopens a done side chat (D47).
+        yield* reopenDoneSideChats(command, projection.thread, events);
         const now = yield* DateTime.now;
         const queued = projection.runs.filter((run) => run.status === "queued");
         for (const run of queued) {

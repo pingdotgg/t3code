@@ -17,7 +17,7 @@ This complements [verify-side-chats](../verify-side-chats/SKILL.md), which drive
 .agents/skills/verify-side-chat-lifecycle/run.sh   # expect: No error has been found
 ```
 
-The script fetches TLC (tla2tools 1.7.4, sha256-pinned) into `~/.local/share/tla/` the first time, then runs under a 2 GB memory cap. It needs Java 11 or later. A run explores about 277k states in about 35 s.
+The script fetches TLC (tla2tools 1.7.4, sha256-pinned) into `~/.local/share/tla/` the first time, then runs under a 2 GB memory cap. It needs Java 11 or later. A run explores about 492k states in under 2 minutes.
 
 ## What the model is
 
@@ -32,7 +32,8 @@ The script fetches TLC (tla2tools 1.7.4, sha256-pinned) into `~/.local/share/tla
 | `ExternalSend(c)`           | `message.dispatch` that `isUserAuthoredSideChatTrigger` (`sideChat/notes.ts`) rejects: scheduled task, notification, delegated completion, agent, and the learner's `/compact` or `/logout` (`isNativeMaintenanceCommand`, `CommandPolicy.ts`). In a done side chat, `dispatchMessage` queues it held (`parksInDoneSideChat`); the model counts it in `parked` until `Reopen` turns it into a held queue    |
 | `Stop(c)`                   | `thread.stop` on an open side chat: `holdStoppedThread` sets `queueHeld`                                                                                                                                                                                                                                                                                                                                    |
 | `RunEnds`, `QueuedStarts`   | the provider ends a run; `startNextQueuedRun` starts the next unheld queued run, never in a done side chat                                                                                                                                                                                                                                                                                                  |
-| `StartParked(c)`            | a parked run whose hold was lifted while the chat was done (`/compact`'s `heldRunsToRelease`, `releaseUnattendedHolds`, `queue.resume`); only `startNextQueuedRun`'s done check stops it                                                                                                                                                                                                                    |
+| `SendNow(c)`                | `queued-run.start` or `queue.resume` (Send now, Resume) on a parked run: `reopenDoneSideChats` in that case of the dispatch switch, then the hold is lifted and `startNextQueuedRun` runs it (D47)                                                                                                                                                                                                          |
+| `StartParked(c)`            | a parked run whose hold was lifted while the chat was done (`/compact`'s `heldRunsToRelease`, `releaseUnattendedHolds`); only `startNextQueuedRun`'s done check stops it                                                                                                                                                                                                                                    |
 | `OutcomeComplete(e)`        | `SideChatLifecycleService.writeOutcome` (`sideChat/SideChatLifecycleService.ts`) → `dispatchSideChatOutcomeComplete`: lands only on the matching `generating` request                                                                                                                                                                                                                                       |
 
 Invariants are `FinishedOnce`, `OwnOutcome` and `NothingLeftWhenDone`. `NoteSettles` is a liveness property, under fairness for the provider and the effect worker.
@@ -71,7 +72,7 @@ The same double finish in real code (guard at `if (sideChat.done !== null)` in `
 
 **Covered code**, all in `apps/server/src/orchestration-v2/`:
 
-- `Orchestrator.ts`: `finishSideChat`, `stopSideChatRun`, `dispatchSideChatDone`, `dispatchSideChatOutcomeComplete`, `reopenDoneSideChats`, `applySideChatUserMessage`, the `message.dispatch` case, the queue hold, release and `parksInDoneSideChat` in `dispatchMessage`, `startNextQueuedRun`, `holdStoppedThread`, `markStoppedRun`, `sideChatLessonLockThreadId`.
+- `Orchestrator.ts`: `finishSideChat`, `stopSideChatRun`, `dispatchSideChatDone`, `dispatchSideChatOutcomeComplete`, `reopenDoneSideChats`, `applySideChatUserMessage`, the `message.dispatch` case, the queue hold, release and `parksInDoneSideChat` in `dispatchMessage`, the `queued-run.start`/`queue.resume` case, `startNextQueuedRun`, `holdStoppedThread`, `markStoppedRun`, `sideChatLessonLockThreadId`.
 - `sideChat/SideChatLifecycleService.ts`: `writeOutcome`.
 - `sideChat/notes.ts`: `isUserAuthoredSideChatTrigger`.
 - `sideChat/tree.ts`: `sideChatOutcomeRequestId`.

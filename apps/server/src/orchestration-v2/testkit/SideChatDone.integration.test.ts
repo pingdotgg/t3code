@@ -521,6 +521,52 @@ describe("side chat Done", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("Send now on a parked notification reopens the finished side chat and runs it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeSideChatHarness("side-chat-done-send-now");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const lesson = yield* harness.createLesson("Teach me RL environments.");
+        const space = yield* harness.openSideChat({ parentThreadId: lesson, label: SPACE });
+        yield* harness.send(space, SPACE_QUESTION);
+        yield* finishWithNote(harness, space, SPACE, SPACE_NOTE);
+
+        const parked = MessageId.make("message:parked-notification");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("send:parked-notification"),
+          threadId: space,
+          messageId: parked,
+          text: "Background check finished.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "completed",
+            summary: "Background check finished",
+          },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        const parkedRun = (yield* orchestrator.getThreadProjection(space)).runs.find(
+          (run) => run.userMessageId === parked,
+        );
+        assert.equal(parkedRun?.queueHeld, true);
+        assert(parkedRun !== undefined);
+
+        const after = yield* harness.mark;
+        yield* orchestrator.dispatch({
+          type: "queued-run.start",
+          commandId: CommandId.make("send-now:parked"),
+          threadId: space,
+          runId: parkedRun.id,
+        });
+        assert.isNull((yield* harness.thread(space)).sideChat?.done);
+        yield* harness.awaitRun(after, parked, "completed");
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "Done finishes nested side chats first and a grandchild's note reaches the lesson through its parent",
     () =>

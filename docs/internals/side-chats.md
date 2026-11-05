@@ -100,7 +100,9 @@ never open under a done one: a learner's message in a done side chat, or a side 
 reopens it and every done ancestor. Any other message (a scheduled task, notification, delegated
 completion, agent send) is queued held in the done side chat, since its turn would reach no note, and
 `startNextQueuedRun` starts nothing in a done side chat, because other paths can lift a hold. The
-learner's next message there reopens it and releases the queue. A note the lesson received is kept as `deliveredNote`, so the next says only
+learner's next message there, or Send now or Resume on its queue (`queued-run.start`, `queue.resume`, which
+only clients send), reopens it and releases the queue. The queue shows these parked notifications and
+delegated completions, which other chats hide. A note the lesson received is kept as `deliveredNote`, so the next says only
 what is new; a nested one is not, since the parent note carrying it may be dropped. A user message also
 finishes the idle open side chats below it that have messages; busy ones stay open with their
 ancestors, and empty ones stay open because their composer may hold an unsent draft.
