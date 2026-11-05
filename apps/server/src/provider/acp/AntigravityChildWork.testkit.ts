@@ -25,7 +25,7 @@ const field = (number: number, value: string | Uint8Array) => {
   return [...varint(number * 8 + 2), ...varint(bytes.length), ...bytes];
 };
 const proto = (...parts: number[][]) => Uint8Array.from(parts.flat());
-const toolCall = (id: string) => proto(field(1, id), field(2, "invoke_subagent"));
+const toolCall = (id: string, name = "invoke_subagent") => proto(field(1, id), field(2, name));
 
 export const invokeStep = (input: {
   readonly callId: string;
@@ -49,6 +49,22 @@ export const invokeStep = (input: {
   );
 export const plannerStep = (callIds: ReadonlyArray<string>) =>
   proto(field(20, proto(...callIds.map((id) => field(7, toolCall(id))))));
+/** A planner message with response text (field 1) or thinking (field 3) besides its calls. */
+export const plannerResponse = (input: {
+  readonly text?: string;
+  readonly thinking?: string;
+  readonly calls: ReadonlyArray<readonly [id: string, name: string]>;
+}) =>
+  proto(
+    field(
+      20,
+      proto(
+        input.text === undefined ? [] : field(1, input.text),
+        input.thinking === undefined ? [] : field(3, input.thinking),
+        ...input.calls.map(([id, name]) => field(7, toolCall(id, name))),
+      ),
+    ),
+  );
 
 export const transcriptLines = [
   // Trimmed from 1.4.5: the launch envelope around the prompt the parent record already holds.

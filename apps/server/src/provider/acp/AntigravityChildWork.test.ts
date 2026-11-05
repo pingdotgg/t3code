@@ -20,6 +20,7 @@ import {
   invokeStep,
   LAUNCH,
   makeProfile,
+  plannerResponse,
   plannerStep,
   ROOT,
   transcriptLines,
@@ -65,6 +66,63 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         "marker 4242 found",
       ]);
       expect(child?.steps?.[0]?.toolCalls[0]?.input).toBe('{"AbsolutePath":"/project/README.md"}');
+    }),
+  );
+
+  it.effect("follows each auto-approved launch id to the step that ran it", () =>
+    Effect.gen(function* () {
+      const tester = { role: "Test Runner", prompt: "Run the tests" };
+      const empty = new Uint8Array();
+      // A 1.4.5 session: USER_INPUT 14, VIEW_FILE 8, SYSTEM_MESSAGE 101, PLANNER_RESPONSE 15.
+      // Ids number the executing steps, skipping planners with neither text nor thinking:
+      // the invoke records at idx 8 and 12 arrive as `:6` and `:9`.
+      const { profile } = yield* makeProfile({
+        steps: (logUri) => [
+          [0, 14, empty],
+          [
+            1,
+            15,
+            plannerResponse({
+              calls: [
+                ["v1", "view_file"],
+                ["v2", "view_file"],
+              ],
+            }),
+          ],
+          [2, 8, empty],
+          [3, 8, empty],
+          [4, 15, plannerResponse({ text: "Reading more", calls: [["v3", "view_file"]] })],
+          [5, 8, empty],
+          [
+            6,
+            15,
+            plannerResponse({
+              calls: [
+                ["v4", "view_file"],
+                ["call-a", "invoke_subagent"],
+              ],
+            }),
+          ],
+          [7, 8, empty],
+          [
+            8,
+            127,
+            invokeStep({ callId: "call-a", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+          ],
+          [9, 15, plannerResponse({ text: "The reader is done", calls: [] })],
+          [10, 101, empty],
+          [11, 15, plannerResponse({ calls: [["call-b", "invoke_subagent"]] })],
+          [
+            12,
+            127,
+            invokeStep({ callId: "call-b", launches: [tester], children: [{ id: CHILD, logUri }] }),
+          ],
+        ],
+      });
+      const first = yield* read(profile, `${ROOT}:6`);
+      expect(first.map((child) => child.role)).toEqual([LAUNCH.role]);
+      const second = yield* read(profile, `${ROOT}:9`);
+      expect(second.map((child) => child.role)).toEqual([tester.role]);
     }),
   );
 
