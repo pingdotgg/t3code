@@ -24,6 +24,7 @@ import type { ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
 import {
+  filterProviderSystemSkills,
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
@@ -72,6 +73,7 @@ export function useComposerMenuItems({
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  showSystemSkills,
   workspaceSkillsScanning,
   questionAttachmentTarget,
 }: {
@@ -92,6 +94,7 @@ export function useComposerMenuItems({
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
+  readonly showSystemSkills: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
 }) {
@@ -290,17 +293,19 @@ export function useComposerMenuItems({
         description: command.description ?? command.input?.hint ?? "Run provider command",
       }));
       const query = composerTrigger.query.trim().toLowerCase();
-      const skillItems = slashMenuSkills.map((skill) => ({
-        id: `skill:${selectedProvider}:${skill.name}`,
-        type: "skill" as const,
-        provider: selectedProvider,
-        skill,
-        label: `/skill:${skill.name}`,
-        description:
-          skill.shortDescription ??
-          skill.description ??
-          (skill.scope ? `${skill.scope} skill` : ""),
-      }));
+      const skillItems = filterProviderSystemSkills(slashMenuSkills, showSystemSkills).map(
+        (skill) => ({
+          id: `skill:${selectedProvider}:${skill.name}`,
+          type: "skill" as const,
+          provider: selectedProvider,
+          skill,
+          label: `/skill:${skill.name}`,
+          description:
+            skill.shortDescription ??
+            skill.description ??
+            (skill.scope ? `${skill.scope} skill` : ""),
+        }),
+      );
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
@@ -314,7 +319,10 @@ export function useComposerMenuItems({
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
+      return searchProviderSkills(
+        filterProviderSystemSkills(selectedProviderSkills, showSystemSkills),
+        composerTrigger.query,
+      ).map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
         type: "skill" as const,
         provider: selectedProvider,
