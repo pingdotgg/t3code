@@ -2328,7 +2328,6 @@ describe("parseAgentSessionTranscript", () => {
         JSON.stringify({
           type: "user",
           sessionId: "claude-session",
-          origin: { kind: "task-notification" },
           message: { role: "user", content: notification },
         }),
         JSON.stringify({
