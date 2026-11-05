@@ -233,8 +233,9 @@ export class RepoWorktreeService extends Context.Service<
       input: RepoWorktreeSetSubmoduleInput,
     ) => Effect.Effect<RepoWorktreeSetSubmoduleResult, RepoWorktreeFailure>;
     /**
-     * Removes a worktree the user asked to delete, unless a thread has it
-     * attached as a repository worktree. Forced removals are refused the same way.
+     * Removes a worktree unless a thread has it attached as a repository
+     * worktree. Forced removals are refused the same way, so user deletes and
+     * the undo of a canceled or failed setup or handoff all go through here.
      */
     readonly removeWorktree: (
       input: VcsRemoveWorktreeInput,
@@ -525,6 +526,30 @@ const make = Effect.gen(function* () {
     return yield* new RepoWorktreeRequestError({ reason: "path_unavailable", path: base });
   });
 
+  /**
+   * Removes a checkout unless a thread has it attached. Callers hold the
+   * repository lease, which ensure attaches under, so the answer still holds
+   * when Git removes the folder.
+   */
+  const removeUnattached = Effect.fnUntraced(function* (input: VcsRemoveWorktreeInput) {
+    const target = yield* pathIdentity(input.path);
+    const attachments = yield* projections
+      .getThreadRepoWorktreePaths()
+      .pipe(
+        Effect.mapError((cause) => new RepoWorktreeReadError({ operation: "attachments", cause })),
+      );
+    for (const attachment of attachments) {
+      if ((yield* pathIdentity(attachment.worktreePath)) === target) {
+        return yield* new RepoWorktreeInUseError({
+          path: input.path,
+          threadId: attachment.threadId,
+          threadTitle: attachment.title,
+        });
+      }
+    }
+    yield* gitWorkflow.removeWorktree(input);
+  });
+
   const dispatchAttach = (threadId: ThreadId, repoWorktree: ThreadRepoWorktree) =>
     Effect.gen(function* () {
       const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
@@ -722,30 +747,34 @@ const make = Effect.gen(function* () {
           origin: "created",
           attachedAt,
         };
-        const rollback = gitWorkflow
-          .removeWorktree({ cwd, path: repoWorktree.worktreePath, force: true })
-          .pipe(
-            Effect.andThen(
-              plan.newRefName === undefined
-                ? Effect.void
-                : Effect.gen(function* () {
-                    const created = yield* probe(cwd, "branchExists", [
-                      "show-ref",
-                      "--verify",
-                      "--quiet",
-                      branchRef,
-                    ]);
-                    if (created.ok) {
-                      yield* gitWorkflow.deleteLocalBranch({
-                        cwd,
-                        refName: input.branch,
-                        force: true,
-                      });
-                    }
-                  }),
-            ),
-            Effect.ignoreCause({ log: true }),
-          );
+        // Already under this repository's lease. An attach that committed
+        // despite reporting failure keeps the checkout and its branch.
+        const rollback = removeUnattached({
+          cwd,
+          path: repoWorktree.worktreePath,
+          force: true,
+        }).pipe(
+          Effect.andThen(
+            plan.newRefName === undefined
+              ? Effect.void
+              : Effect.gen(function* () {
+                  const created = yield* probe(cwd, "branchExists", [
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    branchRef,
+                  ]);
+                  if (created.ok) {
+                    yield* gitWorkflow.deleteLocalBranch({
+                      cwd,
+                      refName: input.branch,
+                      force: true,
+                    });
+                  }
+                }),
+          ),
+          Effect.ignoreCause({ log: true }),
+        );
         // The result names a branch, so it must be the one Git checked out.
         const actualBranch = yield* checkedOutBranch(repoWorktree.worktreePath).pipe(
           Effect.onError(() => rollback),
@@ -799,31 +828,7 @@ const make = Effect.gen(function* () {
     const leaseKey = yield* pathIdentity(
       commonDir.ok && commonDir.stdout !== "" ? commonDir.stdout : input.cwd,
     );
-    // Checked under the lease ensure attaches under, so the answer still holds
-    // when Git removes the folder.
-    yield* withRepositoryLease(
-      leaseKey,
-      Effect.gen(function* () {
-        const target = yield* pathIdentity(input.path);
-        const attachments = yield* projections
-          .getThreadRepoWorktreePaths()
-          .pipe(
-            Effect.mapError(
-              (cause) => new RepoWorktreeReadError({ operation: "attachments", cause }),
-            ),
-          );
-        for (const attachment of attachments) {
-          if ((yield* pathIdentity(attachment.worktreePath)) === target) {
-            return yield* new RepoWorktreeInUseError({
-              path: input.path,
-              threadId: attachment.threadId,
-              threadTitle: attachment.title,
-            });
-          }
-        }
-        yield* gitWorkflow.removeWorktree(input);
-      }),
-    );
+    yield* withRepositoryLease(leaseKey, removeUnattached(input));
   });
 
   const detach: RepoWorktreeService["Service"]["detach"] = Effect.fn("RepoWorktreeService.detach")(

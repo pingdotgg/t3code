@@ -289,8 +289,10 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as({ status: "failed", detail } as const));
           });
 
+        // The new branch exists from here, so a folder thread may attach its
+        // checkout before the rollback; the guard then keeps both for it.
         const removeCreatedWorktree = Effect.suspend(() =>
-          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
+          repoWorktrees.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
             Effect.andThen(
               Effect.suspend(() =>
                 gitWorkflow.deleteLocalBranch({

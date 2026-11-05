@@ -139,7 +139,7 @@ Each worktree goes in the worktree location below, named after the repository an
 
 Use **Repository worktree guidance** for anything agents should know, such as which branch each repository's work starts from. T3 Code gives agents the rules and this guidance itself, so no extra skill or instruction file is needed.
 
-The thread's details panel (the Git sheet on mobile) lists its repository worktrees with their branch and path. Detach one there to stop tracking it; the folder, branch, and edits stay. Checkpoints, diffs, and rollback cover only the project folder, not repository worktrees, so review and commit those with Git in each worktree. Neither storage cleanup nor deleting a thread with its worktree removes a worktree while another thread has it attached; detach it there first. After you detach one or delete its thread, cleanup results list it as a folder no thread uses, for you to remove when you want.
+The thread's details panel (the Git sheet on mobile) lists its repository worktrees with their branch and path. Detach one there to stop tracking it; the folder, branch, and edits stay. Checkpoints, diffs, and rollback cover only the project folder, not repository worktrees, so review and commit those with Git in each worktree. Storage cleanup, deleting a thread with its worktree, and canceling a new thread's worktree setup never remove a worktree while another thread has it attached. To delete one, detach it there first. After you detach one or delete its thread, cleanup results list it as a folder no thread uses, for you to remove when you want.
 
 Repository worktrees sit outside the project folder, so in permission modes that limit edits to the workspace, the provider may ask before writing there.
 

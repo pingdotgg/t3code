@@ -110,6 +110,8 @@ interface HarnessOptions {
   readonly fetchRemoteFails?: boolean;
   readonly resolveRemoteFails?: boolean;
   readonly removeWorktreeFails?: boolean;
+  /** Another thread attached the new checkout before the rollback. */
+  readonly removalRefusedInUse?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
 }
@@ -333,7 +335,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
-        Layer.mock(RepoWorktreeService.RepoWorktreeService)({}),
+        Layer.mock(RepoWorktreeService.RepoWorktreeService)({
+          removeWorktree: (input) =>
+            options.removalRefusedInUse
+              ? Effect.fail(
+                  new RepoWorktreeService.RepoWorktreeInUseError({
+                    path: input.path,
+                    threadId: "thread-folder",
+                    threadTitle: "Folder thread",
+                  }),
+                )
+              : removeWorktree(input),
+        }),
         NodeServices.layer,
       ),
     ),
@@ -807,6 +820,16 @@ describe("t3_worktree_handoff", () => {
       const exit = yield* Effect.exit(runHandoff(harness, { branch: "feature/rollback-fails" }));
       expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
       expect(harness.removeWorktree).toHaveBeenCalledTimes(1);
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
+    });
+  });
+
+  it.effect("keeps the checkout and branch when another thread attached them first", () => {
+    const harness = makeHarness({ dispatchFails: true, removalRefusedInUse: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runHandoff(harness, { branch: "feature/attached-race" }));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
       expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
     });
   });

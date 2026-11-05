@@ -37,6 +37,7 @@ import {
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "../git/RepoWorktreeService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -200,6 +201,7 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -684,10 +686,22 @@ const make = Effect.gen(function* () {
             const removedPath = createdWorktreePath;
             // The thread forgets the worktree only once it is gone; a failed
             // removal leaves the directory for the user to clean up rather than
-            // reusing a checkout that may be half written.
-            yield* git
+            // reusing a checkout that may be half written. Setup can run for
+            // minutes, and a folder thread may attach the new branch's checkout
+            // meanwhile: the guard then keeps it, edits and branch included,
+            // for that thread, and this thread still lets it go.
+            yield* repoWorktrees
               .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
               .pipe(
+                Effect.catchTags({
+                  RepoWorktreeInUseError: (inUse) =>
+                    Effect.logInfo("Kept an abandoned thread worktree another thread works in", {
+                      commandId: input.commandId,
+                      threadId,
+                      path: removedPath,
+                      attachedThreadId: inUse.threadId,
+                    }),
+                }),
                 Effect.andThen(
                   threads
                     .dispatch({
