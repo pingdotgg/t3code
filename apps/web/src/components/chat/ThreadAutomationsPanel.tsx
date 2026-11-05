@@ -73,6 +73,8 @@ export function ThreadAutomationsPanel(props: {
     (task) => task.threadId === props.threadId,
   );
 
+  if (boundTasks.length === 0 && tasksQuery.error === null) return null;
+
   const nextRun = boundTasks
     .filter((task) => task.enabled && task.nextRunAt !== null)
     .map((task) => task.nextRunAt!)
@@ -115,7 +117,6 @@ export function ThreadAutomationsPanel(props: {
   return (
     <ThreadDetailsSection
       title="Automations"
-      empty={boundTasks.length === 0 && tasksQuery.error === null}
       summary={
         boundTasks.length ? (
           <>
@@ -126,9 +127,7 @@ export function ThreadAutomationsPanel(props: {
               </>
             ) : null}
           </>
-        ) : (
-          "None scheduled"
-        )
+        ) : undefined
       }
       action={
         <ThreadDetailsControl
@@ -146,12 +145,6 @@ export function ThreadAutomationsPanel(props: {
       }
       data-thread-automations-panel
     >
-      {boundTasks.length === 0 && tasksQuery.error === null ? (
-        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-muted-foreground">
-          <CalendarClockIcon className="size-4" />
-          No automations scheduled
-        </div>
-      ) : null}
       <div className="max-h-[13.5rem] overflow-y-auto">
         {boundTasks.map((task) => (
           <Menu key={task.id}>
