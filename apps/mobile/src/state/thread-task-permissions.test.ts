@@ -333,6 +333,7 @@ describe("mobile handoff preview and submission", () => {
       auth: { status: "authenticated" as const },
       availability: "available" as "available" | "unavailable",
       models: [{ slug: selection.model }],
+      slashCommands: [],
     };
     const projectOverride = { enabled: false };
     state.serverConfig = {
