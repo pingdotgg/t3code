@@ -2188,6 +2188,42 @@ describe("waitForRevertedMessage", () => {
     await expect(waiting).rejects.toThrow("The provider could not roll back.");
   });
 
+  const rewound = (
+    projection: ReturnType<typeof makeThreadProjectionFixture>,
+    checkpointStatus: "ready" | "stale",
+    rollbackFailure: { requestId: CommandId; message: string } | null = null,
+  ) =>
+    ({
+      ...projection,
+      thread: { ...projection.thread, rollbackFailure },
+      runs: [{ id: RunId.make("run-2"), ordinal: 2, status: "rolled_back" }],
+      checkpoints: [{ appRunOrdinal: 2, status: checkpointStatus }],
+    }) as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+  it("waits for the files before reporting a rewind as finished", async () => {
+    const { state, projection } = projectionAtom();
+    appAtomRegistry.set(state, { data: Option.some(rewound(projection, "ready")) });
+    const waiting = waitForRevertedMessage(threadRef, messageId, 1, requestId, async () => {});
+    for (let flush = 0; flush < 5; flush += 1) await Promise.resolve();
+    await expect(Promise.race([waiting, Promise.resolve("waiting")])).resolves.toBe("waiting");
+
+    appAtomRegistry.set(state, { data: Option.some(rewound(projection, "stale")) });
+    await expect(waiting).resolves.toBeNull();
+  });
+
+  it("resolves with the failure when the conversation rewound but files did not", async () => {
+    const { state, projection } = projectionAtom();
+    const waiting = waitForRevertedMessage(threadRef, messageId, 1, requestId, async () => {});
+    await Promise.resolve();
+    appAtomRegistry.set(state, {
+      data: Option.some(
+        rewound(projection, "ready", { requestId, message: "Restoring files stopped." }),
+      ),
+    });
+
+    await expect(waiting).resolves.toBe("Restoring files stopped.");
+  });
+
   it("ignores a failure recorded for an earlier rollback", async () => {
     vi.useFakeTimers();
     const { state, projection } = projectionAtom();

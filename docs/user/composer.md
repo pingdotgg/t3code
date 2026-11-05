@@ -149,8 +149,10 @@ File restore is only offered for threads running in a worktree, and it is
 refused when another thread or agent session also uses that directory, a folder
 inside it, or a folder that contains it, since
 restoring would erase their changes. A thread that works in the project directory
-rewinds the conversation only. The selected prompt and its attachments return to the composer for editing and
+restores only its [repository worktrees](project-settings.md#repository-worktrees), if it has any. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
+
+The conversation is rewound first, then the files. If restoring files stops partway, for example because a folder can't be written, the conversation stays rewound and its earlier turns are kept. The error names where restoring stopped and what was already restored. Fix that folder, then choose **Try again** on the error to finish restoring files to the same point. Nothing more is removed from the conversation.
 
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider

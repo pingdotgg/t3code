@@ -1064,6 +1064,11 @@ export async function waitForStartedServerThread(
   });
 }
 
+/**
+ * Resolves once the conversation is rewound to before the message: with
+ * `null` when the files were restored too, or with the failure when restoring
+ * them stopped. Rejects when nothing was rewound.
+ */
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
   messageId: MessageId,
@@ -1071,7 +1076,7 @@ export async function waitForRevertedMessage(
   requestId: CommandId,
   revert: () => Promise<void>,
   timeoutMs = 120_000,
-): Promise<void> {
+): Promise<string | null> {
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
   const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
   const initial = readProjection();
@@ -1079,46 +1084,53 @@ export async function waitForRevertedMessage(
     throw new Error("The message to rewind is no longer available.");
   }
   const messageRunId = initial.messages.find((message) => message.id === messageId)?.runId;
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<string | null>((resolve, reject) => {
     let settled = false;
     let accepted = false;
     let unsubscribe = () => {};
     let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
-    const finish = (error?: unknown) => {
+    const finish = (outcome: { readonly error: unknown } | { readonly failure: string | null }) => {
       if (settled) return;
       settled = true;
       if (timeout !== undefined) globalThis.clearTimeout(timeout);
       unsubscribe();
-      if (error !== undefined) reject(error);
-      else resolve();
+      if ("error" in outcome) reject(outcome.error);
+      else resolve(outcome.failure);
     };
     const inspect = () => {
       const thread = readProjection();
       if (!thread) return;
+      const rewound = thread.runs.some(
+        (run) => run.id === messageRunId && run.ordinal > turnCount && run.status === "rolled_back",
+      );
       const failure = thread.thread.rollbackFailure;
       if (failure?.requestId === requestId) {
-        finish(new Error(failure.message));
+        finish(rewound ? { failure: failure.message } : { error: new Error(failure.message) });
         return;
       }
-      if (
-        accepted &&
-        thread.runs.some(
-          (run) =>
-            run.id === messageRunId && run.ordinal > turnCount && run.status === "rolled_back",
-        )
-      )
-        finish();
+      // The server marks later checkpoints stale once their files are back,
+      // ahead of the rolled-back runs; until then a failure may follow.
+      const filesPending = thread.checkpoints.some(
+        (checkpoint) =>
+          checkpoint.status === "ready" &&
+          checkpoint.appRunOrdinal !== null &&
+          checkpoint.appRunOrdinal > turnCount,
+      );
+      if (accepted && rewound && !filesPending) finish({ failure: null });
     };
     unsubscribe = appAtomRegistry.subscribe(threadAtom, inspect);
     timeout = globalThis.setTimeout(() => {
-      finish(new Error("Timed out waiting for the thread to rewind."));
+      finish({ error: new Error("Timed out waiting for the thread to rewind.") });
     }, timeoutMs);
     Promise.resolve()
       .then(revert)
-      .then(() => {
-        accepted = true;
-        inspect();
-      }, finish);
+      .then(
+        () => {
+          accepted = true;
+          inspect();
+        },
+        (error: unknown) => finish({ error }),
+      );
   });
 }
 

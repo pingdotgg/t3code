@@ -8035,6 +8035,34 @@ export default function ChatView(props: ChatViewProps) {
   if (pendingRevert && pendingRevert.routeThreadKey !== routeThreadKey) {
     setPendingRevert(null);
   }
+  // The conversation already went back to `turnCount`; trying again restores its files.
+  const [fileRestoreRetry, setFileRestoreRetry] = useState<{
+    turnCount: number;
+    message: string;
+    routeThreadKey: string;
+  } | null>(null);
+  if (fileRestoreRetry && fileRestoreRetry.routeThreadKey !== routeThreadKey) {
+    setFileRestoreRetry(null);
+  }
+  // Rollbacks that nothing awaits report a failure once the server gives up,
+  // with the file restore to try again when there is one.
+  const watchedRollbacksRef = useRef(new Map<CommandId, { readonly turnCount: number } | null>());
+  const rollbackFailure = serverProjection?.thread.rollbackFailure ?? null;
+  const onRollbackFailure = useStableCallback(
+    (failure: { readonly requestId: CommandId; readonly message: string }) => {
+      const watched = watchedRollbacksRef.current;
+      if (!activeThread || !watched.has(failure.requestId)) return;
+      const retry = watched.get(failure.requestId) ?? null;
+      watched.delete(failure.requestId);
+      setThreadError(activeThread.id, failure.message);
+      if (retry !== null) {
+        setFileRestoreRetry({ ...retry, message: failure.message, routeThreadKey });
+      }
+    },
+  );
+  useEffect(() => {
+    if (rollbackFailure !== null) onRollbackFailure(rollbackFailure);
+  }, [rollbackFailure, onRollbackFailure]);
 
   const onRevertToTurnCount = async (
     turnCount: number,
@@ -8115,13 +8143,19 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
       const commandId = CommandId.make(randomUUID());
-      await waitForRevertedMessage(routeThreadRef, messageId, turnCount, commandId, async () => {
-        const result = await revertThreadCheckpoint({
-          environmentId,
-          input: { commandId, threadId: activeThread.id, turnCount, restoreFiles },
-        });
-        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      });
+      const fileRestoreFailure = await waitForRevertedMessage(
+        routeThreadRef,
+        messageId,
+        turnCount,
+        commandId,
+        async () => {
+          const result = await revertThreadCheckpoint({
+            environmentId,
+            input: { commandId, threadId: activeThread.id, turnCount, restoreFiles },
+          });
+          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        },
+      );
       const currentPrompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
       const restoredPrompt = recallableComposerPrompt(message.text);
       const nextPrompt =
@@ -8156,6 +8190,10 @@ export default function ChatView(props: ChatViewProps) {
           if (currentRouteThreadKeyRef.current === routeThreadKey)
             composerRef.current?.focusAtEnd();
         });
+      }
+      if (fileRestoreFailure !== null) {
+        setThreadError(activeThread.id, fileRestoreFailure);
+        setFileRestoreRetry({ turnCount, message: fileRestoreFailure, routeThreadKey });
       }
     } catch (error) {
       setThreadError(
@@ -8201,15 +8239,19 @@ export default function ChatView(props: ChatViewProps) {
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
     setThreadError(activeThread.id, null);
+    const commandId = CommandId.make(randomUUID());
+    watchedRollbacksRef.current.set(commandId, null);
     const result = await revertThreadCheckpoint({
       environmentId,
       input: {
+        commandId,
         threadId: activeThread.id,
         checkpointId: input.checkpointId,
         scopeId: input.scopeId,
       },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      watchedRollbacksRef.current.delete(commandId);
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThread.id,
@@ -8222,6 +8264,42 @@ export default function ChatView(props: ChatViewProps) {
       return { rewindingThreadKeys: remaining };
     });
   };
+
+  const onRetryFileRestore = async () => {
+    if (!fileRestoreRetry || !activeThread || isRevertingCheckpoint) return;
+    if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+      setThreadError(
+        activeThread.id,
+        `Reconnect ${activeEnvironmentUnavailableLabel} before restoring files.`,
+      );
+      return;
+    }
+    const { turnCount } = fileRestoreRetry;
+    setFileRestoreRetry(null);
+    setThreadError(activeThread.id, null);
+    useComposerDraftStore.setState((store) => ({
+      rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
+    }));
+    const commandId = CommandId.make(randomUUID());
+    watchedRollbacksRef.current.set(commandId, { turnCount });
+    const result = await revertThreadCheckpoint({
+      environmentId,
+      input: { commandId, threadId: activeThread.id, turnCount, restoreFiles: true },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      watchedRollbacksRef.current.delete(commandId);
+      const error = squashAtomCommandFailure(result);
+      const message = error instanceof Error ? error.message : "Failed to restore files.";
+      setThreadError(activeThread.id, message);
+      setFileRestoreRetry({ turnCount, message, routeThreadKey });
+    }
+    useComposerDraftStore.setState((store) => {
+      const remaining = new Set(store.rewindingThreadKeys);
+      remaining.delete(routeThreadKey);
+      return { rewindingThreadKeys: remaining };
+    });
+  };
+  const onRetryFileRestoreStable = useStableCallback(onRetryFileRestore);
 
   const onForkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
@@ -10926,8 +11004,14 @@ export default function ChatView(props: ChatViewProps) {
                     ? (serverRuntime?.lastErrorClass ?? null)
                     : null
                 }
+                action={
+                  fileRestoreRetry !== null && fileRestoreRetry.message === timelineThreadError
+                    ? { label: "Try again", onClick: () => void onRetryFileRestoreStable() }
+                    : null
+                }
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
+                  setFileRestoreRetry(null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
                   setThreadErrorBannerDismissTick((tick) => tick + 1);
                 }}
