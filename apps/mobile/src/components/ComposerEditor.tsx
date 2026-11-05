@@ -177,7 +177,7 @@ export function ComposerEditor({
     <>
       {/* Reset revision history with the recreated iOS view without aborting context imports. */}
       <NativeComposerEditor
-        key={`${hidden ? "hidden" : "visible"}:${draftKey ?? "no-draft"}`}
+        key={hidden ? "hidden" : "visible"}
         {...props}
         enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
         onChangeText={changeText}
