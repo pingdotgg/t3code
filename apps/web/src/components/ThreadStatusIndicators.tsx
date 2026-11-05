@@ -299,9 +299,7 @@ function PullRequestBadge({
           className={cn(
             "contents tabular-nums",
             appearance === "number" ? "text-meta" : "font-normal text-xs",
-            appearance === "number"
-              ? sidebarPullRequestToneClassName(presentation.toneClassName)
-              : presentation.toneClassName,
+            presentation.toneClassName,
           )}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
@@ -337,22 +335,6 @@ function PullRequestBadge({
       </TooltipPopup>
     </Tooltip>
   );
-}
-
-// Sidebar state glyphs keep main's subdued palette; counts stay secondary labels.
-function sidebarPullRequestToneClassName(toneClassName: string): string {
-  switch (toneClassName) {
-    case "text-success-foreground":
-      return "text-emerald-600 dark:text-emerald-300/90";
-    case "text-dim-foreground":
-      return "text-zinc-500 dark:text-zinc-400/80";
-    case "text-error-foreground":
-      return "text-red-600 dark:text-red-300/90";
-    case "text-merged-foreground":
-      return "text-violet-600 dark:text-violet-300/90";
-    default:
-      return toneClassName;
-  }
 }
 
 const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
@@ -845,13 +827,13 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
 function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"]): string {
   switch (state) {
     case "draft":
-      return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
+      return "group-hover/sidebar-row:text-dim-foreground";
     case "open":
-      return "group-hover/sidebar-row:text-emerald-600 dark:group-hover/sidebar-row:text-emerald-300/90";
+      return "group-hover/sidebar-row:text-success-foreground";
     case "merged":
-      return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
+      return "group-hover/sidebar-row:text-merged-foreground";
     case "closed":
-      return "group-hover/sidebar-row:text-red-600 dark:group-hover/sidebar-row:text-red-300/90";
+      return "group-hover/sidebar-row:text-error-foreground";
   }
 }
 
