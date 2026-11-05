@@ -205,9 +205,9 @@ function remoteRefreshFailureDelay(
 export class VcsStatusBroadcaster extends Context.Service<
   VcsStatusBroadcaster,
   {
-    readonly streamLocalChanges: Stream.Stream<{
+    readonly streamBranchChanges: Stream.Stream<{
       readonly cwd: string;
-      readonly local: VcsStatusLocalResult;
+      readonly refName: string | null;
     }>;
     readonly getStatus: (
       input: VcsStatusInput,
@@ -249,8 +249,8 @@ export const make = Effect.gen(function* () {
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
   );
-  const localChangesPubSub = yield* Effect.acquireRelease(
-    PubSub.unbounded<{ readonly cwd: string; readonly local: VcsStatusLocalResult }>(),
+  const branchChangesPubSub = yield* Effect.acquireRelease(
+    PubSub.unbounded<{ readonly cwd: string; readonly refName: string | null }>(),
     (pubsub) => PubSub.shutdown(pubsub),
   );
   const broadcasterScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
@@ -274,16 +274,20 @@ export const make = Effect.gen(function* () {
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
       const nextLocal = { fingerprint: fingerprintStatusPart(local), value: local };
-      const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
+      const [localChanged, branchChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
         return [
-          [previous.local?.fingerprint !== nextLocal.fingerprint, previous.remote !== remote],
+          [
+            previous.local?.fingerprint !== nextLocal.fingerprint,
+            previous.local?.value.refName !== local.refName,
+            previous.remote !== remote,
+          ],
           new Map(cache).set(cwd, { local: nextLocal, remote }),
         ] as const;
       });
-      if (localChanged) {
-        yield* PubSub.publish(localChangesPubSub, { cwd, local });
+      if (branchChanged && local.isRepo) {
+        yield* PubSub.publish(branchChangesPubSub, { cwd, refName: local.refName });
       }
       if (options?.publish && remoteCleared) {
         yield* PubSub.publish(changesPubSub, {
@@ -765,7 +769,7 @@ export const make = Effect.gen(function* () {
     );
 
   return VcsStatusBroadcaster.of({
-    streamLocalChanges: Stream.fromPubSub(localChangesPubSub),
+    streamBranchChanges: Stream.fromPubSub(branchChangesPubSub),
     getStatus,
     refreshLocalStatus,
     refreshStatus,

@@ -7,10 +7,12 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
@@ -27,7 +29,7 @@ it.effect.each([false, true])(
       snapshotSequence: 0,
       threads: [
         thread("generated", "t3/unify-converter-branches", "/worktree"),
-        thread("shared", "t3/bfc349ae", "/worktree"),
+        thread("shared", "t3/bfc349ae", "/link/worktree"),
         thread("current", "union", "/worktree"),
         thread("root", "main", null),
         thread("other", "feature", "/other"),
@@ -50,25 +52,31 @@ it.effect.each([false, true])(
         }),
         [
           ["generated", "union", "t3/unify-converter-branches", "/worktree"],
-          ["shared", "union", "t3/bfc349ae", "/worktree"],
+          ["shared", "union", "t3/bfc349ae", "/link/worktree"],
           ["archived", "union", "t3/bfc349ae", "/worktree"],
         ],
       );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
+          FileSystem.layerNoop({
+            realPath: (path) => Effect.succeed(path === "/link/worktree" ? "/worktree" : path),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadWorktreePaths: () =>
+              Effect.succeed(
+                [...snapshot.threads, ...snapshot.archivedThreads].flatMap((thread) =>
+                  thread.worktreePath === null
+                    ? []
+                    : [{ threadId: thread.id, worktreePath: thread.worktreePath }],
+                ),
+              ),
+          }),
           Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
-            streamLocalChanges: Stream.fromIterable([null, "t3/bfc349ae", "union"]).pipe(
+            streamBranchChanges: Stream.fromIterable([null, "t3/bfc349ae", "union"]).pipe(
               Stream.map((refName) => ({
                 cwd: "/worktree",
-                local: {
-                  isRepo: true,
-                  refName,
-                  isDefaultRef: false,
-                  hasPrimaryRemote: false,
-                  hasWorkingTreeChanges: false,
-                  workingTree: { files: [], insertions: 0, deletions: 0 },
-                },
+                refName,
               })),
               Stream.ensuring(Deferred.succeed(reconciled, undefined)),
             ),
