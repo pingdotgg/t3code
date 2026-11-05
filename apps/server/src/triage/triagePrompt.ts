@@ -129,9 +129,36 @@ of \`main\` for that work, never the tag-pinned diagnosis clone.
 - Show the user the complete final issue text and get an explicit yes before
   posting. Never post without it.
 - Note at the end of the issue which model and agent produced it.
-- Post with \`gh issue create --repo pingdotgg/t3code --label via-triage\` only
-  if \`gh api repos/pingdotgg/t3code --jq .permissions.triage\` prints \`true\`.
-- Otherwise, or if \`gh\` is not authenticated, build a prefilled
+- If \`gh\` is authenticated to github.com, file through \`gh api graphql\` with
+  \`issueTemplate: "Triage report"\` (the template's \`name\`, not its filename).
+  This applies the template's labels without requiring triage permission.
+  Resolve the upstream repository ID with
+  \`gh api --hostname github.com repos/pingdotgg/t3code --jq .node_id\`.
+  Use this mutation, requesting both the URL and labels:
+
+      mutation($repo:ID!,$title:String!,$body:String!){createIssue(input:{repositoryId:$repo,title:$title,body:$body,issueTemplate:"Triage report"}){issue{url labels(first:100){nodes{name}}}}}
+
+  Use a JSON serializer to write an input file with \`query\` and a \`variables\`
+  object containing \`repo\`, \`title\` and \`body\`. Read the approved title and full
+  body from files;
+  never interpolate their text into shell commands or the mutation. Submit with
+  \`gh api --hostname github.com graphql --input <input-file>\`.
+
+- Inspect \`data.createIssue.issue\` even if the command exits nonzero or returns
+  errors. If it contains an issue URL, creation succeeded: report that URL and
+  check the returned labels for \`via-triage\`. If labels are missing from the
+  response, read them back from that issue. Report "created with via-triage"
+  only after verifying the label. Otherwise report "created, but via-triage is
+  missing" or "created, label unverified", as appropriate. Never recreate an
+  issue or send the user to submit another form to repair a missing label.
+- A timeout, network failure or unclear response may hide a successful creation.
+  Before retrying or offering a browser submission, reconcile against the
+  reporter's recent upstream issues using the approved title and body. If you
+  cannot establish whether creation happened, stop and report the uncertainty;
+  do not risk a duplicate. A URL or exit code alone does not prove labeling.
+- If \`gh\` is missing or unauthenticated, or an API error definitely prevented
+  creation (such as a rejected template name or permission denial with no
+  created issue), build a prefilled
   https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml URL.
   The form applies the label whoever submits it. Add \`title\` plus one
   URL-encoded query parameter per form field id: \`what-happened\`, \`diagnosis\`,
