@@ -258,26 +258,32 @@ it("keeps status order across forks and collapsed previous agents", async () => 
     [...document.querySelectorAll("[data-thread-relationships-panel] li")].map(
       (row) => row.textContent,
     );
-  expect(titles()).toEqual([
-    expect.stringContaining("running child"),
-    expect.stringContaining("Finished fork"),
-  ]);
+  await vi.waitFor(() =>
+    expect(titles()).toEqual([
+      expect.stringContaining("running child"),
+      expect.stringContaining("Finished fork"),
+    ]),
+  );
 
   const previous = screen.getByRole("button", { name: /Previous agents/ });
   await previous.click();
-  expect(titles()).toEqual([
-    expect.stringContaining("running child"),
-    expect.stringContaining("idle child"),
-    expect.stringContaining("Finished fork"),
-    expect.stringContaining("completed child"),
-    expect.stringContaining("failed child"),
-  ]);
+  await vi.waitFor(() =>
+    expect(titles()).toEqual([
+      expect.stringContaining("running child"),
+      expect.stringContaining("idle child"),
+      expect.stringContaining("Finished fork"),
+      expect.stringContaining("completed child"),
+      expect.stringContaining("failed child"),
+    ]),
+  );
 
   await previous.click();
-  expect(titles()).toEqual([
-    expect.stringContaining("running child"),
-    expect.stringContaining("Finished fork"),
-  ]);
+  await vi.waitFor(() =>
+    expect(titles()).toEqual([
+      expect.stringContaining("running child"),
+      expect.stringContaining("Finished fork"),
+    ]),
+  );
 });
 
 it("shows a lineage thread's full title in its tooltip", async () => {
