@@ -60,6 +60,7 @@ import { isModalDialogOpen } from "../lib/modalDialog";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { WorkspacePlane } from "../layout/WorkspacePlane";
+import { overviewZoomTransition, useOverviewPhase } from "../layout/Overview";
 import { ChromeChannelArt, useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
   clampThreadSidebarWidth,
@@ -540,6 +541,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const chromeArtVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
+  const overviewPhase = useOverviewPhase();
+  const overviewStaged = overviewPhase !== "closed" && !isMobileLayout;
+  const overviewShown = overviewPhase === "opening" || overviewPhase === "open";
   const hideWindowControlsWhenSidebarCollapsed = useHideWindowControlsWhenSidebarCollapsed();
   const isWindowFullscreen = useSyncExternalStore(
     subscribeToWindowFullscreen,
@@ -611,7 +615,17 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
             onResize: setSidebarWidth,
           }}
-          style={windowControlsInsetStyle}
+          className={cn(overviewStaged && "z-35")}
+          style={
+            overviewStaged
+              ? {
+                  ...windowControlsInsetStyle,
+                  ...overviewZoomTransition(),
+                  transitionProperty: "opacity",
+                  ...(overviewShown && { opacity: 0, pointerEvents: "none" }),
+                }
+              : windowControlsInsetStyle
+          }
         >
           {isOnDesignSystem && DesignSystemSidebarNav ? (
             <>
