@@ -98,10 +98,19 @@ const WORKSPACE_HINT_COMMANDS: ReadonlySet<LayoutKeybindingCommand> = new Set([
  * Workspaces as the hints count them: every workspace with something in it,
  * plus the empty one only while it has focus.
  */
-export function countedLayoutWorkspaces(layout: LayoutState) {
+function countedLayoutWorkspaces(layout: LayoutState) {
   return layout.workspaces.filter(
     (workspace) => workspace.columns.length > 0 || workspace.id === layout.focusedWorkspaceId,
   );
+}
+
+export function countedLayoutWorkspacesAcrossSwitch(previous: LayoutState, next: LayoutState) {
+  const counted = countedLayoutWorkspaces(next);
+  const left = selectFocusedWorkspace(previous);
+  if (left.columns.length > 0 || counted.some((workspace) => workspace.id === left.id)) {
+    return counted;
+  }
+  return previous.workspaces[0] === left ? [left, ...counted] : [...counted, left];
 }
 
 /** Commands after which a hint shows where the pane landed (pen Q5TwsK). */

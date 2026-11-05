@@ -10,7 +10,7 @@ import { cn } from "../lib/utils";
 import { observeResize } from "../lib/observeResize";
 import { useThreadShell } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { countedLayoutWorkspaces } from "./layoutCommands";
+import { countedLayoutWorkspacesAcrossSwitch } from "./layoutCommands";
 import {
   selectFocusedTab,
   selectFocusedWorkspace,
@@ -173,7 +173,7 @@ export function LayoutStripHint() {
             if (state.layout.focusedWorkspaceId === previous.layout.focusedWorkspaceId) return;
             if (state.overviewOpen) return;
             if (state.hint?.kind === "workspace" && state.hint.id !== previous.hint?.id) return;
-            const workspaces = countedLayoutWorkspaces(state.layout);
+            const workspaces = countedLayoutWorkspacesAcrossSwitch(previous.layout, state.layout);
             const workspace = selectFocusedWorkspace(state.layout);
             // One workspace has nothing to tell apart.
             if (workspaces.length < 2) return;
@@ -284,12 +284,19 @@ function WorkspaceHintPill({
         leaving && "opacity-0",
       )}
     >
-      <span aria-hidden className="flex shrink-0 flex-col gap-0.5">
+      <span
+        aria-hidden
+        className={cn(
+          "flex shrink-0 flex-col",
+          small ? "max-h-4.75" : "max-h-5.5",
+          hint.count > 3 ? "gap-px" : "gap-0.5",
+        )}
+      >
         {Array.from({ length: Math.min(hint.count, 5) }, (_, index) => (
           <span
             key={index}
             className={cn(
-              "rounded-xs",
+              "min-h-0 rounded-xs",
               small ? "h-1.25 w-2" : "h-1.5 w-2.5",
               index === Math.min(hint.index, 4) ? "bg-foreground" : "bg-foreground/20",
             )}
