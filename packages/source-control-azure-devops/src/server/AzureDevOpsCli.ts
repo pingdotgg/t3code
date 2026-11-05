@@ -386,6 +386,7 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
   const installFor: (launcherPath: string) => AzureCliInstall | undefined =
     yield* AzureCliInstallLocation;
   const install = launcher === undefined ? undefined : installFor(launcher);
+  // Unrecognized installs (pipx's Scripts\az.exe) keep the launcher and today's decode.
   return install === undefined
     ? ({ command: "az", args: [] } satisfies AzureCliInvocation)
     : ({
