@@ -152,6 +152,20 @@ describe("command permissions", () => {
         yield* cleanup.authorize(registry, env);
         registry.set(sessions(other), AsyncResult.success(grant(false)));
         expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
+
+        const sync = createCommandPermissions(runtime, WS_METHODS.serverStartChatSync);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(sync.permissionAtom(env))).toBe(false);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthSettingsWriteScope],
+            permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(sync.permissionAtom(env))).toBe(true);
+        yield* sync.authorize(registry, env);
       }),
     ),
   );

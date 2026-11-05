@@ -101,6 +101,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 import { SideChatSettings } from "./SideChatSettings";
+import { ChatSyncSection } from "./ChatSyncSettings";
 import { hasSideChatSettings } from "./sideChatSettingsSupport";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
@@ -1838,6 +1839,7 @@ export function ThreadsSettingsPanel() {
       ) ? (
         <SideChatSettings />
       ) : null}
+      {!isProjectScope ? <ChatSyncSection /> : null}
     </SettingsPageContainer>
   );
 }

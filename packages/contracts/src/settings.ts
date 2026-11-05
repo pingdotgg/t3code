@@ -1554,6 +1554,17 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   }
 }
 
+export const ChatSyncStatus = Schema.Struct({
+  state: Schema.Literals(["never", "running", "succeeded", "failed"]),
+  message: Schema.NullOr(Schema.String),
+  addedChats: Schema.NullOr(Schema.Int),
+});
+export type ChatSyncStatus = typeof ChatSyncStatus.Type;
+
+export class ChatSyncError extends Schema.TaggedError<ChatSyncError>()("ChatSyncError", {
+  message: Schema.String,
+}) {}
+
 export type UnifiedSettings = Omit<ServerSettings, keyof ModelPreferences> & ClientSettings;
 export const DEFAULT_UNIFIED_SETTINGS: UnifiedSettings = {
   ...DEFAULT_SERVER_SETTINGS,

@@ -49,6 +49,11 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
       supportsLessonSideChats(environment.serverConfig.environment) &&
       hasSideChatSettings(environment.serverConfig.settings),
   );
+  const hasChatSync = environments.some(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.chatSync === true,
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
@@ -76,6 +81,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     isWslSettingsRowVisible: wslSettingsRowVisible,
     hasThreadAutoSettlement,
     hasSideChats,
+    hasChatSync,
     managedTunnelActive,
     hasPeerLinkHost,
   });
