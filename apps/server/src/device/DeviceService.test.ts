@@ -56,7 +56,7 @@ it.effect.each([400, 500])(
           ),
         ),
         run: () => Effect.die("Screenshot does not run a command"),
-        androidAvailable: Effect.succeed(false),
+        platformAvailable: () => Effect.succeed(false),
       });
       const result = yield* operations
         .screenshot({
@@ -100,6 +100,7 @@ const fixture = Effect.fn("fixture")(function* (
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
+  const iosAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
@@ -212,7 +213,8 @@ const fixture = Effect.fn("fixture")(function* (
         origin: "http://device.test",
         http,
         run,
-        androidAvailable: Ref.get(androidAvailable),
+        platformAvailable: (platform) =>
+          Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
@@ -338,6 +340,7 @@ const fixture = Effect.fn("fixture")(function* (
     encoderResult,
     discoveryErrors,
     androidAvailable,
+    iosAvailable,
     listing,
     endDevice,
   };
@@ -746,14 +749,21 @@ it.effect(
 );
 
 it.effect.each([
-  { android: true, incompletePlatforms: ["ios", "android"], kept: ["iphone", "Pixel_API_35"] },
-  { android: false, incompletePlatforms: ["ios"], kept: ["iphone"] },
+  {
+    ios: true,
+    android: true,
+    incompletePlatforms: ["ios", "android"],
+    kept: ["iphone", "Pixel_API_35"],
+  },
+  { ios: true, android: false, incompletePlatforms: ["ios"], kept: ["iphone"] },
+  { ios: false, android: true, incompletePlatforms: ["android"], kept: ["Pixel_API_35"] },
 ] as const)(
-  "keeps every device when the hub does not answer within 40 seconds (Android SDK: $android)",
-  ({ android, incompletePlatforms, kept }) =>
+  "keeps the devices of listable platforms when the hub does not answer within 40 seconds (iOS: $ios, Android SDK: $android)",
+  ({ ios, android, incompletePlatforms, kept }) =>
     Effect.gen(function* () {
-      const { service, devices, listing, androidAvailable } = yield* fixture();
+      const { service, devices, listing, androidAvailable, iosAvailable } = yield* fixture();
       yield* Ref.set(androidAvailable, android);
+      yield* Ref.set(iosAvailable, ios);
       devices.push({
         id: DeviceId.make("iphone"),
         name: "iPhone",
@@ -953,7 +963,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1115,7 +1125,7 @@ it.effect("leaves a session its host leases to every thread open when one thread
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         agentEndpoint: () =>
           Effect.succeed({
@@ -1237,7 +1247,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1309,7 +1319,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,

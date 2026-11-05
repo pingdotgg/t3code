@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deviceHubReadiness,
+  incompleteListings,
   isAndroidDiscoveryUncertain,
   platformSetupStatus,
 } from "./DeviceSetup";
@@ -57,6 +58,13 @@ describe("device setup guidance", () => {
         hostStatuses: { remote: { status: "ready", incompletePlatforms: ["ios", "android"] } },
       }),
     ).toBe(true);
+    expect(
+      incompleteListings({
+        status: "ready",
+        androidDiscoveryIncomplete: true,
+        incompletePlatforms: ["ios"],
+      }),
+    ).toEqual(["ios", "android"]);
   });
 
   it("counts a remote device host when this machine has no simulator tooling", () => {

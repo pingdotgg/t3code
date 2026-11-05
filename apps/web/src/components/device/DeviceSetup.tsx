@@ -24,11 +24,20 @@ const deviceHubDescription =
 const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+/** Platforms whose latest listing on a ready host may be missing devices. */
+export const incompleteListings = (
+  status: DeviceServiceState["hostStatuses"][string] | undefined,
+) =>
+  (["ios", "android"] as const).filter(
+    (platform) =>
+      status?.status === "ready" &&
+      (status.incompletePlatforms?.includes(platform) ||
+        (platform === "android" && status.androidDiscoveryIncomplete === true)),
+  );
+
 export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
-  Object.values(state.hostStatuses).some(
-    (status) =>
-      status.status === "ready" &&
-      (status.androidDiscoveryIncomplete || status.incompletePlatforms?.includes("android")),
+  Object.values(state.hostStatuses).some((status) =>
+    incompleteListings(status).includes("android"),
   );
 
 /**

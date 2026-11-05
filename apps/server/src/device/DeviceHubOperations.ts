@@ -69,8 +69,8 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  /** Whether to list AVDs, which the hub does not report until they boot. */
-  readonly androidAvailable: Effect.Effect<boolean>;
+  /** Android gates listing AVDs, which the hub does not report until they boot. */
+  readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
@@ -128,14 +128,14 @@ export const makeDeviceHubOperations = (options: {
       return {
         devices: [],
         detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
-        incompletePlatforms: (yield* options.androidAvailable)
-          ? (["ios", "android"] as const)
-          : (["ios"] as const),
+        incompletePlatforms: yield* Effect.filter(["ios", "android"] as const, (platform) =>
+          options.platformAvailable(platform),
+        ),
       };
     }
     const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
-    const androidAvailable = yield* options.androidAvailable;
+    const androidAvailable = yield* options.platformAvailable("android");
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.

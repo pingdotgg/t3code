@@ -28,6 +28,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { incompleteListings } from "../device/DeviceSetup";
 import { DeviceHostEditor } from "./DeviceHostEditor";
 import { updateDeviceHosts, groupDeviceHosts } from "./deviceHostsSettings.logic";
 import { EasDeviceHostEditor } from "./EasDeviceHostEditor";
@@ -116,10 +117,9 @@ function hostStatus(
   const status = state.hostStatuses[hostId];
   switch (status?.status) {
     case "ready": {
-      const incomplete = new Set(status.incompletePlatforms);
-      if (status.androidDiscoveryIncomplete) incomplete.add("android");
-      if (incomplete.size === 0) return undefined;
-      const list = incomplete.size > 1 ? "Device" : incomplete.has("ios") ? "iOS" : "Android";
+      const incomplete = incompleteListings(status);
+      if (incomplete.length === 0) return undefined;
+      const list = incomplete.length > 1 ? "Device" : incomplete[0] === "ios" ? "iOS" : "Android";
       return { tone: "warning", label: `${list} list may be incomplete`, detail: status.detail };
     }
     case "installing":

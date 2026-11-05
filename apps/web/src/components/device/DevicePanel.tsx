@@ -32,7 +32,12 @@ import {
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DeviceSetup, deviceHubReadiness, isAndroidDiscoveryUncertain } from "./DeviceSetup";
+import {
+  DeviceSetup,
+  deviceHubReadiness,
+  incompleteListings,
+  isAndroidDiscoveryUncertain,
+} from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -184,7 +189,7 @@ export function DevicePanel(props: {
             hostId: host.id,
             label: host.label,
             detail,
-            incompletePlatforms: status?.incompletePlatforms ?? [],
+            incompletePlatforms: incompleteListings(status),
           },
         ]
       : [];
