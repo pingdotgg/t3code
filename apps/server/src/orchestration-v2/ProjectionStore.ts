@@ -3967,6 +3967,50 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
     );
 
+    // The newest failed run of each thread and its root error, for isLimitedWake.
+    const latestFailureJoins = sql`
+      LEFT JOIN orchestration_v2_projection_runs latest_failure ON latest_failure.run_id = (
+        SELECT failed.run_id FROM orchestration_v2_projection_runs failed
+        WHERE failed.thread_id = t.thread_id AND failed.status = 'failed'
+        ORDER BY failed.completed_at IS NULL DESC, failed.completed_at DESC,
+          failed.ordinal DESC, failed.run_id DESC
+        LIMIT 1
+      )
+      LEFT JOIN orchestration_v2_projection_turn_items latest_failure_error
+        ON latest_failure_error.turn_item_id = (
+          SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
+          WHERE error.thread_id = t.thread_id
+            AND error.run_id = latest_failure.run_id
+            AND error.node_id IS json_extract(latest_failure.payload_json, '$.rootNodeId')
+            AND error.type = 'error' AND error.status = 'failed'
+          ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
+          LIMIT 1
+        )
+    `;
+    // Mirrors the wake rule of usageLimitBlockedRun: a run that a notification started and
+    // that completed before the newest usage-limit failure resets did no work, so it must
+    // not replace that failure as the latest run.
+    const isLimitedWake = (alias: string) => {
+      const run = sql.literal(alias);
+      return sql`(
+        ${run}.status = 'completed'
+        AND COALESCE(
+          json_extract(latest_failure_error.payload_json, '$.failure.class') = 'usage_limit'
+          AND julianday(${run}.completed_at) <= julianday(
+            json_extract(latest_failure_error.payload_json, '$.failure.resetAt')
+          ), 0
+        ) AND (
+          SELECT wake.type FROM orchestration_v2_projection_turn_items wake
+          WHERE wake.run_id = ${run}.run_id
+            AND wake.node_id IS NOT NULL
+            AND wake.node_id IS json_extract(${run}.payload_json, '$.rootNodeId')
+            AND wake.type IN ('user_message', 'notification')
+          ORDER BY wake.ordinal
+          LIMIT 1
+        ) IS 'notification'
+      )`;
+    };
+
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         const rows = yield* sql<{
@@ -3990,6 +4034,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               LIMIT 1
             ) AS last_error
           FROM orchestration_v2_projection_threads t
+          ${latestFailureJoins}
           INNER JOIN orchestration_v2_projection_runs r ON r.run_id = (
             SELECT latest.run_id FROM orchestration_v2_projection_runs latest
             WHERE latest.thread_id = t.thread_id
@@ -3998,6 +4043,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 latest.status = 'cancelled'
                 AND json_extract(latest.payload_json, '$.startedAt') IS NULL
               )
+              AND NOT ${isLimitedWake("latest")}
             -- latestExecutedRun: the run that ended last (runRanAfter).
             ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC,
               latest.ordinal DESC, latest.run_id DESC
@@ -6288,6 +6334,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1
             )
+            ${latestFailureJoins}
             LEFT JOIN orchestration_v2_projection_runs blocked ON blocked.run_id = (
               SELECT candidate.run_id
               FROM orchestration_v2_projection_runs candidate
@@ -6297,6 +6344,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   candidate.status = 'cancelled'
                   AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
                 )
+                AND NOT ${isLimitedWake("candidate")}
               -- latestExecutedRun: the run that ended last (runRanAfter).
               ORDER BY candidate.completed_at IS NULL DESC, candidate.completed_at DESC,
                 candidate.ordinal DESC, candidate.run_id DESC

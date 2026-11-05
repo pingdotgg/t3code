@@ -5640,7 +5640,71 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
+      // A subagent that died on the same limit starts a notification wake that completes
+      // before the reset. It did no work, so the failed run stays the latest.
+      const wakeRunId = RunId.make("run:limit-shell:wake");
+      const wakeNodeId = NodeId.make("node:limit-shell:wake");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake"),
+        type: "run.created",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: wakeRunId,
+          ordinal: original.ordinal + 4,
+          rootNodeId: wakeNodeId,
+          userMessageId: MessageId.make("message:limit-shell:wake"),
+          status: "completed",
+          startedAt: DateTime.add(now, { minutes: 1 }),
+          completedAt: DateTime.add(now, { minutes: 1 }),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake-notification"),
+        type: "turn-item.updated",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("limit-shell:wake-notification"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 4,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "notification",
+          source: { kind: "delegated_task", taskIds: [] },
+          outcome: "failed",
+          summary: "Subagent failed",
+        },
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
+      const wakeProjection = yield* store.getThreadProjection(threadId);
+      assert.equal(
+        ProjectionStore.threadShellFromProjection(wakeProjection).latestRunId,
+        original.id,
+      );
+      assert.equal(
+        (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!.latestRunId,
+        original.id,
+      );
       const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${wakeRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${aheadRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${queuedRunId}`;
       yield* assertSummary("Plan limit reached.", "usage_limit");
@@ -6282,7 +6346,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (detail) =>
             /^SEARCH (?:item|error) /.test(detail) && !detail.includes("(turn_item_id=?)"),
         );
-        assert.lengthOf(errorLookups, marker.includes("blocking") ? 2 : 1, marker);
+        assert.lengthOf(errorLookups, marker.includes("blocking") ? 3 : 2, marker);
         for (const errorLookup of errorLookups) {
           assert.include(errorLookup, "turn_items_failed_error_idx");
           assert.include(errorLookup, "(thread_id=? AND run_id=? AND node_id=?)");
