@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -32,10 +34,13 @@ export function DatabaseStorageNotice({
   );
   if (visible.length === 0) return null;
   return (
-    <SettingsSection id="storage-database" title="Database">
+    <SettingsSection id="storage-database" title={t({ message: "Database" })}>
       <SettingsRow
-        title="Reclaim freed database space"
-        description="Old history is cleaned up automatically, but these databases still hold the freed space. Run the command on each machine to return it to disk; it pauses and restarts the background service. Quit the desktop app first if it hosts the environment."
+        title={t({ message: "Reclaim freed database space" })}
+        description={t({
+          message:
+            "Old history is cleaned up automatically, but these databases still hold the freed space. Run the command on each machine to return it to disk; it pauses and restarts the background service. Quit the desktop app first if it hosts the environment.",
+        })}
       />
       {visible.map(({ environmentId, status }) => (
         <SettingsRow
@@ -52,14 +57,14 @@ export function DatabaseStorageNotice({
                 size="xs"
                 onClick={() => copyToClipboard(status.compactCommand, undefined)}
               >
-                Copy command
+                <Trans>Copy command</Trans>
               </Button>
               <Button
                 variant="ghost"
                 size="xs"
                 onClick={() => setDismissed((current) => [...current, environmentId])}
               >
-                Dismiss
+                <Trans>Dismiss</Trans>
               </Button>
             </div>
           }

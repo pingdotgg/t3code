@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { LinkableMachine } from "@t3tools/client-runtime/link-request";
 import { useId } from "react";
 
@@ -13,14 +14,14 @@ export function LinkMachineBadge({ machine }: { readonly machine: LinkableMachin
   if (machine.linked) {
     return (
       <Badge variant="success" size="sm">
-        Linked
+        <Trans>Linked</Trans>
       </Badge>
     );
   }
   if (machine.connected) return null;
   return (
     <Badge variant="outline" size="sm">
-      {machine.connectOnly ? "T3 Connect" : "Not connected"}
+      {machine.connectOnly ? <Trans>T3 Connect</Trans> : <Trans>Not connected</Trans>}
     </Badge>
   );
 }
@@ -50,7 +51,7 @@ export function LinkMachineSelect({
   return (
     <div className="space-y-1.5">
       <span id={labelId} className="block text-xs font-medium text-foreground">
-        Machine
+        <Trans>Machine</Trans>
       </span>
       <Select
         value={value}
@@ -78,7 +79,7 @@ export function LinkMachineSelect({
             </SelectItem>
           ))}
           <SelectItem value={ANOTHER_ADDRESS} hideIndicator>
-            Another address…
+            <Trans>Another address…</Trans>
           </SelectItem>
         </SelectPopup>
       </Select>

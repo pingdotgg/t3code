@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
@@ -36,7 +38,7 @@ export function UsageProviderSettings({
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateCursorSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "update Cursor account usage",
+    label: t({ message: "update Cursor account usage" }),
   });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -67,7 +69,7 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
-              Add hub
+              <Trans>Add hub</Trans>
             </Button>
           ) : null
         }
@@ -75,11 +77,14 @@ export function UsageProviderSettings({
         {platform?.os === "darwin" ? (
           <SettingsRow
             id="cursor-keychain-usage"
-            title="Cursor account usage"
-            description="Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access."
+            title={t({ message: "Cursor account usage" })}
+            description={t({
+              message:
+                "Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access.",
+            })}
             control={
               <Switch
-                aria-label="Cursor account usage"
+                aria-label={t({ message: "Cursor account usage" })}
                 checked={cursorKeychainUsageEnabled}
                 disabled={readOnly || updatingCursor}
                 onCheckedChange={(enabled) => void setCursorUsageEnabled(enabled)}
@@ -88,18 +93,22 @@ export function UsageProviderSettings({
           />
         ) : null}
         {entries.length === 0 ? (
-          <SettingsRow title="No hubs configured." />
+          <SettingsRow title={t({ message: "No hubs configured." })} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
+            const sourceEnabledText = source.enabled ? "" : " · Disabled";
+            const labelSourceUrlText = label !== source.url ? ` · ${source.url}` : "";
             return (
               <SettingsRow
                 key={id}
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
-                    {label !== source.url ? ` · ${source.url}` : ""}
+                    <Trans>
+                      CLI Proxy{sourceEnabledText}
+                      {labelSourceUrlText}
+                    </Trans>
                   </span>
                 }
                 control={
@@ -139,20 +148,26 @@ function RemoveUsageProviderButton({
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        <Trans>Remove</Trans>
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <Trans>Remove {label}?</Trans>
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              <Trans>
+                The hub's management key is deleted from this server. Its accounts leave the Limits
+                view; the hub itself is untouched. Add it again with the URL and key to bring them
+                back.
+              </Trans>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <Trans>Cancel</Trans>
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -160,7 +175,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              <Trans>Remove hub</Trans>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

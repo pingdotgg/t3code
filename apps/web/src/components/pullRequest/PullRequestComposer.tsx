@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t, plural } from "@palamedes/core/macro";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -80,10 +82,13 @@ export function PullRequestComposer({
         render={<Button size="icon" variant="glass" />}
         aria-label={
           pendingComments.length > 0
-            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+            ? plural(pendingComments.length, {
+                one: `Review ${term}, ${pendingComments.length} comment pending`,
+                other: `Review ${term}, ${pendingComments.length} comments pending`,
+              })
             : reviewStarted || !canComment
-              ? `Review ${term}`
-              : `Comment on ${term}`
+              ? t`Review ${term}`
+              : t`Comment on ${term}`
         }
       >
         <MessageSquareIcon className="size-4" />
@@ -108,7 +113,7 @@ export function PullRequestComposer({
         <div className="mb-3 flex items-center justify-between gap-2">
           {canComment && verdicts.length > 0 ? (
             <ToggleGroup
-              aria-label="Composer mode"
+              aria-label={t({ message: "Composer mode" })}
               variant="segmented"
               value={[mode]}
               onValueChange={(next) => {
@@ -116,14 +121,20 @@ export function PullRequestComposer({
                 if (value === "comment" || value === "review") setRequestedMode(value);
               }}
             >
-              <Toggle value="comment">Comment</Toggle>
+              <Toggle value="comment">
+                <Trans>Comment</Trans>
+              </Toggle>
               <Toggle value="review">
-                {pendingComments.length > 0 ? `Review (${pendingComments.length})` : "Review"}
+                {pendingComments.length > 0 ? (
+                  <Trans>Review ({pendingComments.length})</Trans>
+                ) : (
+                  <Trans>Review</Trans>
+                )}
               </Toggle>
             </ToggleGroup>
           ) : (
             <PopoverTitle>
-              {mode === "review" ? `Review ${term}` : `Comment on ${term}`}
+              {mode === "review" ? <Trans>Review {term}</Trans> : <Trans>Comment on {term}</Trans>}
             </PopoverTitle>
           )}
           <div className="flex items-center gap-1">
@@ -131,8 +142,8 @@ export function PullRequestComposer({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label="Discard pending line comments"
-                title="Discard pending line comments"
+                aria-label={t({ message: "Discard pending line comments" })}
+                title={t({ message: "Discard pending line comments" })}
                 disabled={reviewPending}
                 onClick={() => clearComments(reviewKey)}
               >
@@ -141,7 +152,7 @@ export function PullRequestComposer({
             ) : null}
             <PopoverClose
               render={<Button size="icon-xs" variant="ghost" />}
-              aria-label="Close composer"
+              aria-label={t({ message: "Close composer" })}
             >
               <XIcon className="size-3.5" />
             </PopoverClose>

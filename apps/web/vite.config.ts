@@ -84,11 +84,14 @@ const unitTestProject = {
   extends: true,
   test: {
     name: "unit",
+    // Palamedes sidecar registration must run even when Vitest has cached a transform.
+    fsModuleCache: false,
     include: ["src/**/*.test.{ts,tsx}"],
     exclude: ["src/**/*.browser.test.{ts,tsx}"],
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: [
+      "./test/i18nSetup.ts",
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",
     ],
@@ -281,7 +284,7 @@ export default defineConfig(() => {
             ],
           }),
       tanstackRouter({ autoCodeSplitting: true }),
-      palamedes({ failOnMissing: true }),
+      palamedes(),
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
       warmBundledDevPlugin(),

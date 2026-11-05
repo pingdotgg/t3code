@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { lucideIconNames } from "./lib/lucideIconByName";
 export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
 
@@ -29,36 +30,186 @@ const POPULAR_PROJECT_ICONS: ReadonlyArray<string> = [
 ];
 
 export const PROJECT_EMOJIS: ReadonlyArray<{ readonly emoji: string; readonly label: string }> = [
-  { emoji: "💻", label: "Computer" },
-  { emoji: "🛠️", label: "Tools" },
-  { emoji: "🚀", label: "Rocket" },
-  { emoji: "🤖", label: "Robot" },
-  { emoji: "✨", label: "Sparkles" },
-  { emoji: "⚡", label: "Lightning" },
-  { emoji: "🌐", label: "Web" },
-  { emoji: "📱", label: "Mobile" },
-  { emoji: "🖥️", label: "Desktop" },
-  { emoji: "⌨️", label: "Keyboard" },
-  { emoji: "⚙️", label: "Gear" },
-  { emoji: "🗄️", label: "Database" },
-  { emoji: "☁️", label: "Cloud" },
-  { emoji: "📦", label: "Package" },
-  { emoji: "📚", label: "Books" },
-  { emoji: "🧪", label: "Test tube" },
-  { emoji: "🔒", label: "Lock" },
-  { emoji: "🎮", label: "Game" },
-  { emoji: "🎵", label: "Music" },
-  { emoji: "🎬", label: "Movie" },
-  { emoji: "🖼️", label: "Picture" },
-  { emoji: "🛍️", label: "Shopping" },
-  { emoji: "🔥", label: "Fire" },
-  { emoji: "💡", label: "Idea" },
-  { emoji: "🧩", label: "Puzzle" },
-  { emoji: "📊", label: "Chart" },
-  { emoji: "🧠", label: "Brain" },
-  { emoji: "🦄", label: "Unicorn" },
-  { emoji: "🐙", label: "Octopus" },
-  { emoji: "🌱", label: "Seedling" },
+  {
+    emoji: "💻",
+    get label() {
+      return t({ message: "Computer" });
+    },
+  },
+  {
+    emoji: "🛠️",
+    get label() {
+      return t({ message: "Tools" });
+    },
+  },
+  {
+    emoji: "🚀",
+    get label() {
+      return t({ message: "Rocket" });
+    },
+  },
+  {
+    emoji: "🤖",
+    get label() {
+      return t({ message: "Robot" });
+    },
+  },
+  {
+    emoji: "✨",
+    get label() {
+      return t({ message: "Sparkles" });
+    },
+  },
+  {
+    emoji: "⚡",
+    get label() {
+      return t({ message: "Lightning" });
+    },
+  },
+  {
+    emoji: "🌐",
+    get label() {
+      return t({ message: "Web" });
+    },
+  },
+  {
+    emoji: "📱",
+    get label() {
+      return t({ message: "Mobile" });
+    },
+  },
+  {
+    emoji: "🖥️",
+    get label() {
+      return t({ message: "Desktop" });
+    },
+  },
+  {
+    emoji: "⌨️",
+    get label() {
+      return t({ message: "Keyboard" });
+    },
+  },
+  {
+    emoji: "⚙️",
+    get label() {
+      return t({ message: "Gear" });
+    },
+  },
+  {
+    emoji: "🗄️",
+    get label() {
+      return t({ message: "Database" });
+    },
+  },
+  {
+    emoji: "☁️",
+    get label() {
+      return t({ message: "Cloud" });
+    },
+  },
+  {
+    emoji: "📦",
+    get label() {
+      return t({ message: "Package" });
+    },
+  },
+  {
+    emoji: "📚",
+    get label() {
+      return t({ message: "Books" });
+    },
+  },
+  {
+    emoji: "🧪",
+    get label() {
+      return t({ message: "Test tube" });
+    },
+  },
+  {
+    emoji: "🔒",
+    get label() {
+      return t({ message: "Lock" });
+    },
+  },
+  {
+    emoji: "🎮",
+    get label() {
+      return t({ message: "Game" });
+    },
+  },
+  {
+    emoji: "🎵",
+    get label() {
+      return t({ message: "Music" });
+    },
+  },
+  {
+    emoji: "🎬",
+    get label() {
+      return t({ message: "Movie" });
+    },
+  },
+  {
+    emoji: "🖼️",
+    get label() {
+      return t({ message: "Picture" });
+    },
+  },
+  {
+    emoji: "🛍️",
+    get label() {
+      return t({ message: "Shopping" });
+    },
+  },
+  {
+    emoji: "🔥",
+    get label() {
+      return t({ message: "Fire" });
+    },
+  },
+  {
+    emoji: "💡",
+    get label() {
+      return t({ message: "Idea" });
+    },
+  },
+  {
+    emoji: "🧩",
+    get label() {
+      return t({ message: "Puzzle" });
+    },
+  },
+  {
+    emoji: "📊",
+    get label() {
+      return t({ message: "Chart" });
+    },
+  },
+  {
+    emoji: "🧠",
+    get label() {
+      return t({ message: "Brain" });
+    },
+  },
+  {
+    emoji: "🦄",
+    get label() {
+      return t({ message: "Unicorn" });
+    },
+  },
+  {
+    emoji: "🐙",
+    get label() {
+      return t({ message: "Octopus" });
+    },
+  },
+  {
+    emoji: "🌱",
+    get label() {
+      return t({ message: "Seedling" });
+    },
+  },
 ];
 
 export function filterProjectIconNames(query: string): ReadonlyArray<string> {

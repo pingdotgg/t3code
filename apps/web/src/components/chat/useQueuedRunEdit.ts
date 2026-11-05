@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunEditStore,
@@ -274,11 +275,11 @@ export function useQueuedRunEdit(input: {
           toastManager.add(
             stackedThreadToast({
               type: recovery === "kept" ? "info" : "warning",
-              title: "Queued message is no longer queued",
+              title: t({ message: "Queued message is no longer queued" }),
               description:
                 recovery === "kept"
-                  ? `Your unsaved edit${where} was kept in the composer.`
-                  : `Your unsaved edit${where} was discarded.`,
+                  ? t`Your unsaved edit${where} was kept in the composer.`
+                  : t`Your unsaved edit${where} was discarded.`,
             }),
           );
         },

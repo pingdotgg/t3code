@@ -1,19 +1,92 @@
+import { t } from "@palamedes/core/macro";
 import type { ClientSettings } from "@t3tools/contracts";
 
 // Ids are stored in client settings, so never rename one.
 export const THREAD_DETAILS_ITEMS = [
-  { id: "environment", label: "Environment and worktree", defaultVisible: true },
-  { id: "openIn", label: "Open in editor", defaultVisible: true },
-  { id: "scripts", label: "Project scripts", defaultVisible: true },
-  { id: "branch", label: "Branch and pull request", defaultVisible: true },
-  { id: "gitActions", label: "Git actions", defaultVisible: true },
-  { id: "changes", label: "Changes", defaultVisible: true },
-  { id: "servers", label: "Servers", defaultVisible: true },
-  { id: "automations", label: "Automations", defaultVisible: true },
-  { id: "lineage", label: "Lineage", defaultVisible: true },
-  { id: "sideChats", label: "Side chats", defaultVisible: true },
-  { id: "usage", label: "Usage limits", defaultVisible: false },
-  { id: "context", label: "Context window", defaultVisible: false },
+  {
+    id: "environment",
+    get label() {
+      return t({ message: "Environment and worktree" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "openIn",
+    get label() {
+      return t({ message: "Open in editor" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "scripts",
+    get label() {
+      return t({ message: "Project scripts" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "branch",
+    get label() {
+      return t({ message: "Branch and pull request" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "gitActions",
+    get label() {
+      return t({ message: "Git actions" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "changes",
+    get label() {
+      return t({ message: "Changes" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "servers",
+    get label() {
+      return t({ message: "Servers" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "automations",
+    get label() {
+      return t({ message: "Automations" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "lineage",
+    get label() {
+      return t({ message: "Lineage" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "sideChats",
+    get label() {
+      return t({ message: "Side chats" });
+    },
+    defaultVisible: true,
+  },
+  {
+    id: "usage",
+    get label() {
+      return t({ message: "Usage limits" });
+    },
+    defaultVisible: false,
+  },
+  {
+    id: "context",
+    get label() {
+      return t({ message: "Context window" });
+    },
+    defaultVisible: false,
+  },
 ] as const;
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];

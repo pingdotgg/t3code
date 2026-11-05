@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type {
   ServerProvider,
   ServerProviderVersionAdvisory,
@@ -114,9 +115,15 @@ export function getProviderVersionLabel(version: string | null | undefined) {
 }
 
 const COMPATIBILITY_TITLES = {
-  graceful: "Limited support",
-  unsupported: "Unsupported version",
-  broken: "Known broken version",
+  get graceful() {
+    return t({ message: "Limited support" });
+  },
+  get unsupported() {
+    return t({ message: "Unsupported version" });
+  },
+  get broken() {
+    return t({ message: "Known broken version" });
+  },
 } as const;
 
 export function getProviderVersionAdvisoryPresentation(

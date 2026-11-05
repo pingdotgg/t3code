@@ -1,3 +1,5 @@
+import { Trans, Plural } from "@palamedes/react/macro";
+import { t, plural } from "@palamedes/core/macro";
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
 
@@ -36,7 +38,7 @@ function ReleaseLink({
   releaseUrl,
   shell,
 }: {
-  readonly children: string;
+  readonly children: import("react").ReactNode;
   readonly releaseUrl: string;
   readonly shell: DesktopUpdateShell | undefined;
 }) {
@@ -71,19 +73,28 @@ export function SidebarUpdateReleaseNotes({
     (releaseNote) => releaseNote.version === state.availableVersion,
   )?.releasedAt;
 
+  const formatReleaseAgeText =
+    state.status === "available" && state.availableVersion && releasedAt
+      ? formatReleaseAge(releasedAt)
+      : undefined;
+
   return (
     <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left text-pretty">
       <div className="shrink-0 px-1">
         {state.status === "available" ? (
           <div>
             <div className="whitespace-nowrap text-sm leading-5 font-medium">
-              Update ready to download
+              <Trans>Update ready to download</Trans>
             </div>
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                {releasedAt
-                  ? `${state.availableVersion} · ${formatReleaseAge(releasedAt)}`
-                  : state.availableVersion}
+                {releasedAt ? (
+                  <Trans>
+                    {state.availableVersion} · {formatReleaseAgeText}
+                  </Trans>
+                ) : (
+                  state.availableVersion
+                )}
               </div>
             ) : null}
           </div>
@@ -95,26 +106,42 @@ export function SidebarUpdateReleaseNotes({
         {state.releaseNotes.map((releaseNote, index) => {
           const releaseUrl = getDesktopUpdateReleaseUrl(releaseNote.version);
           const omittedItemCount = Math.max(0, releaseNote.totalItems - releaseNote.items.length);
+
           const linkLabel =
             releaseNote.stats ??
             (omittedItemCount === 0
-              ? "View release on GitHub"
-              : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`);
+              ? t({ message: "View release on GitHub" })
+              : plural(omittedItemCount, {
+                  one: `${omittedItemCount} more change on GitHub`,
+                  other: `${omittedItemCount} more changes on GitHub`,
+                }));
 
           const generated = releaseNote.stats !== undefined || releaseNote.intro !== undefined;
+          const formatReleaseAgeText2 =
+            generated && releaseNote.version !== state.availableVersion && releaseNote.releasedAt
+              ? formatReleaseAge(releaseNote.releasedAt)
+              : undefined;
           return (
             <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
               {generated ? (
                 releaseNote.version !== state.availableVersion && (
                   <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
-                    {releaseNote.releasedAt
-                      ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt)}`
-                      : releaseNote.version}
+                    {releaseNote.releasedAt ? (
+                      <Trans>
+                        {releaseNote.version} · {formatReleaseAgeText2}
+                      </Trans>
+                    ) : (
+                      releaseNote.version
+                    )}
                   </h3>
                 )
               ) : (
                 <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+                  {index === 0 ? (
+                    <Trans>What's changed</Trans>
+                  ) : (
+                    <Trans>Changes in {releaseNote.version}</Trans>
+                  )}
                 </h3>
               )}
               {releaseNote.intro ? (
@@ -153,7 +180,13 @@ export function SidebarUpdateReleaseNotes({
         {state.omittedReleaseCount > 0 ? (
           <div className="mt-3">
             <ReleaseLink releaseUrl={getDesktopUpdateReleaseHistoryUrl()} shell={shell}>
-              {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
+              {
+                <Plural
+                  value={state.omittedReleaseCount}
+                  one={`${state.omittedReleaseCount} older release on GitHub`}
+                  other={`${state.omittedReleaseCount} older releases on GitHub`}
+                />
+              }
             </ReleaseLink>
           </div>
         ) : null}

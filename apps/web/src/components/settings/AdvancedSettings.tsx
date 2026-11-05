@@ -1,4 +1,4 @@
-import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -31,7 +31,7 @@ export function AdvancedSettings({
           aria-hidden
           className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
         />
-        {t`Advanced`}
+        <Trans>Advanced</Trans>
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">

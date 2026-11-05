@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -118,13 +120,15 @@ function AssistantForkButton({
                 () => setBusy(false),
               );
             }}
-            aria-label="Fork from this response"
+            aria-label={t({ message: "Fork from this response" })}
           />
         }
       >
         <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
       </TooltipTrigger>
-      <TooltipPopup side="top">Fork from this response</TooltipPopup>
+      <TooltipPopup side="top">
+        <Trans>Fork from this response</Trans>
+      </TooltipPopup>
     </Tooltip>
   );
 }

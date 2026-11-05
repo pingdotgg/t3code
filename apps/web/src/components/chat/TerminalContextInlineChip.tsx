@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { TerminalIcon } from "lucide-react";
 
 import type { ContextPresentationCapability } from "../contextPresentationRegistry";
@@ -31,12 +33,18 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
               {terminalLabel}
             </span>
             <span className="ml-auto shrink-0 text-secondary-label text-xs">
-              {lineStart === lineEnd ? `Line ${lineStart}` : `Lines ${lineStart}–${lineEnd}`}
+              {lineStart === lineEnd ? (
+                <Trans>Line {lineStart}</Trans>
+              ) : (
+                <Trans>
+                  Lines {lineStart}–{lineEnd}
+                </Trans>
+              )}
             </span>
           </div>
           <pre
             className="max-h-80 overflow-auto whitespace-pre bg-muted p-3 font-mono text-foreground text-xs leading-relaxed outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            aria-label="Captured terminal output"
+            aria-label={t({ message: "Captured terminal output" })}
             tabIndex={0}
           >
             {text}
@@ -56,7 +64,7 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
       data-terminal-context-expired={expired ? "true" : undefined}
       tooltip={
         expired
-          ? `Terminal context expired. Remove and re-add ${label} to include it in your message.`
+          ? t`Terminal context expired. Remove and re-add ${label} to include it in your message.`
           : detailsMode === "none"
             ? undefined
             : text

@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useId, useRef, useState, type ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
@@ -51,7 +52,7 @@ export function PullRequestCommentBody({
             setExpanded(!expanded);
           }}
         >
-          {expanded ? "Show less" : "Show full comment"}
+          {expanded ? <Trans>Show less</Trans> : <Trans>Show full comment</Trans>}
         </Button>
       ) : null}
     </div>

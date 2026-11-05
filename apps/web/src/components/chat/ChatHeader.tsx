@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { t } from "@palamedes/core/macro";
 import {
   AuthOrchestrationOperateScope,
@@ -194,7 +195,8 @@ export const ChatHeader = memo(function ChatHeader({
         toastManager.add({
           type: "error",
           title: t({ message: "Failed to rename thread" }),
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description:
+            error instanceof Error ? error.message : t({ message: "An error occurred." }),
         });
       }
     });
@@ -315,7 +317,9 @@ export const ChatHeader = memo(function ChatHeader({
                     {activeProjectName}
                   </WorkspaceBreadcrumbText>
                 </TooltipTrigger>
-                <TooltipPopup side="top">{t`New thread in ${activeProjectName}`}</TooltipPopup>
+                <TooltipPopup side="top">
+                  <Trans>New thread in {activeProjectName}</Trans>
+                </TooltipPopup>
               </Tooltip>
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator>
@@ -425,10 +429,12 @@ export const ChatHeader = memo(function ChatHeader({
           {renamingTitle === null && activeThreadLinkOrigin ? (
             <Tooltip>
               <TooltipTrigger render={<Badge variant="info" size="sm" />}>
-                From {activeThreadLinkOrigin}
+                <Trans>From {activeThreadLinkOrigin}</Trans>
               </TooltipTrigger>
               <TooltipPopup side="top">
-                Started by an agent on {activeThreadLinkOrigin} through a linked environment.
+                <Trans>
+                  Started by an agent on {activeThreadLinkOrigin} through a linked environment.
+                </Trans>
               </TooltipPopup>
             </Tooltip>
           ) : null}

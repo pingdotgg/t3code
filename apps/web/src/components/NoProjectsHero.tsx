@@ -1,4 +1,4 @@
-import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { MessageSquareDashedIcon, PlusIcon } from "lucide-react";
 
@@ -29,16 +29,20 @@ export function NoProjectsHero() {
         <Empty size="hero" className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle>{t({ message: "What should we work on?" })}</EmptyTitle>
+              <EmptyTitle>
+                <Trans>What should we work on?</Trans>
+              </EmptyTitle>
               <EmptyDescription>
-                {scratchTargetEnvironmentId === null
-                  ? t({ message: "Add a project to start your first thread." })
-                  : t({ message: "Add a project, or start without one." })}
+                {scratchTargetEnvironmentId === null ? (
+                  <Trans>Add a project to start your first thread.</Trans>
+                ) : (
+                  <Trans>Add a project, or start without one.</Trans>
+                )}
               </EmptyDescription>
               <div className="mt-6 flex justify-center gap-2">
                 <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
                   <PlusIcon className="size-4" />
-                  {t({ message: "Add project" })}
+                  <Trans>Add project</Trans>
                 </Button>
                 {scratchTargetEnvironmentId === null ? null : (
                   <Button
@@ -47,7 +51,7 @@ export function NoProjectsHero() {
                     onClick={() => void startScratchThread(scratchTargetEnvironmentId)}
                   >
                     <MessageSquareDashedIcon className="size-4" />
-                    {t({ message: "Start without a project" })}
+                    <Trans>Start without a project</Trans>
                   </Button>
                 )}
               </div>

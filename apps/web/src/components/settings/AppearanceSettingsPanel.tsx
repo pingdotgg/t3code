@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { t } from "@palamedes/core/macro";
 import type { CSSProperties } from "react";
 import { useState } from "react";
@@ -303,10 +304,14 @@ export function AppearanceSettingsPanel() {
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value="comfortable">
-                    {t({ message: "Comfortable (default)" })}
+                    <Trans>Comfortable (default)</Trans>
                   </SelectItem>
-                  <SelectItem value="wide">{t({ message: "Wide" })}</SelectItem>
-                  <SelectItem value="full">{t({ message: "Full" })}</SelectItem>
+                  <SelectItem value="wide">
+                    <Trans>Wide</Trans>
+                  </SelectItem>
+                  <SelectItem value="full">
+                    <Trans>Full</Trans>
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             </div>
@@ -346,8 +351,12 @@ export function AppearanceSettingsPanel() {
                   <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="label">{t({ message: "Word (default)" })}</SelectItem>
-                  <SelectItem value="bars">{t({ message: "Bars" })}</SelectItem>
+                  <SelectItem value="label">
+                    <Trans>Word (default)</Trans>
+                  </SelectItem>
+                  <SelectItem value="bars">
+                    <Trans>Bars</Trans>
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             </div>

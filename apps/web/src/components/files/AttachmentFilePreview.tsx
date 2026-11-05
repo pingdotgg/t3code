@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -257,14 +259,28 @@ export function AttachmentFilePreview(props: {
         const cause = Cause.squash(result.cause);
         toastManager.add({
           type: "error",
-          title: "Could not save file",
-          description: cause instanceof Error ? cause.message : "Please try again.",
+          title: t({ message: "Could not save file" }),
+          description: cause instanceof Error ? cause.message : t({ message: "Please try again." }),
         });
       }
       setSaving(false);
     });
   };
 
+  const propsNameSplitAt1Text =
+    !failure &&
+    !(streamsText && url) &&
+    !(!url || (needsText && !content)) &&
+    !(needsText && content) &&
+    !(kind === "archive" || kind === "sqlite") &&
+    !(kind === "font") &&
+    !officeKind &&
+    !(kind === "pdf" || kind === "html") &&
+    !(kind === "audio") &&
+    !(kind === "video") &&
+    !(kind === "image")
+      ? props.name.split(".").at(-1) || "this format"
+      : undefined;
   const body = failure ? (
     <FileSurfaceFailure
       message={failure}
@@ -369,20 +385,26 @@ export function AttachmentFilePreview(props: {
     />
   ) : (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-      <p className="text-sm font-medium">No preview for this file</p>
+      <p className="text-sm font-medium">
+        <Trans>No preview for this file</Trans>
+      </p>
       <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-        Save it to open in an app that supports {props.name.split(".").at(-1) || "this format"}{" "}
-        files.
+        <Trans>Save it to open in an app that supports {propsNameSplitAt1Text} files.</Trans>
       </p>
     </div>
   );
 
+  const propsSizeBytes0Text = content?.truncated
+    ? props.sizeBytes > 0
+      ? ` of a ${props.sizeBytes.toLocaleString()} byte file`
+      : ""
+    : undefined;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
         <div className="flex min-w-0 flex-1 items-center text-xs">
           <span className="shrink-0 px-0.5 text-muted-foreground">
-            {props.origin ?? "Attachment"}
+            {props.origin ?? <Trans>Attachment</Trans>}
           </span>
           <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
           <span aria-current="page" className="min-w-0 truncate px-0.5 font-medium text-foreground">
@@ -408,7 +430,9 @@ export function AttachmentFilePreview(props: {
         ) : null}
         {showsRawText ? (
           <FileSurfaceAction
-            label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+            label={
+              wordWrap ? t({ message: "Disable word wrap" }) : t({ message: "Enable word wrap" })
+            }
             pressed={wordWrap}
             onPress={() => setWordWrapOverride(!wordWrap)}
           >
@@ -417,7 +441,13 @@ export function AttachmentFilePreview(props: {
         ) : null}
         {content || streamsText ? (
           <FileSurfaceAction
-            label={isCopied ? "Copied" : content?.truncated ? "Copy preview" : "Copy contents"}
+            label={
+              isCopied
+                ? t({ message: "Copied" })
+                : content?.truncated
+                  ? t({ message: "Copy preview" })
+                  : t({ message: "Copy contents" })
+            }
             onPress={() => {
               if (content) {
                 void copyToClipboard(content.text, undefined);
@@ -427,8 +457,10 @@ export function AttachmentFilePreview(props: {
               if (!copy) {
                 toastManager.add({
                   type: "error",
-                  title: "Could not copy file",
-                  description: "Wait for the file to finish loading before copying.",
+                  title: t({ message: "Could not copy file" }),
+                  description: t({
+                    message: "Wait for the file to finish loading before copying.",
+                  }),
                 });
                 return;
               }
@@ -437,8 +469,9 @@ export function AttachmentFilePreview(props: {
                 .catch((cause: unknown) =>
                   toastManager.add({
                     type: "error",
-                    title: "Could not copy file",
-                    description: cause instanceof Error ? cause.message : "Try again.",
+                    title: t({ message: "Could not copy file" }),
+                    description:
+                      cause instanceof Error ? cause.message : t({ message: "Try again." }),
                   }),
                 );
             }}
@@ -448,7 +481,7 @@ export function AttachmentFilePreview(props: {
         ) : null}
         {url ? (
           <FileSurfaceAction
-            label={saving ? "Preparing file…" : "Save file"}
+            label={saving ? t({ message: "Preparing file…" }) : t({ message: "Save file" })}
             disabled={saving}
             onPress={save}
           >
@@ -456,21 +489,22 @@ export function AttachmentFilePreview(props: {
           </FileSurfaceAction>
         ) : null}
         {props.onRemove ? (
-          <FileSurfaceAction label="Remove from draft" onPress={props.onRemove}>
+          <FileSurfaceAction label={t({ message: "Remove from draft" })} onPress={props.onRemove}>
             <Trash2Icon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
         {props.onClose ? (
-          <FileSurfaceAction label="Close" onPress={props.onClose}>
+          <FileSurfaceAction label={t({ message: "Close" })} onPress={props.onClose}>
             <XIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
       </div>
       {content?.truncated ? (
         <FileSurfaceNotice>
-          Preview limited to the first 1 MB
-          {props.sizeBytes > 0 ? ` of a ${props.sizeBytes.toLocaleString()} byte file` : ""}. Save
-          the file to read it in full.
+          <Trans>
+            Preview limited to the first 1 MB
+            {propsSizeBytes0Text}. Save the file to read it in full.
+          </Trans>
         </FileSurfaceNotice>
       ) : null}
       {body}

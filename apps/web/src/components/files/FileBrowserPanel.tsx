@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
@@ -62,14 +64,16 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="Refresh workspace files"
+            aria-label={t({ message: "Refresh workspace files" })}
             onClick={props.onRefresh}
           />
         }
       >
         <RefreshIcon refreshing={props.isPending} />
       </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
+      <TooltipPopup>
+        {props.isPending ? <Trans>Refreshing…</Trans> : <Trans>Refresh files</Trans>}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -89,7 +93,7 @@ function FileSearchField(props: {
         size="sm"
         value={props.value}
         aria-label={props.ariaLabel}
-        placeholder="Search files"
+        placeholder={t({ message: "Search files" })}
         data-workspace-focus-default
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
@@ -198,8 +202,8 @@ export default function FileBrowserPanel({
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
-            { id: "copy-mention", label: "Copy mention" },
-            { id: "add-to-chat", label: "Add to chat" },
+            { id: "copy-mention", label: t({ message: "Copy mention" }) },
+            { id: "add-to-chat", label: t({ message: "Add to chat" }) },
           ],
           position,
         );
@@ -216,14 +220,15 @@ export default function FileBrowserPanel({
             await writeTextToClipboard(mention);
             toastManager.add({
               type: "success",
-              title: "Mention copied",
+              title: t({ message: "Mention copied" }),
               description: relativePath,
             });
           } catch (error) {
             toastManager.add({
               type: "error",
-              title: "Failed to copy mention",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: t({ message: "Failed to copy mention" }),
+              description:
+                error instanceof Error ? error.message : t({ message: "An error occurred." }),
             });
           }
           return;
@@ -233,8 +238,8 @@ export default function FileBrowserPanel({
           if (!composer) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "Open a chat for this project and try again.",
+              title: t({ message: "Unable to add to chat" }),
+              description: t({ message: "Open a chat for this project and try again." }),
             });
             return;
           }
@@ -242,8 +247,8 @@ export default function FileBrowserPanel({
           if (!inserted) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "The chat isn't ready to accept input right now.",
+              title: t({ message: "Unable to add to chat" }),
+              description: t({ message: "The chat isn't ready to accept input right now." }),
             });
           }
         }
@@ -290,7 +295,7 @@ export default function FileBrowserPanel({
       row.kind === "directory" &&
       row.isExpanded &&
       loadingDirectoriesRef.current.has(item.path.replace(/\/$/, ""))
-        ? { icon: "t3-tree-icon-loading", title: "Loading…" }
+        ? { icon: "t3-tree-icon-loading", title: t({ message: "Loading…" }) }
         : null,
     search: false,
     onSearchChange: (value) => setQuery(value ?? ""),
@@ -472,6 +477,7 @@ export default function FileBrowserPanel({
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId]);
 
+  const errorText = error || pathSearch.error ? (error ?? pathSearch.error) : undefined;
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
@@ -506,8 +512,8 @@ export default function FileBrowserPanel({
                   variant="ghost"
                   aria-label={
                     expandAll || allDirectoriesExpanded
-                      ? "Collapse all folders"
-                      : "Expand all folders"
+                      ? t({ message: "Collapse all folders" })
+                      : t({ message: "Expand all folders" })
                   }
                   onClick={toggleAllDirectories}
                 />
@@ -519,7 +525,11 @@ export default function FileBrowserPanel({
               />
             </TooltipTrigger>
             <TooltipPopup>
-              {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+              {expandAll || allDirectoriesExpanded ? (
+                <Trans>Collapse all folders</Trans>
+              ) : (
+                <Trans>Expand all folders</Trans>
+              )}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -530,12 +540,12 @@ export default function FileBrowserPanel({
           onClick={handleRefresh}
           className="p-4 text-left text-xs leading-relaxed text-destructive"
         >
-          {error ?? pathSearch.error} Click to retry.
+          <Trans>{errorText} Click to retry.</Trans>
         </button>
       ) : null}
       {query.trim() && pathSearch.truncated && !pathSearch.isPending ? (
         <div className="px-3 py-1 text-xs text-muted-foreground">
-          More matches available. Refine your search.
+          <Trans>More matches available. Refine your search.</Trans>
         </div>
       ) : null}
       {(!ready || pathSearch.isPending) && (
@@ -547,13 +557,13 @@ export default function FileBrowserPanel({
               : "px-3 py-1 text-xs text-muted-foreground"
           }
         >
-          Loading files…
+          <Trans>Loading files…</Trans>
         </div>
       )}
       {hasNoSearchMatches ? (
         ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
           <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
-            No matching files.
+            <Trans>No matching files.</Trans>
           </div>
         ) : null
       ) : (

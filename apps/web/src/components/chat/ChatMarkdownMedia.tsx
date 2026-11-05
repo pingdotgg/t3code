@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import type { AssetResource, EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
@@ -106,10 +107,10 @@ function ChatMarkdownMediaUnavailableLabel(props: {
 }) {
   const label =
     props.kind === "audio"
-      ? "Audio unavailable"
+      ? t({ message: "Audio unavailable" })
       : props.kind === "video"
-        ? "Video unavailable"
-        : "Image unavailable";
+        ? t({ message: "Video unavailable" })
+        : t({ message: "Image unavailable" });
   return (
     <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
@@ -234,7 +235,7 @@ export function ChatMarkdownImage(props: {
         id={props.imageProps?.id}
         data-markdown-copy={props.copyMarkdown}
         role="status"
-        aria-label="Loading image"
+        aria-label={t({ message: "Loading image" })}
         className={CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME}
       />
     );

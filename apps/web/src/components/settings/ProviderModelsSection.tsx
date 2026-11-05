@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans, Plural } from "@palamedes/react/macro";
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -301,7 +303,6 @@ export function ProviderModelsSection({
       {label}
     </div>
   );
-
   return (
     <div className="lg:flex lg:h-full lg:min-h-0 lg:flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -309,11 +310,11 @@ export function ProviderModelsSection({
           <Input
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter models"
+            placeholder={t({ message: "Filter models" })}
             size="sm"
             className="w-56 max-w-full"
             spellCheck={false}
-            aria-label="Filter models"
+            aria-label={t({ message: "Filter models" })}
           />
         ) : null}
         <div className="flex items-center gap-2">
@@ -329,15 +330,23 @@ export function ProviderModelsSection({
                 )
               }
             >
-              {allBuiltInModelsHidden ? "Enable all" : "Disable all"}
+              {allBuiltInModelsHidden ? <Trans>Enable all</Trans> : <Trans>Disable all</Trans>}
             </Button>
           ) : null}
           <span className="text-xs text-muted-foreground">
-            {models.length} model{models.length === 1 ? "" : "s"}
-            {favoriteCount > 0
-              ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}`
-              : ""}
-            {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
+            <Plural value={models.length} one="# model" other="# models" />
+            {favoriteCount > 0 ? (
+              <>
+                <span aria-hidden> · </span>
+                <Plural value={favoriteCount} one="# favorite" other="# favorites" />
+              </>
+            ) : null}
+            {hiddenCount > 0 ? (
+              <>
+                <span aria-hidden> · </span>
+                <Trans>{hiddenCount} hidden</Trans>
+              </>
+            ) : null}
           </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (
@@ -350,7 +359,7 @@ export function ProviderModelsSection({
             onClick={() => setIsAdding(true)}
           >
             <PlusIcon className="size-3" />
-            Add custom model
+            <Trans>Add custom model</Trans>
           </Button>
         ) : null}
       </div>
@@ -360,7 +369,11 @@ export function ProviderModelsSection({
       >
         {visibleModels.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">
-            {isFiltering ? "No models match." : "No models reported for this provider yet."}
+            {isFiltering ? (
+              <Trans>No models match.</Trans>
+            ) : (
+              <Trans>No models reported for this provider yet.</Trans>
+            )}
           </p>
         ) : null}
         {visibleModels.map((model, index) => {
@@ -425,10 +438,10 @@ export function ProviderModelsSection({
           />
           <div className="flex shrink-0 gap-2">
             <Button size="sm" variant="outline" onClick={handleAdd}>
-              Add
+              <Trans>Add</Trans>
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelAdd}>
-              Cancel
+              <Trans>Cancel</Trans>
             </Button>
           </div>
         </div>
@@ -475,10 +488,10 @@ function ProviderModelRow({
   const capLabels = describeModelCapabilities(model, flagMissingReasoning);
   const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground/90");
   const pickerTooltip = model.isCustom
-    ? "Custom models are always shown in the picker"
+    ? t({ message: "Custom models are always shown in the picker" })
     : isHidden
-      ? "Hidden from picker"
-      : "Shown in picker";
+      ? t({ message: "Hidden from picker" })
+      : t({ message: "Shown in picker" });
 
   return (
     <div
@@ -505,7 +518,7 @@ function ProviderModelRow({
           <StarIcon className={cn("size-3", isFavorite && "fill-current text-warning")} />
         </TooltipTrigger>
         <TooltipPopup side="top">
-          {isFavorite ? "Remove from favorites" : "Add to favorites"}
+          {isFavorite ? <Trans>Remove from favorites</Trans> : <Trans>Add to favorites</Trans>}
         </TooltipPopup>
       </Tooltip>
       <span className="flex min-w-0 items-baseline gap-2">
@@ -530,7 +543,9 @@ function ProviderModelRow({
           </TooltipPopup>
         </Tooltip>
         {model.isCustom ? (
-          <span className="shrink-0 text-2xs text-muted-foreground/70">custom</span>
+          <span className="shrink-0 text-2xs text-muted-foreground/70">
+            <Trans>custom</Trans>
+          </span>
         ) : null}
       </span>
       <span className="text-2xs text-muted-foreground/70">
@@ -555,7 +570,9 @@ function ProviderModelRow({
               >
                 <ArrowUpIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">Move up</TooltipPopup>
+              <TooltipPopup side="top">
+                <Trans>Move up</Trans>
+              </TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
@@ -571,7 +588,9 @@ function ProviderModelRow({
               >
                 <ArrowDownIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">Move down</TooltipPopup>
+              <TooltipPopup side="top">
+                <Trans>Move down</Trans>
+              </TooltipPopup>
             </Tooltip>
           </>
         ) : null}
@@ -591,7 +610,9 @@ function ProviderModelRow({
               >
                 <PencilIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">Edit name and options</TooltipPopup>
+              <TooltipPopup side="top">
+                <Trans>Edit name and options</Trans>
+              </TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
@@ -607,7 +628,9 @@ function ProviderModelRow({
               >
                 <XIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">Remove custom model</TooltipPopup>
+              <TooltipPopup side="top">
+                <Trans>Remove custom model</Trans>
+              </TooltipPopup>
             </Tooltip>
           </>
         ) : null}

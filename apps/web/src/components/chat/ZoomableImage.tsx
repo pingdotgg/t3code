@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import { flushSync } from "react-dom";
 
@@ -153,6 +154,7 @@ export function ZoomableImage({
     };
   };
 
+  const MathRoundText = Math.round(zoom * 100);
   return (
     <div className="min-w-0">
       <div
@@ -253,7 +255,7 @@ export function ZoomableImage({
         />
       </div>
       <span className="sr-only" aria-live="polite">
-        {Math.round(zoom * 100)}% zoom
+        <Trans>{MathRoundText}% zoom</Trans>
       </span>
     </div>
   );

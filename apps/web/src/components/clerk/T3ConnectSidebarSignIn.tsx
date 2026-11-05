@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { UserButton, useAuth } from "@clerk/react";
 import { LogInIcon } from "lucide-react";
 
@@ -58,7 +59,9 @@ function ConfiguredT3ConnectSidebarSignIn() {
       <SidebarMenuItem>
         <SidebarMenuButton onClick={openAuthPrompt}>
           <LogInIcon />
-          <span>Sign in to T3 Connect</span>
+          <span>
+            <Trans>Sign in to T3 Connect</Trans>
+          </span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

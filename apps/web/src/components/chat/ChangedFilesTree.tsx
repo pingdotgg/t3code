@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans, Plural } from "@palamedes/react/macro";
 import { useSyncLayout } from "@legendapp/list/react";
 import { type OrchestrationV2CheckpointFileTotals, type RunId } from "@t3tools/contracts";
 import { type MouseEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
@@ -50,6 +52,9 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   const hiddenFileCount = totals.count - files.length;
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
 
+  const hiddenFileCountToLocaleStringText =
+    hiddenFileCount > 0 ? hiddenFileCount.toLocaleString() : undefined;
+
   return (
     <div
       className="@container/changed-files mt-4 rounded-lg bg-secondary dark:bg-input/20"
@@ -61,7 +66,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       >
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
           <span>
-            {totals.count.toLocaleString()} changed file{totals.count === 1 ? "" : "s"}
+            <Plural value={totals.count} one="# changed file" other="# changed files" />
           </span>
           {hasNonZeroStat(totals) && (
             <DiffStatLabel
@@ -82,7 +87,9 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                     size="icon-xs"
                     variant="ghost-muted"
                     aria-label={
-                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                      allDirectoriesExpanded
+                        ? t({ message: "Collapse all folders" })
+                        : t({ message: "Expand all folders" })
                     }
                     data-scroll-anchor-ignore
                     onClick={() => {
@@ -98,7 +105,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 />
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+                {allDirectoriesExpanded ? (
+                  <Trans>Collapse all folders</Trans>
+                ) : (
+                  <Trans>Expand all folders</Trans>
+                )}
               </TooltipPopup>
             </Tooltip>
           )}
@@ -109,15 +120,19 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   type="button"
                   size="xs"
                   variant="ghost-muted"
-                  aria-label="Open diff"
+                  aria-label={t({ message: "Open diff" })}
                   onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
                 />
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
+              <span className="hidden @[24rem]/changed-files:inline">
+                <Trans>Open diff</Trans>
+              </span>
             </TooltipTrigger>
-            <TooltipPopup side="top">Open the full diff</TooltipPopup>
+            <TooltipPopup side="top">
+              <Trans>Open the full diff</Trans>
+            </TooltipPopup>
           </Tooltip>
         </div>
       </div>
@@ -138,8 +153,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
             variant="ghost-muted"
             onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
           >
-            {hiddenFileCount.toLocaleString()} more file{hiddenFileCount === 1 ? "" : "s"} in the
-            full diff
+            <Plural
+              value={hiddenFileCount}
+              one={`${hiddenFileCountToLocaleStringText} more file in the full diff`}
+              other={`${hiddenFileCountToLocaleStringText} more files in the full diff`}
+            />
           </Button>
         </div>
       )}

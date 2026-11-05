@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { useRef } from "react";
 
 import { APP_VERSION } from "../../branding";
@@ -16,7 +18,7 @@ export function AboutVersionTitle() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy version",
+          title: t({ message: "Could not copy version" }),
           description: error.message,
         }),
       );
@@ -25,7 +27,9 @@ export function AboutVersionTitle() {
 
   return (
     <span className="inline-flex items-baseline gap-2">
-      <span>Version</span>
+      <span>
+        <Trans>Version</Trans>
+      </span>
       <code className="text-2xs font-medium">
         <Tooltip>
           <TooltipTrigger
@@ -40,7 +44,9 @@ export function AboutVersionTitle() {
               </InlineButton>
             }
           />
-          <TooltipPopup>Copy version</TooltipPopup>
+          <TooltipPopup>
+            <Trans>Copy version</Trans>
+          </TooltipPopup>
         </Tooltip>
       </code>
     </span>

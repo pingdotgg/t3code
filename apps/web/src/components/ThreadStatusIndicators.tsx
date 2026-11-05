@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { pipe } from "effect/Function";
 import {
   scopeProjectRef,
@@ -69,7 +71,7 @@ export interface PrStatusIndicator {
 }
 
 export interface TerminalStatusIndicator {
-  label: "Terminal process running";
+  label: string;
   colorClass: string;
   pulse: boolean;
 }
@@ -175,22 +177,24 @@ function resolveThreadPullRequestBadgePresentation({
   const terminology = changeRequestTerminologyForUrl(url);
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
+    const aggregateLabelToLowerCaseText = aggregate.label.toLowerCase();
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} ${terminology.plural}, ${aggregate.label.toLowerCase()}`,
+      label: t`Stack of ${badge.layers} ${terminology.plural}, ${aggregateLabelToLowerCaseText}`,
       text: badge.layers,
     };
   }
   if (number === undefined || url === undefined) return null;
 
-  const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, status pending`;
+  const tooltip = status?.tooltip ?? t`${terminology.shortLabel} #${number}, status pending`;
   if (badge?.kind === "pull-request" && badge.others > 0) {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
+    const aggregateLabelToLowerCaseText2 = aggregate.label.toLowerCase();
     return {
       Icon: aggregate.Icon,
       toneClassName: aggregate.toneClassName,
-      label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
+      label: t`${tooltip}, and ${badge.others} more linked; overall ${aggregateLabelToLowerCaseText2}`,
       text: `+${badge.others + 1}`,
     };
   }
@@ -352,7 +356,8 @@ export function ThreadPullRequestsMiniList({
           >
             {line.stack ? (
               <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
+                {line.stack.kind === "native" ? <Trans>stack</Trans> : <Trans>chain</Trans>} ·{" "}
+                {line.stack.size}
               </span>
             ) : null}
           </ThreadPullRequestMiniListItem>
@@ -420,11 +425,12 @@ export function prStatusIndicator(
   const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
 
   const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
+  const stateLabelToLowerCaseText = state.label.toLowerCase();
   return {
-    label: `${shortLabel} ${state.label.toLowerCase()}`,
+    label: `${shortLabel} ${stateLabelToLowerCaseText}`,
     colorClass: state.toneClassName,
     Icon: state.Icon,
-    tooltip: `${tooltipLead}: ${pr.title}`,
+    tooltip: t`${tooltipLead}: ${pr.title}`,
     tooltipLead,
     tooltipTitle: pr.title,
     url: pr.url,
@@ -504,7 +510,7 @@ export function terminalStatusFromRunningIds(
     return null;
   }
   return {
-    label: "Terminal process running",
+    label: t({ message: "Terminal process running" }),
     colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
@@ -534,8 +540,8 @@ export function ThreadTerminalStatusButton({
   const status = terminalStatusFromRunningIds(terminalIds);
   const label =
     terminalIds.length === 1
-      ? "1 terminal process running. Open terminal"
-      : `${terminalIds.length} terminal processes running. Open terminal`;
+      ? t({ message: "1 terminal process running. Open terminal" })
+      : t`${terminalIds.length} terminal processes running. Open terminal`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -581,8 +587,8 @@ export function ThreadWorktreeIndicator({
 
   const displayPath = formatWorktreePathForDisplay(worktreePath);
   const tooltip = thread.branch
-    ? `Worktree: ${displayPath} (${thread.branch})`
-    : `Worktree: ${displayPath}`;
+    ? t`Worktree: ${displayPath} (${thread.branch})`
+    : t`Worktree: ${displayPath}`;
 
   return (
     <Tooltip>
@@ -760,7 +766,9 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
-  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
+  const threadEnvironmentLabel = isRemoteThread
+    ? (remoteEnvLabel ?? t({ message: "Remote" }))
+    : null;
   const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 
@@ -794,7 +802,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
           <TooltipTrigger
             render={
               <span
-                aria-label={threadEnvironmentLabel ?? "Remote"}
+                aria-label={threadEnvironmentLabel ?? t({ message: "Remote" })}
                 className="inline-flex items-center justify-center"
               />
             }

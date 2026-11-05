@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { t } from "@palamedes/core/macro";
 import {
   WorkspaceBreadcrumb,
@@ -22,7 +23,9 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
     <WorkspaceBreadcrumb ariaLabel={t({ message: "Settings breadcrumb" })}>
       {sectionLabel ? (
         <>
-          <WorkspaceBreadcrumbItem>{t({ message: "Settings" })}</WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbItem>
+            <Trans>Settings</Trans>
+          </WorkspaceBreadcrumbItem>
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}

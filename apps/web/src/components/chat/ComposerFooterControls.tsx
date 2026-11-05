@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type {
   ModelSelection,
   ProviderInstanceId,
@@ -54,8 +56,8 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
     props.interactionMode === "plan"
-      ? "Plan mode. Click to return to normal build mode"
-      : "Default mode. Click to enter plan mode";
+      ? t({ message: "Plan mode. Click to return to normal build mode" })
+      : t({ message: "Default mode. Click to enter plan mode" });
 
   const interactionModeToggle = props.showInteractionModeToggle ? (
     <Tooltip>
@@ -89,7 +91,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
           data-composer-control-label
           className={size === "xs" ? "sr-only" : "sr-only sm:not-sr-only"}
         >
-          {props.interactionMode === "plan" ? "Plan" : "Build"}
+          {props.interactionMode === "plan" ? <Trans>Plan</Trans> : <Trans>Build</Trans>}
         </span>
       </TooltipTrigger>
       <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
@@ -176,9 +178,11 @@ export function ComposerPermissionsSection(props: {
   const descriptionId = useId();
   return (
     <div data-composer-permissions className="grid w-72 gap-1.5 px-2 py-1.5">
-      <div className="font-medium text-muted-foreground text-xs">Permissions</div>
+      <div className="font-medium text-muted-foreground text-xs">
+        <Trans>Permissions</Trans>
+      </div>
       <MenuPrimitive.RadioGroup
-        aria-label="Permissions"
+        aria-label={t({ message: "Permissions" })}
         value={props.runtimeMode}
         onValueChange={(value: RuntimeMode) => {
           if (value !== props.runtimeMode) props.onRuntimeModeChange(value);

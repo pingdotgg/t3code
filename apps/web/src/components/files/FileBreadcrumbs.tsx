@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -103,6 +105,8 @@ function BreadcrumbMenuContent(props: {
       parentPath === props.rootPath ||
       parentPath.startsWith(`${props.rootPath}/`));
 
+  const pathLabelText =
+    canGoBack && parentPath !== null ? pathLabel(parentPath, props.projectName) : undefined;
   return (
     <MenuPopup
       align="start"
@@ -118,7 +122,9 @@ function BreadcrumbMenuContent(props: {
         <>
           <MenuItem closeOnClick={false} onClick={() => props.onDirectoryChange(parentPath)}>
             <ArrowLeftIcon />
-            <span className="truncate">Back to {pathLabel(parentPath, props.projectName)}</span>
+            <span className="truncate">
+              <Trans>Back to {pathLabelText}</Trans>
+            </span>
           </MenuItem>
           <MenuSeparator />
         </>
@@ -127,20 +133,28 @@ function BreadcrumbMenuContent(props: {
         {entriesQuery.isPending && entriesQuery.data === null ? (
           <MenuItem disabled>
             <Spinner />
-            Loading folder…
+            <Trans>Loading folder…</Trans>
           </MenuItem>
         ) : entriesQuery.error && entriesQuery.data === null ? (
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
             <RefreshIcon refreshing={entriesQuery.isPending} />
-            <span className="min-w-0 flex-1 truncate">Retry loading folder</span>
+            <span className="min-w-0 flex-1 truncate">
+              <Trans>Retry loading folder</Trans>
+            </span>
           </MenuItem>
         ) : !directoryAvailable && !entriesTruncated ? (
-          <MenuItem disabled>This folder is no longer available.</MenuItem>
+          <MenuItem disabled>
+            <Trans>This folder is no longer available.</Trans>
+          </MenuItem>
         ) : children.length === 0 ? (
           <MenuItem disabled>
-            {entriesTruncated
-              ? "No entries from this folder are available in the partial workspace index."
-              : "This folder is empty."}
+            {entriesTruncated ? (
+              <Trans>
+                No entries from this folder are available in the partial workspace index.
+              </Trans>
+            ) : (
+              <Trans>This folder is empty.</Trans>
+            )}
           </MenuItem>
         ) : (
           <MenuRadioGroup
@@ -200,14 +214,16 @@ function BreadcrumbMenuContent(props: {
           <MenuSeparator />
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
             <RefreshIcon refreshing={entriesQuery.isPending} />
-            Refresh failed. Retry
+            <Trans>Refresh failed. Retry</Trans>
           </MenuItem>
         </>
       ) : null}
       {entriesTruncated ? (
         <>
           <MenuSeparator />
-          <MenuItem disabled>Some workspace entries are not shown.</MenuItem>
+          <MenuItem disabled>
+            <Trans>Some workspace entries are not shown.</Trans>
+          </MenuItem>
         </>
       ) : null}
     </MenuPopup>
@@ -299,7 +315,7 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
   const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
 
   return (
-    <nav aria-label="File path" className="flex h-full">
+    <nav aria-label={t({ message: "File path" })} className="flex h-full">
       <ol className="flex items-center">
         {breadcrumbs.map((crumb, index) => {
           const current = index === currentIndex;

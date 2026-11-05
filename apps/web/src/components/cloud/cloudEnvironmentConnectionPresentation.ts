@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
@@ -15,43 +16,43 @@ export function presentSavedCloudEnvironmentConnection(
   switch (connection.phase) {
     case "connected":
       return {
-        buttonLabel: "Connected",
+        buttonLabel: t({ message: "Connected" }),
         statusText: connectionStatusText(connection),
         tone: "connected",
       };
     case "connecting":
       return {
-        buttonLabel: "Connecting…",
+        buttonLabel: t({ message: "Connecting…" }),
         statusText: connectionStatusText(connection),
         tone: "connecting",
       };
     case "reconnecting":
       return {
-        buttonLabel: "Reconnecting…",
+        buttonLabel: t({ message: "Reconnecting…" }),
         statusText: connectionStatusText(connection),
         tone: "connecting",
       };
     case "unsupported":
       return {
-        buttonLabel: "Client not supported",
+        buttonLabel: t({ message: "Client not supported" }),
         statusText: connectionStatusText(connection),
         tone: "idle",
       };
     case "error":
       return {
-        buttonLabel: "Connection failed",
+        buttonLabel: t({ message: "Connection failed" }),
         statusText: connectionStatusText(connection),
         tone: "error",
       };
     case "offline":
       return {
-        buttonLabel: "Offline",
+        buttonLabel: t({ message: "Offline" }),
         statusText: connectionStatusText(connection),
         tone: "idle",
       };
     case "available":
       return {
-        buttonLabel: "Not connected",
+        buttonLabel: t({ message: "Not connected" }),
         statusText: connectionStatusText(connection),
         tone: "idle",
       };

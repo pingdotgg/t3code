@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
@@ -85,13 +86,16 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
   const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
 
   const reportUpdateFailure = (cause: unknown) => {
-    const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
+    const message =
+      cause instanceof Error
+        ? cause.message
+        : t({ message: "Could not update T3 Connect access." });
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not update T3 Connect", { message, traceId, cause });
     setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
     toastManager.add({
       type: "error",
-      title: "Could not update T3 Connect",
+      title: t({ message: "Could not update T3 Connect" }),
       description: message,
       data: traceId
         ? {

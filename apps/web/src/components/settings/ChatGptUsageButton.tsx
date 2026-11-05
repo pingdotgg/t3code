@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { ComponentProps } from "react";
 import { ExternalLinkIcon } from "lucide-react";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
@@ -12,7 +13,7 @@ export function ChatGptUsageButton(props: Omit<ComponentProps<typeof Button>, "o
       {...props}
       onClick={() => void ensureLocalApi().shell.openExternal(CHATGPT_USAGE_URL)}
     >
-      Manage usage
+      <Trans>Manage usage</Trans>
       <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
     </Button>
   );

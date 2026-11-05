@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { observeResize } from "~/lib/observeResize";
@@ -39,7 +40,9 @@ export function DraftHeroProjectHeading({
           ref={inlineRef}
           className="flex w-max items-baseline gap-2 whitespace-nowrap font-normal text-3xl tracking-tight"
         >
-          <span>What should we build in</span>
+          <span>
+            <Trans>What should we build in</Trans>
+          </span>
           <span>
             <span className="font-medium">{projectName}</span>?
           </span>
@@ -47,9 +50,11 @@ export function DraftHeroProjectHeading({
       </span>
       <h1 className="flex w-full flex-col items-center justify-center gap-2 text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl lg:group-data-[inline=true]/draft-hero:flex-row">
         <span className="max-w-full lg:group-data-[inline=true]/draft-hero:shrink-0">
-          What should we build
-          <span className="lg:group-data-[inline=true]/draft-hero:hidden">?</span>
-          <span className="hidden lg:group-data-[inline=true]/draft-hero:inline"> in</span>
+          <Trans>
+            What should we build
+            <span className="lg:group-data-[inline=true]/draft-hero:hidden">?</span>
+            <span className="hidden lg:group-data-[inline=true]/draft-hero:inline"> in</span>
+          </Trans>
         </span>
         <span className="flex min-w-0 max-w-full items-baseline justify-center text-base tracking-normal lg:group-data-[inline=true]/draft-hero:text-3xl lg:group-data-[inline=true]/draft-hero:tracking-tight">
           <span className="min-w-0">{children}</span>

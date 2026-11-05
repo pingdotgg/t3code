@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { PullRequestStack } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 import { resolvePullRequestState } from "./pullRequestPresentation";
@@ -19,7 +20,7 @@ export function PullRequestStackLayerContent({
       <span className="min-w-0 flex-1">
         <span className="block truncate">{layer.title || layer.headBranch}</span>
         <span className="block truncate text-xs font-normal text-muted-foreground">
-          #{layer.number} · {compact ? null : `${layer.headBranch} · `}
+          #{layer.number} · {compact ? null : <Trans>{layer.headBranch} · </Trans>}
           {state.label}
         </span>
       </span>

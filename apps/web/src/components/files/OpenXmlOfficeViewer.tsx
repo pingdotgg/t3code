@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -97,9 +98,11 @@ export default function OfficeViewer(props: {
         role="alert"
         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
       >
-        <p className="text-sm font-medium">No preview for this file</p>
+        <p className="text-sm font-medium">
+          <Trans>No preview for this file</Trans>
+        </p>
         <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-          {error} Save it or open it in another app.
+          <Trans>{error} Save it or open it in another app.</Trans>
         </p>
       </div>
     );
@@ -112,13 +115,15 @@ export default function OfficeViewer(props: {
         <div className={FILE_SURFACE_SUBHEADER_CLASS}>
           <span className="text-xs text-muted-foreground" aria-live="polite">
             {details}
-            {props.kind !== "xlsx" ? " · Fit to width" : ""}
+            {props.kind !== "xlsx" ? <Trans> · Fit to width</Trans> : ""}
           </span>
         </div>
       ) : null}
       {prepared.truncated ? (
         <FileSurfaceNotice>
-          Preview limited. Save it or open it in another app to read the full document.
+          <Trans>
+            Preview limited. Save it or open it in another app to read the full document.
+          </Trans>
         </FileSurfaceNotice>
       ) : null}
       <Suspense fallback={<FileSurfaceLoading />}>

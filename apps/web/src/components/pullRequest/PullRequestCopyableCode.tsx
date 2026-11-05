@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 
@@ -25,6 +26,7 @@ export function PullRequestCopyableCode({
     timeout: 1600,
     ...(onError ? { onError } : {}),
   });
+  const isCopiedText = isCopied ? "Copied" : copyLabel;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -55,11 +57,15 @@ export function PullRequestCopyableCode({
             isCopied ? "opacity-100" : "opacity-0",
           )}
         >
-          Copied
+          <Trans>Copied</Trans>
         </span>
       </TooltipTrigger>
       <TooltipPopup variant="code" side={tooltipSide}>
-        {`${isCopied ? "Copied" : copyLabel}: ${value}`}
+        {
+          <Trans>
+            {isCopiedText}: {value}
+          </Trans>
+        }
       </TooltipPopup>
     </Tooltip>
   );

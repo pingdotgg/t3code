@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   type DesktopUpdateChannel,
@@ -460,10 +461,10 @@ export function describeUpdateCapsule(
 ): UpdateCapsuleView {
   if (run.phase === "countdown" && run.restartAt !== null) {
     const seconds = Math.max(0, Math.ceil((run.restartAt - now) / 1000));
-    return { tone: "default", label: `Restart in ${seconds}s`, action: "later" };
+    return { tone: "default", label: t`Restart in ${seconds}s`, action: "later" };
   }
   if (run.phase === "installing") {
-    return { tone: "default", label: "Restarting…", action: null };
+    return { tone: "default", label: t({ message: "Restarting…" }), action: null };
   }
   const active = machines.filter(({ status }) => isActive(status) && status !== "waiting");
   const slowest = active.toSorted((a, b) => a.machine.startedAt - b.machine.startedAt)[0];
@@ -480,36 +481,50 @@ export function describeUpdateCapsule(
   }
   const done = machines.filter(({ status }) => status === "done").length;
   if (machines.some(({ status }) => isActive(status))) {
-    return { tone: "default", label: `${done} of ${machines.length} updated`, action: null };
+    return { tone: "default", label: t`${done} of ${machines.length} updated`, action: null };
   }
   if (local?.status === "downloading") {
+    const localPercentNullText = local.percent === null ? "" : ` ${Math.floor(local.percent)}%`;
     return {
       tone: "default",
-      label: `Downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`,
+      label: t`Downloading${localPercentNullText}`,
       action: null,
     };
   }
   const failed = machines.filter(({ status }) => status === "failed");
   if (failed.length > 0) {
+    const messageText = failed.length === 1 ? failed[0]!.machine.label : undefined;
     return {
       tone: "failed",
-      label: failed.length === 1 ? `${failed[0]!.machine.label} failed` : `${failed.length} failed`,
+      label: failed.length === 1 ? t`${messageText} failed` : t`${failed.length} failed`,
       action:
         !run.trackSwitch && failed.some(({ machine }) => machine.server !== null)
           ? "retry"
           : "dismiss",
     };
   }
-  return { tone: "default", label: `${done} of ${machines.length} updated`, action: null };
+  return { tone: "default", label: t`${done} of ${machines.length} updated`, action: null };
 }
 
 export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
-  providers: "updating providers",
-  waiting: "waiting",
-  downloading: "downloading",
-  restarting: "restarting",
-  done: "done",
-  failed: "failed",
+  get providers() {
+    return t({ message: "updating providers" });
+  },
+  get waiting() {
+    return t({ message: "waiting" });
+  },
+  get downloading() {
+    return t({ message: "downloading" });
+  },
+  get restarting() {
+    return t({ message: "restarting" });
+  },
+  get done() {
+    return t({ message: "done" });
+  },
+  get failed() {
+    return t({ message: "failed" });
+  },
 };
 
 export interface UpdateEverythingResult {
@@ -568,15 +583,17 @@ export function getUpdateEverythingToastView(
         ];
   if (result.failures.length === 0) {
     if (parts.length === 0) return null;
+    const joinListText = joinList(parts);
     return {
       type: "success",
-      title: `Updated ${joinList(parts)}`,
+      title: t`Updated ${joinListText}`,
       ...(restarting.length === 0 ? {} : { description: restarting.join("\n") }),
     };
   }
+  const joinListText2 = !(parts.length === 0) ? joinList(parts) : undefined;
   return {
     type: "error",
-    title: parts.length === 0 ? "Update failed" : `Updated ${joinList(parts)}`,
+    title: parts.length === 0 ? t({ message: "Update failed" }) : t`Updated ${joinListText2}`,
     description: [...result.failures, ...restarting].join("\n"),
   };
 }

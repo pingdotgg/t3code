@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -28,7 +30,8 @@ function formatRemainingSeconds(seconds: number): string {
 }
 
 function getPromptErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : "SSH verification prompt failed.";
+  const message =
+    error instanceof Error ? error.message : t({ message: "SSH verification prompt failed." });
   return message.includes("expired") || message.includes("no longer pending")
     ? "This SSH verification prompt expired. Try connecting again."
     : message;
@@ -102,7 +105,7 @@ function ActiveSshPasswordPrompt({
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
   const visibleResponseError = isExpired
-    ? "This SSH verification prompt expired. Try connecting again."
+    ? t({ message: "This SSH verification prompt expired. Try connecting again." })
     : responseError;
 
   const respond = async (nextPassword: string | null) => {
@@ -156,11 +159,15 @@ function ActiveSshPasswordPrompt({
     >
       <DialogPopup className="max-w-md" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>SSH verification required</DialogTitle>
+          <DialogTitle>
+            <Trans>SSH verification required</Trans>
+          </DialogTitle>
           <DialogDescription>
-            Enter the password or verification code required by <code>{target}</code>. T3 Code
-            passes your response to the local SSH process and keeps it in memory to reuse for this
-            host. T3 Code does not write it to disk.
+            <Trans>
+              Enter the password or verification code required by <code>{target}</code>. T3 Code
+              passes your response to the local SSH process and keeps it in memory to reuse for this
+              host. T3 Code does not write it to disk.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -183,7 +190,7 @@ function ActiveSshPasswordPrompt({
                         : "shrink-0 text-xs text-muted-foreground"
                     }
                   >
-                    {isExpired ? "Expired" : remainingLabel}
+                    {isExpired ? <Trans>Expired</Trans> : remainingLabel}
                   </span>
                 ) : null}
               </div>
@@ -201,18 +208,20 @@ function ActiveSshPasswordPrompt({
               <p className="text-sm text-destructive">{visibleResponseError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                SSH keys may replace a password, but your server can still require a verification
-                code.
+                <Trans>
+                  SSH keys may replace a password, but your server can still require a verification
+                  code.
+                </Trans>
               </p>
             )}
           </form>
         </DialogPanel>
         <DialogFooter>
           <Button disabled={isResponding} type="button" variant="outline" onClick={cancelPrompt}>
-            {isExpired ? "Dismiss" : "Cancel"}
+            {isExpired ? <Trans>Dismiss</Trans> : <Trans>Cancel</Trans>}
           </Button>
           <Button disabled={isResponding || isExpired} form={formId} type="submit">
-            Continue
+            <Trans>Continue</Trans>
           </Button>
         </DialogFooter>
       </DialogPopup>

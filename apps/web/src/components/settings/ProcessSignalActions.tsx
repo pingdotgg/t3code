@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { ServerProcessSignal } from "@t3tools/contracts";
 
 import { InlineButton } from "../ui/button";
@@ -17,30 +19,34 @@ export function ProcessSignalActions({
           render={
             <InlineButton
               disabled={disabled}
-              aria-label="Send SIGINT"
+              aria-label={t({ message: "Send SIGINT" })}
               tone="muted"
               onClick={() => onSignal("SIGINT")}
             >
-              INT
+              <Trans>INT</Trans>
             </InlineButton>
           }
         />
-        <TooltipPopup side="top">Send SIGINT</TooltipPopup>
+        <TooltipPopup side="top">
+          <Trans>Send SIGINT</Trans>
+        </TooltipPopup>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger
           render={
             <InlineButton
               disabled={disabled}
-              aria-label="Send SIGKILL"
+              aria-label={t({ message: "Send SIGKILL" })}
               tone="destructive"
               onClick={() => onSignal("SIGKILL")}
             >
-              KILL
+              <Trans>KILL</Trans>
             </InlineButton>
           }
         />
-        <TooltipPopup side="top">Send SIGKILL</TooltipPopup>
+        <TooltipPopup side="top">
+          <Trans>Send SIGKILL</Trans>
+        </TooltipPopup>
       </Tooltip>
     </div>
   );

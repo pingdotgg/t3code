@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   type EnvironmentId,
   type ProjectId,
@@ -89,8 +90,9 @@ export function useThreadLinkedPullRequest(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to update the thread pull request",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: t({ message: "Unable to update the thread pull request" }),
+          description:
+            error instanceof Error ? error.message : t({ message: "An error occurred." }),
         }),
       );
     });

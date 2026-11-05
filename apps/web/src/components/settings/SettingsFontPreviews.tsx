@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useAtomValue } from "@effect/atom-react";
@@ -38,7 +39,7 @@ export function PromptFontPreview() {
   return (
     <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
       <ComposerPromptEditor
-        ariaLabel="Prompt font preview"
+        ariaLabel={t({ message: "Prompt font preview" })}
         editorRef={editorRef}
         value={prompt}
         cursor={cursor}
@@ -240,7 +241,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
     <div
       ref={mountSurface}
       className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
-      aria-label="Terminal font preview"
+      aria-label={t({ message: "Terminal font preview" })}
     />
   );
 }

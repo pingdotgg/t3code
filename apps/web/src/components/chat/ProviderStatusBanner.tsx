@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   type EnvironmentId,
   type ProviderInstanceId,
@@ -106,7 +108,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 }) {
   const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    label: "Refresh provider status",
+    label: t({ message: "Refresh provider status" }),
   });
   const refreshingRef = useRef(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -130,11 +132,18 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const incompatible = getIncompatibleVersion(status);
+  const statusVersionText = !isUnauthenticated && incompatible ? (status.version ?? "") : undefined;
+  const incompatibleStatusBrokenText =
+    !isUnauthenticated && incompatible
+      ? incompatible.status === "broken"
+        ? "known to be broken"
+        : "unsupported"
+      : undefined;
   const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
+    ? t`${providerName} is unauthenticated`
     : incompatible
-      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
-      : `${providerName} provider status`;
+      ? t`${providerName} ${statusVersionText} is ${incompatibleStatusBrokenText}`
+      : t`${providerName} provider status`;
   const message = incompatible?.message ?? getProviderStatusMessage(status);
   const isWarning =
     incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
@@ -160,7 +169,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
             <div className="flex flex-wrap items-center justify-end gap-3">
               {onOpenProviderSetup && hasProviderSetup(status) ? (
                 <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-                  Open provider setup
+                  <Trans>Open provider setup</Trans>
                 </InlineButton>
               ) : null}
               <Button
@@ -171,7 +180,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
                 variant="outline"
               >
                 <RefreshIcon />
-                {isRefreshing ? "Refreshing..." : "Refresh"}
+                {isRefreshing ? <Trans>Refreshing...</Trans> : <Trans>Refresh</Trans>}
               </Button>
             </div>
           </div>

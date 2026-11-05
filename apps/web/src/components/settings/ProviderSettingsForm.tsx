@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -124,15 +126,15 @@ export function deriveProviderSettingsFields(
           control: formAnnotation.control ?? "text",
           label:
             isLocalAcp && key === "commandPath"
-              ? "Executable"
+              ? t({ message: "Executable" })
               : (annotatedTitle ?? titleizeFieldKey(key)),
           ...(isLocalAcp && key === "commandPath"
-            ? { description: "Executable name or path on this environment." }
+            ? { description: t({ message: "Executable name or path on this environment." }) }
             : annotatedDescription !== undefined
               ? { description: annotatedDescription }
               : {}),
           ...(isLocalAcp && key === "commandPath"
-            ? { placeholder: "e.g. dsh" }
+            ? { placeholder: t({ message: "e.g. dsh" }) }
             : formAnnotation.placeholder !== undefined
               ? { placeholder: formAnnotation.placeholder }
               : {}),
@@ -226,8 +228,8 @@ function ProviderCommandArguments({
 
   return (
     <SettingsRow
-      title="Arguments"
-      description="One literal argument per row, in launch order."
+      title={t({ message: "Arguments" })}
+      description={t({ message: "One literal argument per row, in launch order." })}
       managed={managedReason}
       control={
         <Button
@@ -237,7 +239,7 @@ function ProviderCommandArguments({
           onClick={() => updateArguments([...rows, makeCommandArgumentDraftRow("")])}
         >
           <PlusIcon />
-          Add argument
+          <Trans>Add argument</Trans>
         </Button>
       }
     >

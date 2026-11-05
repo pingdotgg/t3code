@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -133,8 +135,10 @@ export function FontFamilyPicker({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `"${value}" isn't monospace`,
-          description: "Code and terminal need a fixed-width font, so the current font was kept.",
+          title: t`"${value}" isn't monospace`,
+          description: t({
+            message: "Code and terminal need a fixed-width font, so the current font was kept.",
+          }),
         }),
       );
       return;
@@ -152,7 +156,11 @@ export function FontFamilyPicker({
             {family}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
-            {isDefault ? <span className="text-3xs text-muted-foreground/60">default</span> : null}
+            {isDefault ? (
+              <span className="text-3xs text-muted-foreground/60">
+                <Trans>default</Trans>
+              </span>
+            ) : null}
             {item === selectedValue ? (
               <CheckIcon className="size-3.5 text-muted-foreground" />
             ) : null}
@@ -184,12 +192,14 @@ export function FontFamilyPicker({
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="flex w-72 flex-col">
         <ComboboxSearchInput
-          placeholder="Search fonts…"
+          placeholder={t({ message: "Search fonts…" })}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No fonts found.</ComboboxEmpty>
+          <ComboboxEmpty>
+            <Trans>No fonts found.</Trans>
+          </ComboboxEmpty>
           <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
             <ComboboxListVirtualized>
               <LegendList<string>

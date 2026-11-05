@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -202,7 +203,7 @@ export function useOpenChangeRequestLink(
             const toastId = toastManager.add(
               stackedThreadToast({
                 type: "info",
-                title: "This commit is not in the thread's workspace",
+                title: t({ message: "This commit is not in the thread's workspace" }),
                 actionProps: {
                   children: "Open link",
                   onClick: () => {
@@ -249,8 +250,9 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open pull request link",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: t({ message: "Unable to open pull request link" }),
+          description:
+            error instanceof Error ? error.message : t({ message: "An error occurred." }),
         }),
       );
     });

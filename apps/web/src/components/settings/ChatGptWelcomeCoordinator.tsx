@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { useState } from "react";
@@ -54,6 +55,8 @@ export function ChatGptWelcomeCoordinator() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     } catch {}
   };
+  const messageText = next?.providerName;
+  const messageText2 = next?.environmentLabel;
   return (
     <Dialog
       open={next !== undefined}
@@ -64,18 +67,26 @@ export function ChatGptWelcomeCoordinator() {
       <DialogPopup>
         <DialogHeader>
           <OpenAI className="mb-2 size-8" aria-hidden="true" />
-          <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
+          <DialogTitle>
+            <Trans>Your ChatGPT plan is connected</Trans>
+          </DialogTitle>
           <DialogDescription>
-            Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any
-            credit settings in ChatGPT.
+            <Trans>
+              Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any
+              credit settings in ChatGPT.
+            </Trans>
           </DialogDescription>
           <p className="text-xs text-muted-foreground">
-            {next?.providerName} on {next?.environmentLabel}
+            <Trans>
+              {messageText} on {messageText2}
+            </Trans>
           </p>
         </DialogHeader>
         <DialogFooter>
           <ChatGptUsageButton />
-          <Button onClick={dismiss}>Continue</Button>
+          <Button onClick={dismiss}>
+            <Trans>Continue</Trans>
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

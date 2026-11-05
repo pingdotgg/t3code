@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import {
   type SourceControlDefinition,
@@ -18,7 +19,7 @@ function pullRequestLinkContextMenuItems(
   openLabel: string,
 ): readonly ContextMenuItem<PullRequestLinkContextMenuAction>[] {
   return [
-    { id: "copy-link", label: "Copy link", icon: "copy" },
+    { id: "copy-link", label: t({ message: "Copy link" }), icon: "copy" },
     { id: "open-external", label: openLabel },
   ];
 }
@@ -46,7 +47,10 @@ export async function showPullRequestLinkContextMenu({
   } catch {
     toastManager.add({
       type: "error",
-      title: action === "copy-link" ? "Could not copy the link" : "Could not open the link",
+      title:
+        action === "copy-link"
+          ? t({ message: "Could not copy the link" })
+          : t({ message: "Could not open the link" }),
     });
   }
 }

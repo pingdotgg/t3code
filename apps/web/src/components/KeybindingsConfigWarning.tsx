@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import {
   AuthOrchestrationOperateScope,
   type EditorId,
@@ -40,13 +42,16 @@ export function KeybindingsConfigWarning({
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Unable to open keybindings file",
-                description: error instanceof Error ? error.message : "Unknown error opening file.",
+                title: t({ message: "Unable to open keybindings file" }),
+                description:
+                  error instanceof Error
+                    ? error.message
+                    : t({ message: "Unknown error opening file." }),
               }),
             );
           }}
         >
-          Open keybindings.json
+          <Trans>Open keybindings.json</Trans>
         </Button>
       </span>
     </>

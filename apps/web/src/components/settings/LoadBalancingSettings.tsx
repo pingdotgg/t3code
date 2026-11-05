@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
 import {
@@ -13,10 +15,30 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
 
 const preferences = [
-  { value: 100, label: "Prefer" },
-  { value: 50, label: "Normal" },
-  { value: 25, label: "Less often" },
-  { value: 0, label: "Manual only" },
+  {
+    value: 100,
+    get label() {
+      return t({ message: "Prefer" });
+    },
+  },
+  {
+    value: 50,
+    get label() {
+      return t({ message: "Normal" });
+    },
+  },
+  {
+    value: 25,
+    get label() {
+      return t({ message: "Less often" });
+    },
+  },
+  {
+    value: 0,
+    get label() {
+      return t({ message: "Manual only" });
+    },
+  },
 ] as const;
 
 type LoadPreference = (typeof preferences)[number]["value"];
@@ -69,7 +91,7 @@ export function LoadBalancingSettings({
       }
       control={
         <Switch
-          aria-label="Automatically balance load"
+          aria-label={t({ message: "Automatically balance load" })}
           checked={settings.loadBalancingEnabled}
           disabled={!settingsHydrated}
           onCheckedChange={(loadBalancingEnabled) => updateClientSettings({ loadBalancingEnabled })}
@@ -77,8 +99,10 @@ export function LoadBalancingSettings({
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        New threads in shared projects start on the machine with the most free CPU and memory,
-        weighted by each machine's preference.
+        <Trans>
+          New threads in shared projects start on the machine with the most free CPU and memory,
+          weighted by each machine's preference.
+        </Trans>
       </p>
       {environments.map((environment) => (
         <EnvironmentRow

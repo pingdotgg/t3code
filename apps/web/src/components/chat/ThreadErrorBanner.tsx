@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import type { OrchestrationV2ProviderFailureClass } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
@@ -19,10 +21,10 @@ export function copyAdminRequest() {
     () =>
       toastManager.add({
         type: "success",
-        title: "Request copied",
-        description: "Send it to your workspace admin.",
+        title: t({ message: "Request copied" }),
+        description: t({ message: "Send it to your workspace admin." }),
       }),
-    () => toastManager.add({ type: "error", title: "Could not copy the request" }),
+    () => toastManager.add({ type: "error", title: t({ message: "Could not copy the request" }) }),
   );
 }
 
@@ -95,11 +97,16 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         <AlertDescription>
           {chatGptLimit ? (
             <div className="space-y-1">
-              <p className="font-medium">ChatGPT usage limit reached</p>
+              <p className="font-medium">
+                <Trans>ChatGPT usage limit reached</Trans>
+              </p>
               {workspaceLimit ? (
                 <p>
                   {
-                    "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
+                    <Trans>
+                      You've reached your workspace's limit for using your ChatGPT plan in other
+                      apps. Copy a request to ask your workspace admin for increased usage limits.
+                    </Trans>
                   }
                 </p>
               ) : null}
@@ -112,13 +119,18 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           <AlertAction>
             {workspaceLimit ? (
               <Button variant="default" size="sm" onClick={copyAdminRequest}>
-                Copy request for admin
+                <Trans>Copy request for admin</Trans>
               </Button>
             ) : chatGptLimit ? (
               <ChatGptUsageButton variant="default" size="sm" />
             ) : null}
             {onDismiss ? (
-              <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t({ message: "Dismiss error" })}
+                onClick={onDismiss}
+              >
                 <XIcon />
               </Button>
             ) : null}

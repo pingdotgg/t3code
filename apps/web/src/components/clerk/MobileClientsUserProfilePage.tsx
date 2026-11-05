@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
 import { SmartphoneIcon } from "lucide-react";
 
@@ -28,7 +30,7 @@ function MobileClientStatusBadge({
 }) {
   return (
     <Badge variant={enabled ? "success" : "outline"}>
-      {label}: {enabled ? "On" : "Off"}
+      {label}: {enabled ? <Trans>On</Trans> : <Trans>Off</Trans>}
     </Badge>
   );
 }
@@ -52,9 +54,12 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
       <div className="mt-2 flex flex-wrap gap-1.5">
         <MobileClientStatusBadge
           enabled={device.notifications.enabled}
-          label="Push notifications"
+          label={t({ message: "Push notifications" })}
         />
-        <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
+        <MobileClientStatusBadge
+          enabled={device.liveActivities.enabled}
+          label={t({ message: "Live Activities" })}
+        />
       </div>
       <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground/80">
         {mobileClientNotificationDetail(device)}
@@ -65,7 +70,11 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
 
 function MobileClientsSkeleton() {
   return (
-    <div aria-label="Loading mobile clients" className="divide-y border-t" role="status">
+    <div
+      aria-label={t({ message: "Loading mobile clients" })}
+      className="divide-y border-t"
+      role="status"
+    >
       {MOBILE_CLIENT_SKELETON_ROWS.map((row) => (
         <div key={row} className="py-4">
           <div className="flex gap-3">
@@ -92,10 +101,14 @@ function EmptyMobileClients() {
         <SmartphoneIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No mobile clients</EmptyTitle>
+        <EmptyTitle>
+          <Trans>No mobile clients</Trans>
+        </EmptyTitle>
         <EmptyDescription>
-          Install T3 Code on your phone and sign in to T3 Connect to get push notifications and Live
-          Activities.
+          <Trans>
+            Install T3 Code on your phone and sign in to T3 Connect to get push notifications and
+            Live Activities.
+          </Trans>
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -111,8 +124,8 @@ export function MobileClientsUserProfilePage() {
 
   return (
     <ClerkUserProfilePage
-      title="Mobile clients"
-      description="Mobile devices that get notifications from your environments."
+      title={t({ message: "Mobile clients" })}
+      description={t({ message: "Mobile devices that get notifications from your environments." })}
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}
@@ -128,12 +141,12 @@ export function MobileClientsUserProfilePage() {
           >
             <div>
               <p className="font-medium text-destructive-foreground">
-                Could not load mobile clients
+                <Trans>Could not load mobile clients</Trans>
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
             </div>
             <Button size="xs" variant="outline" onClick={devicesState.refresh}>
-              Try again
+              <Trans>Try again</Trans>
             </Button>
           </div>
         ) : null}

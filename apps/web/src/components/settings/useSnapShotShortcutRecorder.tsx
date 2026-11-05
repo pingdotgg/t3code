@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   isModifierPairShortcut,
   type SnapShotModifier,
@@ -116,6 +117,9 @@ export function useSnapShotShortcutRecorder({
     onRecord(next);
   };
 
+  const formatSnapShotShortcutLabelText = displayShortcut
+    ? formatSnapShotShortcutLabel(displayShortcut)
+    : undefined;
   return {
     recording,
     stopRecording,
@@ -127,8 +131,8 @@ export function useSnapShotShortcutRecorder({
         disabled={disabled}
         aria-label={
           displayShortcut
-            ? `Record snapshot shortcut, currently ${formatSnapShotShortcutLabel(displayShortcut)}`
-            : "Change snapshot shortcut"
+            ? t`Record snapshot shortcut, currently ${formatSnapShotShortcutLabelText}`
+            : t({ message: "Change snapshot shortcut" })
         }
         aria-pressed={recording}
         data-keybinding-capture=""

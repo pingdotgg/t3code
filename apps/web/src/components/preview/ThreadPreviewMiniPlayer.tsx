@@ -1,3 +1,5 @@
+import { Trans } from "@palamedes/react/macro";
+import { t } from "@palamedes/core/macro";
 import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -251,8 +253,10 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: serverTab ? "Unable to pop out preview" : "Unable to update popped-out preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: serverTab
+          ? t({ message: "Unable to pop out preview" })
+          : t({ message: "Unable to update popped-out preview" }),
+        description: error instanceof Error ? error.message : t({ message: "An error occurred." }),
       });
     }
   };
@@ -272,7 +276,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
-      label="Floating browser preview"
+      label={t({ message: "Floating browser preview" })}
       recording={recording}
       onOpenInPanel={openInPanel}
       pillActions={
@@ -284,7 +288,9 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
                   variant={poppedOut ? "secondary" : "ghost"}
                   size="icon-xs"
                   aria-label={
-                    poppedOut ? "Close popped-out preview" : "Pop preview into separate window"
+                    poppedOut
+                      ? t({ message: "Close popped-out preview" })
+                      : t({ message: "Pop preview into separate window" })
                   }
                   disabled={!serverTab && !desktopOverlay?.hasWebContents}
                   onPointerDown={(event) => event.stopPropagation()}
@@ -295,7 +301,11 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               <PictureInPicture2 />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {poppedOut ? "Close separate window" : "Pop into separate window"}
+              {poppedOut ? (
+                <Trans>Close separate window</Trans>
+              ) : (
+                <Trans>Pop into separate window</Trans>
+              )}
             </TooltipPopup>
           </Tooltip>
         ) : null
@@ -344,7 +354,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
             />
             {!desktopOverlay?.hasWebContents ? (
               <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
-                Reconnecting preview…
+                <Trans>Reconnecting preview…</Trans>
               </div>
             ) : null}
           </>
@@ -367,7 +377,7 @@ function DeviceMiniPlayer({
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
   );
   const host = deviceState.hosts.find((entry) => entry.id === source.hostId);
-  const hostLabel = host?.label ?? "Device host";
+  const hostLabel = host?.label ?? t({ message: "Device host" });
   const cornerRadius = (player: PreviewMiniPlayerSize) =>
     resolveDeviceMiniPlayerCornerRadius(source.platform, player);
 
@@ -386,7 +396,7 @@ function DeviceMiniPlayer({
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
-      label="Floating device preview"
+      label={t({ message: "Floating device preview" })}
       onOpenInPanel={openInPanel}
       cornerRadius={cornerRadius}
     >
@@ -555,7 +565,7 @@ function MiniPlayerShell({
           >
             <div
               role={recording ? "status" : undefined}
-              aria-label={recording ? "Recording preview" : undefined}
+              aria-label={recording ? t({ message: "Recording preview" }) : undefined}
               aria-hidden={!recording}
               className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 group-data-pill-open:opacity-0 pointer-coarse:right-2.5 pointer-coarse:top-2.5"
             >
@@ -580,7 +590,7 @@ function MiniPlayerShell({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label="Open preview in right panel"
+                      aria-label={t({ message: "Open preview in right panel" })}
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={onOpenInPanel}
                     />
@@ -588,7 +598,9 @@ function MiniPlayerShell({
                 >
                   <PanelRightIcon />
                 </TooltipTrigger>
-                <TooltipPopup side="top">Open in right panel</TooltipPopup>
+                <TooltipPopup side="top">
+                  <Trans>Open in right panel</Trans>
+                </TooltipPopup>
               </Tooltip>
               {pillActions}
               <Tooltip>
@@ -597,7 +609,7 @@ function MiniPlayerShell({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label="Close floating preview"
+                      aria-label={t({ message: "Close floating preview" })}
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={close}
                     />
@@ -605,7 +617,9 @@ function MiniPlayerShell({
                 >
                   <XIcon />
                 </TooltipTrigger>
-                <TooltipPopup side="top">Close floating preview</TooltipPopup>
+                <TooltipPopup side="top">
+                  <Trans>Close floating preview</Trans>
+                </TooltipPopup>
               </Tooltip>
             </div>
           </div>

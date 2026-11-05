@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -732,7 +733,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ...current,
             surfaces: current.surfaces.map((surface) =>
               surface.id === surfaceId && surface.kind === "device"
-                ? { ...surface, title: title.trim() || surface.target?.name || "Device" }
+                ? {
+                    ...surface,
+                    title: title.trim() || surface.target?.name || t({ message: "Device" }),
+                  }
                 : surface,
             ),
           })),

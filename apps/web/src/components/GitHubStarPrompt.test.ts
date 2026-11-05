@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -190,7 +191,9 @@ describe("recordPromptSent", () => {
     click(add.mock.lastCall?.[0].actionProps);
     await vi.advanceTimersByTimeAsync(0);
     const fallback = update.mock.lastCall?.[1];
-    expect(fallback).toMatchObject({ actionProps: { children: "Open GitHub" } });
+    expect(
+      renderToStaticMarkup(typeof fallback === "object" ? fallback.actionProps?.children : null),
+    ).toBe("Open GitHub");
     expect(openExternal).not.toHaveBeenCalled();
     click(typeof fallback === "object" ? fallback.actionProps : undefined);
     expect(openExternal).toHaveBeenCalledOnce();

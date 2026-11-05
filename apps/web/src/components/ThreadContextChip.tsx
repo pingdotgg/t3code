@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ThreadContextRecord } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -39,11 +40,16 @@ export function ThreadContextChip(props: {
         }
       />
       <TooltipPopup side="top">
-        {props.unreadable
-          ? "On another machine, so this machine's agent can't read it. Remove it or switch back to send."
-          : shell
-            ? "Open thread"
-            : "Thread no longer available"}
+        {props.unreadable ? (
+          <Trans>
+            On another machine, so this machine's agent can't read it. Remove it or switch back to
+            send.
+          </Trans>
+        ) : shell ? (
+          <Trans>Open thread</Trans>
+        ) : (
+          <Trans>Thread no longer available</Trans>
+        )}
       </TooltipPopup>
     </Tooltip>
   );

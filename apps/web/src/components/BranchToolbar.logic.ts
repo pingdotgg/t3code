@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
@@ -94,9 +95,15 @@ export function resolveEnvModeLabel(mode: EnvMode): string {
 }
 
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
-  recursive: "Recursive",
-  "top-level": "Top level only",
-  none: "Skip",
+  get recursive() {
+    return t({ message: "Recursive" });
+  },
+  get "top-level"() {
+    return t({ message: "Top level only" });
+  },
+  get none() {
+    return t({ message: "Skip" });
+  },
 };
 
 export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {

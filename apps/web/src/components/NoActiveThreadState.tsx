@@ -1,4 +1,4 @@
-import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { isElectron } from "../env";
@@ -11,12 +11,12 @@ export function NoActiveThreadState() {
         <WorkspacePageHeader electron={isElectron} className="border-b border-border">
           {isElectron ? (
             <span className="text-xs text-muted-foreground/50">
-              {t({ message: "No active thread" })}
+              <Trans>No active thread</Trans>
             </span>
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                {t({ message: "No active thread" })}
+                <Trans>No active thread</Trans>
               </span>
             </div>
           )}
@@ -25,9 +25,11 @@ export function NoActiveThreadState() {
         <Empty className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle>{t({ message: "Pick a thread to continue" })}</EmptyTitle>
+              <EmptyTitle>
+                <Trans>Pick a thread to continue</Trans>
+              </EmptyTitle>
               <EmptyDescription>
-                {t({ message: "Select an existing thread or create a new one to get started." })}
+                <Trans>Select an existing thread or create a new one to get started.</Trans>
               </EmptyDescription>
             </EmptyHeader>
           </div>
