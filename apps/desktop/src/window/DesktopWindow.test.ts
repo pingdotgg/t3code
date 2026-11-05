@@ -37,6 +37,7 @@ import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopTray from "../app/DesktopTray.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -100,6 +101,7 @@ function makeFakeBrowserWindow() {
 
   const window = {
     close: vi.fn(),
+    hide: vi.fn(),
     focus: vi.fn(),
     getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
@@ -110,6 +112,7 @@ function makeFakeBrowserWindow() {
     isVisible: vi.fn(() => true),
     loadURL: vi.fn(() => Promise.resolve()),
     maximize: vi.fn(),
+    minimize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
     }),
@@ -130,6 +133,7 @@ function makeFakeBrowserWindow() {
 
   return {
     window: window as unknown as Electron.BrowserWindow,
+    hide: window.hide,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
@@ -138,6 +142,7 @@ function makeFakeBrowserWindow() {
     isMinimized: window.isMinimized,
     loadURL: window.loadURL,
     maximize: window.maximize,
+    minimize: window.minimize,
     openDevTools: webContents.openDevTools,
     reload: webContents.reload,
     reloadIgnoringCache: webContents.reloadIgnoringCache,
@@ -158,6 +163,10 @@ function makeFakeBrowserWindow() {
 
 const layerDesktopClientSettings = Layer.mock(DesktopClientSettings.DesktopClientSettings)({
   get: Effect.succeedNone,
+});
+
+const layerDesktopTray = Layer.mock(DesktopTray.DesktopTray)({
+  shouldHideOnClose: Effect.succeed(false),
 });
 
 const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
@@ -236,6 +245,7 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly shouldHideOnClose?: Effect.Effect<boolean>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -300,6 +310,9 @@ function layerTest(input: {
     Layer.provide(
       Layer.mergeAll(
         layerDesktopAssets,
+        Layer.mock(DesktopTray.DesktopTray)({
+          shouldHideOnClose: input.shouldHideOnClose ?? Effect.succeed(false),
+        }),
         Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
           register: () => Effect.void,
           recordMetrics: () => Effect.void,
@@ -421,6 +434,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       Layer.provide(
         Layer.mergeAll(
           layerDesktopAssets,
+          layerDesktopTray,
           Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
             register: () => Effect.void,
             recordMetrics: () => Effect.void,
@@ -462,6 +476,101 @@ const captureOne = DesktopSnapShotId.make("11111111-1111-4111-8111-111111111111"
 const captureTwo = DesktopSnapShotId.make("22222222-2222-4222-8222-222222222222");
 
 describe("DesktopWindow", () => {
+  it.effect.each(["windowed", "minimized", "activated", "system-activated"] as const)(
+    "applies %s login presentation only to the first window and respects explicit activation",
+    (mode) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const presented = Promise.withResolvers<void>();
+        const reveal = vi.fn(() => presented.resolve());
+        fake.minimize.mockImplementation(() => presented.resolve());
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.activateFromSystem;
+          yield* windows.setStartupMinimized(mode !== "windowed");
+          if (mode !== "windowed") {
+            yield* windows.showConnectingSplash;
+            assert.equal(yield* Ref.get(createCount), 0);
+          }
+          yield* windows.ensureMain;
+          if (mode === "system-activated") yield* windows.activateFromSystem;
+          if (mode === "activated") yield* windows.activate;
+          fake.windowListeners.get("ready-to-show")?.();
+          yield* Effect.promise(() => presented.promise);
+          assert.equal(fake.minimize.mock.calls.length, mode === "minimized" ? 1 : 0);
+          assert.equal(reveal.mock.calls.length, mode === "minimized" ? 0 : 1);
+          if (mode === "minimized") {
+            assert.equal(fake.maximize.mock.calls.length, 0);
+            fake.windowListeners.get("restore")?.();
+            assert.equal(fake.maximize.mock.calls.length, 1);
+          }
+          yield* windows.activateFromSystem;
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.equal(reveal.mock.calls.length, mode === "minimized" ? 1 : 2);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: reveal,
+              desktopSettings: {
+                ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+                mainWindowMaximized: true,
+              },
+            }),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "retains the main window in the tray across startup and reopens the same renderer",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        let revealed = false;
+        let enabled = false;
+        const layer = layerTest({
+          window: fake.window,
+          createCount,
+          mainWindow,
+          shouldHideOnClose: Effect.sync(() => enabled),
+          onReveal: () => {
+            revealed = true;
+          },
+        });
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.ensureMain;
+          const close = () => {
+            const event = { preventDefault: vi.fn() };
+            fake.windowListeners.get("close")?.(event);
+            return event;
+          };
+          assert.equal(close().preventDefault.mock.calls.length, 0);
+          enabled = true;
+          assert.equal(close().preventDefault.mock.calls.length, 1);
+          assert.equal(fake.hide.mock.calls.length, 1);
+          assert.equal(Option.getOrThrow(yield* Ref.get(mainWindow)), fake.window);
+          fake.windowListeners.get("ready-to-show")?.();
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.isFalse(revealed);
+          yield* windows.activate;
+          assert.isTrue(revealed);
+          assert.equal(yield* Ref.get(createCount), 1);
+          fake.windowListeners.get("query-session-end")?.();
+          assert.equal(close().preventDefault.mock.calls.length, 1);
+          fake.windowListeners.get("session-end")?.();
+          assert.equal(close().preventDefault.mock.calls.length, 0);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

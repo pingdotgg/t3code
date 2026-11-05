@@ -33,6 +33,9 @@ import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopTray from "./DesktopTray.ts";
+import * as DesktopLoginItem from "./DesktopLoginItem.ts";
+import * as DesktopClientPreferences from "../settings/DesktopClientPreferences.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -160,6 +163,8 @@ it.effect(
             quitting,
           } as DesktopState.DesktopState["Service"]),
           Effect.provideService(DesktopWindow.DesktopWindow, {
+            activate: Effect.void,
+            setStartupMinimized: () => Effect.void,
             ensureMain: record("window").pipe(
               Effect.andThen(Deferred.succeed(windowStarted, undefined)),
             ),
@@ -191,7 +196,18 @@ it.effect(
             Layer.mock(BrowserImport.BrowserImport, {}),
             Layer.mock(DesktopBackendConfiguration.DesktopBackendConfiguration, {}),
             Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
-            Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
+            Layer.mock(DesktopClientSettings.DesktopClientSettings, { get: Effect.succeedNone }),
+            Layer.mock(DesktopClientPreferences.DesktopClientPreferences, {
+              get: Effect.succeedNone,
+            }),
+            Layer.mock(DesktopLoginItem.DesktopLoginItem, {
+              supported: false,
+              wasOpenedAtLogin: Effect.succeed(false),
+            }),
+            Layer.mock(DesktopTray.DesktopTray, {
+              initialize: () => Effect.void,
+              configure: () => Effect.void,
+            }),
             Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
             Layer.mock(DesktopIpc.DesktopIpc, {}),
             Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),

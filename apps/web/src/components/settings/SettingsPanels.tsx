@@ -565,6 +565,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Delete confirmation"]
       : []),
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
+    ...(settings.keepRunningInBackground !== DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground
+      ? ["Keep running in background"]
+      : []),
+    ...(settings.openAtLogin !== DEFAULT_UNIFIED_SETTINGS.openAtLogin ? ["Launch at login"] : []),
+    ...(settings.loginWindowMode !== DEFAULT_UNIFIED_SETTINGS.loginWindowMode
+      ? ["Startup window"]
+      : []),
     ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
@@ -673,6 +680,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
+      keepRunningInBackground: DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground,
+      openAtLogin: DEFAULT_UNIFIED_SETTINGS.openAtLogin,
+      loginWindowMode: DEFAULT_UNIFIED_SETTINGS.loginWindowMode,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
@@ -791,6 +801,96 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {isElectron ? (
+        <SettingsSection id="desktop" title="Desktop">
+          <SettingsRow
+            {...searchableSetting("open-at-login")}
+            description="Start T3 Code automatically when you sign in to this computer."
+            resetAction={
+              settings.openAtLogin !== DEFAULT_UNIFIED_SETTINGS.openAtLogin ? (
+                <SettingResetButton
+                  label="launch at login"
+                  onClick={() =>
+                    updateSettings({ openAtLogin: DEFAULT_UNIFIED_SETTINGS.openAtLogin })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.openAtLogin}
+                onCheckedChange={(checked) => updateSettings({ openAtLogin: checked })}
+                aria-label="Launch at login"
+              />
+            }
+          />
+          {settings.openAtLogin ? (
+            <SettingsRow
+              id="login-window-mode"
+              title="Startup window"
+              description="Applies only when T3 Code starts at login. Opening it yourself always shows the window."
+              resetAction={
+                settings.loginWindowMode !== DEFAULT_UNIFIED_SETTINGS.loginWindowMode ? (
+                  <SettingResetButton
+                    label="startup window"
+                    onClick={() =>
+                      updateSettings({ loginWindowMode: DEFAULT_UNIFIED_SETTINGS.loginWindowMode })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={settings.loginWindowMode}
+                  onValueChange={(value) => {
+                    if (value === "windowed" || value === "minimized") {
+                      updateSettings({ loginWindowMode: value });
+                    }
+                  }}
+                >
+                  <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Startup window">
+                    <SelectValue>
+                      {settings.loginWindowMode === "minimized" ? "Minimized" : "Windowed"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value="windowed">
+                      Windowed
+                    </SelectItem>
+                    <SelectItem hideIndicator value="minimized">
+                      Minimized
+                    </SelectItem>
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ) : null}
+          <SettingsRow
+            {...searchableSetting("keep-running-in-background")}
+            description="Keep the local server and tasks running when you close the window. Reopen or quit T3 Code from the system tray or menu bar."
+            resetAction={
+              settings.keepRunningInBackground !==
+              DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground ? (
+                <SettingResetButton
+                  label="keep running in background"
+                  onClick={() =>
+                    updateSettings({
+                      keepRunningInBackground: DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.keepRunningInBackground}
+                onCheckedChange={(checked) => updateSettings({ keepRunningInBackground: checked })}
+                aria-label="Keep running in background"
+              />
+            }
+          />
+        </SettingsSection>
+      ) : null}
       <SettingsSection id="notifications" title="Notifications">
         <NotificationSettings />
         <SettingsRow

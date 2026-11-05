@@ -688,6 +688,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "keep-running-in-background",
+    title: "Keep running in background",
+    to: "/settings/general",
+    searchTerms: ["desktop tray menu bar close window server tasks quit"],
+    desktopOnly: true,
+  },
+  {
+    id: "open-at-login",
+    title: "Launch at login",
+    to: "/settings/general",
+    searchTerms: [
+      "desktop automatically sign in computer startup window minimized windowed autostart",
+    ],
+    desktopOnly: true,
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/threads",

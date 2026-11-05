@@ -41,7 +41,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
+import { LOGIN_ITEM_ARGUMENT } from "./DesktopLoginItem.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
@@ -64,6 +66,7 @@ const layerDesktopClerk = (
     copyText: () => Effect.void,
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
+  activate: Effect.Effect<void> = Effect.die("Unexpected desktop activation"),
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir: clerkStateDir,
@@ -107,6 +110,7 @@ const layerDesktopClerk = (
         fileSystemLayer,
       ),
     ),
+    Layer.provideMerge(Layer.mock(DesktopWindow.DesktopWindow, { activate })),
   );
 };
 
@@ -175,14 +179,14 @@ describe("DesktopClerk", () => {
   );
 
   it.effect.each(["before configure", "after configure"] as const)(
-    "reveals the running window when a second instance launches %s",
+    "ignores login startup and activates a manual second instance %s",
     (entry) => {
       storageMock.mockReturnValue(storageAdapter);
       createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
       const quit = vi.fn();
       const listeners = new Map<string, (...args: unknown[]) => void>();
-      const revealed = Promise.withResolvers<unknown>();
-      const window = { id: 1 };
+      const revealed = Promise.withResolvers<void>();
+      const activate = vi.fn(() => revealed.resolve());
       const electronApp = {
         quit: Effect.sync(quit),
         on: (eventName: string, listener: (...args: unknown[]) => void) =>
@@ -190,22 +194,36 @@ describe("DesktopClerk", () => {
             listeners.set(eventName, listener);
           }),
       } as unknown as ElectronApp.ElectronApp["Service"];
-      const electronWindow = {
-        currentMainOrFirst: Effect.succeedSome(window),
-        reveal: (value: unknown) => Effect.sync(() => revealed.resolve(value)),
-      } as unknown as ElectronWindow.ElectronWindow["Service"];
+      const electronWindow = {} as unknown as ElectronWindow.ElectronWindow["Service"];
 
       return Effect.gen(function* () {
         const clerk = yield* DesktopClerk.DesktopClerk;
-        if (entry === "before configure") listeners.get("second-instance")?.({}, ["t3"]);
+        if (entry === "before configure") {
+          listeners.get("second-instance")?.({}, ["t3", LOGIN_ITEM_ARGUMENT]);
+          listeners.get("second-instance")?.({}, ["t3"]);
+        }
         yield* clerk.configure;
 
         assert.equal(quit.mock.calls.length, 0);
-        if (entry === "after configure") listeners.get("second-instance")!({}, ["t3"]);
-        assert.strictEqual(yield* Effect.promise(() => revealed.promise), window);
+        if (entry === "after configure") {
+          listeners.get("second-instance")!({}, ["t3", LOGIN_ITEM_ARGUMENT]);
+          listeners.get("second-instance")!({}, ["t3"]);
+        }
+        yield* Effect.promise(() => revealed.promise);
+        assert.equal(activate.mock.calls.length, 1);
       }).pipe(
         Effect.scoped,
-        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
+        Effect.provide(
+          layerDesktopClerk(
+            true,
+            [],
+            "darwin",
+            undefined,
+            undefined,
+            listeners,
+            Effect.sync(activate),
+          ),
+        ),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
@@ -232,7 +250,7 @@ describe("DesktopClerk", () => {
 
     return Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
-      listeners.get("second-instance")?.({}, ["t3", first]);
+      listeners.get("second-instance")?.({}, ["t3", LOGIN_ITEM_ARGUMENT, first]);
       listeners.get("second-instance")?.({}, ["t3", second]);
       listeners.get("open-url")?.({ preventDefault: () => undefined }, launchPair);
       assert.deepEqual(received, []);
@@ -323,6 +341,7 @@ it.effect(
       assert.equal(event.preventDefault.mock.calls.length, 0);
       listeners.get("second-instance")!({}, [
         "t3",
+        LOGIN_ITEM_ARGUMENT,
         "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
       ]);
       yield* Effect.promise(() => revealed.promise);

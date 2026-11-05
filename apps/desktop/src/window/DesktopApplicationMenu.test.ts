@@ -75,6 +75,8 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected createMain"),
+    setStartupMinimized: () => Effect.void,
+    activateFromSystem: Effect.void,
     ensureMain: Effect.die("unexpected ensureMain"),
     revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
     activate: Effect.void,

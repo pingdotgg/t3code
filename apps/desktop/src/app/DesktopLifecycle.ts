@@ -12,6 +12,7 @@ import type * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { LOGIN_ITEM_ARGUMENT } from "./DesktopLoginItem.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -226,12 +227,16 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
-      // Startup already acted on the app link that launched it; passing it on replays it.
+      // Startup links and login intent apply only to the original launch.
       const appLinkPrefix = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}:`;
       const args = yield* HostProcess.Arguments;
       yield* electronApp.relaunch({
         execPath: yield* HostProcess.ExecutablePath,
-        args: args.slice(1).filter((arg) => !arg.toLowerCase().startsWith(appLinkPrefix)),
+        args: args
+          .slice(1)
+          .filter(
+            (arg) => arg !== LOGIN_ITEM_ARGUMENT && !arg.toLowerCase().startsWith(appLinkPrefix),
+          ),
       });
       yield* electronApp.exit(0);
     }).pipe(
@@ -284,7 +289,7 @@ export const make = DesktopLifecycle.of({
         Effect.gen(function* () {
           const state = yield* DesktopState.DesktopState;
           if (yield* Ref.get(state.quitting)) return;
-          yield* desktopWindow.activate;
+          yield* desktopWindow.activateFromSystem;
         }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
       );
     });

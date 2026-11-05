@@ -32,6 +32,10 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopStartupRecovery from "./DesktopStartupRecovery.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopTray from "./DesktopTray.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import * as DesktopClientPreferences from "../settings/DesktopClientPreferences.ts";
+import * as DesktopLoginItem from "./DesktopLoginItem.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
@@ -185,6 +189,44 @@ const bootstrap = Effect.gen(function* () {
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });
   yield* installDesktopIpcHandlers();
+  const preferences = yield* DesktopClientPreferences.DesktopClientPreferences;
+  const loginItem = yield* DesktopLoginItem.DesktopLoginItem;
+  yield* Effect.gen(function* () {
+    const saved = yield* preferences.get;
+    yield* desktopWindow.setStartupMinimized(
+      Option.isSome(saved) &&
+        saved.value.loginWindowMode === "minimized" &&
+        (yield* loginItem.wasOpenedAtLogin),
+    );
+  }).pipe(
+    Effect.catchCause((cause) => Effect.logWarning("Could not restore login preferences", cause)),
+  );
+  const tray = yield* DesktopTray.DesktopTray;
+  yield* tray.initialize(desktopWindow.activate.pipe(Effect.ignoreCause));
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+  yield* clientSettings.get.pipe(
+    Effect.flatMap((saved) =>
+      tray
+        .configure(Option.isSome(saved) && saved.value.keepRunningInBackground)
+        .pipe(
+          Effect.tapError(() =>
+            Option.isSome(saved)
+              ? clientSettings.set({ ...saved.value, keepRunningInBackground: false })
+              : Effect.void,
+          ),
+        ),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.gen(function* () {
+        yield* Effect.logWarning("Could not restore desktop background mode", cause);
+        const dialog = yield* ElectronDialog.ElectronDialog;
+        yield* dialog.showErrorBox(
+          "Background mode unavailable",
+          "T3 Code could not restore background mode. Closing the window will use the normal behavior. Check Settings → General before closing it.",
+        );
+      }),
+    ),
+  );
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
   // Before any window: the preload merges these items before the app reads storage.
   yield* (yield* DesktopLegacyLocalStorage.DesktopLegacyLocalStorage).load(

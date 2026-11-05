@@ -64,6 +64,9 @@ import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopState from "./app/DesktopState.ts";
+import * as DesktopTray from "./app/DesktopTray.ts";
+import * as DesktopLoginItem from "./app/DesktopLoginItem.ts";
+import * as DesktopClientPreferences from "./settings/DesktopClientPreferences.ts";
 import * as DesktopLegacyLocalStorage from "./app/DesktopLegacyLocalStorage.ts";
 import * as DesktopTelemetryPublisher from "./telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./telemetry/DesktopRendererHistory.ts";
@@ -175,6 +178,8 @@ const layerDesktopPreview = PreviewManager.layer.pipe(
 );
 
 const layerDesktopWindow = DesktopWindow.layer.pipe(
+  Layer.provideMerge(DesktopTray.layer.pipe(Layer.provide(layerDesktopFoundation))),
+  Layer.provideMerge(DesktopLoginItem.layer.pipe(Layer.provide(layerDesktopFoundation))),
   Layer.provideMerge(layerDesktopServerExposure),
   Layer.provideMerge(layerDesktopPreview),
 );
@@ -206,6 +211,7 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
 );
 
 const layerDesktopApplication = Layer.mergeAll(
+  DesktopClientPreferences.layer,
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,

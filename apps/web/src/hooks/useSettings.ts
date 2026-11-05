@@ -187,10 +187,23 @@ function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A>
   return result;
 }
 
+function logClientSettingsPersistenceError(error: unknown): void {
+  console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
+    operation: "persist",
+    ...safeErrorLogAttributes(error),
+  });
+}
+
 export function persistClientSettingsPatch(
   patch: ClientSettingsPatch,
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
 ): Promise<void> {
+  // Native settings must be accepted by the OS before they appear enabled.
+  if (patch.keepRunningInBackground !== undefined || patch.openAtLogin !== undefined) {
+    return persistClientSettingsUpdate((current) => ({ ...current, ...patch }), persist)
+      .then(() => undefined)
+      .catch(logClientSettingsPersistenceError);
+  }
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
     clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
@@ -211,12 +224,7 @@ export function persistClientSettingsPatch(
       }
     }
     await persist(getClientSettingsSnapshot());
-  }).catch((error) => {
-    console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
-      operation: "persist",
-      ...safeErrorLogAttributes(error),
-    });
-  });
+  }).catch(logClientSettingsPersistenceError);
 }
 
 /** Reapply to newer snapshots after pending writes to avoid losing concurrent changes. */

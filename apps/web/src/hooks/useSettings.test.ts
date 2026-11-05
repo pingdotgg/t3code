@@ -167,6 +167,25 @@ describe("client settings hydration", () => {
 });
 
 describe("persistClientSettingsPatch", () => {
+  it.each(["keepRunningInBackground", "openAtLogin"] as const)(
+    "keeps %s disabled after a rejected enable and saves subsequent preferences",
+    async (setting) => {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+      using _log = vi.spyOn(console, "error").mockImplementation(() => {});
+      persistenceMocks.setClientSettings.mockRejectedValueOnce(new Error("No tray host"));
+
+      await persistClientSettingsPatch({ [setting]: true });
+      expect(getClientSettings()[setting]).toBe(false);
+      await persistClientSettingsPatch({ wordWrap: false });
+      expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith({
+        ...DEFAULT_CLIENT_SETTINGS,
+        wordWrap: false,
+      });
+      await persistClientSettingsPatch({ [setting]: true });
+      expect(getClientSettings()[setting]).toBe(true);
+    },
+  );
+
   it("waits for settings writes in request order", async () => {
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     let finishFirst!: () => void;

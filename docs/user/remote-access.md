@@ -23,9 +23,11 @@ choice, and `t3 status` to see it.
 
 The background service is not available on Windows, so there `t3 up` prints the
 `t3 serve` command to keep running in a terminal. You can also keep the desktop
-app running with its local environment enabled. Closing the desktop app's last
-window stops its local server. Saving your sign-in alone does not start a server
-or make the machine reachable.
+app running with its local environment enabled. To keep its server available
+after closing the window, enable [Keep running in background](./background-service.md#keep-the-desktop-app-running)
+in **Settings > General > Desktop**. Otherwise, closing the last window stops
+its local server. Saving your sign-in alone does not start a server or make the
+machine reachable.
 
 On your other device, sign in to the same T3 Connect account and choose the
 environment. On the app.t3.codes home page with no computer added yet, signing

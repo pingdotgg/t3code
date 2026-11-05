@@ -14,6 +14,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import { LOGIN_ITEM_ARGUMENT } from "./DesktopLoginItem.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -90,6 +91,8 @@ function layerDesktopWindow(
 ) {
   return Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected window creation"),
+    setStartupMinimized: () => Effect.void,
+    activateFromSystem: Effect.void,
     ensureMain: Effect.die("unexpected window creation"),
     revealOrCreateMain: Effect.die("unexpected window creation"),
     activate: input.activate ?? Effect.void,
@@ -226,7 +229,7 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
-  it.effect("relaunches without the app link that launched it", () =>
+  it.effect("relaunches without the login intent or app links that launched it", () =>
     Effect.gen(function* () {
       const relaunched = yield* Deferred.make<Electron.RelaunchOptions>();
       const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
@@ -261,6 +264,7 @@ describe("DesktopLifecycle", () => {
         Effect.provideService(HostProcess.Arguments, [
           "/opt/T3 Code/t3code",
           "--no-sandbox",
+          LOGIN_ITEM_ARGUMENT,
           "T3CODE://pair?token=spent",
           "t3code://new?prompt=hello",
         ]),

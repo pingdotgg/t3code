@@ -1,7 +1,33 @@
 # Running T3 Code in the background
 
-On Linux and macOS, T3 Code can run as a service for your user so you do not need
-to keep a terminal open.
+The desktop app can keep running after you close its window. On Linux and macOS,
+T3 Code can also run as a service for your user so you do not need to keep a terminal open.
+
+## Keep the desktop app running
+
+In **Settings > General > Desktop**, enable **Keep running in background**. It is
+off by default. Closing the window then keeps the local server, running agents,
+and scheduled tasks available. Use the system tray on Windows or Linux, or the
+menu bar on macOS, to reopen T3 Code or quit it completely. Linux needs a desktop
+environment with system tray support.
+
+This setting does not start T3 Code when you sign in or keep the computer awake.
+To restore the usual window-close behavior, turn it off in Settings.
+
+## Start the desktop app at login
+
+Enable **Launch at login** in **Settings > General > Desktop** to start the
+installed app when you sign in. It is off by default. Choose **Startup window >
+Minimized** to start with a minimized window in the taskbar or Dock; **Windowed**
+is the default. Opening T3 Code yourself always shows the window.
+On Linux, minimizing depends on the window manager; Wayland compositors may show
+the window instead.
+
+Windows and macOS use the system's startup and login items. Linux uses XDG
+autostart and requires a graphical desktop login; starting a WSL shell alone
+does not launch the app. Turn off **Launch at login** to remove its startup entry.
+This is independent of **Keep running in background** and does not keep the
+computer awake.
 
 ## Manage the service
 
@@ -94,9 +120,9 @@ service is still installed and will start at the next login.
 
 Windows background services are not supported. To keep a Windows host available
 through T3 Connect, leave the desktop app running with its local environment
-enabled, or keep `t3 serve` running in a terminal. Minimize the desktop app rather
-than closing its last window, which stops its local server. Linking T3 Connect
-does not configure automatic startup at Windows sign-in.
+enabled and turn on **Keep running in background**, or keep `t3 serve` running in
+a terminal. Without that setting, closing the last desktop window stops its
+local server. Linking T3 Connect does not configure automatic startup at Windows sign-in.
 
 `t3 up` installs the service when you set up T3 Connect, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.

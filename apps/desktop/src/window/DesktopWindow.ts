@@ -16,6 +16,7 @@ import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopTray from "../app/DesktopTray.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -107,6 +108,8 @@ export class DesktopWindow extends Context.Service<
     readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly activate: Effect.Effect<void, DesktopWindowError>;
+    readonly activateFromSystem: Effect.Effect<void, DesktopWindowError>;
+    readonly setStartupMinimized: (minimized: boolean) => Effect.Effect<void>;
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
     readonly showConnectingSplash: Effect.Effect<void>;
     readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
@@ -305,6 +308,7 @@ function bindFirstRevealTrigger(
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
+  const tray = yield* DesktopTray.DesktopTray;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
@@ -319,14 +323,25 @@ export const make = Effect.gen(function* () {
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
   let mainClosedDuringStartup = false;
+  let startupMinimized = false;
+  let activationRequested = false;
+  let startupPresentationConfigured = false;
+  let initialSystemActivationReceived = false;
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
+  const hiddenToTray = new WeakSet<Electron.BrowserWindow>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
-    Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
+    Effect.suspend(() => {
+      activationRequested = true;
+      startupMinimized = false;
+      hiddenToTray.delete(window);
+      return pendingMainReveals.get(window) ?? electronWindow.reveal(window);
+    }),
   );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
@@ -700,8 +715,18 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
+    let sessionEnding = false;
+    window.on("session-end", () => {
+      sessionEnding = true;
+    });
+    window.on("close", (event) => {
       runFork(flushBoundsPersist);
+      if (!sessionEnding && runSync(tray.shouldHideOnClose)) {
+        event.preventDefault();
+        hiddenToTray.add(window);
+        startupMinimized = false;
+        window.hide();
+      }
     });
 
     if (environment.platform === "darwin") {
@@ -848,15 +873,27 @@ export const make = Effect.gen(function* () {
       if (
         !rendererReady ||
         firstRevealComplete ||
+        hiddenToTray.has(window) ||
         window.isDestroyed() ||
         (yield* Ref.get(desktopState.quitting))
       )
         return;
       firstRevealComplete = true;
+      startupPresentationConfigured = true;
       pendingMainReveals.delete(window);
       window.webContents.setBackgroundThrottling(true);
-      if (persistedSettings.mainWindowMaximized) window.maximize();
-      yield* electronWindow.reveal(window);
+      if (startupMinimized) {
+        startupMinimized = false;
+        if (persistedSettings.mainWindowMaximized) {
+          window.once("restore", () => {
+            if (!window.isDestroyed()) window.maximize();
+          });
+        }
+        window.minimize();
+      } else {
+        if (persistedSettings.mainWindowMaximized) window.maximize();
+        yield* electronWindow.reveal(window);
+      }
       yield* dismissConnectingSplash;
     });
     pendingMainReveals.set(window, revealWhenReady);
@@ -906,6 +943,8 @@ export const make = Effect.gen(function* () {
     });
 
   const revealOrCreateMain = Effect.gen(function* () {
+    activationRequested = true;
+    startupMinimized = false;
     const window = yield* ensureMain.pipe(Effect.flatMap(requireWindow));
     yield* revealMain(window);
     return window;
@@ -923,6 +962,7 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
+    if (startupMinimized) return;
     if (yield* Ref.get(desktopState.quitting)) return;
     const existingSplash = yield* Ref.get(splashWindowRef);
     if (Option.isSome(existingSplash)) return;
@@ -998,6 +1038,29 @@ export const make = Effect.gen(function* () {
     yield* dispatch;
   });
 
+  const activate = Effect.gen(function* () {
+    activationRequested = true;
+    startupMinimized = false;
+    if (yield* Ref.get(desktopState.quitting)) return;
+    const existingWindow = yield* currentMainWindow;
+    if (Option.isSome(existingWindow)) {
+      yield* revealMain(existingWindow.value);
+      return;
+    }
+    if (mainClosedDuringStartup) {
+      yield* ensureMain;
+      return;
+    }
+    if (!(yield* Ref.get(backendReadyRef))) {
+      const splash = yield* Ref.get(splashWindowRef);
+      if (Option.isSome(splash)) {
+        yield* electronWindow.reveal(splash.value);
+        return;
+      }
+    }
+    yield* createMainIfBackendReady;
+  }).pipe(Effect.withSpan("desktop.window.activate"));
+
   return DesktopWindow.of({
     createMain: createMain.pipe(Effect.flatMap(requireWindow)),
     ensureMain: ensureMain.pipe(Effect.flatMap(requireWindow)),
@@ -1008,27 +1071,21 @@ export const make = Effect.gen(function* () {
         yield* electronWindow.prepareReveal(existingWindow.value);
       }
     }),
-    activate: Effect.gen(function* () {
-      if (yield* Ref.get(desktopState.quitting)) return;
-      const existingWindow = yield* currentMainWindow;
-      if (Option.isSome(existingWindow)) {
-        yield* revealMain(existingWindow.value);
-        return;
+    activate,
+    // macOS also emits activate for the initial launch, before the login window is presented.
+    activateFromSystem: Effect.suspend(() => {
+      if (!initialSystemActivationReceived) {
+        initialSystemActivationReceived = true;
+        if (!startupPresentationConfigured || startupMinimized) return Effect.void;
       }
-      if (mainClosedDuringStartup) {
-        yield* ensureMain;
-        return;
-      }
-      const backendReady = yield* Ref.get(backendReadyRef);
-      if (!backendReady) {
-        const splash = yield* Ref.get(splashWindowRef);
-        if (Option.isSome(splash)) {
-          yield* electronWindow.reveal(splash.value);
-          return;
-        }
-      }
-      yield* createMainIfBackendReady;
-    }).pipe(Effect.withSpan("desktop.window.activate")),
+      return activate;
+    }),
+    setStartupMinimized: Effect.fn("desktop.window.setStartupMinimized")((minimized) =>
+      Effect.sync(() => {
+        startupPresentationConfigured = true;
+        if (!activationRequested) startupMinimized = minimized;
+      }),
+    ),
     createMainIfBackendReady,
     showConnectingSplash,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {

@@ -19,6 +19,8 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { LOGIN_ITEM_ARGUMENT } from "./DesktopLoginItem.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
@@ -60,6 +62,7 @@ export class DesktopClerk extends Context.Service<
       never,
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
+      | DesktopWindow.DesktopWindow
       | DesktopWebLinks.DesktopWebLinks
       | Scope.Scope
     >;
@@ -162,7 +165,9 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
-      const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
+      const context = yield* Effect.context<
+        ElectronWindow.ElectronWindow | DesktopWindow.DesktopWindow
+      >();
       const runPromise = Effect.runPromiseWith(context);
 
       const startProviderAuthHandoff = (value: string | undefined) => {
@@ -241,11 +246,16 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
+        if (argv.includes(LOGIN_ITEM_ARGUMENT)) return;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
-          }),
+            const desktopWindow = yield* DesktopWindow.DesktopWindow;
+            yield* desktopWindow.activate;
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not activate the desktop window", cause),
+            ),
+          ),
         );
       };
       for (const argv of pendingSecondInstances.splice(0)) handleSecondInstance(argv);

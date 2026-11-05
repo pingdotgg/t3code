@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import { beforeEach, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Layer from "effect/Layer";
 
 const native = vi.hoisted(() => ({
   setBadgeCount: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("electron", () => ({
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import { installNotificationBadge } from "./notificationBadge.ts";
+import * as DesktopTray from "../../app/DesktopTray.ts";
 
 const badge = { count: 2, image: "data:image/png;base64,aGVsbG8=" };
 
@@ -42,58 +44,81 @@ beforeEach(() => {
   native.listeners.clear();
 });
 
-it.effect("validates IPC and clears on native focus, quit, and disposal", () =>
-  Effect.gen(function* () {
-    const handlers = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        yield* installNotificationBadge();
-        const handler = handlers.get("desktop:set-notification-badge")!;
-        const event = { sender: { id: 1 } };
-        for (const invalid of [
-          { ...badge, count: -1 },
-          { ...badge, count: 0.5 },
-          { ...badge, count: Infinity },
-          { ...badge, image: "https://example.com/icon.png" },
-          { ...badge, image: `data:image/png;base64,${"a".repeat(16_384)}` },
-        ]) {
-          yield* Effect.promise(() => expect(handler(event, invalid)).rejects.toBeDefined());
+it.effect.each(["win32", "darwin", "linux"] satisfies NodeJS.Platform[])(
+  "validates IPC and clears taskbar and tray badges on focus, quit, and disposal on %s",
+  (platform) =>
+    Effect.gen(function* () {
+      const expectLastBadge = (count: number) => {
+        if (platform === "win32") {
+          expect(native.setOverlayIcon).toHaveBeenLastCalledWith(
+            count > 0 ? native.image : null,
+            count > 0 ? `${count} threads with new notifications` : "",
+          );
+        } else {
+          expect(native.setBadgeCount).toHaveBeenLastCalledWith(count);
         }
-        expect(native.setBadgeCount).not.toHaveBeenCalled();
-        yield* Effect.promise(() => Promise.resolve(handler(event, badge)));
-        expect(native.setBadgeCount).toHaveBeenLastCalledWith(2);
-        native.listeners.get("browser-window-focus")!();
-        expect(native.setBadgeCount).toHaveBeenLastCalledWith(0);
-        expect(native.webContents.send).toHaveBeenCalledWith("desktop:set-notification-badge");
-        native.getFocusedWindow.mockReturnValue({});
-        yield* Effect.promise(() => Promise.resolve(handler(event, badge)));
-        expect(native.setBadgeCount).toHaveBeenLastCalledWith(0);
-        expect(native.webContents.send).toHaveBeenCalledTimes(2);
-        yield* Effect.promise(() => Promise.resolve(handler(event, { count: 0, image: null })));
-        expect(native.webContents.send).toHaveBeenCalledTimes(2);
-        native.getFocusedWindow.mockReturnValue(null);
-        yield* Effect.promise(() => Promise.resolve(handler(event, badge)));
-        native.listeners.get("before-quit")!();
-        expect(native.setBadgeCount).toHaveBeenLastCalledWith(0);
-      }),
-    ).pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provide([
-        ElectronApp.layer,
-        DesktopIpc.layer({
-          handle: (channel, handler) => {
-            handlers.set(channel, handler);
-          },
-          removeHandler: (channel) => {
-            handlers.delete(channel);
-          },
-          on: vi.fn(),
-          removeAllListeners: vi.fn(),
+      };
+      const handlers = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
+      const trayBadges: Array<{ count: number; image: string | null }> = [];
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* installNotificationBadge();
+          const handler = handlers.get("desktop:set-notification-badge")!;
+          const event = { sender: { id: 1 } };
+          for (const invalid of [
+            { ...badge, count: -1 },
+            { ...badge, count: 0.5 },
+            { ...badge, count: Infinity },
+            { ...badge, image: "https://example.com/icon.png" },
+            { ...badge, image: `data:image/png;base64,${"a".repeat(16_384)}` },
+          ]) {
+            yield* Effect.promise(() => expect(handler(event, invalid)).rejects.toBeDefined());
+          }
+          expect(native.setBadgeCount).not.toHaveBeenCalled();
+          expect(native.setOverlayIcon).not.toHaveBeenCalled();
+          expect(trayBadges).toEqual([]);
+          yield* Effect.promise(() => Promise.resolve(handler(event, badge)));
+          expectLastBadge(2);
+          expect(trayBadges.at(-1)).toEqual(badge);
+          native.listeners.get("browser-window-focus")!();
+          expectLastBadge(0);
+          expect(trayBadges.at(-1)).toEqual({ count: 0, image: null });
+          expect(native.webContents.send).toHaveBeenCalledWith("desktop:set-notification-badge");
+          native.getFocusedWindow.mockReturnValue({});
+          yield* Effect.promise(() => Promise.resolve(handler(event, badge)));
+          expectLastBadge(0);
+          expect(native.webContents.send).toHaveBeenCalledTimes(2);
+          yield* Effect.promise(() => Promise.resolve(handler(event, { count: 0, image: null })));
+          expect(native.webContents.send).toHaveBeenCalledTimes(2);
+          native.getFocusedWindow.mockReturnValue(null);
+          yield* Effect.promise(() => Promise.resolve(handler(event, badge)));
+          native.listeners.get("before-quit")!();
+          expectLastBadge(0);
         }),
-      ]),
-    );
-    expect(native.setBadgeCount).toHaveBeenLastCalledWith(0);
-    expect(native.listeners.size).toBe(0);
-    expect(handlers.size).toBe(0);
-  }),
+      ).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provide([
+          ElectronApp.layer,
+          Layer.mock(DesktopTray.DesktopTray, {
+            updateBadge: (badge) =>
+              Effect.sync(() => {
+                trayBadges.push(badge);
+              }),
+          }),
+          DesktopIpc.layer({
+            handle: (channel, handler) => {
+              handlers.set(channel, handler);
+            },
+            removeHandler: (channel) => {
+              handlers.delete(channel);
+            },
+            on: vi.fn(),
+            removeAllListeners: vi.fn(),
+          }),
+        ]),
+      );
+      expectLastBadge(0);
+      expect(native.listeners.size).toBe(0);
+      expect(handlers.size).toBe(0);
+    }),
 );

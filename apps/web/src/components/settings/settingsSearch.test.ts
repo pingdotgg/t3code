@@ -106,7 +106,13 @@ describe("searchSettings", () => {
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "open-at-login")).toBe(true);
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "keep-running-in-background")).toBe(
+      true,
+    );
     expect(searchSettings("hold to quit")).toEqual([]);
+    expect(searchSettings("keep running in background")).toEqual([]);
+    expect(searchSettings("launch at login")).toEqual([]);
     expect(searchSettings("wsl")).toEqual([]);
     expect(searchSettings("update track")).toEqual([]);
   });

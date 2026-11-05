@@ -302,12 +302,18 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
-describe("ClientSettings notifications", () => {
-  it("requires opt-in when existing settings omit notification preferences", () => {
+describe("ClientSettings opt-in preferences", () => {
+  it("preserves startup and notification behavior when existing settings omit new preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
+    expect(decodeClientSettings({}).keepRunningInBackground).toBe(false);
+    expect(decodeClientSettings({}).openAtLogin).toBe(false);
+    expect(decodeClientSettings({}).loginWindowMode).toBe("windowed");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("keepRunningInBackground");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("openAtLogin");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("loginWindowMode");
   });
 });
 
