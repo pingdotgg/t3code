@@ -6754,7 +6754,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT EXISTS (
             SELECT 1 FROM orchestration_v2_projection_threads
             WHERE project_id = ${input.projectId} AND deleted_at IS NULL
-              AND json_extract(payload_json, '$.sideChat.anchor.threadId') = ${input.parentThreadId}
+              -- Matches orchestration_v2_projection_threads_side_chat_anchor_idx (Migrations.ts).
+              AND CASE WHEN json_valid(payload_json)
+                THEN json_extract(payload_json, '$.sideChat.anchor.threadId') END = ${input.parentThreadId}
           ) AS found
         `;
         return rows[0]?.found === 1;
