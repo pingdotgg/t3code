@@ -87,12 +87,19 @@ function SubagentAvatar(props: {
           size={15}
           displayName={resolveProviderInstanceDisplayName(provider)}
           accentColor={provider.accentColor}
+          icon={provider.icon}
+          badgeLabel={provider.badgeLabel}
           showBadge
         />
       ) : driver === undefined ? (
         <SymbolView name="sparkles" size={13} tintColorClassName="accent-icon-muted" />
       ) : (
-        <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={15} />
+        <ProviderIcon
+          provider={driver}
+          iconUrl={provider?.iconUrl}
+          appearance={provider}
+          size={15}
+        />
       )}
     </View>
   );

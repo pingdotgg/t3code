@@ -215,6 +215,8 @@ function SubagentAvatar({
   driver,
   displayName,
   iconUrl,
+  icon,
+  badgeLabel,
   accentColor,
   showBadge,
   status,
@@ -223,6 +225,8 @@ function SubagentAvatar({
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
   iconUrl?: string | undefined;
+  icon?: string | undefined;
+  badgeLabel?: string | undefined;
   accentColor?: string | undefined;
   showBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
@@ -241,6 +245,8 @@ function SubagentAvatar({
           driverKind={driver}
           displayName={displayName ?? driver}
           accentColor={accentColor}
+          icon={icon}
+          badgeLabel={badgeLabel}
           acpRegistryIconUrl={iconUrl}
           showBadge={showBadge}
           size="compact"
@@ -310,12 +316,23 @@ export function EnvironmentSubagentAvatar({
     (providers) =>
       providers?.find((provider) => provider.instanceId === providerInstanceId)?.iconUrl,
   );
+  const icon = useAtomValue(
+    providersAtom,
+    (providers) => providers?.find((provider) => provider.instanceId === providerInstanceId)?.icon,
+  );
+  const badgeLabel = useAtomValue(
+    providersAtom,
+    (providers) =>
+      providers?.find((provider) => provider.instanceId === providerInstanceId)?.badgeLabel,
+  );
   return (
     <SubagentAvatar
       {...props}
       driver={providerDriver ?? (remote === undefined ? driver : undefined)}
       displayName={displayName}
       iconUrl={iconUrl}
+      icon={icon}
+      badgeLabel={badgeLabel}
       accentColor={accentColor}
       showBadge={showBadge}
     />
@@ -700,6 +717,8 @@ function HandoffEndpoint(props: {
               driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
               displayName={entry?.displayName ?? props.instanceId}
               accentColor={entry?.accentColor}
+              icon={entry?.icon}
+              badgeLabel={entry?.badgeLabel}
               acpRegistryAgentId={entry?.acpRegistryAgentId}
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
               showBadge={showBadge}

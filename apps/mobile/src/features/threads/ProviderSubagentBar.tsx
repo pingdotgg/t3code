@@ -7,13 +7,16 @@ import { useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, type ProviderGlyphAppearance } from "../../components/ProviderIcon";
 import { Button } from "../../components/ui/Button";
 import { NativeChildWorkSheet } from "./NativeChildWorkSheet";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export function ProviderSubagentBar(props: {
-  readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
+  /** Driver and catalog icon of the provider running the subagent. */
+  readonly provider:
+    | (ProviderGlyphAppearance & { readonly driver: string; readonly iconUrl?: string | undefined })
+    | null;
   readonly modelLabel: string;
   readonly effortLabel: string | null;
   readonly status: ProviderSubagentStatus | null;
@@ -41,6 +44,7 @@ export function ProviderSubagentBar(props: {
             <ProviderIcon
               iconUrl={props.provider.iconUrl}
               provider={props.provider.driver}
+              appearance={props.provider}
               size={16}
             />
           ) : null}

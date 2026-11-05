@@ -284,6 +284,8 @@ function sameSidebarProviderEntries(
       other.enabled !== entry.enabled ||
       other.displayName !== entry.displayName ||
       other.accentColor !== entry.accentColor ||
+      other.icon !== entry.icon ||
+      other.badgeLabel !== entry.badgeLabel ||
       other.acpRegistryAgentId !== entry.acpRegistryAgentId ||
       other.acpRegistryIconUrl !== entry.acpRegistryIconUrl ||
       other.models !== entry.models

@@ -54,6 +54,8 @@ export function ComposerModelControl(props: {
       renderIcon={(size) =>
         badge?.showBadge ? (
           <ProviderInstanceIcon
+            icon={props.modelOption?.providerAppearance?.icon}
+            badgeLabel={props.modelOption?.providerAppearance?.badgeLabel}
             iconUrl={props.modelOption?.providerIconUrl}
             provider={props.modelOption?.providerDriver}
             displayName={badge.displayName}
@@ -64,6 +66,7 @@ export function ComposerModelControl(props: {
           />
         ) : (
           <ProviderIcon
+            appearance={props.modelOption?.providerAppearance}
             iconUrl={props.modelOption?.providerIconUrl}
             provider={props.modelOption?.providerDriver}
             size={size}

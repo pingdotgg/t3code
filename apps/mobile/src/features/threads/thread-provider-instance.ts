@@ -13,6 +13,8 @@ export interface ThreadRowProviderInstance {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  readonly icon?: string | undefined;
+  readonly badgeLabel?: string | undefined;
   readonly showBadge: boolean;
 }
 
@@ -29,12 +31,18 @@ export function resolveThreadProviderInstance(
     driverKind: snapshot.driver,
     displayName: resolveProviderInstanceDisplayName(snapshot),
     accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+    icon: snapshot.icon,
+    badgeLabel: snapshot.badgeLabel,
   };
   return {
     ...entry,
     showBadge: shouldShowInstanceBadge(
       { ...entry, enabled: snapshot.enabled },
-      providers.map((provider) => ({ driverKind: provider.driver, enabled: provider.enabled })),
+      providers.map((provider) => ({
+        driverKind: provider.driver,
+        enabled: provider.enabled,
+        icon: provider.icon,
+      })),
     ),
   };
 }
