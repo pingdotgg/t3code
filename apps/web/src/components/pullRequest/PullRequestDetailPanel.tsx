@@ -31,6 +31,7 @@ import {
   CircleDotIcon,
   FileDiffIcon,
   GitCommitHorizontalIcon,
+  HammerIcon,
   MessageSquareIcon,
   PanelRightIcon,
 } from "lucide-react";
@@ -107,7 +108,7 @@ import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { pullRequestAutolinkPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
-import { PullRequestFixChecksButton, PullRequestSummaryTab } from "./PullRequestSummaryTab";
+import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
   buildAddSelectionToAgentHandoff,
@@ -1636,12 +1637,17 @@ export function PullRequestDetailPanel({
                 {canFixFindings &&
                 !checksStale &&
                 classifyPullRequestChecks(detail.checks) === "failing" ? (
-                  <PullRequestFixChecksButton
-                    label="Fix all"
-                    accessibleLabel={handoffLabels.fixChecks}
-                    pendingFinding={handoff}
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    className="shrink-0"
+                    aria-label="Fix all failing checks"
+                    disabled={handoff !== null}
                     onClick={startFixChecks}
-                  />
+                  >
+                    <HammerIcon className="size-3" />
+                    {handoff === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : "Fix"}
+                  </Button>
                 ) : null}
               </>
             ) : tab === "timeline" ? (
@@ -1784,11 +1790,7 @@ export function PullRequestDetailPanel({
                   activityError={activityError}
                   pendingFinding={handoff}
                   fixFindingLabel={handoffLabels.fixFinding}
-                  fixCheckLabel={handoffLabels.fixCheck}
-                  fixChecksLabel={handoffLabels.fixChecks}
-                  {...(canFixFindings
-                    ? { onFixFinding: startFixFinding, onFixChecks: startFixChecks }
-                    : {})}
+                  {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
                 />

@@ -64,8 +64,6 @@ import {
   pagePullRequestConversationItems,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
-  PULL_REQUEST_FIX_CHECKS_KEY,
-  classifyPullRequestChecks,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
@@ -309,32 +307,6 @@ function MetaRow({
   );
 }
 
-export function PullRequestFixChecksButton({
-  label,
-  accessibleLabel,
-  pendingFinding,
-  onClick,
-}: {
-  label: string;
-  accessibleLabel?: string;
-  pendingFinding: string | null | undefined;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      size="xs"
-      variant="ghost"
-      className="shrink-0"
-      aria-label={accessibleLabel}
-      disabled={pendingFinding !== null && pendingFinding !== undefined}
-      onClick={onClick}
-    >
-      <HammerIcon className="size-3" />
-      {pendingFinding === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : label}
-    </Button>
-  );
-}
-
 function Section({
   title,
   defaultOpen = true,
@@ -415,10 +387,7 @@ export function PullRequestSummaryTab({
   activityError,
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
-  fixCheckLabel = "Fix",
-  fixChecksLabel = "Fix all",
   onFixFinding,
-  onFixChecks,
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
@@ -432,10 +401,7 @@ export function PullRequestSummaryTab({
   activityError: string | null;
   pendingFinding?: string | null;
   fixFindingLabel?: string;
-  fixCheckLabel?: string;
-  fixChecksLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
-  onFixChecks?: () => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
@@ -823,20 +789,7 @@ export function PullRequestSummaryTab({
         </div>
       </Section>
 
-      <Section
-        key={`checks:${detail.url}`}
-        title="Checks"
-        defaultOpen={false}
-        actions={
-          onFixChecks && !checksStale && classifyPullRequestChecks(detail.checks) === "failing" ? (
-            <PullRequestFixChecksButton
-              label={fixChecksLabel}
-              pendingFinding={pendingFinding}
-              onClick={onFixChecks}
-            />
-          ) : undefined
-        }
-      >
+      <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Check details are out of date.</span>
@@ -883,9 +836,7 @@ export function PullRequestSummaryTab({
                         onClick={() => onFixFinding(finding)}
                       >
                         <HammerIcon className="size-3" />
-                        {pendingFinding === pullRequestFindingKey(finding)
-                          ? "Preparing..."
-                          : fixCheckLabel}
+                        {pendingFinding === pullRequestFindingKey(finding) ? "Preparing..." : "Fix"}
                       </Button>
                     ) : null}
                   </div>

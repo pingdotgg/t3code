@@ -246,14 +246,10 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
   return inThisThread
     ? {
         fixFinding: "Fix in this thread",
-        fixCheck: "Fix in this thread",
-        fixChecks: "Fix all in this thread",
         fixFindings: "Fix findings in this thread",
       }
     : {
         fixFinding: "Fix in a thread",
-        fixCheck: "Fix",
-        fixChecks: "Fix all",
         fixFindings: "Fix findings in a thread",
       };
 }
