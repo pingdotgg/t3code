@@ -371,6 +371,12 @@ describe("evaluatePullRequestWatch", () => {
         "2026-10-02T12:08:00Z",
         "Replace `<div>` with ``<span>``:\n~~~html\n<p>Done</p>\n~~~",
       ),
+      remark("maintainer", "2026-10-02T12:09:00Z", "<p>Guard this</p>"),
+      remark(
+        "summary-bot",
+        "2026-10-02T12:10:00Z",
+        `<!-- ${"x".repeat(3_000)} -->\nCheck the retry.`,
+      ),
     ]);
     const { text } = pullRequestWatchMessage({
       number: 1,
@@ -382,6 +388,8 @@ describe("evaluatePullRequestWatch", () => {
     assert.include(text, `"_⚠️ Potential issue_ | _🟠 Major_ **Guard the empty list.**"`);
     assert.include(text, `"Return Promise<void>, not Promise<A> or Promise<a>."`);
     assert.include(text, '"Replace `<div>` with ``<span>``: ~~~html <p>Done</p> ~~~"');
+    assert.include(text, 'maintainer on src/index.ts: "Guard this"');
+    assert.include(text, '"Check the retry."');
     assert.notInclude(text, "<picture");
   });
 
