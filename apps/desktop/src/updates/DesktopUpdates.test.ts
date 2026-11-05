@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -5,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -21,6 +23,31 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+
+// What electron-updater leaves in `<cache>/<updaterCacheDirName>/pending` after a verified download.
+const pendingDownloadCache = Effect.fn("test.pendingDownloadCache")(function* (cache: {
+  readonly sha512: string;
+  readonly packageFile?: boolean;
+  readonly updateInfo?: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-updater-pending-" });
+  if (cache.packageFile !== false) {
+    yield* fs.writeFileString(`${directory}/T3-Code-1.2.4-mac.zip`, "package");
+  }
+  if (cache.updateInfo !== false) {
+    yield* fs.writeFileString(
+      `${directory}/update-info.json`,
+      JSON.stringify({ fileName: "T3-Code-1.2.4-mac.zip", sha512: cache.sha512 }),
+    );
+  }
+  return directory;
+});
+
+const relaunchedUpdateInfo = {
+  version: "1.2.4",
+  files: [{ url: "T3-Code-1.2.4-mac.zip", sha512: "sha-1.2.4" }],
+};
 
 describe("DesktopUpdates", () => {
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
@@ -108,6 +135,71 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("restores a verified cached download after quitting without installing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const directory = yield* pendingDownloadCache({ sha512: "sha-1.2.4" });
+        const harness = makeHarness({
+          pendingDownloadDirectory: directory,
+          checkForUpdates: Effect.sync(() =>
+            harness.emit("update-available", relaunchedUpdateInfo),
+          ),
+          // electron-updater satisfies the download from its verified cache.
+          downloadUpdate: Effect.sync(() =>
+            harness.emit("update-downloaded", { version: "1.2.4" }),
+          ),
+        });
+
+        yield* Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.check("startup");
+          yield* flushCallbacks;
+
+          const state = yield* updates.getState;
+          assert.equal(
+            state.status,
+            "downloaded",
+            "the update downloaded before quitting is offered for download again",
+          );
+          assert.equal(state.downloadedVersion, "1.2.4");
+          assert.equal(harness.downloadCount(), 1);
+        }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { name: "a cached package for another release", sha512: "sha-1.2.3" },
+    { name: "a missing cached package", sha512: "sha-1.2.4", packageFile: false },
+    { name: "a cache without update-info.json", sha512: "sha-1.2.4", updateInfo: false },
+  ])("keeps the update click-to-download with $name", (cache) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const directory = yield* pendingDownloadCache(cache);
+        const harness = makeHarness({
+          pendingDownloadDirectory: directory,
+          checkForUpdates: Effect.sync(() =>
+            harness.emit("update-available", relaunchedUpdateInfo),
+          ),
+          downloadUpdate: Effect.sync(() =>
+            harness.emit("update-downloaded", { version: "1.2.4" }),
+          ),
+        });
+
+        yield* Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.check("startup");
+          yield* flushCallbacks;
+
+          assert.equal((yield* updates.getState).status, "available");
+          assert.equal(harness.downloadCount(), 0);
+        }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("preserves a queued installer when the feed has no update", () => {
     const harness = makeHarness();

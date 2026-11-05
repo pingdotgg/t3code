@@ -28,6 +28,8 @@ export interface UpdatesHarnessOptions {
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly downloadUpdate?: Effect.Effect<void>;
+  /** electron-updater's pending cache directory; its files are read from disk. */
+  readonly pendingDownloadDirectory?: string;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -93,6 +95,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         fullChangelog = value;
       }),
     setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
+    pendingDownloadDirectory: Effect.succeed(
+      Option.fromUndefinedOr(options.pendingDownloadDirectory),
+    ),
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
       checkAllowedDowngrade.push(allowDowngrade);
@@ -241,36 +246,51 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
-  const layerFileSystem = FileSystem.layerNoop({
-    readFileString: (path) => {
-      const installRecord = isInstallRecord(path)
-        ? (installRecords.get(path) ?? previousInstallRecord)
-        : undefined;
-      if (installRecord !== undefined) return Effect.succeed(installRecord);
-      return path === "/missing/resources/package-type" && options.packageType !== undefined
-        ? Effect.succeed(options.packageType)
-        : Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              method: "readFileString",
-              _tag: "NotFound",
-              pathOrDescriptor: path,
-            }),
-          );
-    },
-    makeDirectory: () => Effect.void,
-    writeFileString: (path, data) =>
-      Effect.sync(() => {
-        if (isInstallRecord(path)) installRecords.set(path, data);
-        else updateRestartMarkers.add(path);
-      }),
-    remove: (path) =>
-      Effect.sync(() => {
-        updateRestartMarkers.delete(path);
-        installRecords.delete(path);
-        if (isInstallRecord(path)) previousInstallRecord = undefined;
-      }),
-  });
+  const pendingDownloadDirectory = options.pendingDownloadDirectory;
+  const isPendingDownloadPath = (path: string) =>
+    pendingDownloadDirectory !== undefined && path.startsWith(`${pendingDownloadDirectory}/`);
+  const layerFileSystem = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const disk = yield* FileSystem.FileSystem;
+      const missing = FileSystem.makeNoop({});
+      return FileSystem.makeNoop({
+        exists: (path) => (isPendingDownloadPath(path) ? disk.exists(path) : missing.exists(path)),
+        stat: (path) => (isPendingDownloadPath(path) ? disk.stat(path) : missing.stat(path)),
+        readFile: (path) =>
+          isPendingDownloadPath(path) ? disk.readFile(path) : missing.readFile(path),
+        readFileString: (path) => {
+          if (isPendingDownloadPath(path)) return disk.readFileString(path);
+          const installRecord = isInstallRecord(path)
+            ? (installRecords.get(path) ?? previousInstallRecord)
+            : undefined;
+          if (installRecord !== undefined) return Effect.succeed(installRecord);
+          return path === "/missing/resources/package-type" && options.packageType !== undefined
+            ? Effect.succeed(options.packageType)
+            : Effect.fail(
+                PlatformError.systemError({
+                  module: "FileSystem",
+                  method: "readFileString",
+                  _tag: "NotFound",
+                  pathOrDescriptor: path,
+                }),
+              );
+        },
+        makeDirectory: () => Effect.void,
+        writeFileString: (path, data) =>
+          Effect.sync(() => {
+            if (isInstallRecord(path)) installRecords.set(path, data);
+            else updateRestartMarkers.add(path);
+          }),
+        remove: (path) =>
+          Effect.sync(() => {
+            updateRestartMarkers.delete(path);
+            installRecords.delete(path);
+            if (isInstallRecord(path)) previousInstallRecord = undefined;
+          }),
+      });
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
 
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
