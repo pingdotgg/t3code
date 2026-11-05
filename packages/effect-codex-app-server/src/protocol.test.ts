@@ -512,18 +512,22 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
-  it.effect.each(["dies", "throws"] as const)(
-    "answers an incoming request whose handler %s, keeping its text out of logs",
-    (outcome) =>
+  it.effect.each([
+    { outcome: "dies", method: "item/tool/requestUserInput", logged: "item/tool/requestUserInput" },
+    { outcome: "throws", method: "codex-handler-secret-sentinel", logged: "unknown" },
+  ] as const)(
+    "answers an incoming request whose handler $outcome, keeping its text out of logs",
+    ({ outcome, method, logged: loggedMethod }) =>
       Effect.gen(function* () {
         const secret = "codex-handler-secret-sentinel";
+        const defect = Object.assign(new Error(secret), { name: secret });
         const { stdio, input, output } = yield* makeInMemoryStdio();
         const logged: Array<string> = [];
         yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
           stdio,
           onRequest: () => {
-            if (outcome === "throws") throw new Error(secret);
-            return Effect.die(new Error(secret));
+            if (outcome === "throws") throw defect;
+            return Effect.die(defect);
           },
         }).pipe(
           Effect.provide(
@@ -540,11 +544,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
           ),
         );
 
-        const request = encodeUnknownJsonString({
-          id: 1,
-          method: "item/tool/requestUserInput",
-          params: {},
-        });
+        const request = encodeUnknownJsonString({ id: 1, method, params: {} });
         yield* Queue.offer(
           input,
           encoder.encode(`${request}
@@ -557,6 +557,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         });
         assert.lengthOf(logged, 2);
         assert.notInclude(logged.join(), secret);
+        assert.include(logged.join(), loggedMethod);
       }),
   );
 

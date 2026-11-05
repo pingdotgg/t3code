@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
+import * as CodexRpc from "./_generated/meta.gen.ts";
 import * as CodexError from "./errors.ts";
 import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
 const isJsonRpcId = Schema.is(JsonRpcId);
@@ -328,11 +329,13 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
               return Effect.suspend(() => handler(request)).pipe(
                 // Adapter handlers end in Effect.orDie; Codex waits for an answer regardless.
-                Effect.catchDefect((defect) =>
+                Effect.catchDefect(() =>
                   Effect.logError("Codex request handler failed").pipe(
                     Effect.annotateLogs({
-                      method: request.method,
-                      defect: defect instanceof Error ? defect.name : typeof defect,
+                      method:
+                        request.method in CodexRpc.SERVER_REQUEST_PARAMS
+                          ? request.method
+                          : "unknown",
                     }),
                     Effect.andThen(
                       Effect.fail(CodexError.CodexAppServerRequestError.internalError()),
