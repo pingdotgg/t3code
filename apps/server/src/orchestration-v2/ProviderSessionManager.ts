@@ -45,6 +45,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { orbitBrokerTokenFile, orbitCredentialPolicy } from "../mcp/orbitInput.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -461,6 +462,16 @@ export const layerWithOptions = (
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
                 );
+                const { orbitNeedsAttestation, orbitContextOnly } = orbitCredentialPolicy(
+                  yield* orbitBrokerTokenFile.pipe(
+                    Effect.map(Option.isSome),
+                    Effect.orElseSucceed(() => false),
+                  ),
+                  yield* registry.get(providerInstanceId).pipe(
+                    Effect.map((adapter): string | undefined => adapter.driver),
+                    Effect.orElseSucceed(() => undefined),
+                  ),
+                );
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -483,7 +494,9 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
                     // A credential issued while the lineage read failed is replaced once it works.
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    (resolved.thread.orbitNeedsAttestation === true) === orbitNeedsAttestation &&
+                    (resolved.thread.orbitContextOnly === true) === orbitContextOnly
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -496,6 +509,8 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   subagent,
+                  orbitNeedsAttestation,
+                  orbitContextOnly,
                 });
                 yield* mcpSessions.set(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);

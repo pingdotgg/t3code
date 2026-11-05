@@ -122,6 +122,7 @@ import {
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { withHostElicitation, permitsOrdinaryElicitation } from "./codexHostElicitation.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
@@ -762,6 +763,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
+    readonly orbitNeedsAttestation?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
@@ -769,10 +771,14 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
-    const approvalPolicy =
+    const requestedApprovalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
+    const approvalPolicy =
+      input.orbitNeedsAttestation === true
+        ? withHostElicitation(requestedApprovalPolicy ?? runtimeModeDefaults.approvalPolicy, true)
+        : requestedApprovalPolicy;
     const sandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
@@ -5517,6 +5523,51 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
+            if (
+              payload.serverName === "t3-code" &&
+              (payload.mode === "form" || payload.mode === "openai/form") &&
+              payload.message.startsWith(McpProviderSession.ORBIT_HOST_CHALLENGE_PREFIX)
+            ) {
+              const context =
+                payload.turnId == null ? undefined : yield* awaitActiveTurn(payload.turnId);
+              if (
+                context === undefined ||
+                (yield* getNativeThreadId(context.providerThread)) !== payload.threadId
+              )
+                return {
+                  action: "decline",
+                } satisfies CodexSchema.McpServerElicitationRequestResponse;
+              const config = yield* mcpSessions.read(context.input.threadId);
+              const accepted =
+                config === undefined
+                  ? false
+                  : yield* mcpSessions.attestHostInvocation(
+                      payload.message.slice(McpProviderSession.ORBIT_HOST_CHALLENGE_PREFIX.length),
+                      config.providerSessionId,
+                      context.subagent !== null,
+                    );
+              return accepted
+                ? { action: "accept" as const, content: { confirmed: true } }
+                : { action: "decline" as const };
+            }
+
+            const ordinaryContext =
+              payload.turnId == null ? undefined : yield* awaitActiveTurn(payload.turnId);
+            const ordinaryConfig =
+              ordinaryContext === undefined
+                ? undefined
+                : yield* mcpSessions.read(ordinaryContext.input.threadId);
+            if (
+              ordinaryConfig?.orbitNeedsAttestation === true &&
+              ordinaryContext !== undefined &&
+              !permitsOrdinaryElicitation(
+                ordinaryContext.input.runtimePolicy.approvalPolicy,
+                ordinaryContext.input.runtimePolicy.runtimeMode === "full-access",
+              )
+            )
+              return {
+                action: "decline",
+              } satisfies CodexSchema.McpServerElicitationRequestResponse;
             if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
               yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
                 serverName: payload.serverName,
@@ -6790,6 +6841,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
+              orbitNeedsAttestation: mcpSession?.orbitNeedsAttestation === true,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,

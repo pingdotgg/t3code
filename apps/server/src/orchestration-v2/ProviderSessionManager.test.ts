@@ -1,3 +1,4 @@
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1826,6 +1827,42 @@ it.effect(
             mcpConfigs,
           }),
         ),
+      );
+    }),
+);
+
+it.effect.each([
+  { env: {}, attested: false },
+  { env: { T3CODE_ORBIT_BROKER_TOKEN_FILE: "/private/broker-token" }, attested: true },
+] as const)(
+  "ProviderSessionManagerV2 changes no Codex approval policy until the Orbit broker is on ($attested)",
+  ({ env, attested }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-orbit");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        assert.equal((yield* Ref.get(mcpConfigs))[0]?.orbitNeedsAttestation, attested);
+        yield* manager.close(providerSessionId);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })),
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
       );
     }),
 );

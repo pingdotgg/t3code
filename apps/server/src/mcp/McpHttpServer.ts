@@ -12,7 +12,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
   OrchestratorMcpFailure,
@@ -78,6 +78,10 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import * as OrbitBroker from "./OrbitBroker.ts";
+import { orbitBrokerTokenFile } from "./orbitInput.ts";
+import { OrbitToolkit } from "./toolkits/orbit/tools.ts";
+import * as OrbitHandlers from "./toolkits/orbit/handlers.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -196,6 +200,7 @@ const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
 
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
+  const sessionOwners = new Map<string, string>();
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
@@ -229,6 +234,9 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
+    const sessionId = request.headers["mcp-session-id"];
+    if (sessionId !== undefined && sessionOwners.get(sessionId) !== invocation.requestNamespace)
+      return HttpServerResponse.jsonUnsafe({ error: "unknown_mcp_session" }, { status: 404 });
     const asked = withModeLimit(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
@@ -239,6 +247,23 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         ...limited,
         linkedEnvironments,
       }),
+      Effect.tap(() =>
+        HttpEffect.appendPreResponseHandler((_request, response) =>
+          Effect.sync(() => {
+            const issuedSession = response.headers["mcp-session-id"];
+            if (issuedSession !== undefined) {
+              sessionOwners.delete(issuedSession);
+              sessionOwners.set(issuedSession, invocation.requestNamespace);
+              // Eviction asks the oldest client to initialize again.
+              if (sessionOwners.size > 4096)
+                sessionOwners.delete(sessionOwners.keys().next().value!);
+            }
+            if (request.method === "DELETE" && sessionId !== undefined && response.status === 204)
+              sessionOwners.delete(sessionId);
+            return response;
+          }),
+        ),
+      ),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;
@@ -1193,6 +1218,15 @@ export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE,
   }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
+export const layerOrbitToolkit = Layer.unwrap(
+  Effect.gen(function* () {
+    if (Option.isNone(yield* orbitBrokerTokenFile)) return Layer.empty;
+    return toolkitRegistration(OrbitToolkit, OrbitHandlers.layer).pipe(
+      Layer.provide(OrbitBroker.layer.pipe(Layer.provide(OrbitBroker.layerLoopbackTransport))),
+    );
+  }),
+);
+
 export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
@@ -1205,6 +1239,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerOrbitToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

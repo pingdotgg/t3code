@@ -209,6 +209,7 @@ import {
   mcpToolPresentation,
   normalizeMcpText,
 } from "@t3tools/provider-core/server/mcpToolPresentation";
+import { limitNativeChildOrbit } from "./claudeOrbitPolicy.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1893,9 +1894,10 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
+    hooks: {
+      ...(deviceInstructions ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } : {}),
+      PreToolUse: [{ hooks: [limitNativeChildOrbit] }],
+    },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [

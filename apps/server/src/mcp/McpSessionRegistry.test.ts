@@ -137,7 +137,9 @@ it.effect("expires credentials once their session stops showing signs of life", 
       capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    timestamp += 101;
+    timestamp += 99;
+    expect(yield* registry.resolve(token)).toBeDefined();
+    timestamp += 2;
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
@@ -221,4 +223,22 @@ it.effect.each(["provider-session", "thread", "all"] as const)(
       yield* registry.touch(threadId);
       expect(yield* registry.resolve(token)).toBeUndefined();
     }),
+);
+
+it.effect("binds host attestation requirements to the issued credential", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1000);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("native-root"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      orbitNeedsAttestation: true,
+      orbitContextOnly: true,
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    expect(issued.config.orbitNeedsAttestation).toBe(true);
+    expect((yield* registry.resolve(token))?.thread.orbitNeedsAttestation).toBe(true);
+    expect((yield* registry.resolve(token))?.thread.orbitContextOnly).toBe(true);
+    yield* registry.revokeProviderSession(issued.config.providerSessionId);
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
 );

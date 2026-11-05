@@ -29,6 +29,8 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  readonly orbitNeedsAttestation?: boolean;
+  readonly orbitContextOnly?: boolean;
 }
 
 export interface McpClientCaller {

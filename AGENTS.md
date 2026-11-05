@@ -143,6 +143,7 @@ Every outbound path this fork has, and what it may carry. A path that is not on 
 | Guest links (a guest's browser, over T3 Connect)                                              | Yes — the shared thread's history, replies, files and command output            | Labs beta, off by default, and needs T3 Connect. See the note below                                                                          |
 | EAS cloud simulators (`api.expo.dev`) and Simlock gateways                                    | Whatever the agent installs on or shows the device: app builds, screens         | Operator-added device hosts only, with the operator's Expo token or gateway (`apps/server/src/device/EasDeviceHost.ts`)                      |
 | GitHub star check (`api.github.com`, the server's GitHub login)                               | No — whether that account starred `pingdotgg/t3code`                            | Web client asks once after five prompts (`apps/web/src/components/GitHubStarPrompt.tsx`)                                                     |
+| Orbit broker (the local Orbit daemon, `http://127.0.0.1:<port>/internal/t3/tool`)             | Yes — prompts, ticket text and notes an agent passes, but only to this machine  | Off unless `T3CODE_ORBIT_BROKER_TOKEN_FILE` is set; loopback enforced in code. See the note below (`apps/server/src/mcp/OrbitBroker.ts`)     |
 
 **The Claude harness is a library, not a subprocess.** Upstream moved the Claude provider from a
 spawned `claude` CLI to `@anthropic-ai/claude-agent-sdk` running inside the server process
@@ -220,6 +221,21 @@ server's self-update ignores the mirror here and still runs only a provisioned r
 (`pinnedRuntime.ts`, `[fork:lockdown]`). Setting a feed URL is an access decision, the same shape
 as T3 Connect.
 
+**The Orbit broker stays on this machine.** Orbit is the operator's local planning daemon, and this
+fork's `orbit` MCP tool forwards an agent's fixed planning operations to it with T3-verified
+environment, thread and provider-session identity. That body can hold whatever the agent passes:
+thread prompts, ticket text and progress notes, plus those identifiers. With
+`T3CODE_ORBIT_BROKER_TOKEN_FILE` unset, the tool is not advertised and Codex approval policy is
+unchanged. When set, the file must be owner-only (no group or other bits) and its credential is read
+per call, never placed in a prompt, log or transcript. The destination is fixed to `127.0.0.1`;
+`T3CODE_ORBIT_PORT` only accepts a port number. `loopbackOnly` refuses any other URL before it
+reaches the transport, and the transport is `node:http` with its own agent because `fetch` would
+follow a 307 to another host with the body, and honor `NODE_USE_ENV_PROXY`. Providers other than
+Codex (host attestation) and Claude (SDK hook) cannot separate a native child from its parent, so
+they get `orbit_context` only. Orbit is responsible for what it does with the data afterward, and
+the token file is readable by any process running as this OS user, including an unsandboxed agent's
+shell. Tripwires: `OrbitBrokerEgress.test.ts` (real redirect and env proxy) and `OrbitBroker.test.ts`.
+
 **Upstream's `cursor-hygiene-webhook` workflow is not carried here.** It POSTs the full GitHub event
 payload — PR titles and bodies, issue and discussion text — to a Cursor webhook on every push, PR,
 issue and discussion. It no-ops without its two secrets, so it was inert, but it forwards this
@@ -265,7 +281,7 @@ Read the whole diff at least at file-name level, then look hard at:
 
 Then, before pushing the merge:
 
-- Run the tripwires: the telemetry, pinned-runtime, self-update, tunnel, and CLI-registration tests above. They are the automated half of this audit and they must pass on the merged tree, not just on the fork's side.
+- Run the tripwires: the telemetry, pinned-runtime, self-update, tunnel, CLI-registration, and Orbit broker egress tests above. They are the automated half of this audit and they must pass on the merged tree, not just on the fork's side.
 - Confirm `git grep -n "fork:lockdown"` still finds every marker — a vanished marker means an upstream hunk overwrote a lockdown edit.
 - If something in the diff is unclear, it does not merge until it is understood. "Probably fine" is not an audit result.
 

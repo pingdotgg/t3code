@@ -20,6 +20,8 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly subagent?: boolean;
+  readonly orbitNeedsAttestation?: boolean;
+  readonly orbitContextOnly?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -109,6 +111,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
+          orbitNeedsAttestation: request.orbitNeedsAttestation === true,
+          orbitContextOnly: request.orbitContextOnly === true,
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([
@@ -132,6 +136,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: scope.thread.providerInstanceId,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
+          orbitNeedsAttestation: request.orbitNeedsAttestation === true,
           browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
         },
@@ -149,9 +154,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
           return [undefined, { records }] as const;
         }
-        const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        return [record.scope, { records }] as const;
       });
     },
   );

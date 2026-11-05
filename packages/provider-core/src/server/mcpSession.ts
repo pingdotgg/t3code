@@ -7,6 +7,7 @@ export interface McpProviderSessionConfig {
   readonly providerInstanceId: ProviderInstanceId;
   readonly endpoint: string;
   readonly authorizationHeader: string;
+  readonly orbitNeedsAttestation?: boolean;
   /** Omit preview_* instructions when the user withholds agent browser access. */
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
@@ -28,3 +29,5 @@ export function withAgentDeviceEnvironment(
     ...(shimDir ? { PATH: basePath ? `${shimDir}${separator}${basePath}` : shimDir } : {}),
   };
 }
+
+export const ORBIT_HOST_CHALLENGE_PREFIX = "t3-orbit-host-invocation:";
