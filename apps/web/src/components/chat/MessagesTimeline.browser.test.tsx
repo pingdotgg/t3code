@@ -428,17 +428,22 @@ describe("MessagesTimeline work rows", () => {
     const barElement = bar.element();
     const barTop = barElement.getBoundingClientRect().top;
     const viewport = history.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
-    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(
-      2,
-    );
+    const fullHeight = viewport.scrollHeight;
+    expect(fullHeight).toBeGreaterThan(2000 * 20);
+    expect(fullHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(2);
+    const tailSources = mountedSources();
+    const tailAnchor = history.querySelector<HTMLElement>("[data-assistant-citation-source]")!;
+    let tailAnchorTop = 0;
     await act(() => {
-      viewport.scrollTop = 0;
+      viewport.scrollTop = fullHeight - viewport.clientHeight - 400;
       viewport.dispatchEvent(new Event("scroll"));
+      tailAnchorTop = tailAnchor.getBoundingClientRect().top;
     });
     await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await vi.waitFor(() => expect(mountedSources()).toBeGreaterThan(tailSources));
+    expect(Math.abs(tailAnchor.getBoundingClientRect().top - tailAnchorTop)).toBeLessThanOrEqual(1);
     await expect.element(bar).toHaveAttribute("aria-expanded", "false");
-    expect(viewport.scrollTop).toBeGreaterThan(0);
+    expect(Math.abs(viewport.scrollHeight - fullHeight)).toBeLessThan(fullHeight / 10);
     expect(mountedSources()).toBeLessThan(70);
     expect(barElement.getBoundingClientRect().top).toBe(barTop);
     await screen.getByRole("button", { name: "Jump to latest" }).click();
@@ -446,6 +451,13 @@ describe("MessagesTimeline work rows", () => {
     await expect
       .element(screen.getByRole("button", { name: "Jump to latest" }))
       .not.toBeInTheDocument();
+    await act(() => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await expect.element(screen.getByText("History answer 0", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(viewport.scrollTop).toBe(0));
+    await screen.getByRole("button", { name: "Jump to latest" }).click();
     const barTops = new Set<number>();
     const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
     resizes.observe(history);
