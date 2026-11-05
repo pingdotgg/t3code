@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
 import {
@@ -5,6 +6,8 @@ import {
   type PreparedVoiceTranscription,
   type VoiceTranscriber,
 } from "./transcription.ts";
+
+const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -171,7 +174,7 @@ function preparationErrorMessage(error: unknown): string {
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
   }
-  return error instanceof VoiceTranscriptionError
+  return isVoiceTranscriptionError(error)
     ? error.message
     : "Could not prepare voice transcription.";
 }
@@ -180,9 +183,7 @@ function transcriptionErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message === "voice-operation-busy") {
     return "Voice transcription is still finishing. Try again shortly.";
   }
-  return error instanceof VoiceTranscriptionError
-    ? error.message
-    : "Could not transcribe this recording.";
+  return isVoiceTranscriptionError(error) ? error.message : "Could not transcribe this recording.";
 }
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -193,6 +194,7 @@ export class VoiceInputController {
   private operationToken = 0;
   private sessionToken: VoiceInputSession | null = null;
   private transcription: PreparedVoiceTranscription | null = null;
+  private liveTranscription: Promise<{ text: string } | { error: unknown }> | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private capturedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
@@ -277,6 +279,21 @@ export class VoiceInputController {
         return;
       }
       this.capturedDraft = capturedDraft;
+      if (this.transcription.start && this.recordingUri) {
+        const start = this.transcription.start;
+        const uri = this.recordingUri;
+        this.liveTranscription = runTranscriptionOperation(() =>
+          start(uri, { signal: abortController.signal }),
+        ).then(
+          (text) => ({ text }),
+          (error: unknown) => {
+            if (this.isCurrent(operationToken) && this.state.phase === "recording") {
+              void this.discardRecording(transcriptionErrorMessage(error));
+            }
+            return { error };
+          },
+        );
+      }
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch {
@@ -340,6 +357,7 @@ export class VoiceInputController {
 
   handleRecorderStatus(status: VoiceRecorderStatus): Promise<void> | void {
     if (this.state.phase !== "recording") return;
+    if (status.url && this.recordingUri && status.url !== this.recordingUri) return;
     if (status.hasError) {
       return this.interruptRecording(
         status.error ?? "Voice recording was interrupted.",
@@ -401,9 +419,15 @@ export class VoiceInputController {
       const capturedDraft = this.capturedDraft;
       let transcript: string;
       try {
-        transcript = await runTranscriptionOperation(() =>
-          transcription.transcribe(recordingUri, { signal }),
-        );
+        if (this.liveTranscription) {
+          const result = await this.liveTranscription;
+          if ("error" in result) throw result.error;
+          transcript = result.text;
+        } else {
+          transcript = await runTranscriptionOperation(() =>
+            transcription.transcribe(recordingUri, { signal }),
+          );
+        }
       } catch (error) {
         if (this.isCurrent(operationToken)) {
           this.setError(transcriptionErrorMessage(error), "retry");
@@ -453,6 +477,7 @@ export class VoiceInputController {
   }
 
   private async releaseResources(): Promise<void> {
+    if (this.liveTranscription) this.transcriptionAbortController?.abort();
     this.rememberRecordingUri(this.recordingUri);
     try {
       this.rememberRecordingUri(this.dependencies.recorder.uri);
@@ -462,6 +487,8 @@ export class VoiceInputController {
         await this.dependencies.recorder.stop();
       } catch {}
     }
+    await this.liveTranscription;
+    this.liveTranscription = null;
     this.recordingUri = null;
     for (const uri of this.ownedRecordingUris) {
       try {
