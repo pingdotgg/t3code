@@ -42,6 +42,7 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <PullRequestSnoozeSection />
         <BetaSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
@@ -222,6 +223,52 @@ export function NewThreadSettingsSection() {
         onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
       />
     </SettingsSection>
+  );
+}
+
+/** Per machine, since the server that owns a thread decides whether it offers this snooze. */
+function PullRequestSnoozeSection() {
+  const { environments } = useEnvironments();
+  const supported = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.threadPullRequestSnooze === true,
+  );
+  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "pull request snooze beta update",
+    reportFailure: true,
+  });
+  if (supported.length === 0) return null;
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta: Snooze until PR update">
+        {supported.map((environment) => {
+          const policy = environment.serverConfig?.managedPolicy;
+          const managed = isManagedSettingPath(policy, "pullRequestSnoozeEnabled");
+          return (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon="clock"
+              label={environment.label}
+              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              value={environment.serverConfig?.settings.pullRequestSnoozeEnabled === true}
+              disabled={managed || !writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: { patch: { pullRequestSnoozeEnabled: value } },
+                })
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Add Until PR update to the snooze menu of threads with an open pull request. While it is
+        off, threads already snoozed this way still wake.
+      </Text>
+    </View>
   );
 }
 
