@@ -19,12 +19,7 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import {
-  ChevronDownIcon,
-  FolderClosedIcon,
-  SquareArrowOutUpRightIcon,
-  TerminalIcon,
-} from "lucide-react";
+import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
 import {
@@ -45,6 +40,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  TerminalAppIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -198,9 +194,9 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
       kind: isMacPlatform(platform) || isWindowsPlatform(platform) ? "brand" : "generic",
     },
     {
-      Icon: TerminalIcon,
+      Icon: TerminalAppIcon,
       value: "terminal",
-      kind: "generic",
+      kind: "brand",
     },
   ];
   const availableEditorSet = new Set(availableEditors);
