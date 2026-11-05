@@ -1,17 +1,17 @@
 import {
   navigationCustomizationAvailable,
   overflowNavigationTabs,
-} from "../workspace/navigation-tab-order";
+} from "../layout/workspace/navigation-tab-order";
 import {
   NAVIGATION_TAB_ICONS,
   WORKSPACE_TAB_LABELS,
   useNavigationTabOrder,
   useHiddenNavigationTabs,
-} from "../workspace/navigation-tabs";
-import { currentWorkspaceSelections } from "../workspace/workspace-selection-store";
-import { rememberedSettingsPage } from "../workspace/workspace-tab-navigation";
-import { useSelectWorkspaceTab } from "../workspace/useSelectWorkspaceTab";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+} from "../layout/workspace/navigation-tabs";
+import { currentWorkspaceSelections } from "../layout/workspace/workspace-selection-store";
+import { rememberedSettingsPage } from "../layout/workspace/workspace-tab-navigation";
+import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";

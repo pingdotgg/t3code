@@ -1,11 +1,8 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { Platform } from "react-native";
 
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
-import type {
-  WorkspaceDetail,
-  WorkspaceDetailSheet,
-} from "../workspace/workspace-detail-selection";
+import { useSelectWorkspaceDetail } from "./workspace/useSelectWorkspaceDetail";
+import type { WorkspaceDetail, WorkspaceDetailSheet } from "./workspace/workspace-detail-selection";
 
 /**
  * Opens a thread or pull request from another page. Android shows one detail page at a time, so

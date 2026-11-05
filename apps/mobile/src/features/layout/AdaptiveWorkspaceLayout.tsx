@@ -69,20 +69,20 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useEnabledNavigationTabs } from "../workspace/navigation-tabs";
-import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-workspace-tabs";
+import { useEnabledNavigationTabs } from "./workspace/navigation-tabs";
+import { FLOATING_TABS, floatingTabsMetrics } from "./workspace/floating-workspace-tabs";
 import {
   AndroidWorkspaceNavigation,
   FloatingWorkspaceTabs,
   ANDROID_WORKSPACE_RAIL_WIDTH,
-} from "../workspace/AndroidWorkspaceNavigation";
+} from "./workspace/AndroidWorkspaceNavigation";
 import {
   selectWorkspaceDetail,
   type WorkspaceDetail,
   type WorkspaceDetailSheet,
-} from "../workspace/workspace-detail-selection";
-import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+} from "./workspace/workspace-detail-selection";
+import { startOpeningDetail } from "./workspace/useSelectWorkspaceDetail";
+import { useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -103,20 +103,20 @@ import {
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
-import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
+import { useAndroidWorkspaceRoot } from "./workspace/AndroidWorkspaceTabsProvider";
 import { dispatchRootStackReset, rootStackState } from "../../lib/root-stack-reset";
 import {
   currentWorkspaceSelections,
   workspaceSelectionCheck,
-} from "../workspace/workspace-selection-store";
+} from "./workspace/workspace-selection-store";
 import {
   workspaceTabColumns,
   workspaceTabNavigationState,
-} from "../workspace/workspace-tab-navigation";
-import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
+} from "./workspace/workspace-tab-navigation";
+import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
-import { WorkspaceThreadSidebar } from "../workspace/WorkspaceThreadSidebar";
+import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
 
 export { useAdaptiveWorkspaceLayout };
 
