@@ -7,7 +7,7 @@ const Topic = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(120),
 );
-const Explanation = Schema.String.check(Schema.isMaxLength(600));
+const Explanation = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(600));
 const BuildsOn = Schema.Array(Topic).check(
   Schema.makeFilter((value: readonly unknown[]) => value.length <= 8, {
     message: "at most 8 items",

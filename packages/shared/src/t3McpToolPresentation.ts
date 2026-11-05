@@ -373,6 +373,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   animation_render: tool(["Render", "Rendering", "Rendered", "an animation"], "html-render"),
+  knowledge_map_read: tool(["Read", "Reading", "Read", "What you know"], "environment-read"),
+  knowledge_map_mark_done: tool(
+    ["Save", "Saving", "Saved", "to What you know"],
+    "environment-update",
+  ),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

@@ -1,99 +1,68 @@
-// @ts-nocheck -- vitest types are not included in the server package typecheck config.
-import { describe, expect, it } from "vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ThreadId } from "@t3tools/contracts";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Layer from "effect/Layer";
-import { ThreadId } from "@t3tools/contracts";
-import * as ServerConfig from "./config.ts";
-import * as Service from "./knowledgeMap.ts";
+import * as Path from "effect/Path";
 
-const run = (
+import * as KnowledgeMap from "./knowledgeMap.ts";
+
+const threadId = ThreadId.make("thread-1");
+
+const withMap = <A, E>(
   body: (
-    service: Service.KnowledgeMap["Service"],
-    fs: FileSystem.FileSystem["Service"],
-    target: string,
-  ) => Effect.Effect<unknown>,
-  file?: string,
-) => {
-  const dir = "/tmp/knowledge-map-test";
-  const target = `${dir}/knowledge.json`;
-  const config = ServerConfig.ServerConfig.of({ stateDir: dir } as never);
-  return Effect.gen(function* () {
+    map: KnowledgeMap.KnowledgeMap["Service"],
+    file: string,
+  ) => Effect.Effect<A, E, FileSystem.FileSystem>,
+  existing?: string,
+) =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.makeDirectory(dir, { recursive: true });
-    yield* fs.remove(target).pipe(Effect.ignore);
-    if (file !== undefined) yield* fs.writeFileString(target, file);
-    const service = yield* Service.KnowledgeMap;
-    return yield* body(service, fs, target);
-  }).pipe(
-    Effect.provide(Service.layer),
-    Effect.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
-    Effect.provide(NodeServices.layer),
-  );
-};
+    const dir = yield* fs.makeTempDirectoryScoped();
+    const file = (yield* Path.Path).join(dir, "knowledge.json");
+    if (existing !== undefined) yield* fs.writeFileString(file, existing);
+    return yield* body(yield* KnowledgeMap.make(dir), file);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("KnowledgeMap", () => {
-  it("replaces a topic regardless of case and whitespace", async () => {
-    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- focused service behavior test
-    const result = await Effect.runPromise(
-      run((service) =>
+  it.effect("marking a topic again replaces it, whatever its case and spacing", () =>
+    withMap((map) =>
+      Effect.gen(function* () {
+        yield* map.markDone({ topic: "Set  theory", explanation: "first", threadId });
+        yield* map.markDone({ topic: "set theory", explanation: "second", threadId });
+        const entries = yield* map.list;
+        assert.deepStrictEqual(
+          entries.map((entry) => entry.explanation),
+          ["second"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("remove deletes a topic and ignores one that isn't there", () =>
+    withMap((map) =>
+      Effect.gen(function* () {
+        yield* map.markDone({ topic: "Combinatorics", explanation: "words", threadId });
+        assert.lengthOf(yield* map.remove("combinatorics"), 0);
+        assert.lengthOf(yield* map.remove("missing"), 0);
+      }),
+    ),
+  );
+
+  it.effect("a corrupt file fails the save and keeps its bytes", () =>
+    withMap(
+      (map, file) =>
         Effect.gen(function* () {
-          yield* service.markDone({
-            topic: "  HTTP  ",
-            explanation: "first",
-            threadId: ThreadId.make("thread"),
-          });
-          yield* service.markDone({
-            topic: "http",
-            explanation: "second",
-            threadId: ThreadId.make("thread"),
-          });
-          return yield* service.list;
+          const failure = yield* map
+            .markDone({ topic: "Combinatorics", explanation: "words", threadId })
+            .pipe(Effect.flip);
+          assert.strictEqual(failure._tag, "KnowledgeMapError");
+          assert.strictEqual(
+            yield* (yield* FileSystem.FileSystem).readFileString(file),
+            "not json",
+          );
         }),
-      ),
-    );
-    expect(result).toHaveLength(1);
-    expect((result as any)[0].explanation).toBe("second");
-  });
-  it("removes a topic and ignores missing topics", async () => {
-    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- focused service behavior test
-    const result = await Effect.runPromise(
-      run((service) =>
-        Effect.gen(function* () {
-          yield* service.markDone({
-            topic: "HTTP",
-            explanation: "words",
-            threadId: ThreadId.make("thread"),
-          });
-          yield* service.remove("http");
-          return yield* service.remove("missing");
-        }),
-      ),
-    );
-    expect(result).toHaveLength(0);
-  });
-  it("does not overwrite corrupt storage", async () => {
-    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- focused service behavior test
-    const result = await Effect.runPromise(
-      run(
-        (service, fs, target) =>
-          Effect.gen(function* () {
-            const before = yield* fs.readFileString(target);
-            const exit = yield* Effect.exit(
-              service.markDone({
-                topic: "HTTP",
-                explanation: "words",
-                threadId: ThreadId.make("thread"),
-              }),
-            );
-            const after = yield* fs.readFileString(target);
-            return { exit, before, after };
-          }),
-        "not json",
-      ),
-    );
-    expect((result as any).exit._tag).toBe("Failure");
-    expect((result as any).after).toBe((result as any).before);
-  });
+      "not json",
+    ),
+  );
 });
