@@ -50,7 +50,9 @@ T3 Code checks them when provider status refreshes, without sending a model
 message, on Muse versions supporting `muse usage --json` (1.4.13 or newer).
 Replies also update the windows. If the command is unavailable or Meta has not
 reported an allowance yet, limits appear after Muse's next reply. The same
-Meta account signed in on several hosts counts once.
+Meta account signed in on several hosts counts once when Muse reports the same
+email address on each host. If Muse reports only a display label, each connection
+counts separately because the label does not uniquely identify an account.
 
 With an API key, Limits shows none: a key names no Meta account to count
 them against.
