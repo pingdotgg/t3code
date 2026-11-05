@@ -6,6 +6,7 @@ import {
   getThreadErrorBannerMessage,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
+  threadFailureIsShownElsewhere,
 } from "./ThreadErrorBanner";
 
 describe("getThreadErrorBannerMessage", () => {
@@ -41,5 +42,22 @@ describe("ThreadErrorBanner", () => {
         isThreadErrorBannerDismissedForSession(newErrorKey),
       ),
     ).toBe(true);
+  });
+});
+
+describe("threadFailureIsShownElsewhere", () => {
+  it("hides the banner for classified failures, which have their own row", () => {
+    expect(threadFailureIsShownElsewhere("provider_error", "boom")).toBe(true);
+    expect(threadFailureIsShownElsewhere("usage_limit", "usage_limit")).toBe(true);
+  });
+
+  it("keeps the banner for unclassified failures", () => {
+    expect(threadFailureIsShownElsewhere(null, null)).toBe(false);
+  });
+
+  it("keeps a ChatGPT limit outside usage_limit and hides one inside it", () => {
+    const code = "subscription_sharing_usage_limit_exceeded";
+    expect(threadFailureIsShownElsewhere("provider_error", code)).toBe(false);
+    expect(threadFailureIsShownElsewhere("usage_limit", code)).toBe(true);
   });
 });

@@ -304,6 +304,7 @@ import {
   getThreadErrorBannerKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
+  threadFailureIsShownElsewhere,
 } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
@@ -983,7 +984,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadShell = serverThread;
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
-    serverRuntime.lastErrorClass === "usage_limit" &&
+    threadFailureIsShownElsewhere(serverRuntime.lastErrorClass, serverRuntime.lastErrorCode) &&
     activeThreadShell?.latestRun &&
     visibleThreadError === serverRuntime.lastError
       ? null
