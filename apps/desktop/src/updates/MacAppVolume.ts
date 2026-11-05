@@ -50,29 +50,37 @@ export const UNCHECKED: MacAppLocation = blocked(
 
 const quietly = { stdin: "ignore", stdout: "ignore", stderr: "ignore" } as const;
 
-// Arguments: app pid, app bundle, staged bundle, stage directory, and how many 0.2s waits the app
-// gets to exit (default 300). No signal can cut the swap between its two moves, both renames on
-// the app's volume. A failed second move puts the previous app back, and the stage is removed
-// only once an app is in place again.
+// Args: app pid, app, staged app, stage, then how many 0.2s waits the app gets to exit (300) and
+// how many 0.2s retries the swap gets once the app is moved aside (18000). A drive that drops out
+// between the renames fails both, so they retry until it returns. previous.app stays until an app
+// opens at the bundle path, and goes back there if the new one will not open.
 export const SWAP_SCRIPT = `trap '' HUP INT TERM QUIT PIPE
-pid=$1 target=$2 staged=$3 stage=$4 waits=\${5:-300}
+pid=$1 target=$2 staged=$3 stage=$4 waits=\${5:-300} retries=\${6:-18000}
 backup="$stage/previous.app"
 while kill -0 "$pid" 2>/dev/null; do
   if [ "$waits" -le 0 ]; then rm -rf "$stage"; exit 1; fi
   waits=$((waits - 1))
   sleep 0.2
 done
-if mv "$target" "$backup"; then
-  if mv "$staged" "$target"; then
-    xattr -r -d com.apple.quarantine "$target" 2>/dev/null
-  else
-    mv "$backup" "$target"
-  fi
-fi
-if [ -e "$target" ]; then
-  rm -rf "$stage"
-  open -n "$target"
-fi
+mv "$target" "$backup" || exit 1
+until [ -e "$target" ] || mv "$staged" "$target" || mv "$backup" "$target"; do
+  if [ "$retries" -le 0 ]; then exit 1; fi
+  retries=$((retries - 1))
+  sleep 0.2
+done
+xattr -r -d com.apple.quarantine "$target" 2>/dev/null
+open -n "$target" ||
+  { [ -e "$backup" ] && rm -rf "$target" && mv "$backup" "$target" && open -n "$target"; } ||
+  exit 1
+rm -rf "$stage"
+`;
+
+// Args: app pid, app, stage. Once the copy running from the stage's previous.app quits, moves it
+// back to the bundle path unless an app is already there, then removes the stage.
+export const PUT_BACK_SCRIPT = `trap '' HUP INT TERM QUIT PIPE
+while kill -0 "$1" 2>/dev/null; do sleep 1; done
+[ -e "$2" ] || mv "$3/previous.app" "$2"
+[ -e "$2" ] && rm -rf "$3"
 `;
 
 export const make = Effect.gen(function* () {
@@ -83,6 +91,28 @@ export const make = Effect.gen(function* () {
   const removeStage = (stageDirectory: string) =>
     fileSystem.remove(stageDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
 
+  const launchHelper = (script: string, args: ReadonlyArray<string>) =>
+    Effect.scoped(
+      spawner
+        .spawn(
+          ChildProcess.make(
+            "/bin/sh",
+            ["-c", script, "t3code-update", String(process.pid), ...args],
+            {
+              ...quietly,
+              detached: true,
+              extendEnv: true,
+              env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+            },
+          ),
+        )
+        // An unreferenced helper outlives this scope and the app.
+        .pipe(
+          Effect.flatMap((handle) => handle.unref),
+          Effect.asVoid,
+        ),
+    );
+
   const resolveLocation = Effect.fn("MacAppVolume.resolveLocation")(function* (
     resourcesPath: string,
     tempDirectory: string,
@@ -92,6 +122,19 @@ export const make = Effect.gen(function* () {
     if (bundlePath.includes("/AppTranslocation/")) {
       return blocked(
         "Automatic updates are off because macOS opened T3 Code from a temporary read-only copy. Move T3 Code to Applications with Finder, then open it from there.",
+      );
+    }
+    // macOS follows an app the swap moved aside, so an interrupted swap's previous.app can be the
+    // copy that opens. Its backends run from this bundle, so it moves back only after it quits.
+    const stageDirectory = path.dirname(bundlePath);
+    const appName = /^\.(.+)\.update$/.exec(path.basename(stageDirectory))?.[1];
+    if (path.basename(bundlePath) === "previous.app" && appName !== undefined) {
+      yield* launchHelper(PUT_BACK_SCRIPT, [
+        path.join(path.dirname(stageDirectory), `${appName}.app`),
+        stageDirectory,
+      ]).pipe(Effect.ignore({ log: true }));
+      return blocked(
+        "Automatic updates are off because an earlier update did not finish. Quit and reopen T3 Code to turn them back on.",
       );
     }
     const [bundle, temp] = yield* Effect.all([
@@ -195,34 +238,11 @@ export const make = Effect.gen(function* () {
 
   /** Starts the helper that swaps in the staged app once this process exits, then reopens it. */
   const launchSwap = Effect.fn("MacAppVolume.launchSwap")(function* (staged: StagedMacUpdate) {
-    yield* Effect.scoped(
-      spawner
-        .spawn(
-          ChildProcess.make(
-            "/bin/sh",
-            [
-              "-c",
-              SWAP_SCRIPT,
-              "t3code-update",
-              String(process.pid),
-              staged.bundlePath,
-              staged.stagedBundlePath,
-              staged.stageDirectory,
-            ],
-            {
-              ...quietly,
-              detached: true,
-              extendEnv: true,
-              env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
-            },
-          ),
-        )
-        // An unreferenced helper outlives this scope and the app.
-        .pipe(
-          Effect.flatMap((handle) => handle.unref),
-          Effect.asVoid,
-        ),
-    ).pipe(
+    yield* launchHelper(SWAP_SCRIPT, [
+      staged.bundlePath,
+      staged.stagedBundlePath,
+      staged.stageDirectory,
+    ]).pipe(
       Effect.mapError((cause) => new MacAppVolumeInstallError({ step: "launch", cause })),
       Effect.onError(() => removeStage(staged.stageDirectory)),
     );

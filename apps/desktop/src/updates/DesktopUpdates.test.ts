@@ -66,7 +66,7 @@ describe("DesktopUpdates", () => {
             const updates = yield* DesktopUpdates.DesktopUpdates;
             yield* updates.configure;
             const { checked } = yield* updates.check("manual");
-            return { checked, state: yield* updates.getState };
+            return { checked, state: yield* updates.getState, commands: harness.commands };
           }),
         ).pipe(Effect.provide(harness.layer));
       };
@@ -90,6 +90,25 @@ describe("DesktopUpdates", () => {
       assert.isFalse(translocated.checked);
       assert.equal(translocated.state.status, "disabled");
       assert.match(translocated.state.message ?? "", /temporary read-only copy/);
+
+      // macOS opened the app an interrupted swap moved aside. A helper moves it back once it quits.
+      const stage = "/Volumes/ExternalDrive/.T3 Code.update";
+      const movedAside = yield* checkFrom(`${stage}/previous.app`, { device: 2n });
+      assert.isFalse(movedAside.checked);
+      assert.match(movedAside.state.message ?? "", /an earlier update did not finish/);
+      assert.deepEqual(movedAside.commands, [
+        {
+          command: "/bin/sh",
+          args: [
+            "-c",
+            MacAppVolume.PUT_BACK_SCRIPT,
+            "t3code-update",
+            String(process.pid),
+            "/Volumes/ExternalDrive/T3 Code.app",
+            stage,
+          ],
+        },
+      ]);
 
       const unreadable = makeHarness({
         resourcesPath: "/Volumes/PortableSSD/T3 Code.app/Contents/Resources",
