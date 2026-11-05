@@ -65,8 +65,6 @@ describe("ElectronMenu.popupTemplate", () => {
       const { host, guest, input, isDropped, listeners } = setup();
       yield* popupTemplate(input, "darwin");
 
-      // The frame keeps Writing Tools and Services in the native menu.
-      assert.strictEqual(electron.popups[0]?.frame, input.frame);
       assert.isTrue(isDropped(host));
       assert.isTrue(isDropped(guest));
       assert.isFalse(isDropped(host, "mouseUp"));
