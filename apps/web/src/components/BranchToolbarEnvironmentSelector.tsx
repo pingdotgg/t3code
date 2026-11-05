@@ -73,7 +73,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     const lockedRow = (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 max-w-full items-center gap-1.25 border border-transparent px-2 font-medium text-muted-foreground text-xs sm:h-5.5",
+          "inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-2 font-medium text-muted-foreground text-xs sm:h-5.5",
           unavailableTone && "text-warning-foreground",
         )}
         data-composer-context-control

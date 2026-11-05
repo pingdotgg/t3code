@@ -8,6 +8,7 @@ import {
 import { useLayoutEffect, useRef, useState } from "react";
 
 const CONTEXT_STRIP_SELECTOR = '[data-slot="composer-tray-row"]';
+const CONTEXT_STRIP_LABEL_SELECTOR = "[data-composer-label]";
 
 export function useRestingComposerControlsLayout(
   host: HTMLDivElement | null,
@@ -23,6 +24,7 @@ export function useRestingComposerControlsLayout(
     hiddenCount: 0,
     visible: true,
   });
+  const stripSettlingRef = useRef(false);
 
   const measure = () => {
     const currentHost = useControlsAsHost ? controls : host;
@@ -31,6 +33,20 @@ export function useRestingComposerControlsLayout(
     const measurement = measureRestingComposerControls(controls);
     if (!measurement) return;
     const strip = controls.closest<HTMLElement>(CONTEXT_STRIP_SELECTOR);
+    const stripMotion = strip
+      ? Array.from(strip.querySelectorAll(CONTEXT_STRIP_LABEL_SELECTOR)).flatMap((label) =>
+          label.getAnimations().filter((animation) => animation.playState === "running"),
+        )
+      : [];
+    if (stripMotion.length > 0) {
+      if (stripSettlingRef.current) return;
+      stripSettlingRef.current = true;
+      void Promise.allSettled(stripMotion.map((animation) => animation.finished)).then(() => {
+        stripSettlingRef.current = false;
+        measure();
+      });
+      return;
+    }
     const style = getComputedStyle(currentHost);
     const hostWidth =
       currentHost.clientWidth -

@@ -44,6 +44,7 @@ function providerModelPickerIconOnlyWidth(picker: HTMLElement, scale: number): n
   return (
     horizontalBoxWidth(getComputedStyle(picker)) +
     elementOuterWidth(icon, scale) +
+    elementInlineMarginWidth(label.parentElement!) +
     elementInlineMarginWidth(picker)
   );
 }
@@ -63,9 +64,12 @@ function providerModelPickerNaturalWidth(picker: HTMLElement, scale: number): nu
     : 0;
   let naturalWidth = renderedWidth;
   if (label && getComputedStyle(label).position === "absolute") {
-    // Recover the capped label width while the provider icon is the visible trigger.
+    // Recover the capped label width and the icon-only inset while the provider icon is the visible trigger.
     const content = label.parentElement!;
-    naturalWidth += (Number.parseFloat(getComputedStyle(content).columnGap) || 0) + labelWidth;
+    naturalWidth +=
+      (Number.parseFloat(getComputedStyle(content).columnGap) || 0) +
+      labelWidth -
+      elementInlineMarginWidth(content);
   } else if (label) {
     // A flexible label squeezed below its text still needs its width recovered.
     naturalWidth += Math.max(0, labelWidth - label.clientWidth);

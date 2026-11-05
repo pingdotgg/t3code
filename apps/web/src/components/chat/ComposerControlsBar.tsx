@@ -221,9 +221,9 @@ export function ComposerControlsBar(props: {
         "group/model-trigger",
         TEXT_CONTROL_STATES,
         composerControlsCollapsed && "text-meta!",
-        // Icon-only: the 16px icon box already pads its 11px glyph, so 6px matches the other chips' ink inset.
+        // Icon-only: the 16px icon box already pads its 11px glyph, so a 2px inset matches the other chips' ink inset.
         pickerIconOnly
-          ? "min-w-0 shrink-0 px-1.5 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
+          ? "min-w-0 shrink-0 [&>span:has(>[data-chat-provider-model-picker-label])]:-mx-0.5 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
           : "min-w-13 shrink",
       )}
       effortColumn={
