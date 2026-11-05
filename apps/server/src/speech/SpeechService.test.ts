@@ -7,12 +7,14 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
+import { listNativeSpeechGpuDevices } from "./native.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import * as SpeechService from "./SpeechService.ts";
 import { SILERO_VAD } from "./silero.ts";
@@ -55,6 +57,7 @@ const modelDefinitions = vi.hoisted(() => [
     size: 4,
     languages: ["en", "fr"],
     accuracy: 1,
+    benchmark: { accuracy: { en: { grade: "A-", errorPercent: 4 } }, secondsPer30s: 1.2 },
     speed: 1,
     recommended: true,
     supportsStreaming: true,
@@ -168,6 +171,47 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect.each(["cancellation", "timeout"] as const)(
+  "releases a stalled model preparation on %s",
+  (reason) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const started = Promise.withResolvers<AbortSignal>();
+      const stalled = Promise.withResolvers<typeof native>();
+      const disposed = Promise.withResolvers<void>();
+      const abandoned = { ...native, dispose: vi.fn(() => disposed.resolve()) };
+      loadNative.mockImplementationOnce((_path, signal) => {
+        started.resolve(signal);
+        return stalled.promise;
+      });
+      const request = yield* speech.prepareModel.pipe(Effect.forkChild);
+      const signal = yield* Effect.promise(() => started.promise);
+      try {
+        if (reason === "cancellation") {
+          yield* Fiber.interrupt(request).pipe(Effect.forkChild({ startImmediately: true }));
+        }
+        yield* TestClock.adjust(reason === "timeout" ? "2 minutes" : 0);
+        expect(signal.aborted).toBe(true);
+        const exit = yield* Fiber.await(request);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (reason === "timeout") {
+          expect(Exit.findErrorOption(exit)).toMatchObject({
+            value: { _tag: "SpeechOperationError", operation: "model preparation" },
+          });
+        }
+        yield* speech.selectModel("fallback-model");
+        const transcribe = speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+        expect(yield* transcribe).toBe("hello");
+        stalled.resolve(abandoned);
+        yield* Effect.promise(() => disposed.promise);
+        expect(yield* transcribe).toBe("hello");
+        expect(loadNative).toHaveBeenCalledTimes(2);
+      } finally {
+        stalled.resolve(abandoned);
+      }
+    }).pipe(Effect.provide(layer)),
+);
+
 it.effect("rejects model mutations outside the offered registry", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
@@ -185,7 +229,12 @@ it.effect("rejects model mutations outside the offered registry", () =>
       }
     }
     expect(download).not.toHaveBeenCalled();
-    expect((yield* speech.models).models.find((model) => model.active)?.id).toBe("test-model");
+    const current = (yield* speech.models(false)).models.find((model) => model.active);
+    expect(current?.id).toBe("test-model");
+    expect(current).not.toHaveProperty("benchmark");
+    expect(
+      (yield* speech.models(true)).models.find((model) => model.active)?.benchmark?.secondsPer30s,
+    ).toBe(1.2);
   }).pipe(Effect.provide(layer)),
 );
 
@@ -298,6 +347,23 @@ it.effect("keeps the installed speech model usable when optional Silero acquisit
     expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
     expect(download).toHaveBeenCalledTimes(3);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "allows another model operation after an already-installed download completes immediately",
+  () =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const models = yield* speech.downloadModel("test-model").pipe(
+        Effect.provideService(Scheduler.Scheduler, {
+          executionMode: "sync",
+          shouldYield: () => false,
+          makeDispatcher: () => ({ scheduleTask: (task) => task(), flush: () => {} }),
+        }),
+      );
+      expect(models.models.find((model) => model.id === "test-model")?.state).toBe("installed");
+      yield* speech.selectModel("fallback-model");
+    }).pipe(Effect.provide(layer)),
 );
 
 it.effect("honors exact aliases and phrase boundaries in batch and streamed text", () =>
@@ -480,6 +546,25 @@ it.effect("resets cancelled streams and reuses the loaded model", () =>
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("releases a failed stream start without waiting for its socket scope to close", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const socket = yield* Scope.fork(yield* Effect.scope);
+    yield* speech.updateAcceleration("cpu");
+    native.begin.mockRejectedValueOnce(new Error("cannot start streaming"));
+    const error = yield* speech
+      .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Scope.provide(socket), Effect.flip);
+    expect(error._tag).toBe("SpeechOperationError");
+    expect(yield* speech.status).toMatchObject({ state: "ready" });
+    expect(native.dispose).toHaveBeenCalledOnce();
+    const next = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    yield* Scope.close(socket, Exit.void);
+    expect(yield* speech.status).toMatchObject({ state: "transcribing" });
+    expect(yield* next.finish).toBe("hello");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.effect("closes its scope without waiting for hung native inference", () =>
   Effect.gen(function* () {
     const started = Promise.withResolvers<void>();
@@ -515,6 +600,24 @@ it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
       architecture: "arm64",
     });
   }),
+);
+
+it.effect.each([{ devices: [] }, { devices: [{ id: "gpu", name: "Test GPU" }] }])(
+  "retries failed GPU discovery without repeatedly probing on status polls: $devices",
+  ({ devices }) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const discover = vi.mocked(listNativeSpeechGpuDevices).mockReset();
+      discover.mockRejectedValueOnce(new Error("driver not ready")).mockResolvedValueOnce(devices);
+      expect(yield* speech.status).toMatchObject({ gpuDevices: [] });
+      yield* speech.status;
+      expect(discover).toHaveBeenCalledOnce();
+      yield* TestClock.adjust("1 minute");
+      expect(yield* speech.status).toMatchObject({ gpuDevices: devices });
+      yield* TestClock.adjust("1 minute");
+      expect(yield* speech.status).toMatchObject({ gpuDevices: devices });
+      expect(discover).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layer)),
 );
 
 it.effect(
