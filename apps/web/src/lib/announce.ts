@@ -2,8 +2,10 @@
 // whatever they were saying. So the regions exist before the first message lands, and
 // messages wait until focus has stayed put for a moment, then are spoken together.
 const FOCUS_SETTLE_MS = 250;
-// Spoken text stays readable in browse mode, so it is removed once it has had time to be read.
-const CLEAR_SPOKEN_MS = 7_000;
+// Leftover text stays readable in browse mode, and NVDA reads a polite region's leftover text
+// again when focus returns from a dialog, so an announcement is cleared once it has had time to
+// be spoken. Clearing doesn't cut off speech that already started.
+export const CLEAR_AFTER_MS = 7_000;
 
 let regions: readonly [HTMLElement, HTMLElement] | null = null;
 let pending: { message: string; source: string | undefined }[] = [];
@@ -33,7 +35,7 @@ function flush() {
   spokenSources = pending.map((entry) => entry.source);
   pending = [];
   clearTimeout(clearTimer);
-  clearTimer = setTimeout(clearSpoken, CLEAR_SPOKEN_MS);
+  clearTimer = setTimeout(clearSpoken, CLEAR_AFTER_MS);
 }
 
 function createRegion() {
