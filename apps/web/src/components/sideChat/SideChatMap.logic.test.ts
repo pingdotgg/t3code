@@ -90,11 +90,11 @@ describe("groupSideChatMapRows", () => {
     ).toEqual([
       [ThreadId.make("lesson"), null, 0, "lesson"],
       [ThreadId.make("plain"), ThreadId.make("lesson"), 1, "plain"],
-      [ThreadId.make("section:0"), ThreadId.make("lesson"), 1, "Lesson 1: first"],
-      [ThreadId.make("a"), ThreadId.make("section:0"), 2, "a"],
+      [ThreadId.make("section:Lesson 1: first"), ThreadId.make("lesson"), 1, "Lesson 1: first"],
+      [ThreadId.make("a"), ThreadId.make("section:Lesson 1: first"), 2, "a"],
       [ThreadId.make("a1"), ThreadId.make("a"), 3, "a1"],
-      [ThreadId.make("section:1"), ThreadId.make("lesson"), 1, "U2: second"],
-      [ThreadId.make("b"), ThreadId.make("section:1"), 2, "b"],
+      [ThreadId.make("section:U2: second"), ThreadId.make("lesson"), 1, "U2: second"],
+      [ThreadId.make("b"), ThreadId.make("section:U2: second"), 2, "b"],
     ]);
   });
 
@@ -105,11 +105,11 @@ describe("groupSideChatMapRows", () => {
     const child = row("a1", "a", 2);
     const collapsed = groupSideChatMapRows(
       [row("lesson", null, 0), section, child],
-      new Set([ThreadId.make("section:0")]),
+      new Set([ThreadId.make("section:Lesson 1: first")]),
     );
     expect(collapsed.map((entry) => entry.threadId)).toEqual([
       ThreadId.make("lesson"),
-      ThreadId.make("section:0"),
+      ThreadId.make("section:Lesson 1: first"),
     ]);
     expect(collapsed[1]?.label).toBe("Lesson 1: first (2)");
   });

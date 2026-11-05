@@ -77,6 +77,32 @@ it.each([
     expected: undefined,
   },
   {
+    name: "headings after the anchor message and in user messages do not count",
+    messages: [
+      lessonMessage("a1", "assistant", "## Lesson 1: intro"),
+      lessonMessage("u1", "user", "## Lesson 7: mine"),
+      lessonMessage("a2", "assistant", "body"),
+      lessonMessage("a3", "assistant", "## Lesson 2: later"),
+    ],
+    anchor: { messageId: MessageId.make("message:a2"), start: 0 },
+    expected: "Lesson 1: intro",
+  },
+  {
+    name: "an embed highlight covers its whole reply",
+    messages: [
+      lessonMessage("a1", "assistant", "## Lesson 1: intro"),
+      lessonMessage("a2", "assistant", "intro\n## Lesson 2: Ohm\n<embed>"),
+    ],
+    anchor: { messageId: MessageId.make("message:a2"), start: 0, embedTitle: "Ohm" },
+    expected: "Lesson 2: Ohm",
+  },
+  {
+    name: "a missing anchor message has no section",
+    messages: [lessonMessage("a1", "assistant", "## Lesson 9: last")],
+    anchor: { messageId: MessageId.make("message:gone"), start: 0 },
+    expected: undefined,
+  },
+  {
     name: "no heading",
     messages: [lessonMessage("a1", "assistant", "details")],
     anchor: { messageId: MessageId.make("message:a1"), start: 2 },

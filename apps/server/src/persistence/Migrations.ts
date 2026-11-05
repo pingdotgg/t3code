@@ -240,7 +240,7 @@ const backfillSideChatSectionsAtStartup = Effect.fn("backfillSideChatSectionsAtS
     const sideChats = rows.map((row) => {
       const sideChat = JSON.parse(row.side_chat_json) as {
         lessonThreadId: string;
-        anchor: { threadId: string; messageId: string; start: number };
+        anchor: { threadId: string; messageId: string; start: number; embedTitle?: string };
         section: string | null;
         checked: number;
       };

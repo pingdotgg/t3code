@@ -4707,26 +4707,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* refuse("The highlight belongs to a different thread.");
     }
 
-    const anchorThread = yield* projectionStore
-      .getThread(command.anchorThreadId)
-      .pipe(
-        Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: command.anchorThreadId, cause }),
-        ),
-      );
     const anchorProjection = yield* projectionStore
-      .getThreadRecords(
-        command.anchorThreadId,
-        ["messages"],
-        anchorThread.sideChat === undefined
-          ? { messageRoles: ["assistant"] as const }
-          : { messageIds: [command.anchor.messageId] },
-      )
+      .getThreadRecords(command.anchorThreadId, ["messages"], {
+        messageRoles: ["assistant"],
+      })
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.anchorThreadId, cause }),
         ),
       );
+    const anchorThread = anchorProjection.thread;
     if (anchorThread.archivedAt !== null || anchorThread.deletedAt !== null) {
       return yield* refuse(`Thread ${command.anchorThreadId} is not active.`);
     }

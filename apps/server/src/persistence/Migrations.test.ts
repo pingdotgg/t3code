@@ -179,6 +179,17 @@ describe("runMigrations", () => {
         { thread_id: "child", section: "Lesson 2: Ohm's law" },
         { thread_id: "parent", section: "Lesson 2: Ohm's law" },
       ]);
+
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.sideChat.section', 'kept')
+      `;
+      yield* runMigrations();
+      const after = yield* sql<{ readonly section: string }>`
+        SELECT DISTINCT json_extract(payload_json, '$.sideChat.section') AS section
+        FROM orchestration_v2_projection_threads
+      `;
+      assert.deepStrictEqual(after, [{ section: "kept" }]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

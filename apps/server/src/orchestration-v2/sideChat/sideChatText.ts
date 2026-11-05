@@ -33,18 +33,22 @@ export function deriveSideChatLabel(excerpt: string): string {
 const LESSON_SECTION_HEADING = /^#{1,3}\s+Lesson\s+\d+\b/i;
 const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[A-Za-z]?:/;
 
-/** Returns the last lesson section heading at a highlighted assistant message. */
+/**
+ * The last section heading at or above the highlight, or undefined when the anchor message is
+ * missing. An embed highlight (`embedTitle`) covers its whole reply.
+ */
 export function lessonSectionAt(
   messages: ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>,
-  anchor: { readonly messageId: string; readonly start: number },
+  anchor: { readonly messageId: string; readonly start: number; readonly embedTitle?: string },
 ): string | undefined {
   let section: string | undefined;
   for (const message of messages) {
+    const isAnchor = message.id === anchor.messageId;
     if (message.role === "assistant") {
       // A heading counts when its line starts before the highlight, even if the highlight is inside it.
       const lineEnd = message.text.indexOf("\n", anchor.start);
       const text =
-        message.id === anchor.messageId && lineEnd !== -1
+        isAnchor && anchor.embedTitle === undefined && lineEnd !== -1
           ? message.text.slice(0, lineEnd)
           : message.text;
       for (const line of text.split("\n")) {
@@ -56,9 +60,9 @@ export function lessonSectionAt(
         }
       }
     }
-    if (message.id === anchor.messageId) break;
+    if (isAnchor) return section;
   }
-  return section;
+  return undefined;
 }
 
 export interface SideChatSectionBackfillInput {
@@ -74,6 +78,7 @@ export interface SideChatSectionBackfillInput {
       readonly threadId: string;
       readonly messageId: string;
       readonly start: number;
+      readonly embedTitle?: string;
     };
     readonly section: string | null | undefined;
   }>;

@@ -37,8 +37,6 @@ export function groupSideChatMapRows(
     .map(({ row }) => row.section ?? null)
     .filter((section): section is string => section !== null);
   if (sectionNames.length === 0) return rows;
-  let sectionIndex = 0;
-  const usedThreadIds = new Set(rows.map((row) => row.threadId));
   const output: SideChatTreeRow[] = [{ ...lesson, section: null }];
   const appendSubtree = (subtree: ReadonlyArray<SideChatTreeRow>, sectionId: ThreadId | null) => {
     for (const [index, row] of subtree.entries()) {
@@ -54,11 +52,8 @@ export function groupSideChatMapRows(
     appendSubtree(entry.subtree, null);
   }
   for (const section of new Set(sectionNames)) {
-    let sectionId = ThreadId.make(`section:${sectionIndex++}`);
-    while (usedThreadIds.has(sectionId)) {
-      sectionId = ThreadId.make(`section:${sectionIndex++}`);
-    }
-    usedThreadIds.add(sectionId);
+    // Keyed by name so a section stays collapsed when an earlier one empties.
+    const sectionId = ThreadId.make(`section:${section}`);
     const entries = direct.filter(({ row }) => row.section === section);
     const hidden = collapsedSections.has(sectionId);
     const descendants = entries.flatMap((entry) => entry.subtree);
