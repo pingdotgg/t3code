@@ -1188,7 +1188,7 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
             mentioned,
             "pr-mention",
             "assistant",
-            "See https://github.com/acme/app/pull/4101",
+            "See https://github.com/acme/app/pull/4101 and 4102",
           ),
         ],
         projections.apply,
@@ -1208,6 +1208,12 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
       assert.deepEqual(
         byUrl.matches.map((match) => [match.threadId, match.source]),
         [[linked, "pull_request"]],
+      );
+
+      const unlinked = yield* search.searchThreads({ query: "4102", projectId: project });
+      assert.deepEqual(
+        unlinked.matches.map((match) => [match.threadId, match.source]),
+        [[mentioned, "assistant"]],
       );
     }),
   );

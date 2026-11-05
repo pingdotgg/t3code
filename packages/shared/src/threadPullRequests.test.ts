@@ -99,6 +99,7 @@ describe("pull request identity search helpers", () => {
     expect(isPullRequestIdentityQuery("acme/app#22889")).toBe(true);
     expect(isPullRequestIdentityQuery("https://github.com/acme/app/pull/22889")).toBe(true);
     expect(isPullRequestIdentityQuery("open auth")).toBe(false);
+    expect(isPullRequestIdentityQuery("why does /pull/12 fail")).toBe(false);
   });
 
   it("matches linked PRs by number and reference, not by title text", () => {

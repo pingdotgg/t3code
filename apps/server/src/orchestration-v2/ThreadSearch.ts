@@ -601,8 +601,11 @@ export const make = Effect.gen(function* () {
               source: "title" as const,
             };
       });
-    // PR number/URL lookups should not surface mention-only message hits.
-    if (isPullRequestIdentityQuery(normalizedQuery)) {
+    // PR number/URL lookups that hit a linked PR should not surface mention-only message hits.
+    if (
+      isPullRequestIdentityQuery(normalizedQuery) &&
+      titleHits.some((hit) => hit.source === "pull_request")
+    ) {
       return { matches: titleHits };
     }
     const shown = new Set(titleHits.map((hit) => hit.threadId));
