@@ -11,7 +11,8 @@ export default function PreviewImageContent(props: {
   readonly mimeType?: string;
   readonly onError?: () => void;
 }) {
-  const [failed, setFailed] = useState(false);
+  // A renewed URL for the same file retries a failed load without resetting zoom.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [natural, setNatural] = useState({ width: 0, height: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
@@ -34,7 +35,7 @@ export default function PreviewImageContent(props: {
     : 1;
   const scale = zoom ?? fit;
   const changeZoom = (factor: number) => setZoom(Math.max(0.05, Math.min(8, scale * factor)));
-  if (failed) return <FileSurfaceFailure message="Unable to load image." />;
+  if (failedSrc === props.src) return <FileSurfaceFailure message="Unable to load image." />;
   return (
     <>
       <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
@@ -107,7 +108,7 @@ export default function PreviewImageContent(props: {
                 })
               }
               onError={() => {
-                setFailed(true);
+                setFailedSrc(props.src);
                 props.onError?.();
               }}
             />

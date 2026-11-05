@@ -2412,6 +2412,7 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
   }
 });
 it("keeps a workspace image and its zoom across agent commands and reloads it when the file changes", async () => {
+  assetUrlState.mockReset();
   const { WorkspaceImagePreview } = await import("./FilePreviewPanel");
   const original =
     'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>';
@@ -2471,6 +2472,39 @@ it("keeps a workspace image and its zoom across agent commands and reloads it wh
     expect(reloaded).not.toBe(opened);
     expect(reloaded?.getAttribute("src")?.startsWith(edited)).toBe(true);
   });
+});
+it("retries a failed workspace image when its URL is renewed for the same file", async () => {
+  assetUrlState.mockReset();
+  const { WorkspaceImagePreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string) => (
+    <WorkspaceImagePreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/screenshot.svg"
+      alt="screenshot.svg"
+      workspaceMutationId={mutation}
+    />
+  );
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:image/svg+xml,broken",
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  await using screen = await render(preview("first"));
+  await expect.element(screen.getByText("Unable to load image.")).toBeVisible();
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>#renewed',
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  await screen.rerender(preview("second"));
+  await expect.element(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
+  expect(screen.container.textContent).not.toContain("Unable to load image.");
 });
 function planningPdf(
   titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
