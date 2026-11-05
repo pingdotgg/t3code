@@ -573,11 +573,12 @@ export function useThreadComposerState() {
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
     if (
       selectedEnvironmentRuntime?.connectionState === "connected" &&
-      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId)
+      draft.modelSelection !== undefined &&
+      isModelSelectionUnavailable(serverConfig, draft.modelSelection, thread.projectId)
     ) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
-        modelSelection,
+        draft.modelSelection,
         thread.projectId,
       );
       Dialog.alert(title, detail);
@@ -703,7 +704,9 @@ export function useThreadComposerState() {
       text,
       attachments,
       context: draft.context,
-      modelSelection,
+      // Only a pick travels with the message. The thread's model is read by the server when the
+      // outbox delivers, because this client's copy of it can be stale by then.
+      ...(draft.modelSelection === undefined ? {} : { modelSelection: draft.modelSelection }),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
         provider,

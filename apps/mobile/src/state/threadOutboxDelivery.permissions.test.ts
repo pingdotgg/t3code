@@ -152,6 +152,7 @@ vi.mock("./use-composer-drafts", async () => {
     }),
     replaceComposerDraftAttachments: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
+    releaseDeliveredComposerModelPick: vi.fn(async () => {}),
     updateComposerDraftSettings: vi.fn(),
     waitForComposerDraftsLoaded: vi.fn(),
   };
@@ -325,6 +326,40 @@ afterEach(() => {
   state.cleanups.splice(0).forEach((cleanup) => cleanup());
 });
 
+describe("queued follow-up model", () => {
+  it("delivers a follow-up queued without a pick with no model, so the server keeps the thread's own", async () => {
+    setOperateGrant("secondary", true);
+    await state.manager.enqueue(message());
+
+    await runDrain();
+
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input).not.toHaveProperty("modelSelection");
+  });
+
+  it("delivers a follow-up without a pick even when this client's copy of the thread model looks unavailable", async () => {
+    setOperateGrant("secondary", true);
+    state.modelUnavailable.mockReturnValue(true);
+    await state.manager.enqueue(message());
+
+    await runDrain();
+
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(remaining()).toEqual([]);
+  });
+
+  it("delivers the model the user picked with the follow-up", async () => {
+    setOperateGrant("secondary", true);
+    const picked = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" };
+    await state.manager.enqueue(message({ modelSelection: picked }));
+
+    await runDrain();
+
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input.modelSelection).toEqual(picked);
+  });
+});
+
 describe("queued task operation access", () => {
   it("parks a connected read-only target, then delivers its unchanged queue after a grant", async () => {
     const queued = message();
@@ -341,7 +376,9 @@ describe("queued task operation access", () => {
 
   it("backs off instead of redelivering at once when a delivery hits a defect", async () => {
     setOperateGrant("secondary", true);
-    const queued = message();
+    const queued = message({
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+    });
     await state.manager.enqueue(queued);
     // Awaited steps catch their own failures, so a defect in the delivery's own code is what
     // rejects a delivery.
