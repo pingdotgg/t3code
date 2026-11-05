@@ -2415,7 +2415,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const current = thread.repoWorktrees ?? [];
       let repoWorktrees: ReadonlyArray<ThreadRepoWorktree>;
       if (command.type === "thread.repo-worktree.attach") {
-        if (thread.archivedAt !== null) {
+        if (thread.archivedAt !== null && command.relabelOnly !== true) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -2425,6 +2425,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const listed = current.find(
           (entry) => entry.worktreePath === command.repoWorktree.worktreePath,
         );
+        // A relabel read before a detach must not attach the worktree again.
+        if (listed === undefined && command.relabelOnly === true) return;
         if (listed?.branch === command.repoWorktree.branch) return;
         // A listed path is relabeled in place after its checkout switched branch.
         repoWorktrees =

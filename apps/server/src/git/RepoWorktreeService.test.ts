@@ -769,6 +769,53 @@ describe("RepoWorktreeService", () => {
     ),
   );
 
+  it.effect("records a switched branch for every thread with the checkout, never reattaching", () =>
+    withFixture(() =>
+      Effect.gen(function* () {
+        const service = yield* RepoWorktreeService.RepoWorktreeService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const first = yield* createThread;
+        const second = yield* createThread;
+        const detached = yield* createThread;
+        const unrelated = yield* createThread;
+        const { repoWorktree } = yield* service.ensure({
+          threadId: first,
+          repository: "alpha",
+          branch: "feature/shared",
+          baseRef: "main",
+        });
+        for (const threadId of [second, detached]) {
+          yield* service.ensure({ threadId, repository: "alpha", branch: "feature/shared" });
+        }
+        yield* service.detach({ threadId: detached, worktreePath: repoWorktree.worktreePath });
+        // As a Git action does from the thread's Changes view.
+        yield* git(repoWorktree.worktreePath, ["switch", "--quiet", "-c", "feature/renamed"]);
+
+        yield* service.recordBranch({ cwd: repoWorktree.worktreePath });
+        for (const threadId of [first, second]) {
+          assert.deepEqual(
+            (yield* readThread(threadId)).repoWorktrees?.map((entry) => entry.branch),
+            ["feature/renamed"],
+          );
+        }
+        assert.deepEqual((yield* readThread(detached)).repoWorktrees ?? [], []);
+        assert.deepEqual((yield* readThread(unrelated)).repoWorktrees ?? [], []);
+
+        // A relabel read before that detach landed is refused and leaves it detached.
+        yield* threads
+          .dispatch({
+            type: "thread.repo-worktree.attach",
+            commandId: CommandId.make("relabel:after-detach"),
+            threadId: detached,
+            repoWorktree: { ...repoWorktree, branch: "feature/renamed" },
+            relabelOnly: true,
+          })
+          .pipe(Effect.ignore);
+        assert.deepEqual((yield* readThread(detached)).repoWorktrees ?? [], []);
+      }),
+    ),
+  );
+
   it.effect("treats a linked worktree location and Git's real path as one checkout", () =>
     withFixture(
       () =>

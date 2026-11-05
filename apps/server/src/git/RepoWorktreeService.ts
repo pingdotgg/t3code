@@ -221,6 +221,14 @@ export class RepoWorktreeService extends Context.Service<
     readonly ensure: (
       input: RepoWorktreeEnsureInput,
     ) => Effect.Effect<RepoWorktreeEnsureResult, RepoWorktreeFailure>;
+    /**
+     * Relabels every thread that has the checkout at `cwd` attached with its
+     * current branch, after something switched it, so the branch shown and the
+     * one a rollback recreates a removed folder from stay current.
+     */
+    readonly recordBranch: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<void, RepoWorktreeFailure>;
     /** Forgets an attached worktree. Works with the setting off; never touches files. */
     readonly detach: (input: {
       readonly threadId: ThreadId;
@@ -560,7 +568,11 @@ const make = Effect.gen(function* () {
     yield* gitWorkflow.removeWorktree(input);
   });
 
-  const dispatchAttach = (threadId: ThreadId, repoWorktree: ThreadRepoWorktree) =>
+  const dispatchAttach = (
+    threadId: ThreadId,
+    repoWorktree: ThreadRepoWorktree,
+    options: { readonly relabelOnly?: boolean } = {},
+  ) =>
     Effect.gen(function* () {
       const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       yield* threadManagement.dispatch({
@@ -568,6 +580,7 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`repo-worktree:attach:${uuid}`),
         threadId,
         repoWorktree,
+        ...(options.relabelOnly === true ? { relabelOnly: true } : {}),
       });
     }).pipe(
       Effect.catchCause((cause) =>
@@ -898,6 +911,41 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const recordBranch: RepoWorktreeService["Service"]["recordBranch"] = Effect.fn(
+    "RepoWorktreeService.recordBranch",
+  )(function* (input) {
+    const target = yield* pathIdentity(input.cwd);
+    const attachments = yield* projections
+      .getThreadRepoWorktreePaths()
+      .pipe(
+        Effect.mapError((cause) => new RepoWorktreeReadError({ operation: "attachments", cause })),
+      );
+    const threadIds = new Set<ThreadId>();
+    for (const attachment of attachments) {
+      if ((yield* pathIdentity(attachment.worktreePath)) === target) {
+        threadIds.add(attachment.threadId);
+      }
+    }
+    if (threadIds.size === 0) return;
+    // A detached HEAD keeps the branch it was last on.
+    const branch = yield* checkedOutBranch(input.cwd);
+    if (branch === undefined) return;
+    for (const threadId of threadIds) {
+      const attached = yield* attachedWorktree(yield* loadThread(threadId), input.cwd);
+      if (attached === undefined || attached.branch === branch) continue;
+      // Refused when a detach landed first, which leaves nothing to relabel.
+      yield* dispatchAttach(threadId, { ...attached, branch }, { relabelOnly: true }).pipe(
+        Effect.catchTags({
+          RepoWorktreeDispatchError: (error) =>
+            Effect.logWarning("repository worktree branch was not relabeled", {
+              threadId,
+              cause: error.cause,
+            }),
+        }),
+      );
+    }
+  });
+
   const repositoryOriginUrl = (cwd: string) =>
     probe(cwd, "originUrl", ["config", "--get", "remote.origin.url"]).pipe(
       Effect.map((result) =>
@@ -1053,7 +1101,13 @@ const make = Effect.gen(function* () {
     } satisfies RepoWorktreeSetSubmoduleResult;
   });
 
-  return RepoWorktreeService.of({ ensure, detach, setSubmoduleCommit, removeWorktree });
+  return RepoWorktreeService.of({
+    ensure,
+    detach,
+    recordBranch,
+    setSubmoduleCommit,
+    removeWorktree,
+  });
 });
 
 export const layer = Layer.effect(RepoWorktreeService, make);

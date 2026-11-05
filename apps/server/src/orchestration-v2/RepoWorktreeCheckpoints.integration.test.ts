@@ -1289,6 +1289,40 @@ describe("repository worktree checkpoints", () => {
     { timeout: 120_000 },
   );
 
+  it.effect("recreates a removed worktree on the branch a Git action switched it to", () =>
+    withHarness(({ agent }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
+        const threadId = yield* createThread({ threadId: "thread:switched" });
+        let alpha = "";
+        yield* runTurn(
+          agent,
+          threadId,
+          Effect.gen(function* () {
+            alpha = (yield* repoWorktrees.ensure({
+              threadId,
+              repository: "alpha",
+              branch: "t3/before",
+              baseRef: "main",
+            })).repoWorktree.worktreePath;
+            yield* write(path.join(alpha, "README.md"), "# alpha\nturn 1\n");
+          }),
+        );
+        yield* runTurn(agent, threadId, write(path.join(alpha, "README.md"), "# alpha\nturn 2\n"));
+        // As "Commit on new branch" does from the thread's Changes view.
+        yield* git(alpha, ["switch", "--quiet", "-c", "t3/after"]);
+        yield* repoWorktrees.recordBranch({ cwd: alpha });
+        yield* fileSystem.remove(alpha, { recursive: true });
+
+        yield* rollback(threadId, 1);
+        assert.equal(yield* git(alpha, ["branch", "--show-current"]), "t3/after");
+        assert.equal(yield* read(path.join(alpha, "README.md")), "# alpha\nturn 1\n");
+      }),
+    ),
+  );
+
   it.effect(
     "rejects rollback for a provider that cannot rewind before any file changes",
     () =>

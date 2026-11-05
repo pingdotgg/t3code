@@ -1717,6 +1717,9 @@ const layerWsRpc = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+      // The checkout's branch already changed, so a stale label must not fail the action.
+      const recordBranch = (cwd: string) =>
+        repoWorktrees.recordBranch({ cwd }).pipe(Effect.ignoreCause({ log: true }));
 
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
         const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
@@ -2819,6 +2822,9 @@ const layerWsRpc = (
                           ),
                         ),
                       ),
+                      Effect.andThen(
+                        result.branch.status === "created" ? recordBranch(input.cwd) : Effect.void,
+                      ),
                       Effect.andThen(refreshGitStatus(input.cwd)),
                       Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                     ),
@@ -2859,9 +2865,15 @@ const layerWsRpc = (
             Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
-          gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow.createRef(input).pipe(
+            Effect.tap(() => (input.switchRef === true ? recordBranch(input.cwd) : Effect.void)),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow.switchRef(input).pipe(
+            Effect.tap(() => recordBranch(input.cwd)),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),

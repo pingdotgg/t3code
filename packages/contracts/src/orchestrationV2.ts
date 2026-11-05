@@ -3038,6 +3038,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     repoWorktree: ThreadRepoWorktree,
+    /** Only updates a worktree the thread still lists, such as after its checkout switched branch. */
+    relabelOnly: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
