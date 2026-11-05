@@ -22,7 +22,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -40,6 +40,38 @@ const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * MIB;
 const MAX_PAGE_BYTES = 25 * MIB;
 const formatMib = (bytes: number) => `${(bytes / MIB).toFixed(1)} MiB`;
+/** The longest page, in UTF-16 code units, whether passed inline or by path. */
+const MAX_HTML_LENGTH = 512_000;
+// UTF-8 takes at most 3 bytes per UTF-16 code unit, plus a 3-byte BOM.
+const MAX_PAGE_FILE_BYTES = MAX_HTML_LENGTH * 3 + 3;
+
+export class HtmlRenderPageInputError extends Schema.TaggedError<HtmlRenderPageInputError>()(
+  "HtmlRenderPageInputError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+const PAGE_LENGTH_LIMIT = `a page must be at most ${MAX_HTML_LENGTH.toLocaleString("en-US")} characters.`;
+
+export class HtmlRenderPageFileError extends Schema.TaggedError<HtmlRenderPageFileError>()(
+  "HtmlRenderPageFileError",
+  { path: Schema.String, reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return `${this.path} cannot be used as the page: ${this.reason}`;
+  }
+}
+
+/** The page as inline HTML or as an absolute path to an HTML file; exactly one is set. */
+export interface HtmlRenderPage {
+  readonly html?: string | undefined;
+  readonly path?: string | undefined;
+}
+
+export type HtmlRenderPageError = HtmlRenderPageInputError | HtmlRenderPageFileError;
 
 export class HtmlRenderImagesNotFoundError extends Schema.TaggedError<HtmlRenderImagesNotFoundError>()(
   "HtmlRenderImagesNotFoundError",
@@ -121,19 +153,25 @@ export class HtmlRender extends Context.Service<
   HtmlRender,
   {
     readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
-    readonly publish: (input: {
-      readonly threadId: ThreadId;
-      readonly html: string;
-      readonly title: string;
-      readonly height: number;
-    }) => Effect.Effect<HtmlRenderReference, HtmlRenderPrepareError | HtmlRenderStoreError>;
-    readonly preview: (input: {
-      readonly html: string;
-      readonly width?: number | undefined;
-      readonly appearance?: ThemeAppearance | undefined;
-    }) => Effect.Effect<
+    readonly publish: (
+      input: HtmlRenderPage & {
+        readonly threadId: ThreadId;
+        readonly title: string;
+        readonly height: number;
+      },
+    ) => Effect.Effect<
+      HtmlRenderReference,
+      HtmlRenderPrepareError | HtmlRenderPageError | HtmlRenderStoreError
+    >;
+    readonly preview: (
+      input: HtmlRenderPage & {
+        readonly width?: number | undefined;
+        readonly appearance?: ThemeAppearance | undefined;
+      },
+    ) => Effect.Effect<
       HtmlPreview,
       | Exclude<HtmlRenderPrepareError, HtmlRenderImagesNotFoundError>
+      | HtmlRenderPageError
       | PreviewBrowser.PreviewBrowserInstallError
       | PreviewBrowser.PreviewBrowserInstallingError
       | PreviewBrowser.PreviewBrowserUnsupportedError
@@ -230,6 +268,60 @@ const afterDoctype = (text: string, from: number) => {
   }
   return -1;
 };
+
+// Sticky, so it matches at `lastIndex` without copying the page, however much whitespace follows.
+const DOCTYPE_HTML = /<!doctype\s+html[\s>]/iy;
+
+// Like hasSvgRoot, so a renamed .env, key, or JSON file cannot pass for a page. \s includes a BOM.
+const hasHtmlRoot = (text: string) => {
+  let at = 0;
+  while (at !== -1) {
+    while (/\s/.test(text.charAt(at))) at += 1;
+    DOCTYPE_HTML.lastIndex = at;
+    if (text.startsWith("<?", at)) at = after(text, "?>", at + 2);
+    else if (text.startsWith("<!--", at)) at = after(text, "-->", at + 4);
+    else if (DOCTYPE_HTML.test(text)) return true;
+    else if (text.slice(at, at + 9).toLowerCase() === "<!doctype") at = afterDoctype(text, at + 9);
+    else return /^<(?:html|head|body)[\s/>]/i.test(text.slice(at, at + 6));
+  }
+  return false;
+};
+
+const readPageFile = Effect.fn("HtmlRender.readPageFile")(function* (pagePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const reject = (reason: string, cause?: unknown) =>
+    new HtmlRenderPageFileError({ path: pagePath, reason, cause });
+  if (!path.isAbsolute(pagePath)) return yield* reject("use an absolute path.");
+  // stat follows symlinks, so the checks below apply to the file a link points to.
+  const info = yield* fileSystem
+    .stat(pagePath)
+    .pipe(Effect.mapError((cause) => reject("it does not exist or cannot be read.", cause)));
+  if (info.type !== "File") return yield* reject("it is not a file.");
+  const tooLarge = (size: string) => reject(`it is ${size}; ${PAGE_LENGTH_LIMIT}`);
+  if (Number(info.size) > MAX_PAGE_FILE_BYTES) {
+    return yield* tooLarge(formatMib(Number(info.size)));
+  }
+  // The file can grow after stat, so bound the read too.
+  const bytes = yield* fileSystem.stream(pagePath, { bytesToRead: MAX_PAGE_FILE_BYTES + 1 }).pipe(
+    Stream.mkUint8Array,
+    Effect.mapError((cause) => reject("it cannot be read.", cause)),
+  );
+  if (bytes.byteLength > MAX_PAGE_FILE_BYTES) return yield* tooLarge(formatMib(bytes.byteLength));
+  const html = yield* Effect.try({
+    try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    catch: (cause) => reject("it is not UTF-8 text.", cause),
+  });
+  if (html.length > MAX_HTML_LENGTH) {
+    return yield* tooLarge(`${html.length.toLocaleString("en-US")} characters`);
+  }
+  if (!hasHtmlRoot(html)) {
+    return yield* reject(
+      "it does not start with <!doctype html> or an <html>, <head> or <body> tag.",
+    );
+  }
+  return html;
+});
 
 const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -400,6 +492,23 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const loadPage = (page: HtmlRenderPage) => {
+    const invalid = (reason: string) => Effect.fail(new HtmlRenderPageInputError({ reason }));
+    if (page.path !== undefined) {
+      return page.html === undefined
+        ? readPageFile(page.path).pipe(Effect.provideContext(services))
+        : invalid("Pass the page as either html or path, not both.");
+    }
+    if (page.html === undefined || page.html.length === 0) {
+      return invalid("Pass the page as html, or as the absolute path of an HTML file.");
+    }
+    return page.html.length > MAX_HTML_LENGTH
+      ? invalid(
+          `The html is ${page.html.length.toLocaleString("en-US")} characters; ${PAGE_LENGTH_LIMIT}`,
+        )
+      : Effect.succeed(page.html);
+  };
+
   // The bootstrap goes in first so its head scan never runs over inlined image data.
   const inline = (html: string) =>
     inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
@@ -413,13 +522,14 @@ const make = Effect.gen(function* () {
     return inlined.html;
   });
 
-  const publish = Effect.fn("HtmlRender.publish")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly html: string;
-    readonly title: string;
-    readonly height: number;
-  }) {
-    const html = yield* prepare(input.html);
+  const publish = Effect.fn("HtmlRender.publish")(function* (
+    input: HtmlRenderPage & {
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly height: number;
+    },
+  ) {
+    const html = yield* prepare(yield* loadPage(input));
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
     const filePath =
@@ -463,18 +573,20 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const preview = Effect.fn("HtmlRender.preview")(function* (input: {
-    readonly html: string;
-    readonly width?: number | undefined;
-    readonly appearance?: ThemeAppearance | undefined;
-  }) {
+  const preview = Effect.fn("HtmlRender.preview")(function* (
+    input: HtmlRenderPage & {
+      readonly width?: number | undefined;
+      readonly appearance?: ThemeAppearance | undefined;
+    },
+  ) {
     const width = Math.min(
       MAX_PREVIEW_WIDTH,
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),
     );
     const appearance = input.appearance ?? "dark";
-    yield* rejectViewportHeight(input.html);
-    const inlined = yield* inline(input.html);
+    const html = yield* loadPage(input);
+    yield* rejectViewportHeight(html);
+    const inlined = yield* inline(html);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
       appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,

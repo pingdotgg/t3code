@@ -24,6 +24,8 @@ import {
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -252,6 +254,31 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
   });
 });
 
+const layerHtmlTools = McpHttpServer.layerHtmlToolkit.pipe(
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(PreviewBrowser.layer),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
+  Layer.provideMerge(
+    DocumentText.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ),
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: () =>
+        Effect.succeed({
+          id: threadId,
+          deletedAt: null,
+          archivedAt: null,
+          activeRunId: RunId.make("mcp-core-run"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        } as OrchestrationV2ThreadShell),
+    }),
+  ),
+);
+
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -272,34 +299,41 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     expect(
       htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
     ).toEqual(reference);
-  }).pipe(
-    Effect.provide(
-      McpHttpServer.layerHtmlToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(McpProviderSessions.layer),
-        Layer.provide(PreviewBrowser.layer),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
-        Layer.provide(
-          DocumentText.layer.pipe(
-            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-          ),
-        ),
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: () =>
-              Effect.succeed({
-                id: threadId,
-                deletedAt: null,
-                archivedAt: null,
-                activeRunId: RunId.make("mcp-core-run"),
-                providerInstanceId: ProviderInstanceId.make("codex"),
-              } as OrchestrationV2ThreadShell),
-          }),
-        ),
-      ),
-    ),
-  ),
+  }).pipe(Effect.provide(layerHtmlTools)),
+);
+
+it.effect("renders a page by path and rejects calls without exactly one page", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const server = yield* McpServer.McpServer;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mcp-html-path-" });
+    const page = path.join(directory, "revenue.html");
+    yield* fileSystem.writeFileString(page, "<!doctype html><p>Revenue</p>");
+    const render = (args: Record<string, unknown>) =>
+      server
+        .callTool({ name: "html_render", arguments: { title: "Revenue", height: 240, ...args } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const rendered = yield* render({ path: page });
+    expect(rendered.isError).not.toBe(true);
+    expect(
+      htmlRenderFromToolItem({
+        toolName: "t3-code.html_render",
+        output: rendered.structuredContent,
+      }),
+    ).toMatchObject({ title: "Revenue", height: 240 });
+    for (const args of [{}, { html: "<p>Revenue</p>", path: page }]) {
+      expect(declaredFailure(yield* render(args))).toMatchObject({ code: "invalid_request" });
+    }
+    expect(declaredFailure(yield* render({ path: "revenue.html" }))).toMatchObject({
+      code: "invalid_request",
+      message: "revenue.html cannot be used as the page: use an absolute path.",
+    });
+  }).pipe(Effect.scoped, Effect.provide(layerHtmlTools)),
 );
 
 it.effect("records only failed calls of tools that hand off no work", () => {
