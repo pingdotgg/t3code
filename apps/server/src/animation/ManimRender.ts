@@ -76,7 +76,7 @@ export const make = Effect.fn("ManimRender.make")(function* (command = "manim") 
             "Lesson",
           ],
           cwd: directory,
-          env: { ...process.env, PYTHONNOUSERSITE: "1" },
+          env: { PYTHONNOUSERSITE: "1" },
           timeout: "120 seconds",
           timeoutBehavior: "timedOutResult",
           outputMode: "truncate",

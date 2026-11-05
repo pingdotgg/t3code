@@ -40,8 +40,9 @@ const AnimationRenderTool = Tool.make(ANIMATION_RENDER_TOOL_NAME, {
   ],
 })
   .annotate(Tool.Title, "Render animation")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
+  // It runs agent-written Python on the server, so providers must gate it like a shell command.
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
