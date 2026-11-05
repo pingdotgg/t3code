@@ -27,6 +27,7 @@ import {
   LabelCandidates,
   PullRequestActivity,
   PullRequestCore,
+  PullRequestCoreEnterprise,
   PullRequestFilesViewed,
   ReviewerCandidates,
   ViewerPermissions,
@@ -59,6 +60,7 @@ const row = (fields: Record<string, unknown>) => ({
   baseRefName: "main",
   state: "OPEN",
   isDraft: false,
+  isInMergeQueue: false,
   mergeable: "UNKNOWN",
   reviewDecision: null,
   latestReviews: { nodes: [] },
@@ -87,6 +89,10 @@ const decodePullRequestActivityJson = through(
   toPullRequestActivityPage,
 );
 const decodePullRequestCoreJson = through(PullRequestCore.result, toPullRequestCore);
+const decodePullRequestCoreEnterpriseJson = through(
+  PullRequestCoreEnterprise.result,
+  toPullRequestCore,
+);
 type Json = Record<string, any>;
 const LAST_PAGE = { hasNextPage: false, endCursor: null };
 const nodesIn = (connection: Json | null | undefined): ReadonlyArray<Json> =>
@@ -348,6 +354,7 @@ describe("pull request detail decoding", () => {
             body: "Body",
             state: "OPEN",
             isDraft: false,
+            isInMergeQueue: false,
             mergeable: "MERGEABLE",
             mergeStateStatus: "BLOCKED",
             reviewDecision: null,
@@ -518,10 +525,12 @@ describe("pull request detail decoding", () => {
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
   });
 
-  it("reads merge queue membership, and leaves it absent when not asked", () => {
+  it("reads merge queue membership, and leaves it absent from an Enterprise read", () => {
     expect(detailOf([], { isInMergeQueue: true }).isInMergeQueue).toBe(true);
     expect(detailOf([], { isInMergeQueue: false }).isInMergeQueue).toBe(false);
-    expect(detailOf([])).not.toHaveProperty("isInMergeQueue");
+    expect(expectSuccess(decodePullRequestCoreEnterpriseJson(coreJson([])))).not.toHaveProperty(
+      "isInMergeQueue",
+    );
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -1655,6 +1664,7 @@ describe("pull request watch fingerprints", () => {
       readonly reviews: number;
     }) => ({
       state: "OPEN",
+      isInMergeQueue: false,
       mergeable: "MERGEABLE",
       headRefOid: "abc123",
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
