@@ -14,15 +14,23 @@ to keep a large paste editable in the composer instead.
 
 ## Formatting
 
-The composer writes Markdown and shows it styled as you type. Markers such as
-`**` stay in the text and show beside the styled words when your cursor is on
-them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
-task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
-block. What you typed is what the agent receives, markers and numbering
-included, and `#1234` without a space still looks up a pull request.
+The composer writes Markdown and shows it styled as you type. When your cursor
+is on styled text, its Markdown shows instead, such as `**bold**`, and the
+markers edit like any other text: delete them to remove the style, or change
+`**` to `*` for italic. The style updates when your cursor leaves. To write
+plain Markdown with no styling, turn off **Settings → Chat → Rich text
+composer**. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---`
+become lists, task lists, quotes, headings and rules; ` ``` ` followed by Enter
+opens a code block. What you typed is what the agent receives, markers and
+numbering included, and `#1234` without a space still looks up a pull request.
+
+Some styled text containing or touching literal Markdown characters, such as a
+bold `path\` or `2*3`, keeps its styling without showing markers. Use formatting
+shortcuts or turn off rich text to edit the formatting of those ranges.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
-on an empty line leaves it; **Tab** nests a list item. In a code block, Enter
+on an empty line moves out one level, then leaves it; **Tab** nests a list item
+under the one above and **Shift+Tab** moves it back out. In a code block, Enter
 starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
 the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
 at the end, leave the block. **Backspace** at the start of a code block turns it
@@ -36,7 +44,8 @@ Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
 50 MiB each, subject to the environment's upload support and limit. The agent
 receives them on the environment's machine. Provider and model limits still
 apply, including images already in the conversation. A video attachment gives
-the agent a file path; it does not enable native video input.
+the agent a file path; only [Antigravity](./providers-antigravity.md#skills-and-attachments)
+sends supported videos to Gemini models as video.
 
 Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
@@ -46,6 +55,8 @@ You can drag or paste images into the web or desktop composer. HEIC and HEIF
 photos are converted to JPEG there and when selected from the mobile photo
 library; photos over the image limit are also resized to fit. On mobile, you can
 also send files to T3 Code through another app's system share sheet.
+On Android, you can also drag images from another app into the message input
+in split screen.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
@@ -173,24 +184,36 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
-## Voice input on iPhone
+## Voice input on mobile
 
-On supported iPhones with iOS 26 or later, use the composer's microphone to record,
-then confirm to transcribe. Text is inserted where your selection was when
-recording started, ready for you to review and edit before sending.
+On supported iPhones with iOS 26 or later and Android devices with Android 12 or
+later, use the composer's microphone to record, then confirm to transcribe. Text is
+inserted where your selection was when recording started, ready for you to review
+and edit before sending.
 
-The first use may download Apple's speech model and needs a network connection.
-Later transcription works offline for that language. Recordings can be up to five
-minutes long. Canceling, leaving the screen, or an audio interruption discards the
-recording and preserves your existing draft. While recording, the screen stays
+Voice input uses on-device speech transcription: Apple's on iOS, and compatible
+Google speech services on Android. When it is unavailable for the device or its
+language, the composer has no microphone button and **Settings → Microphone** says
+voice input isn't available. On Android, keep T3 Code open while recording and
+transcribing.
+
+The first use may download a speech model and needs a network connection.
+Later transcription works offline for that language. On Android, transcription
+processes the full recording at roughly its original duration. Recordings can be up to five
+minutes long. Canceling or an audio interruption discards the recording and
+preserves your existing draft. Navigating to another screen keeps dictation active;
+use the floating controls to finish or cancel. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
-Voice input records from the first connected microphone in **Settings → Microphone**.
-The list mixes kinds (built-in, other wired, other Bluetooth, CarPlay) with wired and
-Bluetooth devices you have dictated with, listed by name. Drag to rank them together:
+Choose a preferred order in **Settings → Microphone**. Voice input requests the first
+connected microphone in the list. The list mixes kinds (built-in, other wired, other
+Bluetooth, and CarPlay on iOS) with wired and Bluetooth devices you have dictated
+with, listed by name. Drag to rank them together:
 for example, put **Other Bluetooth** above your AirPods so a new headset is preferred
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
-microphone. Swipe a device left to forget it.
+microphone on iOS. Swipe a device left to forget it. Android may use another input
+when the preferred microphone cannot be routed. Devices with the same name may share
+a saved preference, but simultaneous same-name inputs remain separately selectable.
 
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
@@ -210,8 +233,8 @@ images. **Send now** sends a message right away, into the running turn if there 
 also edit or remove it.
 
 If you stop the agent or the server restarts, queued messages keep their order and are held.
-Press **Resume** in an empty composer on web and desktop, or **Resume queue** on mobile, to
-continue. Sending a new message also resumes the queue, unless it steers a turn that is already
+Press **Resume** in an empty composer to continue. **Resume** also continues a stopped
+run or one that hit a usage limit, even with nothing queued. Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit or remove held messages without starting them.
 
 The pencil on a queued message opens it in the composer for editing. The original message
@@ -239,7 +262,12 @@ Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
-provider supports it. Web and desktop also offer compaction from the context meter.
+provider supports it, even with the context meter turned off.
+
+On web and desktop, turn on **Settings → Labs → Legacy → Context
+window indicator (legacy)** to see context usage. The meter is off by default
+and appears once the provider reports usage. Open it for usage details and
+**Compact context** when the provider supports compaction.
 
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
@@ -283,14 +311,15 @@ the repository by text. Choose a result to insert it as a chip.
 Another thread can be context too. Type `@` followed by part of its title to pick one from
 the same server, or from a machine it links to while the Linked environments beta is on; those
 show the machine's name. On web and desktop you can also drag a thread out of the sidebar and
-drop it on the composer; a multi-selection drops together. On any client, **Copy thread** puts a
-thread on the clipboard that pastes into a composer as its chip. The chip shows the thread's
+drop it on the composer; a multi-selection drops together. On any client, **Copy thread** copies a
+link to the thread that pastes into a composer as its chip. The chip shows the thread's
 current title and opens it when selected. Your prompt only carries a reference: the agent reads the thread's
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
 A thread from a linked machine, picked, pasted or dropped, stays a reference that the agent reads
-on that machine. Dropping a thread from any other environment attaches a saved transcript file. The source
+on that machine. A pasted link to a thread on any other machine stays a link. Dropping a thread
+from any other environment attaches a saved transcript file. The source
 environment must be connected and up to date. The transcript includes the visible history and
 saved text context at the time of the drop; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal

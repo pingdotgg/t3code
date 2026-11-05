@@ -9,7 +9,7 @@ import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidSheetHeader } from "../../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text } from "../../../components/ui/AppText";
@@ -94,6 +94,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       gitState.selectedThreadBranches.length > 0
         ? gitState.selectedThreadBranches
         : await gitActions.refreshSelectedThreadBranches();
+    if (branches === null) return;
     const newBranchName = resolveAutoFeatureBranchName(
       Arr.filterMap(branches, (branch) =>
         branch.isRemote ? Result.failVoid : Result.succeed(branch.name),
@@ -129,11 +130,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         />
       ) : null}
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader
-          title="Confirm action"
-          onBack={() => navigation.goBack()}
-          hideBottomBorder
-        />
+        <AppBar sheet title="Confirm action" onBack={() => navigation.goBack()} hideBottomBorder />
       ) : (
         <View className="min-h-4 pt-2" />
       )}

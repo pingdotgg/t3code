@@ -18,7 +18,11 @@ import {
   NativeWorkspaceTabActivityContext,
   WorkspaceSlotOptionsContext,
 } from "../../native/v5-workspace-context";
-import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
+import {
+  useCompactWorkspaceTabs,
+  useFloatingWorkspaceTabs,
+  useSystemWorkspaceTabBar,
+} from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
@@ -69,6 +73,8 @@ function RetainedWorkspaceTab(props: {
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
+  /** The sidebar column draws the tabs itself, so they leave with it. */
+  readonly tabsInSidebarColumn?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
@@ -79,8 +85,14 @@ export function WorkspaceNativeTabs(props: {
   const systemTabBar = useSystemWorkspaceTabBar();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
-  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
-  const compactSidebarTabs = deviceType === "phone" || !layout.usesSplitView;
+  const { layout, panes } = useAdaptiveWorkspaceLayout();
+  // The tabs belong to the sidebar; over a page with the sidebar hidden they'd cover the composer.
+  const hiddenWithSidebar =
+    deviceType === "pad" &&
+    layout.usesSplitView &&
+    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
+    !panes.primarySidebarVisible;
+  const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
@@ -147,9 +159,11 @@ export function WorkspaceNativeTabs(props: {
       </Tabs.Host>
       {(deviceType === "pad" ||
         compactTabs ||
-        (layout.primarySidebarOverlaysContent &&
+        (layout.variant === "medium" &&
           !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
-      !props.hidden ? (
+      !props.hidden &&
+      !props.tabsInSidebarColumn &&
+      !hiddenWithSidebar ? (
         <View
           pointerEvents="box-none"
           style={{
@@ -158,23 +172,33 @@ export function WorkspaceNativeTabs(props: {
             bottom: 0,
             // UIKit can shrink the sidebar to 280pt independently of its preferred width.
             width:
-              deviceType === "pad"
+              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
                 ? Math.min(280, layout.listPaneWidth ?? width, width)
                 : (layout.listPaneWidth ?? width),
             height: 128,
           }}
         >
-          <WorkspaceSidebarTabs
-            compact={compactSidebarTabs}
-            reserveComposeSpace={compactSidebarTabs}
-            onNewTask={
-              compactSidebarTabs && !workspace.settingsOpen && selectedTab === "threads"
-                ? startNewTask
-                : undefined
-            }
-          />
+          <WorkspaceSidebarTabsFooter />
         </View>
       ) : null}
     </View>
+  );
+}
+
+/** The workspace tabs at the foot of the sidebar. */
+export function WorkspaceSidebarTabsFooter() {
+  const workspace = useWorkspaceTabs()!;
+  const { startNewTask } = useAdaptiveWorkspaceLayout();
+  const compact = useFloatingWorkspaceTabs();
+  return (
+    <WorkspaceSidebarTabs
+      compact={compact}
+      reserveComposeSpace={compact}
+      onNewTask={
+        compact && !workspace.settingsOpen && workspace.state.selectedTab === "threads"
+          ? startNewTask
+          : undefined
+      }
+    />
   );
 }

@@ -149,7 +149,11 @@ export default defineConfig({
       : {}),
   },
   staged: {
-    "*": "vp fmt --no-error-on-unmatched-pattern",
+    // In order, so lint reads the formatted file. CI lint failures cost a full round trip.
+    "*": ["vp fmt --no-error-on-unmatched-pattern", "vp lint --no-error-on-unmatched-pattern"],
+    // knip checks the whole repo, so it takes no file list. Any code or manifest change can leave
+    // a file, export, or dependency unused.
+    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,knip.jsonc}": () => "vp run knip:check",
   },
   fmt: {
     ignorePatterns: [
@@ -378,6 +382,27 @@ export default defineConfig({
             {
               paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
               patterns: RESTRICTED_UI_VARIANT_PATTERNS,
+            },
+          ],
+        },
+      },
+      {
+        files: ["apps/mobile/src/features/**"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: [
+                {
+                  group: [
+                    "**/components/ui/AndroidScreenHeader",
+                    "**/components/ui/WorkspaceAppBar*",
+                  ],
+                  importNames: ["AndroidScreenHeader", "WorkspaceAppBar"],
+                  message: "Use AppBar, so every screen gets the same header and button metrics.",
+                },
+              ],
             },
           ],
         },

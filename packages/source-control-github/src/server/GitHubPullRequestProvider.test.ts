@@ -16,6 +16,8 @@ import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullReque
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
 const coreFields = {
+  maintainerCanModify: true,
+  canEditMaintainerEdits: false,
   reviewRequestTeams: [],
   checksTruncated: false,
   comparison: { behindBy: 0, viewerCanUpdate: true },
@@ -64,6 +66,44 @@ it.effect("maps credential verification failures without relabeling operation fa
     verificationFails = false;
     expect(yield* verify(input, operation).pipe(Effect.flip)).toBe("operation-failed");
     expect(operations).toBe(1);
+  }),
+);
+
+it.effect.each([
+  { status: 403, githubErrorTypes: [], reason: "forbidden" },
+  { status: 503, githubErrorTypes: [], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN"], reason: "forbidden" },
+  { status: 200, githubErrorTypes: ["INTERNAL"], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", "NOT_FOUND"], reason: "forbidden" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", "INTERNAL"], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", null], reason: "failed" },
+])("classifies GitHub response $status as $reason", ({ status, githubErrorTypes, reason }) =>
+  Effect.gen(function* () {
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          revalidateChecks: (_input, read) => read,
+          getPullRequestDetail: () =>
+            Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: "github.com",
+                operation: "detail",
+                status,
+                githubErrorTypes,
+              }),
+            ),
+        }),
+      ),
+    );
+    const error = yield* provider
+      .getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      })
+      .pipe(Effect.flip);
+    expect(error.reason).toBe(reason);
   }),
 );
 
@@ -205,6 +245,7 @@ describe("gitHubViewerPermissions", () => {
       });
 
       expect(detail.viewerPermissions).toEqual({
+        maintainerEdits: false,
         actions: ["ready", "draft", "close", "reopen"],
         comment: true,
         resolve: false,

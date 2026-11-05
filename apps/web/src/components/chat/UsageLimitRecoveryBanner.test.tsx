@@ -9,7 +9,7 @@ const stoppedAt = new Date(2026, 9, 20, 12, 0);
 function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
   return usageLimitRecoveryBannerItem({
     runId: RunId.make("run-1"),
-    failureCode: "usageLimitExceeded",
+    errorCode: null,
     resetAt: resetAt.toISOString(),
     stoppedAt: stoppedAt.toISOString(),
     snoozedUntil: null,
@@ -23,10 +23,10 @@ describe("usageLimitRecoveryBannerItem", () => {
   it.each([
     ["responseTooManyFailedAttempts", "Provider rate limit (HTTP 429)"],
     ["usageLimitExceeded", "Usage limit reached"],
-  ] as const)("keeps %s manually recoverable without a reported reset", (failureCode, title) => {
+  ] as const)("keeps %s manually recoverable without a reported reset", (errorCode, title) => {
     const banner = usageLimitRecoveryBannerItem({
       runId: RunId.make("run-1"),
-      failureCode,
+      errorCode,
       resetAt: null,
       stoppedAt: stoppedAt.toISOString(),
       snoozedUntil: null,

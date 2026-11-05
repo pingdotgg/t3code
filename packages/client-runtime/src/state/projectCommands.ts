@@ -5,7 +5,7 @@ import {
   type ScopedProjectRef,
   WS_METHODS,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -73,7 +73,7 @@ export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProj
 }
 
 export function createProjectEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
   options: {
     readonly projectAtom: (ref: ScopedProjectRef) => Atom.Atom<EnvironmentProject | null>;
   },
@@ -198,6 +198,12 @@ export function createProjectEnvironmentAtoms<R, E>(
     createNew: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:create-new",
       tag: WS_METHODS.projectsCreateNew,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    createFromThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:create-from-thread",
+      tag: WS_METHODS.projectsCreateFromThread,
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
