@@ -6,6 +6,7 @@ import { refreshUsageLimits, usageLimitsRefreshDelay } from "@t3tools/client-run
 import type { AtomRegistry } from "effect/reactivity";
 import { isAppActive, subscribeAppState } from "../../lib/appState";
 import { serverEnvironment } from "../../state/server";
+import { instanceLimitsRefreshSelection } from "./usageLimitsRefresh";
 
 export function useInstanceLimitsRefresh(
   registry: AtomRegistry.AtomRegistry,
@@ -18,7 +19,7 @@ export function useInstanceLimitsRefresh(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- quota demand follows the native panel and app lifecycle
   useEffect(() => {
     if (!visible || !focused) return;
-    const selectionKey = JSON.stringify([instanceId, driver]);
+    const selectionKey = instanceLimitsRefreshSelection(instanceId, driver);
     let disposed = false;
     let pending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -29,7 +30,10 @@ export function useInstanceLimitsRefresh(
       const completed = () => {
         pending = false;
         if (!disposed)
-          timer = setTimeout(refresh, usageLimitsRefreshDelay(environmentId, selectionKey));
+          timer = setTimeout(
+            refresh,
+            usageLimitsRefreshDelay(environmentId, selectionKey.resources),
+          );
       };
       void refreshUsageLimits(
         environmentId,

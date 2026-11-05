@@ -1,5 +1,9 @@
 import { isAppActive, subscribeAppState } from "../../lib/appState";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ProviderInstanceId,
+  type ProviderDriverKind,
+} from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { refreshUsageLimits, usageLimitsRefreshDelay } from "@t3tools/client-runtime/state/usage";
 import { Atom, type AtomRegistry } from "effect/reactivity";
@@ -13,6 +17,36 @@ import { serverEnvironment } from "../../state/server";
 const limitsRefreshFailedAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make(false).pipe(Atom.withLabel(`mobile:limits-refresh-failed:${environmentId}`)),
 );
+
+export function instanceLimitsRefreshSelection(
+  instanceId: ProviderInstanceId,
+  driver?: ProviderDriverKind,
+) {
+  return {
+    key: JSON.stringify([instanceId, driver]),
+    resources: [
+      ...(driver ? [JSON.stringify(["provider", driver])] : []),
+      JSON.stringify(["instance", instanceId, driver]),
+    ],
+  };
+}
+
+function environmentLimitsRefreshKeys(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+) {
+  const config = registry.get(serverEnvironment.configValueAtom(environmentId));
+  const keys = (config?.providers ?? []).flatMap(
+    (provider) => instanceLimitsRefreshSelection(provider.instanceId, provider.driver).resources,
+  );
+  for (const source of config?.usageLimitSources ?? []) {
+    keys.push(
+      JSON.stringify(["source", source.id]),
+      ...source.accounts.map((account) => JSON.stringify(["provider", account.driver])),
+    );
+  }
+  return keys.length ? [...new Set(keys)] : [""];
+}
 
 export async function refreshEnvironmentLimits(
   registry: AtomRegistry.AtomRegistry,
@@ -33,6 +67,7 @@ export async function refreshEnvironmentLimits(
       ),
     options.automatic,
     options.afterPending,
+    { key: "", resources: environmentLimitsRefreshKeys(registry, environmentId) },
   );
   if (result === undefined) return;
   registry.set(limitsRefreshFailedAtom(environmentId), result._tag === "Failure");
@@ -54,9 +89,15 @@ const limitsAutoRefreshAtom = Atom.family((environmentId: EnvironmentId) =>
       } finally {
         pending = false;
         if (!disposed)
-          timer = setTimeout(() => {
-            void refresh();
-          }, usageLimitsRefreshDelay(environmentId));
+          timer = setTimeout(
+            () => {
+              void refresh();
+            },
+            usageLimitsRefreshDelay(
+              environmentId,
+              environmentLimitsRefreshKeys(get.registry, environmentId),
+            ),
+          );
       }
     };
     void refresh();

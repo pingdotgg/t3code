@@ -55,8 +55,17 @@ export function usageSummaryInput(
 const limitsRefreshAfter = new Map<string, number>();
 const limitsRefreshes = new Map<string, Promise<unknown>>();
 
-export function usageLimitsRefreshDelay(environmentId: EnvironmentId, selectionKey = ""): number {
-  const refreshAfter = limitsRefreshAfter.get(JSON.stringify([environmentId, selectionKey])) ?? 0;
+export function usageLimitsRefreshDelay(
+  environmentId: EnvironmentId,
+  selectionKey: string | readonly string[] = "",
+): number {
+  const selections =
+    typeof selectionKey === "string" ? [selectionKey] : selectionKey.length ? selectionKey : [""];
+  const refreshAfter = Math.min(
+    ...selections.map(
+      (selection) => limitsRefreshAfter.get(JSON.stringify([environmentId, selection])) ?? 0,
+    ),
+  );
   // @effect-diagnostics-next-line globalDate:off
   return Math.max(0, refreshAfter - Date.now());
 }
@@ -66,9 +75,18 @@ export async function refreshUsageLimits<A>(
   refresh: () => Promise<A>,
   automatic = false,
   afterPending = false,
-  selectionKey = "",
+  selectionKey: string | { readonly key: string; readonly resources: readonly string[] } = "",
 ): Promise<A | undefined> {
-  const key = JSON.stringify([environmentId, selectionKey]);
+  const selections =
+    typeof selectionKey === "string"
+      ? [selectionKey]
+      : selectionKey.resources.length
+        ? selectionKey.resources
+        : [""];
+  const key = JSON.stringify([
+    environmentId,
+    typeof selectionKey === "string" ? selectionKey : selectionKey.key,
+  ]);
   const pending = limitsRefreshes.get(key);
   if (pending !== undefined) {
     if (afterPending) {
@@ -79,13 +97,19 @@ export async function refreshUsageLimits<A>(
     }
     return (await pending) as A;
   }
-  if (automatic && usageLimitsRefreshDelay(environmentId, selectionKey) > 0) return;
+  if (automatic && usageLimitsRefreshDelay(environmentId, selections) > 0) return;
+  const refreshedSelections =
+    typeof selectionKey === "string"
+      ? selections
+      : selections.filter((selection) => usageLimitsRefreshDelay(environmentId, selection) === 0);
   const current = Promise.resolve()
     .then(refresh)
     .finally(() => {
       limitsRefreshes.delete(key);
       // @effect-diagnostics-next-line globalDate:off
-      limitsRefreshAfter.set(key, Date.now() + 5 * 60_000);
+      const refreshAfter = Date.now() + 5 * 60_000;
+      for (const selection of refreshedSelections)
+        limitsRefreshAfter.set(JSON.stringify([environmentId, selection]), refreshAfter);
     });
   limitsRefreshes.set(key, current);
   return await current;

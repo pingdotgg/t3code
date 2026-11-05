@@ -19,6 +19,7 @@ import {
   needsCursorKeychainAccess,
   refreshUsage,
   refreshUsageLimits,
+  usageLimitsRefreshDelay,
 } from "./usage.ts";
 
 const input = {
@@ -199,30 +200,45 @@ describe("manual usage refresh", () => {
 });
 
 describe("limits refresh cooldown", () => {
-  it("runs a fresh check after an in-flight check when settings change", async () => {
-    const id = EnvironmentId.make("limits-after-enable");
-    const oldCheck = Promise.withResolvers<string>();
-    const first = refreshUsageLimits(id, () => oldCheck.promise, true, false, "cursor");
-    const otherProviders = refreshUsageLimits(
-      id,
-      async () => "claude limits",
-      false,
-      false,
-      "claude",
-    );
-    const automaticCheck = vi.fn(async () => "unexpected extra limits");
-    const coalescedAutomatic = refreshUsageLimits(id, automaticCheck, true, false, "cursor");
-    const newCheck = vi.fn(async () => "new limits");
-    const afterEnable = refreshUsageLimits(id, newCheck, false, true, "cursor");
-    expect(newCheck).not.toHaveBeenCalled();
-    oldCheck.resolve("old limits");
-    expect(await first).toBe("old limits");
-    expect(await coalescedAutomatic).toBe("old limits");
-    expect(automaticCheck).not.toHaveBeenCalled();
-    expect(await otherProviders).toBe("claude limits");
-    expect(await afterEnable).toBe("new limits");
-    expect(newCheck).toHaveBeenCalledTimes(1);
-  });
+  it.each(["legacy", "resources"] as const)(
+    "runs a fresh check after an in-flight check when settings change (%s)",
+    async (kind) => {
+      const id = EnvironmentId.make(`limits-after-enable-${kind}`);
+      const cursor =
+        kind === "legacy" ? "cursor" : { key: "cursor", resources: ["cursor", "instance-a"] };
+      const claude = kind === "legacy" ? "claude" : { key: "claude", resources: ["claude"] };
+      const oldCheck = Promise.withResolvers<string>();
+      const first = refreshUsageLimits(id, () => oldCheck.promise, true, false, cursor);
+      const otherProviders = refreshUsageLimits(
+        id,
+        async () => "claude limits",
+        false,
+        false,
+        claude,
+      );
+      const automaticCheck = vi.fn(async () => "unexpected extra limits");
+      const coalescedAutomatic = refreshUsageLimits(
+        id,
+        automaticCheck,
+        true,
+        false,
+        typeof cursor === "string"
+          ? cursor
+          : { ...cursor, resources: [...cursor.resources].reverse().concat("new-instance") },
+      );
+      const newCheck = vi.fn(async () => "new limits");
+      const afterEnable = refreshUsageLimits(id, newCheck, false, true, cursor);
+      expect(newCheck).not.toHaveBeenCalled();
+      oldCheck.resolve("old limits");
+      expect(await first).toBe("old limits");
+      expect(await coalescedAutomatic).toBe("old limits");
+      expect(automaticCheck).not.toHaveBeenCalled();
+      if (kind === "resources") expect(usageLimitsRefreshDelay(id, "new-instance")).toBe(0);
+      expect(await otherProviders).toBe("claude limits");
+      expect(await afterEnable).toBe("new limits");
+      expect(newCheck).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe("needsCursorKeychainAccess", () => {
