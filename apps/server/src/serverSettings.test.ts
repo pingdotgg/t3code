@@ -2765,6 +2765,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         );
         const restored = yield* withPolicy(undefined, (service) => service.getSettings);
         assert.equal(restored.providerInstances[claudeId]?.environment?.[0]?.value, token.value);
+
+        // Removing a secret provider still clears a hidden variable that read from it.
+        const reference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Anthropic/key",
+        };
+        yield* withPolicy(undefined, (service) =>
+          decodeServerSettingsPatch({
+            secretProviders: {
+              personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+            },
+          }).pipe(
+            Effect.flatMap(service.updateSettings),
+            Effect.andThen(
+              service.updateProviderInstance({
+                operation: "upsert",
+                instanceId: claudeId,
+                instance: {
+                  driver: claude,
+                  environment: [{ name: token.name, value: reference, sensitive: true }],
+                },
+              }),
+            ),
+          ),
+        );
+        yield* withPolicy(policy, (service) =>
+          service.updateSettings({ secretProviders: { [reference.provider]: null } }),
+        );
+        const cleared = yield* withPolicy(undefined, (service) => service.getSettings);
+        assert.notInclude(JSON.stringify(cleared), "op://Private");
       }).pipe(Effect.provide(shared));
     });
 
