@@ -56,6 +56,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  compactBeforeSend: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   creation: Schema.optional(QueuedThreadCreationSchema),
@@ -89,6 +90,8 @@ export interface QueuedThreadMessage {
   readonly interactionMode?: ProviderInteractionModeType;
   /** Captured at enqueue because draining may occur long after the tap. */
   readonly dispatchMode?: ComposerDispatchMode;
+  /** Sends "When you return"'s `/compact` ahead of the message, which queues behind it. */
+  readonly compactBeforeSend?: boolean;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }
