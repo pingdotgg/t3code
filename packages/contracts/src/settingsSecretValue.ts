@@ -44,7 +44,10 @@ export const requireSettingsSecretLiteral = (
   isSecretReference(value)
     ? Effect.fail(
         new SettingsSecretUnresolvedError({
-          provider: secretProviders[value.provider]?.label.trim() || value.provider,
+          provider:
+            (Object.hasOwn(secretProviders, value.provider)
+              ? secretProviders[value.provider]?.label.trim()
+              : undefined) || value.provider,
         }),
       )
     : Effect.succeed(value ?? "");

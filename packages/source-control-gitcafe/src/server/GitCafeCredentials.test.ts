@@ -96,15 +96,18 @@ describe("GitCafeCredentials", () => {
       yield* settings.update({ sourceControlHosts: { gitcafe: { token: "" } } });
       assert.strictEqual((yield* credentials.get("git.cafe")).source, "env");
 
-      // A reference left in place by getWithSecrets is one its secret provider could not read.
+      // A reference left in place by getWithSecrets is one its secret provider could not read,
+      // here one naming a removed provider whose id is also an Object.prototype key.
       yield* settings.update({
         sourceControlHosts: {
-          gitcafe: { token: { provider: SecretProviderId.make("vault"), reference: "cafe#token" } },
+          gitcafe: {
+            token: { provider: SecretProviderId.make("constructor"), reference: "cafe#token" },
+          },
         },
       });
       const error = yield* Effect.flip(credentials.get("git.cafe"));
       assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
-      assert.include(error.message, '"vault"');
+      assert.include(error.message, '"constructor"');
       assert.strictEqual(
         (yield* Effect.flip(credentials.cliEnv("git.cafe")))._tag,
         "SettingsSecretUnresolvedError",
