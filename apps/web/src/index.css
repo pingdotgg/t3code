@@ -5022,40 +5022,27 @@ body {
 
 .composer-prompt-body {
   grid-template-areas: "attachments" "prompt";
+  --composer-actions-gap: calc(var(--spacing) * 1.5);
 }
 
-/* The hidden inline copy keeps one wrap boundary when the visible text gains
-   the actions' width. Native layout owns height; the observer reads its entries. */
-.composer-tiptap.composer-wrap-probe {
-  position: absolute;
-  inset-inline: 0;
-  top: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.composer-wrap-probe::before,
-.composer-prompt-body:not([data-composer-multiline]) [data-testid="composer-editor"]::before {
+.composer-prompt-body:not([data-composer-overflow]) [data-testid="composer-editor"]::before {
   content: "";
   float: inline-end;
-  width: calc(var(--composer-actions-width, 100px) + 6px);
+  width: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
   height: 1lh;
 }
 
-.composer-prompt-placeholder {
-  padding-inline-end: calc(var(--composer-actions-width, 100px) + 6px);
+.composer-prompt-body[data-composer-multiline]:not([data-composer-overflow])
+  [data-testid="composer-editor"]::before {
+  height: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
 }
 
-.composer-prompt-body[data-composer-multiline] {
-  grid-template-areas: "attachments" "prompt" "actions";
+.composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
+  margin-inline-end: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
 }
 
-[data-composer-multiline] .composer-prompt-editor {
-  padding-block: 0;
-}
-
-[data-composer-multiline] [data-chat-composer-actions="right"] {
-  grid-area: actions;
+.composer-prompt-body [data-composer-placeholder] {
+  padding-inline-end: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
 }
 
 .composer-tiptap p {
