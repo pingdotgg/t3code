@@ -22,7 +22,6 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
-  parseSideChatCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
@@ -551,19 +550,8 @@ describe("extendReplacementRangeForTrailingSpace", () => {
   });
 });
 
-describe("parseSideChatCommand", () => {
-  it("reads an optional prompt after /side or /btw", () => {
-    expect(parseSideChatCommand("/side")).toEqual({ prompt: "" });
-    expect(parseSideChatCommand("  /SIDE  why does this fail?\nline two ")).toEqual({
-      prompt: "why does this fail?\nline two",
-    });
-    expect(parseSideChatCommand("/btw check @src/a.ts")).toEqual({ prompt: "check @src/a.ts" });
-  });
-
-  it("ignores other commands and inline mentions, which the menu does not offer", () => {
-    expect(parseSideChatCommand("/sidebar")).toBeNull();
-    expect(parseSideChatCommand("/btwx")).toBeNull();
-    expect(parseSideChatCommand("ask /side later")).toBeNull();
+describe("side chat slash commands", () => {
+  it("are not offered after the start of a message", () => {
     const items = (["side", "btw", "clear", "plan"] as const).map((command) => ({
       id: `slash:${command}`,
       type: "slash-command" as const,
