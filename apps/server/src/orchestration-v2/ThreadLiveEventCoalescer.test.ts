@@ -426,7 +426,7 @@ describe("ThreadLiveEventCoalescer", () => {
   it.effect("keeps the flush timer alive when an offer's shorter scope closes", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const coalescer = yield* makeThreadLiveEventCoalescer({ coalesceWindow: "50 millis" });
+        const coalescer = yield* makeThreadLiveEventCoalescer();
         yield* Effect.scoped(coalescer.offer(makeToolActivity(1)));
         yield* TestClock.adjust("50 millis");
         const items = yield* coalescer.stream.pipe(Stream.take(1), Stream.runCollect);

@@ -26,6 +26,7 @@ import {
   resolveFffNativeDependencies,
   STAGE_INSTALL_ARGS,
 } from "./build-desktop-artifact.ts";
+import { assertLinuxArm64PageCompatibility } from "./lib/linux-arm64-sea.ts";
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { signWithJsign } from "./lib/windows-jsign.ts";
 import { windowsSystemTar } from "./lib/windows-tar.ts";
@@ -60,6 +61,15 @@ const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceCo
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
+
+export class CliArchiveLinuxArm64PageError extends Schema.TaggedError<CliArchiveLinuxArm64PageError>()(
+  "CliArchiveLinuxArm64PageError",
+  { executablePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.executablePath} is not page-compatible with Linux arm64.`;
+  }
+}
 
 export class CliArchiveCommandFailedError extends Schema.TaggedError<CliArchiveCommandFailedError>()(
   "CliArchiveCommandFailedError",
@@ -248,6 +258,69 @@ const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, ta
   for (const entry of maps) {
     yield* fs.remove(path.join(target, entry), { force: true });
   }
+});
+
+/** Node links libatomic.so.1, which Ubuntu server and container images lack, so t3 carries its own. */
+const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input: {
+  readonly repoRoot: string;
+  readonly contentDir: string;
+  readonly executablePath: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const ldd = yield* spawner.string(ChildProcess.make("ldd", [input.executablePath]));
+  const source = /libatomic\.so\.1 => (\/\S+)/.exec(ldd)?.[1];
+  if (source === undefined) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: "libatomic.so.1",
+      hint: `ldd did not resolve it for ${input.executablePath}. Install libatomic1 on the build host.`,
+    });
+  }
+  yield* fs.makeDirectory(path.join(input.contentDir, "lib"));
+  yield* fs.copyFile(source, path.join(input.contentDir, "lib/libatomic.so.1"));
+
+  // libatomic is GPL-3.0-or-later WITH GCC-exception-3.1, so its terms and source travel with it.
+  const owner = yield* spawner.string(
+    ChildProcess.make("dpkg-query", ["-S", yield* fs.realPath(source)]),
+  );
+  // Keep the arch qualifier so a second installed arch cannot add its own line.
+  const [, qualifiedPkg, pkg] = /^(([^:\s]+)(?::[^:\s]+)?): /.exec(owner) ?? [];
+  const versions = qualifiedPkg
+    ? yield* spawner.string(
+        ChildProcess.make("dpkg-query", [
+          "-W",
+          "-f=${Version} ${source:Package} ${source:Version}",
+          qualifiedPkg,
+        ]),
+      )
+    : "";
+  const [version, sourcePackage, sourceVersion] = versions.trim().split(" ");
+  if (!pkg || !version || !sourcePackage || !sourceVersion) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: `dpkg package for ${source}`,
+      hint: "The archive copies libatomic's license and source reference from its Ubuntu package.",
+    });
+  }
+  const header = [
+    `libatomic.so.1 is copied from the Ubuntu package ${pkg} ${version}.`,
+    `Source: https://launchpad.net/ubuntu/+source/${sourcePackage}/${sourceVersion}`,
+  ].join("\n");
+  // Vendored because CI runner images strip /usr/share/doc.
+  const license = yield* fs.readFileString(
+    path.join(input.repoRoot, "scripts/licenses/libatomic.LICENSE"),
+  );
+  yield* fs.writeFileString(
+    path.join(input.contentDir, "lib/libatomic.so.1.LICENSE"),
+    `${header}\n\n${license}`,
+  );
+
+  // RUNPATH resolves through symlinks and is not inherited by child processes, unlike LD_LIBRARY_PATH.
+  yield* runCommand(
+    ChildProcess.make("patchelf", ["--set-rpath", "$ORIGIN/lib", input.executablePath]),
+    "patchelf --set-rpath",
+  );
+  yield* Effect.log(`[cli-archive] Bundled ${source} as lib/libatomic.so.1.`);
 });
 
 const MacSigningConfig = Config.all({
@@ -441,7 +514,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
 
   yield* requireInput(
     builtExecutable,
-    `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
+    `Run \`node apps/server/scripts/cli.ts build-exe${targetKey === hostKey ? "" : ` --target ${targetKey}`}\` first.`,
   );
   yield* requireInput(path.join(webClient, "index.html"), "Run `vp run --filter t3 build` first.");
   yield* requireInput(
@@ -467,6 +540,17 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   });
 
   const executablePath = path.join(contentDir, executableName);
+  if (input.platform === "linux") {
+    yield* bundleLinuxLibatomic({ repoRoot, contentDir, executablePath });
+  }
+  // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+  if (input.platform === "linux" && input.arch === "arm64") {
+    const bytes = yield* fs.readFile(executablePath);
+    yield* Effect.try({
+      try: () => assertLinuxArm64PageCompatibility(bytes),
+      catch: (cause) => new CliArchiveLinuxArm64PageError({ executablePath, cause }),
+    });
+  }
   if (input.platform === "mac") {
     yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
   } else if (input.platform === "win") {

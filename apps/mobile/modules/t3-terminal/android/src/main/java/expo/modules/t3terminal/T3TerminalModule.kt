@@ -66,7 +66,15 @@ class T3TerminalModule : Module() {
       Prop("captureRequest") { view: T3TerminalView, request: Double ->
         view.captureRequest = request
       }
+
+      Prop("sharedGrid") { view: T3TerminalView, sharedGrid: List<Int> ->
+        view.sharedGrid = sharedGrid
+      }
       Events("onInput", "onResize", "onCapture")
+
+      OnViewDidUpdateProps { view: T3TerminalView ->
+        view.applyPendingBuffer()
+      }
 
       OnViewDestroys { view: T3TerminalView ->
         view.cleanup()

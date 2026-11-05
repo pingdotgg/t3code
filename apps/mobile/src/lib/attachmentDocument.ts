@@ -10,6 +10,7 @@ import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { useEffect, useRef, useState } from "react";
 
 import type { FileBackedComposerAttachment } from "./composerImages";
@@ -57,19 +58,31 @@ async function readAttachmentText(key: AttachmentTextKey, signal: AbortSignal) {
   return readFilePreviewResponse(response, signal);
 }
 
+class AttachmentTextReadError extends Schema.TaggedError<AttachmentTextReadError>()(
+  "AttachmentTextReadError",
+  {
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
 // Plain-object keys compare structurally (Effect `Equal`/`Hash`). Unmounting the
 // last reader interrupts the read, which aborts the fetch.
 const attachmentTextAtom = Atom.family((key: AttachmentTextKey) =>
   Atom.make(
     Effect.tryPromise({
       try: (signal) => readAttachmentText(key, signal),
-      catch: (cause) => (cause instanceof Error ? cause : new Error("Could not read this file.")),
+      catch: (cause) =>
+        new AttachmentTextReadError({
+          message: cause instanceof Error ? cause.message : "Could not read this file.",
+          cause,
+        }),
     }),
   ).pipe(Atom.withLabel("attachment-text")),
 );
 
 const noAttachmentText = Atom.make(
-  AsyncResult.initial<{ text: string; truncated: boolean }, Error>(),
+  AsyncResult.initial<{ text: string; truncated: boolean }, AttachmentTextReadError>(),
 ).pipe(Atom.withLabel("attachment-text:none"));
 
 /** Captured bytes never resolve against the workspace. */
@@ -84,6 +97,7 @@ export function useAttachmentDocument(input: {
   const kind = filePreviewKind(input, { richDocuments: false });
   const delimiter = filePreviewDelimiter(input);
   const shareController = useRef<AbortController | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight attachment share download when the component unmounts
   useEffect(() => () => shareController.current?.abort(), []);
   const resource = {
     _tag: "attachment" as const,

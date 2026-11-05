@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
@@ -79,7 +78,7 @@ function useProjectsInSidebarOrder<Project extends { id: string; environmentId: 
 ) {
   const { sidebarProjectGroupingMode } = useMobileProjectGroupingSettings();
   const scopes = useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
-  return useMemo(() => sortProjectsByGroupOrder(projects, scopes), [projects, scopes]);
+  return sortProjectsByGroupOrder(projects, scopes);
 }
 
 export interface PullRequestFilterMenu {

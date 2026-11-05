@@ -18,6 +18,7 @@ export function ComposerEditor({
   contentInsetVertical = 0,
   singleLineCentered: _singleLineCentered,
   enterBehavior: _enterBehavior,
+  readResetGeneration: _readResetGeneration,
   readOnly = false,
   onContentSizeChange,
   ...props

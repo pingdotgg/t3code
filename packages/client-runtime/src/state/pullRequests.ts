@@ -24,7 +24,6 @@ import {
   type PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
@@ -53,9 +52,10 @@ export {
 export * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 
 /** @public Required to name the error in consumers' inferred pull request results. */
-export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
+export class EnvironmentHttpConnectionNotReadyError extends Schema.TaggedError<EnvironmentHttpConnectionNotReadyError>()(
   "EnvironmentHttpConnectionNotReadyError",
-)<{ readonly message: string }> {}
+  { message: Schema.String },
+) {}
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
@@ -115,13 +115,28 @@ function updateCached<A, E>(
   registry.update(atom, AsyncResult.map(update));
 }
 
-function createPullRequestRefreshAtomFamily<R, E>(
+function makePullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:pull-requests:turn-refreshes",
     tag: WS_METHODS.pullRequestsSubscribeRefreshes,
   });
+}
+
+const refreshFamiliesByRuntime = new WeakMap<
+  object,
+  ReturnType<typeof makePullRequestRefreshAtomFamily>
+>();
+
+function createPullRequestRefreshAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+): ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>> {
+  const existing = refreshFamiliesByRuntime.get(runtime);
+  if (existing) return existing as ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>>;
+  const refreshes = makePullRequestRefreshAtomFamily(runtime);
+  refreshFamiliesByRuntime.set(runtime, refreshes);
+  return refreshes;
 }
 
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
@@ -206,6 +221,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
   );
+  const detailAnswerAtoms = Atom.family((_key: string) =>
+    Atom.make<{ readonly value: PullRequestDetail; readonly version: number } | null>(null).pipe(
+      Atom.setIdleTTL(5 * 60_000),
+    ),
+  );
+  const detailAnswers = normalizePullRequestQuery((target) =>
+    detailAnswerAtoms(JSON.stringify(target)),
+  );
   const detail = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:detail",
@@ -214,8 +237,29 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsDetail, input),
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-      ...(onAnswer.detail === undefined ? {} : { onAnswer: onAnswer.detail }),
+      onAnswer: (target, value, registry) =>
+        Effect.sync(() => {
+          // Cache reads bypass onAnswer, and server freshness stays separate from local readbacks.
+          registry.update(detailAnswers(target), (previous) => ({
+            value,
+            version: (previous?.version ?? 0) + 1,
+          }));
+        }).pipe(Effect.andThen(() => onAnswer.detail?.(target, value, registry) ?? Effect.void)),
     }),
+  );
+  const detailReadVersions = Atom.family((source: ReturnType<typeof detail>) =>
+    Atom.family((answer: ReturnType<typeof detailAnswers>) =>
+      Atom.make((get) => {
+        const result = get(source);
+        const latest = get(answer);
+        return result._tag === "Success" && !result.waiting && result.value === latest?.value
+          ? latest.version
+          : Option.getOrElse(get.self<number>(), () => 0);
+      }).pipe(Atom.setIdleTTL(5 * 60_000)),
+    ),
+  );
+  const detailReadVersion = normalizePullRequestQuery((target) =>
+    detailReadVersions(detail(target))(detailAnswers(target)),
   );
   const preview = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -368,6 +412,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 5 * 60_000,
     }),
     detail,
+    detailReadVersion,
     preview,
     previewCard,
     checks: normalizePullRequestQuery(
@@ -520,7 +565,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { reviewers, requested } = target.input;
           const candidatesAtom = reviewerCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const selected =
             candidates?.candidates.filter((candidate) =>
               reviewers.some(
@@ -606,7 +651,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { labels, applied } = target.input;
           const candidatesAtom = labelCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const names = new Set(labels);
           updateCached(registry, candidatesAtom, (value) => ({
             ...value,

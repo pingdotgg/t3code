@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  ThreadId,
+  type ReviewDiffPreviewInput,
   type PreviewEvent,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
@@ -9,6 +12,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -19,6 +23,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import type { HttpClient } from "effect/http";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -33,8 +38,11 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
+import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
+import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
@@ -183,6 +191,63 @@ const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* 
   );
   return registry;
 });
+
+it.effect("keeps complete review metadata visible while a refresh is held", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let fullReads = 0;
+      const rpcSession = {
+        client: {
+          [WS_METHODS.reviewGetDiffPreview]: (input: ReviewDiffPreviewInput) =>
+            Effect.gen(function* () {
+              if (!input.trackedOnly && ++fullReads > 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return {
+                cwd: input.cwd,
+                generatedAt: DateTime.makeUnsafe(0),
+                ...(input.trackedOnly ? { incomplete: true } : {}),
+                sources: [
+                  {
+                    id: "working-tree",
+                    kind: "working-tree" as const,
+                    title: "Uncommitted",
+                    baseRef: "HEAD",
+                    headRef: null,
+                    diff: "",
+                    diffHash: String(fullReads),
+                    truncated: false,
+                    patchesDeferred: true,
+                    files: (input.trackedOnly ? ["tracked"] : ["tracked", "untracked"]).map(
+                      (path) => ({ path, previousPath: null, additions: 1, deletions: 0 }),
+                    ),
+                  },
+                ],
+              };
+            }),
+        },
+      } as unknown as RpcSession.RpcSession;
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
+      const atom = createReviewEnvironmentAtoms(harness.runtime).diffPreview({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { cwd: "/project", sourceKind: "working-tree", metadataOnly: true },
+      });
+      const registry = yield* mountEnvironmentQuery(atom);
+      expect((yield* readEnvironmentQuery(registry, atom)).sources[0]!.files).toHaveLength(2);
+      registry.refresh(atom);
+      yield* Deferred.await(started);
+      yield* Effect.sync(() => {
+        const value = AsyncResult.getOrElse(registry.get(atom), () => null);
+        expect(value?.incomplete).not.toBe(true);
+        expect(value?.sources[0]!.files).toHaveLength(2);
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      expect((yield* readEnvironmentQuery(registry, atom)).sources[0]!.diffHash).toBe("2");
+    }),
+  ),
+);
 
 describe("preview event subscriptions", () => {
   it.effect("delivers every open and close when RPC events arrive in batches", () =>
@@ -957,6 +1022,64 @@ describe("environment query lifecycle", () => {
       }),
     ),
   );
+
+  it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<Deferred.Deferred<Record<string, string>>>();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: () =>
+                Effect.gen(function* () {
+                  const answer = yield* Deferred.make<Record<string, string>>();
+                  yield* Queue.offer(requests, answer);
+                  return yield* Deferred.await(answer);
+                }),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+          removedAt: new Map(),
+        }).pipe(Atom.keepAlive);
+        const removed = (entries: ReadonlyArray<readonly [string, number]>) => ({
+          removedAt: new Map(entries.map(([id, sequence]) => [ThreadId.make(id), sequence])),
+        });
+        // Thread titles never use the HTTP client.
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        }).threadTitles({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [ThreadId.make("fork")] },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        const settled: Array<Record<string, string>> = [];
+        const unsubscribe = registry.subscribe(atom, (result) => {
+          if (AsyncResult.isSuccess(result) && !result.waiting) settled.push(result.value);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        yield* Deferred.succeed(yield* Queue.take(requests), { fork: "Fork" });
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({ fork: "Fork" });
+
+        registry.set(shellState, removed([["other", 5]]));
+        expect(registry.get(atom).waiting).toBe(false);
+
+        // Archiving and then deleting the fork both remove it from the shell.
+        registry.set(shellState, removed([["fork", 6]]));
+        const beforeDelete = yield* Queue.take(requests);
+        registry.set(shellState, removed([["fork", 7]]));
+        const afterDelete = yield* Queue.take(requests);
+        yield* Deferred.succeed(beforeDelete, { fork: "Fork" });
+        yield* Deferred.succeed(afterDelete, {});
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({});
+        expect(settled).toEqual([{ fork: "Fork" }, {}]);
+      }),
+    ),
+  );
 });
 
 describe("executeAtomQuery", () => {
@@ -1212,6 +1335,35 @@ describe("runtime command runner", () => {
 });
 
 describe("persisted environment queries", () => {
+  it.effect("keeps an in-memory cached page pending until revalidation settles", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshStarted = Latch.makeUnsafe();
+        const finishRefresh = Latch.makeUnsafe();
+        let executions = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => {
+            if (++executions === 1) return Effect.succeed("cached");
+            refreshStarted.openUnsafe();
+            return finishRefresh.await.pipe(Effect.as("fresh"));
+          }),
+          { persistence: { load: () => Effect.succeedNone, save: () => Effect.void } },
+        );
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("cached");
+        registry.refresh(harness.atom);
+        yield* refreshStarted.await;
+        expect(registry.get(harness.atom)).toMatchObject({
+          _tag: "Success",
+          value: "cached",
+          waiting: true,
+        });
+        finishRefresh.openUnsafe();
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("fresh");
+      }),
+    ),
+  );
+
   it.effect(
     "restores cached data in a new registry while offline, then refreshes on reconnect",
     () =>
@@ -1306,7 +1458,7 @@ describe("persisted environment queries", () => {
         );
         const registry = yield* mountEnvironmentQuery(harness.atom);
         yield* Effect.result(readEnvironmentQuery(registry, harness.atom));
-        expect(Option.getOrNull(AsyncResult.value(registry.get(harness.atom)))).toBe("cached");
+        expect(AsyncResult.getOrElse(registry.get(harness.atom), () => null)).toBe("cached");
       }),
     ),
   );
