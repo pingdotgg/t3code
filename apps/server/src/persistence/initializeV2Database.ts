@@ -14,6 +14,8 @@ export class V2DatabaseImportError extends Schema.TaggedError<V2DatabaseImportEr
   }
 }
 
+const isV2DatabaseImportError = Schema.is(V2DatabaseImportError);
+
 const isProcessAlive = (pid: number): boolean => {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -72,8 +74,8 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
       prefix: `.v2-import-${process.pid}-`,
     });
     const snapshotPath = path.join(temporaryDirectory, "snapshot.sqlite");
-    yield* Effect.tryPromise(
-      (signal) =>
+    yield* Effect.tryPromise({
+      try: (signal) =>
         new Promise<void>((resolve, reject) => {
           const worker = new NodeWorkerThreads.Worker(snapshotWorkerSource, {
             eval: true,
@@ -85,7 +87,8 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
             code === 0 ? resolve() : reject(new Error(`Snapshot worker exited with ${code}`)),
           );
         }),
-    );
+      catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+    });
     // Publish only a complete snapshot, without replacing an existing V2 database.
     yield* fs.link(snapshotPath, destinationPath).pipe(
       Effect.catchIf(
@@ -95,6 +98,10 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
     );
   }).pipe(
     Effect.scoped,
-    Effect.mapError((cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause })),
+    Effect.mapError((cause) =>
+      isV2DatabaseImportError(cause)
+        ? cause
+        : new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+    ),
   );
 });
