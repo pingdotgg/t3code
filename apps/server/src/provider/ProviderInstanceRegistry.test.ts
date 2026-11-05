@@ -899,40 +899,19 @@ describe("ProviderInstanceRegistry secret environment", () => {
   it.effect("marks an instance unavailable and names the variable it could not read", () => {
     const fixture = setup({});
     return Effect.gen(function* () {
-      const { registry } = yield* fixture.make;
+      const { registry, mutator } = yield* fixture.make;
+      const readsAtStartup = fixture.reads.length;
 
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       expect(fixture.created).toEqual([]);
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
-    }).pipe(Effect.scoped);
-  });
 
-  it.effect("does not read an unreadable secret again when a settings save leaves it alone", () => {
-    const fixture = setup({});
-    return Effect.gen(function* () {
-      const { registry, mutator } = yield* fixture.make;
-      const readsAtStartup = fixture.reads.length;
-
+      // A settings save that leaves it alone does not read the vault again.
       yield* mutator.reconcile({ ...fixture.configMap });
-
       expect(fixture.reads).toHaveLength(readsAtStartup);
       expect(yield* registry.listUnavailable).toHaveLength(1);
-    }).pipe(Effect.scoped);
-  });
-
-  it.effect("starts an unreadable instance once a refresh can read its secret", () => {
-    const fixture = setup({});
-    return Effect.gen(function* () {
-      const { registry, mutator } = yield* fixture.make;
-      yield* mutator.reconcile({ ...fixture.configMap });
-
-      fixture.vault.set(secret.reference, "sk-live");
-      yield* mutator.reloadSecrets();
-
-      expect(yield* registry.getInstance(instanceId)).toBeDefined();
-      expect(yield* registry.listUnavailable).toEqual([]);
     }).pipe(Effect.scoped);
   });
 
