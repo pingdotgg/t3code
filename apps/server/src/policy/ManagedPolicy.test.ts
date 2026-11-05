@@ -59,6 +59,9 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
     const listed = ManagedSettings.listManageableSettings();
     const paths = listed.map(([path]) => path);
     assert.include(paths, "storageCleanup.logsAfterDays");
+    assert.include(paths, "backgroundActivity.baseProfile");
+    assert.include(paths, "backgroundActivity.overrides.pauseWhenOnBattery");
+    assert.notInclude(paths, "backgroundActivity.overrides");
     assert.notInclude(paths, "projectSettingsOverrides");
     assert.notInclude(paths, "compactIdleThreads");
     for (const [path, value] of listed) {
