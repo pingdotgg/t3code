@@ -86,5 +86,6 @@ threads.
   environment, including `PI_CODING_AGENT_DIR` if set. Trust the folder or its parent with `/trust`,
   then start a new thread using that same worktree. Launch arguments with `--no-approve` keep
   project files off without the notice.
-- The context meter appears once Pi reports usage for the thread. Some model providers only
-  report usage when a response completes, so the meter can wait for the first reply.
+- The context meter is off by default; see [commands and skills](./composer.md#commands-and-skills)
+  to enable it on web and desktop. It appears once Pi reports usage for the thread. Some model
+  providers only report usage when a response completes, so the meter can wait for the first reply.
