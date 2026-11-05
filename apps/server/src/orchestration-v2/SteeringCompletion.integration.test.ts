@@ -14,6 +14,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2DomainEvent,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -485,10 +486,12 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   canSteer = true,
   interruptTurn: Effect.Effect<void> = Effect.void,
   steeringAcceptsAttachments = true,
+  switchesRuntimeModeInSession = true,
 ) {
   const cwd = yield* checkpointWorkspace(name);
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
+  const sessionRuntimeModes: RuntimeMode[] = [];
   const steered: string[] = [];
   const interrupted: ProviderTurnId[] = [];
   const capabilities = {
@@ -498,6 +501,12 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
       supportsActiveSteering: canSteer,
       supportsSteeringByInterruptRestart: canRestart,
       activeSteeringAcceptsAttachments: steeringAcceptsAttachments,
+    },
+    // Providers that restart for a mode change, such as Claude and Cursor, run one thread per session.
+    sessions: {
+      ...CodexProviderCapabilitiesV2.sessions,
+      supportsMultipleProviderThreadsPerSession: switchesRuntimeModeInSession,
+      supportsRuntimeModeSwitchInSession: switchesRuntimeModeInSession,
     },
   };
   const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
@@ -534,6 +543,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
         const startTurn = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
           Effect.gen(function* () {
             started.push(turn);
+            sessionRuntimeModes.push(input.runtimePolicy.runtimeMode);
             yield* turnUpdated(turn, "running");
           });
         return {
@@ -648,7 +658,16 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     yield* Fiber.join(running);
     return threadId;
   });
-  return { cwd, events, started, steered, interrupted, layer, startFirstTurn };
+  return {
+    cwd,
+    events,
+    started,
+    sessionRuntimeModes,
+    steered,
+    interrupted,
+    layer,
+    startFirstTurn,
+  };
 });
 
 it.effect("steers a delegated task question notice into the running parent turn", () =>
@@ -1205,6 +1224,198 @@ it.effect("starts each queued message in the modes it was sent with", () =>
             interactionMode: send.interactionMode,
             runtimeMode: send.runtimeMode,
           })),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// regression: #31290
+it.effect("restarts a session that cannot switch modes for a queued message sent in another", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, sessionRuntimeModes, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness(
+          "queued-modes-restart",
+          false,
+          true,
+          Effect.void,
+          true,
+          false,
+        );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = yield* startFirstTurn;
+        // The mode command would restart the session and end the running turn; write its result.
+        const setRuntimeMode = (runtimeMode: RuntimeMode) =>
+          Effect.gen(function* () {
+            const { thread } = yield* orchestrator.getThreadRecords(threadId, []);
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`queued-modes-restart:${runtimeMode}`),
+                  type: "thread.runtime-mode-updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...thread, runtimeMode },
+                },
+              ],
+            });
+          });
+        yield* setRuntimeMode("approval-required");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queued"),
+          threadId,
+          messageId: MessageId.make("message:queued"),
+          text: "queued",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* setRuntimeMode("full-access");
+
+        const first = started[0]!;
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
+          (candidate) => candidate.runAttemptId === first.attemptId,
+        )!;
+        const settled = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === first.runId &&
+              event.payload.status === "waiting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: first.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+
+        assert.deepEqual(
+          started.map((input, index) => ({
+            message: input.message.text,
+            turn: input.runtimePolicy.runtimeMode,
+            session: sessionRuntimeModes[index],
+          })),
+          [
+            { message: "first", turn: "full-access", session: "full-access" },
+            { message: "queued", turn: "approval-required", session: "approval-required" },
+          ],
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// regression: #31290
+it.effect("keeps a started queued message's modes when the thread's change before it runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("queued-modes-gap");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = yield* startFirstTurn;
+        const send = (
+          name: string,
+          runtimeMode: RuntimeMode,
+          interactionMode: "plan" | "default",
+        ) =>
+          Effect.gen(function* () {
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make(`${name}:runtime-mode`),
+              threadId,
+              runtimeMode,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make(`${name}:interaction-mode`),
+              threadId,
+              interactionMode,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${name}:message`),
+              threadId,
+              messageId: MessageId.make(`message:${name}`),
+              text: name,
+              attachments: [],
+              modelSelection: runSelection,
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          });
+        yield* send("queued", "approval-required", "plan");
+        // End the first run with the queue held, so starting the message is one command.
+        const { runs, providerTurns } = yield* orchestrator.getThreadProjection(threadId);
+        const queued = runs.find((run) => run.status === "queued")!;
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            ...runs.map((run) => ({
+              id: EventId.make(`queued-modes-gap:${run.id}`),
+              type: "run.updated" as const,
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload:
+                run.id === queued.id
+                  ? { ...run, queueHeld: true }
+                  : { ...run, status: "cancelled" as const, completedAt: now },
+            })),
+            ...providerTurns.map((turn) => ({
+              id: EventId.make(`queued-modes-gap:${turn.id}`),
+              type: "provider-turn.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: { ...turn, status: "cancelled" as const, completedAt: now },
+            })),
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "queued-run.start",
+          commandId: CommandId.make("start-queued"),
+          threadId,
+          runId: queued.id,
+        });
+        yield* send("next", "full-access", "default");
+        yield* worker.drain();
+
+        const turn = started.at(-1)!;
+        assert.deepEqual(
+          {
+            message: turn.message.text,
+            runtimeMode: turn.runtimePolicy.runtimeMode,
+            interactionMode: turn.runtimePolicy.interactionMode,
+          },
+          { message: "queued", runtimeMode: "approval-required", interactionMode: "plan" },
         );
       }).pipe(Effect.provide(layer));
     }),

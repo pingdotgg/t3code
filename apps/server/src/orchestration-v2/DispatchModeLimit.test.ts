@@ -139,6 +139,48 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
       assert.equal(retried._tag, "OrchestratorDispatchError");
     }),
   );
+
+  it.effect("refuses to edit a queued message sent in modes above the limit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:limit-queued-edit");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("raise-queued-edit"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* orchestrator.dispatch(sendMessage(threadId, "queued-edit-running"));
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "queued-edit-waiting"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower-queued-edit"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const { runs } = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+      const queued = runs.find((run) => run.status === "queued")!;
+      const refused = yield* orchestrator
+        .dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make("edit-queued"),
+          threadId,
+          runId: queued.id,
+          text: "replaced",
+        })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+      assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.equal(
+        messages.find((message) => message.id === queued.userMessageId)?.text,
+        "queued-edit-waiting",
+      );
+    }),
+  );
 });
 
 const layerPolicyDatabase = SqlitePersistence.layerMemory;

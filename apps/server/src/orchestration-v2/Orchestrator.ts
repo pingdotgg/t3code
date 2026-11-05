@@ -865,6 +865,14 @@ function queuedRunModes(
   };
 }
 
+function sessionsWithoutRuntimeModeSwitch(
+  sessions: OrchestrationV2ThreadProjection["providerSessions"],
+): ReadonlyArray<ProviderSessionId> {
+  return sessions
+    .filter((session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession)
+    .map((session) => session.id);
+}
+
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
@@ -1897,9 +1905,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               )
           : null;
+      const runtimeModeRestartIds = new Set(
+        modes.runtimeMode === projection.thread.runtimeMode
+          ? []
+          : sessionsWithoutRuntimeModeSwitch(projection.providerSessions),
+      );
       const releasableSessions = projection.providerSessions.filter(
         (session) =>
-          switchPlan?.releaseProviderSessionIds.includes(session.id) &&
+          (switchPlan?.releaseProviderSessionIds.includes(session.id) ||
+            runtimeModeRestartIds.has(session.id)) &&
           session.status !== "stopped" &&
           session.status !== "error",
       );
@@ -1911,7 +1925,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // Nobody waits on a queued start to refuse it. A handoff runs in its own session, so a
       // busy one stays up; a restart resumes the busy session's native thread, so wait instead.
-      if (busySessionIds.size > 0 && switchPlan?.transition.type === "restart_and_resume") {
+      if (
+        busySessionIds.size > 0 &&
+        (switchPlan?.transition.type === "restart_and_resume" ||
+          [...busySessionIds].some((id) => runtimeModeRestartIds.has(id)))
+      ) {
         yield* Effect.logInfo(
           "Holding the queue: the replaced provider session still runs background work",
           { threadId, runId: queuedRun.id, providerSessionIds: Array.from(busySessionIds) },
@@ -1933,6 +1951,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const sessionsToDetach = releasableSessions.filter(
         (session) => !busySessionIds.has(session.id),
       );
+      const detachReason = (sessionId: ProviderSessionId) =>
+        switchPlan?.releaseProviderSessionIds.includes(sessionId)
+          ? "Provider or model selection changed."
+          : "Runtime mode changed.";
       const canResumeAcrossInstances =
         switchPlan?.instanceChanged === true &&
         switchPlan.transition.type === "restart_and_resume" &&
@@ -2384,7 +2406,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: {
               providerSessionId: session.id,
               detachedAt: now,
-              reason: "Provider or model selection changed.",
+              reason: detachReason(session.id),
             },
           })),
           ...executionIdentityEvents,
@@ -2426,7 +2448,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             request: {
               type: "provider-session.detach" as const,
               providerSessionId: session.id,
-              detail: "Provider or model selection changed.",
+              detail: detachReason(session.id),
             },
           })),
           {
@@ -4267,11 +4289,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
-            ? (providerContext?.providerSessions ?? [])
-                .filter(
-                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-                )
-                .map((session) => session.id)
+            ? sessionsWithoutRuntimeModeSwitch(providerContext?.providerSessions ?? [])
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
@@ -13651,6 +13669,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+      // A queued run starts in the modes it was sent with, which can be above the thread's now.
+      if (
+        shell !== null &&
+        (command.type === "queued-run.edit" || command.type === "queued-run.start")
+      ) {
+        const { runs } = yield* projectionStore
+          .getThreadRecords(threadId, ["runs"], { runIds: [command.runId] })
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        const run = runs.find((candidate) => candidate.id === command.runId);
+        // Both commands refuse automatic deliveries, the only runs that follow the current modes.
+        if (run !== undefined) {
+          yield* refuseAboveDispatchModeLimit(
+            command,
+            threadId,
+            queuedRunModes(shell, run, false, runtimeModeCeiling?.maxRuntimeMode),
+          );
+        }
+      }
     }
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(

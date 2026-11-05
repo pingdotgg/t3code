@@ -699,6 +699,12 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus } = runControls;
 
+      // A queued run keeps the modes it started in; a later send may change the thread's.
+      const runThread = {
+        ...projection.thread,
+        runtimeMode: run.runtimeMode ?? projection.thread.runtimeMode,
+        interactionMode: run.interactionMode ?? projection.thread.interactionMode,
+      };
       // A side chat shares its parent's worktree; the turn that gets its context asks before acting.
       const resolvedPolicy = yield* runtimePolicy
         .resolve({
@@ -706,8 +712,8 @@ export const layer: Layer.Layer<
             projection.thread.lineage.sideChat === true &&
             (sideChatHandoff !== undefined ||
               !projection.runs.some((previous) => previous.ordinal < run.ordinal))
-              ? { ...projection.thread, runtimeMode: "approval-required" }
-              : projection.thread,
+              ? { ...runThread, runtimeMode: "approval-required" }
+              : runThread,
           modelSelection: run.modelSelection,
         })
         .pipe(Effect.result);
