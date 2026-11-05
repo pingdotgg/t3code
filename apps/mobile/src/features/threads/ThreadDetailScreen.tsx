@@ -1821,7 +1821,12 @@ function ThreadDetailBody(
                             }
                           : {})}
                         offersSideChat={
-                          props.offersSideChat && !props.draftMode && props.canOperateThread
+                          props.offersSideChat &&
+                          !props.draftMode &&
+                          props.canOperateThread &&
+                          props.queuedRunEdit === null &&
+                          props.activePendingApproval === null &&
+                          props.activePendingUserInput === null
                         }
                         serverConfig={props.serverConfig}
                         queueCount={props.selectedThreadQueueCount}
