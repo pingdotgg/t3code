@@ -139,6 +139,7 @@ export function BrowserDocumentFrame(props: {
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
   readonly threadRef?: ScopedThreadRef | undefined;
+  readonly formStateKey?: string | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
   /** Resource identity without its revision, so PDF reloads can retain the reading position. */
@@ -158,6 +159,7 @@ export function BrowserDocumentFrame(props: {
       src={props.src}
       title={props.title}
       threadRef={props.threadRef}
+      formStateKey={props.formStateKey}
       className="min-h-0 flex-1"
     />
   ) : (

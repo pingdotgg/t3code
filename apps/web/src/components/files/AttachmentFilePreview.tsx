@@ -334,6 +334,11 @@ export function AttachmentFilePreview(props: {
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
       threadRef={props.threadRef}
+      formStateKey={
+        props.htmlRender === true && attachmentId !== undefined
+          ? `${props.asset?.environmentId}:${attachmentId}:preview`
+          : undefined
+      }
       // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.
       // A draft keeps its Blob key after upload, so finishing the upload does not reload the PDF.
       documentKey={

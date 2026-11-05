@@ -44,6 +44,7 @@ describe("HtmlRenderDocument", () => {
       <select name="tags" multiple><option>x</option><option>y</option><option>z</option></select>
       <input type="radio" name="pick" value="a" checked>
       <input type="radio" name="pick" value="b">
+      <input name="choice" value="a">
       <output id="echo"></output>
       <script>
         var note = document.querySelector("textarea");
@@ -53,6 +54,12 @@ describe("HtmlRenderDocument", () => {
           document.getElementById("echo").textContent = note.value;
           extra().replaceWith(extra().cloneNode());
         });
+        // Fills a later field without an input event, so its value only exists after this handler.
+        document.addEventListener("change", function(event) {
+          if (event.target.name === "pick") {
+            document.querySelector('input[name="choice"]').value = event.target.value;
+          }
+        });
         function report() {
           window.parent.postMessage({
             type: "fields",
@@ -60,6 +67,7 @@ describe("HtmlRenderDocument", () => {
             extra: extra().value,
             tags: Array.from(tags.selectedOptions, function(option) { return option.value; }),
             pick: document.querySelector('input[name="pick"]:checked').value,
+            choice: document.querySelector('input[name="choice"]').value,
             echo: document.getElementById("echo").textContent
           }, "*");
         }
@@ -98,6 +106,7 @@ describe("HtmlRenderDocument", () => {
       extra: "two",
       tags: ["y", "z"],
       pick: "b",
+      choice: "b",
       echo: "keep this",
     };
 
@@ -112,6 +121,7 @@ describe("HtmlRenderDocument", () => {
           extra: "",
           tags: [],
           pick: "a",
+          choice: "a",
           echo: "",
         }),
       );
