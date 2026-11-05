@@ -210,6 +210,76 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
       assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
     }),
   );
+
+  it.effect("refuses to resume a queue with any message sent in modes above the limit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:limit-queue-resume-later");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch(sendMessage(threadId, "queue-resume-later-running"));
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "queue-resume-later-within"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("raise-queue-resume-later"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "queue-resume-later-above"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower-queue-resume-later"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const refused = yield* orchestrator
+        .dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("resume-queue-later"),
+          threadId,
+        })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+      assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
+    }),
+  );
+
+  it.effect("queues an automatic send behind a run above the limit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:limit-auto-queue");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("raise-auto-queue"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* orchestrator.dispatch(sendMessage(threadId, "auto-queue-running"));
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower-auto-queue"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      // The running run has no provider turn yet, so an automatic send queues behind it.
+      yield* orchestrator
+        .dispatch({ ...sendMessage(threadId, "auto-queue-follow-up"), deliveryIntent: "auto" })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised));
+      const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
+      assert.deepStrictEqual(
+        runs
+          .filter((run) => run.status === "queued")
+          .map((run) => [run.userMessageId, run.runtimeMode]),
+        [[MessageId.make("message:auto-queue-follow-up"), "approval-required"]],
+      );
+    }),
+  );
 });
 
 const layerPolicyDatabase = SqlitePersistence.layerMemory;

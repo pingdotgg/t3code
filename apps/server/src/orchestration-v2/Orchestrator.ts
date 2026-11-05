@@ -6030,6 +6030,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
 
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
+      const targetRunId = dispatchMode.targetRunId;
+      // The input reaches the active run, which can run above the thread's modes.
+      yield* refuseAboveDispatchModeLimit(
+        command,
+        command.threadId,
+        runModes(
+          projection.thread,
+          projection.runs.find((run) => run.id === targetRunId),
+        ),
+      );
       yield* dispatchSteerIntoRun({
         command,
         events,
@@ -13734,11 +13744,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : { runIds: [command.runId], messageIds: [] },
           )
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-        const run =
+        // Resuming releases every queued run, not only the next one.
+        const runs =
           command.type === "queue.resume"
-            ? queuedRunsInDeliveryOrder(records)[0]
-            : records.runs.find((candidate) => candidate.id === command.runId);
-        if (run !== undefined) {
+            ? queuedRunsInDeliveryOrder(records)
+            : records.runs.filter((candidate) => candidate.id === command.runId);
+        for (const run of runs) {
           // Edit and start refuse automatic deliveries, the only runs that follow the current modes.
           const followsCurrent = followsCurrentConversation(
             records.messages.find((message) => message.id === run.userMessageId),
@@ -13751,14 +13762,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       // These hand the caller's input to the active run, which can run above the thread's modes.
+      // A message.dispatch is checked once its delivery resolves to a steer or restart.
       if (
         shell !== null &&
         shell.activeRunId !== null &&
-        ((command.type === "message.dispatch" &&
-          (command.dispatchMode.type === "steer_active" ||
-            command.dispatchMode.type === "restart_active" ||
-            command.deliveryIntent !== undefined)) ||
-          command.type === "queued-message.promote-to-steer" ||
+        (command.type === "queued-message.promote-to-steer" ||
           command.type === "runtime-request.respond")
       ) {
         const { runs } = yield* projectionStore
