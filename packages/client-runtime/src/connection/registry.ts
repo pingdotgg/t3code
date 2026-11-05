@@ -1058,7 +1058,19 @@ export const make = Effect.gen(function* () {
         for (const route of renamed) {
           if (Option.isSome(route.profile)) yield* profiles.put(route.profile.value);
         }
-        yield* replaceRoutesLocked(entry, renamed);
+        const next = entryWithRoutes(entry, renamed);
+        yield* registrations.setRoutes(environmentId, persistedRoutes(next));
+        // A label changes no address, so the supervisor keeps its session. It reads the old label
+        // for its own messages until it is next recreated.
+        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+        if (lease !== undefined) {
+          yield* SubscriptionRef.update(serviceScopes, (current) =>
+            new Map(current).set(environmentId, { ...lease, entry: next }),
+          );
+        }
+        yield* SubscriptionRef.update(entries, (current) =>
+          new Map(current).set(environmentId, next),
+        );
       }),
     );
   });

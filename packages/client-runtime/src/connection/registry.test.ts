@@ -2214,8 +2214,16 @@ describe("EnvironmentRegistry routes", () => {
       );
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase === "connected",
+        );
         yield* registry.setLabel(environmentId, "  Studio  ");
 
+        expect((yield* registry.state(environmentId)).phase).toBe("connected");
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
         expect(
           routesOf(yield* Ref.get(harness.storedTargets), environmentId).map((target) => [
             target._tag,
