@@ -38,6 +38,7 @@ it.each([
     creationSource: "web",
     terminal: true,
   },
+  { type: "message.dispatch", text: "!ls", terminal: true },
   {
     type: "message.dispatch",
     text: "!ls",

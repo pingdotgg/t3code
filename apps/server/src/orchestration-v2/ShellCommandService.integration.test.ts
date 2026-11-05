@@ -488,7 +488,10 @@ it.effect.each([false, true])(
         yield* h.send("provider", "Continue working");
         const turn = h.calls[0]!;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const accepted = yield* orchestrator.streamDomainEvents.pipe(
+        const sink = yield* EventSink.EventSinkV2;
+        const afterSequence = yield* sink.latestSequence();
+        const accepted = yield* sink.stream({ afterSequence }).pipe(
+          Stream.map((stored) => stored.event),
           Stream.filter(
             (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
           ),
