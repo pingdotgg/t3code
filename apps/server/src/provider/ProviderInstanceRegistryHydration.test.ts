@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   SecretProviderId,
+  SecretProviderKind,
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -171,7 +172,7 @@ describe("layerSettingsWatcher", () => {
       const next = yield* settings.updateSettings({
         secretProviders: {
           [SecretProviderId.make("personal")]: {
-            kind: "one_password",
+            kind: SecretProviderKind.make("one_password"),
             label: "Personal",
             config: { account: "my" },
           },

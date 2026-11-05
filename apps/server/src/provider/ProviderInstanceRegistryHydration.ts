@@ -8,6 +8,8 @@ import {
   type ProviderInstanceConfigMap,
   ServerSettings,
 } from "@t3tools/contracts";
+import * as NodeUtil from "node:util";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -127,13 +129,25 @@ export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettin
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
       const serverSettings = yield* Settings.ServerSettingsService;
+      let secretProviders = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.secretProviders),
+        Effect.orElseSucceed(() => undefined),
+      );
       yield* settingsChanges.pipe(
         Stream.runForEach(() =>
           // The subscription predates the seed read, so a queued change can be
           // older than the seed. A failed current read must leave the registry intact.
           serverSettings.getSettings.pipe(
             Effect.flatMap((current) =>
-              mutator.reconcile(deriveProviderInstanceConfigMap(current)),
+              Effect.gen(function* () {
+                yield* mutator.reconcile(deriveProviderInstanceConfigMap(current));
+                // Reconcile leaves instances parked on an unreadable secret alone,
+                // and a corrected secret provider is what can make them readable.
+                if (!NodeUtil.isDeepStrictEqual(secretProviders, current.secretProviders)) {
+                  secretProviders = current.secretProviders;
+                  yield* mutator.reloadSecrets();
+                }
+              }),
             ),
             Effect.catchCause((cause) =>
               Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
