@@ -1097,10 +1097,12 @@ it.effect(
 );
 
 let animationRuntimeMode: OrchestrationV2ThreadShell["runtimeMode"] = "full-access";
+const lessonSideChatId = ThreadId.make("course-lesson-side-chat");
 const liveCallerLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
-  getThreadShell: () =>
+  getThreadShell: (id) =>
     Effect.succeed({
       id: threadId,
+      ...(id === lessonSideChatId ? { sideChat: { lessonThreadId: threadId } } : {}),
       deletedAt: null,
       archivedAt: null,
       activeRunId: RunId.make("mcp-core-run"),
@@ -1284,6 +1286,9 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
     yield* service.recordPrepThread(course.id, prepCaller);
     expect(
       (yield* callAsThread(prepCaller, "course_read", { courseId: course.id })).isError,
+    ).not.toBe(true);
+    expect(
+      (yield* callAsThread(lessonSideChatId, "course_read", { courseId: course.id })).isError,
     ).not.toBe(true);
     // course_add reads only PDFs attached to the chat, never other host files.
     const outside = yield* callAs("course_add", { source: "/etc/passwd.pdf" });

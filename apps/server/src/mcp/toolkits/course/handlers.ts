@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { OrchestratorMcpFailure, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -10,6 +10,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
+import { loadCaller } from "../../threadAccess.ts";
 import { CourseToolkit } from "./tools.ts";
 
 const PREP_BRIEF = `You are a course preparation thread. Work only on the requested units for course {{courseId}} (units: {{units}}). For each unit, call course_read with courseId and its unit number. Write 2–3 likely sticking points, ranked by what the unit needs that knowledge_map_read lacks, what the learner asked before, the transcript, and common misconceptions. Write a four-question quiz with answers first. Save both with course_update using courseId. Do not message, wake, or delegate into the lesson thread; this is background preparation.`;
@@ -34,15 +35,17 @@ const courseOwnershipFailure = () =>
   });
 const getOwnedCourse = Effect.fn("course.getOwnedCourse")(function* (
   service: CourseService.CourseService["Service"],
-  threadId: Parameters<typeof CourseService.courseBelongsToThread>[1],
+  threadId: ThreadId,
   courseId: string | undefined,
 ) {
   const course = yield* service
     .get(courseId ? { id: courseId } : { lessonThreadId: threadId })
     .pipe(Effect.mapError(fail));
-  if (courseId && !CourseService.courseBelongsToThread(course, threadId))
-    return yield* courseOwnershipFailure();
-  return course;
+  if (!courseId || CourseService.courseBelongsToThread(course, threadId)) return course;
+  // A lesson's side chats share its course.
+  const { caller } = yield* loadCaller();
+  if (caller?.sideChat?.lessonThreadId === course.lessonThreadId) return course;
+  return yield* courseOwnershipFailure();
 });
 const handlers = {
   course_add: McpToolAccess.actsAsCaller((input) =>

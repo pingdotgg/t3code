@@ -305,15 +305,11 @@ const boundedDownload = (url: string, destination: string) =>
   Effect.tryPromise({
     try: async (signal) => {
       const response = await fetch(url, {
+        redirect: "error",
         signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60_000)]),
       });
       if (!response.ok || !response.body)
         throw new Error(`Download failed with HTTP ${response.status}.`);
-      if (response.url) {
-        const finalUrl = new URL(response.url);
-        if (finalUrl.hostname !== "ocw.mit.edu" || !/^https?:$/.test(finalUrl.protocol))
-          throw new Error(`${finalUrl.origin} is not MIT OpenCourseWare.`);
-      }
       const length = Number(response.headers.get("content-length") ?? 0);
       if (length > MAX_ZIP_BYTES)
         throw new Error("The OCW download is larger than the 300 MB limit.");
@@ -339,8 +335,8 @@ const boundedDownload = (url: string, destination: string) =>
 const ocwDownloadUrl = (source: string) =>
   Effect.tryPromise({
     try: async (signal) => {
-      const fetchPage = (url: URL) =>
-        fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
+      const fetchPage = (url: URL, redirect: "follow" | "error" = "follow") =>
+        fetch(url, { redirect, signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
       // Every URL we fetch stays on OCW: the source can come from a YouTube description.
       const onOcw = (url: URL) => {
         if (url.hostname !== "ocw.mit.edu" || !/^https?:$/.test(url.protocol))
@@ -356,8 +352,7 @@ const ocwDownloadUrl = (source: string) =>
       }
       const page = new URL(parsed.origin);
       page.pathname = `${parsed.pathname.replace(/\/$/, "")}/download/`;
-      const response = await fetchPage(page);
-      if (response.url) parsed = onOcw(new URL(response.url));
+      const response = await fetchPage(page, "error");
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
       const html = await response.text();
       const match = html.match(/href=["']([^"']+\.zip(?:\?[^"']*)?)["']/i);

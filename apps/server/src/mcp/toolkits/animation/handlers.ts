@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { HTML_RENDER_COLUMN_WIDTH } from "@t3tools/shared/htmlRender";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
@@ -92,14 +93,11 @@ const handlers = {
           })
           .pipe(Effect.mapError(toFailure));
         if (input.code && conceptSlug) {
-          const loadedCourse = yield* (yield* CourseService.CourseService)
+          const course = (yield* (yield* CourseService.CourseService)
             .get(input.courseId ? { id: input.courseId } : { lessonThreadId: thread.threadId })
-            .pipe(Effect.option);
-          const course =
-            loadedCourse._tag === "Some" &&
-            CourseService.courseBelongsToThread(loadedCourse.value, thread.threadId)
-              ? loadedCourse
-              : { _tag: "None" as const };
+            .pipe(Effect.option)).pipe(
+            Option.filter((c) => CourseService.courseBelongsToThread(c, thread.threadId)),
+          );
           const meta = {
             concept: input.concept,
             title: input.title,
