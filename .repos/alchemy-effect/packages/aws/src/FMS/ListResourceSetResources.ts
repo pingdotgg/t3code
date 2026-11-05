@@ -1,0 +1,40 @@
+import type * as fms from "@distilled.cloud/aws/fms";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Request for {@link ListResourceSetResources}.
+ */
+export interface ListResourceSetResourcesRequest extends fms.ListResourceSetResourcesRequest {}
+
+/**
+ * Runtime binding for `fms:ListResourceSetResources`.
+ *
+ * Returns an array of the resources associated with the specified Firewall Manager resource set. Provide the
+ * implementation with `Effect.provide(AWS.FMS.ListResourceSetResourcesHttp)`.
+ * ### Resource Sets
+ * **Example:** List a Resource Set's Members
+ * ```typescript
+ * // init — account-level binding takes no resource
+ * const listResourceSetResources = yield* AWS.FMS.ListResourceSetResources();
+ *
+ * // runtime
+ * const result = yield* listResourceSetResources({ Identifier: resourceSetId });
+ * console.log(result.Items.length);
+ * ```
+ *
+ * @binding
+ */
+export interface ListResourceSetResources extends Binding.Service<
+  ListResourceSetResources,
+  "AWS.FMS.ListResourceSetResources",
+  () => Effect.Effect<
+    (
+      request: ListResourceSetResourcesRequest,
+    ) => Effect.Effect<fms.ListResourceSetResourcesResponse, fms.ListResourceSetResourcesError>
+  >
+> {}
+
+export const ListResourceSetResources = Binding.Service<ListResourceSetResources>(
+  "AWS.FMS.ListResourceSetResources",
+);
