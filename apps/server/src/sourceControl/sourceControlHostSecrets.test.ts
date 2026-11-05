@@ -59,11 +59,11 @@ it.effect(
     }),
 );
 
-it.effect("treats a reference the provider cannot read as an unset credential", () =>
+it.effect("keeps a reference the provider cannot read, so it never passes for an unset one", () =>
   Effect.gen(function* () {
     const { reads, resolver } = countingResolver();
     const resolved = yield* resolveSourceControlHostSecrets(resolver, hosts, "gitcafe");
-    assert.deepEqual(resolved.gitcafe, { token: "" });
+    assert.deepEqual(resolved.gitcafe, { token: source("missing#token") });
     assert.deepEqual(reads, ["missing#token"]);
   }),
 );
