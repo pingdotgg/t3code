@@ -734,7 +734,7 @@ function ThreadNavigationSidebarPane(
                 itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={104}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}
@@ -803,7 +803,7 @@ function ThreadNavigationSidebarPane(
                 itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={104}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}
