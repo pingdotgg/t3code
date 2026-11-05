@@ -5,7 +5,7 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -70,10 +70,10 @@ const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
   namespace: string,
   key: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  // @effect-diagnostics-next-line preferSchemaOverJson:off - a JSON pair keeps the caller apart from the key.
+  const crypto = yield* Digest.Digest;
+  // @effect-diagnostics-next-line globalJsonInEffect:off - a JSON pair keeps the caller apart from the key.
   const bytes = new TextEncoder().encode(JSON.stringify([namespace, key]));
-  const digest = yield* crypto.digest("SHA-256", bytes).pipe(Effect.mapError(unavailable));
+  const digest = yield* crypto.digest(Digest.sha256, bytes).pipe(Effect.mapError(unavailable));
   return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });
 
