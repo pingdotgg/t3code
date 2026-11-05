@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -40,14 +41,19 @@ describe("T3 device instructions", () => {
   });
 
   it("reach OpenCode and Cursor only when the session holds device access", () => {
-    assert.include(t3OrchestrationSystemPrompt(true, true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
-    assert.notInclude(t3OrchestrationSystemPrompt(true, false), "## T3 Code devices");
-    assert.isUndefined(t3OrchestrationSystemPrompt(false, true));
+    assert.include(
+      t3OrchestrationSystemPrompt(true, true, false),
+      T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+    );
+    assert.notInclude(t3OrchestrationSystemPrompt(true, false, false), "## T3 Code devices");
+    assert.isUndefined(t3OrchestrationSystemPrompt(false, true, true));
 
     const firstRun = (hasDeviceTools: boolean) =>
       t3OrchestrationPrompt({
         prompt: "Check the login screen.",
         hasT3Mcp: true,
+        hasBrowserTools: false,
+        browserInstructionsDelivered: false,
         hasDeviceTools,
         orchestrationDelivered: false,
         deviceInstructionsDelivered: false,
@@ -59,6 +65,8 @@ describe("T3 device instructions", () => {
       t3OrchestrationPrompt({
         prompt: "Check the login screen.",
         hasT3Mcp: true,
+        hasBrowserTools: false,
+        browserInstructionsDelivered: false,
         hasDeviceTools: true,
         orchestrationDelivered: true,
         deviceInstructionsDelivered,
@@ -68,13 +76,68 @@ describe("T3 device instructions", () => {
     assert.equal(laterRun(true), "Check the login screen.");
   });
 
+  it.each([false, true])("gate browser guidance on browser access (%s)", (hasBrowserTools) => {
+    const input = {
+      prompt: "Browse.",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      hasBrowserTools,
+      orchestrationDelivered: false,
+      deviceInstructionsDelivered: false,
+      browserInstructionsDelivered: false,
+    };
+    assert.equal(
+      t3OrchestrationSystemPrompt(true, false, hasBrowserTools)!.includes("## T3 Code browser"),
+      hasBrowserTools,
+    );
+    assert.equal(t3OrchestrationPrompt(input).includes("## T3 Code browser"), hasBrowserTools);
+    const late = t3OrchestrationPrompt({ ...input, orchestrationDelivered: true });
+    assert.equal(late.includes(T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()), hasBrowserTools);
+    assert.notInclude(late, T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
+    assert.equal(
+      t3OrchestrationPrompt({
+        ...input,
+        orchestrationDelivered: true,
+        browserInstructionsDelivered: true,
+      }),
+      "Browse.",
+    );
+    assert.equal(t3OrchestrationPrompt({ ...input, hasT3Mcp: false }), "Browse.");
+  });
+
   it("reach ACP agents again when device access changes mid-thread", () => {
-    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      hasBrowserTools: false,
+    } as const;
     const withDevices = t3AcpPromptWithInstructions({
       prompt: "Check the login screen.",
       state: { ...state, hasDeviceTools: true },
       previousState: state,
     });
+    for (const hasBrowserTools of [false, true]) {
+      const next = { ...state, hasBrowserTools };
+      const text = t3AcpPromptWithInstructions({
+        prompt: "Hi.",
+        state: next,
+        previousState: state,
+      });
+      assert.equal(text.includes("## T3 Code browser"), hasBrowserTools);
+      assert.equal(
+        t3AcpPromptWithInstructions({ prompt: "Again.", state: next, previousState: next }),
+        "Again.",
+      );
+      assert.notInclude(
+        t3AcpPromptWithInstructions({
+          prompt: "No browser.",
+          state,
+          previousState: { ...state, hasBrowserTools: true },
+        }),
+        "## T3 Code browser",
+      );
+    }
     assert.include(withDevices, T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
     assert.equal(
       t3AcpPromptWithInstructions({ prompt: "Again.", state, previousState: state }),

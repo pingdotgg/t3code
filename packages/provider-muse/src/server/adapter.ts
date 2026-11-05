@@ -40,6 +40,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { T3_CODE_BROWSER_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import {
@@ -2088,17 +2089,22 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (declined !== undefined)
               yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
+            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const result = yield* request(
               "turn/start",
               {
                 input: [
                   {
                     type: "text",
-                    text: buildRuntimeInstructions({
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                    }),
+                    text:
+                      buildRuntimeInstructions({
+                        harness: "Muse Code",
+                        model: session.model ?? undefined,
+                        reasoningEffort: effort,
+                      }) +
+                      (mcpSession?.capabilities?.has("preview") === true
+                        ? `\n${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()}\n`
+                        : ""),
                   },
                   ...parts,
                 ],

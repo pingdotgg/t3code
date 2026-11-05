@@ -743,10 +743,11 @@ describe("ClaudeAdapterV2 device instructions", () => {
     );
   });
 
-  it("gives native subagents the device block only in a session with device access", async () => {
+  it("gives native subagents browser and device blocks only with the corresponding access", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
     const subagentContext = (input: {
       readonly mcp: boolean;
+      readonly browserToolsAvailable?: boolean;
       readonly deviceToolsAvailable: boolean;
     }) =>
       Promise.all(
@@ -775,7 +776,33 @@ describe("ClaudeAdapterV2 device instructions", () => {
         },
       },
     ]);
+    for (const deviceToolsAvailable of [false, true]) {
+      const result = await subagentContext({
+        mcp: true,
+        deviceToolsAvailable,
+        browserToolsAvailable: true,
+      });
+      assert.deepEqual(result, [
+        {
+          hookSpecificOutput: {
+            hookEventName: "SubagentStart",
+            additionalContext: [
+              T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+              ...(deviceToolsAvailable ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
+            ].join("\n\n"),
+          },
+        },
+      ]);
+    }
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
+    assert.deepEqual(
+      await subagentContext({
+        mcp: false,
+        deviceToolsAvailable: true,
+        browserToolsAvailable: true,
+      }),
+      [],
+    );
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
   });
 });

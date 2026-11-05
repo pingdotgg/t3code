@@ -42,6 +42,7 @@ type AgentStartHook = (
 export async function loadMcpBridge(
   options: {
     readonly modern?: boolean;
+    readonly browserToolsAvailable?: boolean;
     readonly result?: unknown;
     readonly toolSearchAvailable?: boolean;
     readonly toolSearchDisabled?: boolean;
@@ -88,6 +89,7 @@ export async function loadMcpBridge(
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {
       env: {
+        T3_MCP_BROWSER_TOOLS: options.browserToolsAvailable ? "1" : "0",
         T3_MCP_URL: "http://fixture.invalid/mcp",
         T3_MCP_BEARER_TOKEN: "fixture-token",
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",

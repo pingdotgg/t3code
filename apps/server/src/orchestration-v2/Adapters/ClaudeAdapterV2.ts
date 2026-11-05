@@ -1741,13 +1741,15 @@ To wait for a background command or Monitor you started (tests, a build), call \
 `;
 
 // Native subagents start from their task, not this session's system prompt.
-const subagentDeviceInstructions: HookCallback = () =>
-  Promise.resolve({
-    hookSpecificOutput: {
-      hookEventName: "SubagentStart",
-      additionalContext: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-    },
-  });
+const subagentInstructions =
+  (additionalContext: string): HookCallback =>
+  () =>
+    Promise.resolve({
+      hookSpecificOutput: {
+        hookEventName: "SubagentStart",
+        additionalContext,
+      },
+    });
 
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
@@ -1900,8 +1902,25 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
+    ...(deviceInstructions || browserInstructions
+      ? {
+          hooks: {
+            SubagentStart: [
+              {
+                hooks: [
+                  subagentInstructions(
+                    [
+                      ...(browserInstructions ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()] : []),
+                      ...(deviceInstructions
+                        ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH]
+                        : []),
+                    ].join("\n\n"),
+                  ),
+                ],
+              },
+            ],
+          },
+        }
       : {}),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };

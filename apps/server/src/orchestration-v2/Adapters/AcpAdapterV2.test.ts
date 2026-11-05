@@ -686,6 +686,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     endpoint: "http://127.0.0.1:43123/mcp",
     authorizationHeader: "Bearer instruction-compaction-token",
     browserToolsAvailable: true,
+    capabilities: new Set(["preview"]),
   });
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
@@ -2247,7 +2248,7 @@ describe("AcpAdapterV2", () => {
         const firstDefault = yield* runTurn(2, defaultPolicy, "First default request.");
         assert.equal(firstDefault.textBlockCount, 2);
         assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
-        assert.include(firstDefault.prompt, "## T3 Code browser");
+        assert.notInclude(firstDefault.prompt, "## T3 Code browser");
         assert.include(firstDefault.prompt, "T3 Code orchestration");
         assert.notInclude(
           firstDefault.methods,

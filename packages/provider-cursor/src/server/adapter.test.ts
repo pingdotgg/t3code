@@ -677,7 +677,7 @@ describe("CursorAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: true,
-          capabilities: new Set(device ? ["device"] : []),
+          capabilities: new Set(device ? ["device", "preview"] : []),
         });
       const modelSelection = { instanceId, model: "composer-2.5" };
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -786,9 +786,14 @@ describe("CursorAdapterV2", () => {
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
           devices: sent.includes("## T3 Code devices"),
+          browser: sent.includes("## T3 Code browser"),
         };
       });
-      const told = (orchestration: boolean, devices: boolean) => ({ orchestration, devices });
+      const told = (orchestration: boolean, devices: boolean) => ({
+        orchestration,
+        devices,
+        browser: devices,
+      });
 
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true));
