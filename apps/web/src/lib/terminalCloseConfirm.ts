@@ -16,14 +16,12 @@ export async function confirmTerminalClose(
     return await localApi.dialogs.confirm(
       labels.length === 1
         ? [
-            `Close terminal "${labels[0]}"?`,
-            "This stops the running process and clears its history.",
+            `Close "${labels[0]}"?`,
+            "This ends its shell and anything running in it, and clears its history.",
           ].join("\n")
         : [
             `Close ${labels.length} terminals?`,
-            `This stops their running processes and clears their histories: ${labels
-              .map((label) => `"${label}"`)
-              .join(", ")}.`,
+            "This ends their shells and anything running in them, and clears their histories.",
           ].join("\n"),
       { variant: "destructive" },
     );

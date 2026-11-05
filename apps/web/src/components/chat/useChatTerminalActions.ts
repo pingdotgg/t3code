@@ -1,4 +1,5 @@
 import { toggleThreadTerminalPane } from "../../layout/openRules";
+import { terminalTabTitle } from "../../layout/surfaceTabLabels";
 import type { TerminalLaunchContext } from "../ThreadTerminalSurfaces";
 export type { TerminalLaunchContext } from "../ThreadTerminalSurfaces";
 import type {
@@ -10,7 +11,6 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
@@ -318,7 +318,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const runShellCommandStable = useStableCallback(runShellCommand);
   const requestCloseTerminal = (terminalId: string) => {
     if (!hasTerminalWriteAccess()) return;
-    const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+    const label = terminalTabTitle(terminalId, activeTerminalLabelsById.get(terminalId));
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
         closeTerminal(terminalId);
