@@ -48,6 +48,7 @@ export function hotSwappableAtomRuntime<R, E>(options: {
     entry = existing;
     options.registry.set(
       entry.layerAtom,
+      // @effect-diagnostics-next-line anyUnknownInErrorContext:off - the HMR registry erases each runtime's R and E
       options.layer as Layer.Layer<
         unknown,
         unknown,

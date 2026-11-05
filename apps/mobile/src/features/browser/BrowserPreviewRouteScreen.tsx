@@ -113,7 +113,6 @@ function BrowserPreviewScreen({
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
       <AppBar
         title={tab ? browserTabTitle(tab) : "Browser"}
-        sidebar={false}
         onBack={onClose}
         options={{ headerBackVisible: false }}
         actions={
