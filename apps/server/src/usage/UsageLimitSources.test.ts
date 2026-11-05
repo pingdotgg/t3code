@@ -239,6 +239,7 @@ it.effect.each(["listing", "quota", "changed-account"] as const)(
           },
         }),
         Layer.succeed(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
           read: () => Effect.succeed([]),
           invalidate: () => Effect.void,
         }),
@@ -392,6 +393,7 @@ it.effect.each([
           },
         }),
         Layer.succeed(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
           read: () => Effect.succeed([]),
           invalidate: () => Effect.void,
         }),
