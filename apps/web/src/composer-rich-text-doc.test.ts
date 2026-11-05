@@ -700,6 +700,9 @@ describe("composer rich text document model", () => {
       "paragraph",
     ]);
     expect(roundTrip(value).value).toBe(value);
+    for (const spaced of ["- item\r\n\r\npara", "> quote\r\n\r\npara"]) {
+      expect(roundTrip(spaced).value).toBe(spaced);
+    }
   });
 
   it("keeps the caret inside an empty fence", () => {

@@ -1525,7 +1525,8 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
       blockIndex > 0 &&
       block.type.name === "paragraph" &&
       needsBlankLineBetween(lazyContinuationTarget(blocks[blockIndex - 1]!), {
-        empty: !first,
+        // A CRLF blank line keeps its "\r".
+        empty: !first || (block.childCount === 1 && first.text === "\r"),
         // Checks the first node, not textContent, which skips a leading chip.
         indented: Boolean(first?.isText && !first.marks.length && /^[ \t]/.test(first.text!)),
       })
