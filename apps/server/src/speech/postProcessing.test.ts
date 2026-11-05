@@ -19,6 +19,8 @@ import { describe, expect, vi } from "vite-plus/test";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { postProcessTranscript } from "./postProcessing.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -166,6 +168,7 @@ describe("postProcessTranscript", () => {
     }).pipe(
       Effect.provide(
         SpeechService.layer.pipe(
+          Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
           Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-post-process-" })),
           Layer.provide(ServerSettings.layerTest({ speechPostProcessingEnabled: true })),
           Layer.provideMerge(NodeServices.layer),

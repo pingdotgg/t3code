@@ -4,6 +4,7 @@ import { encodeSpeechProjectNameHeader, SPEECH_STREAM_PATH } from "@t3tools/cont
 import type {
   SpeechAcceleration,
   SpeechCustomWords,
+  SpeechEngine,
   SpeechLanguage,
   SpeechModelDirectories,
   SpeechModelUnloadTimeout,
@@ -287,4 +288,49 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     method: "POST",
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
+  });
+
+export const updateEnvironmentSpeechEngine = (prepared: PreparedConnection, engine: SpeechEngine) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateEngine(),
+    run: ({ client, headers }) => client.updateEngine({ headers, payload: { engine } }),
+  });
+
+export const getEnvironmentSpeechCloudModels = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.cloudModels(),
+    run: ({ client, headers }) => client.cloudModels({ headers }),
+  });
+
+export const selectEnvironmentSpeechCloudModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.selectCloudModel(),
+    run: ({ client, headers }) => client.selectCloudModel({ headers, payload: { modelId } }),
+  });
+
+export const saveEnvironmentSpeechCloudKey = (prepared: PreparedConnection, apiKey: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.saveCloudKey(),
+    run: ({ client, headers }) => client.saveCloudKey({ headers, payload: { apiKey } }),
+  });
+
+export const removeEnvironmentSpeechCloudKey = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.removeCloudKey(),
+    run: ({ client, headers }) => client.removeCloudKey({ headers }),
   });

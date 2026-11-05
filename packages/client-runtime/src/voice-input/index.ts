@@ -21,6 +21,11 @@ export {
 export {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechCloudModels,
+  removeEnvironmentSpeechCloudKey,
+  saveEnvironmentSpeechCloudKey,
+  selectEnvironmentSpeechCloudModel,
+  updateEnvironmentSpeechEngine,
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
   postProcessEnvironmentTranscript,

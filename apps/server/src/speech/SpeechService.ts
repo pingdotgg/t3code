@@ -1,8 +1,10 @@
 import type {
+  EnvironmentSpeechCloudModel,
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   SpeechAcceleration,
   SpeechCustomWords,
+  SpeechEngine,
   SpeechLanguage,
   SpeechModelDirectories,
   SpeechModelUnloadTimeout,
@@ -15,11 +17,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { SPEECH_STREAM_MAX_CHUNK_BYTES } from "@t3tools/contracts";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -44,6 +48,15 @@ import {
   transcriptionCustomWords,
 } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
+import {
+  fetchSpeechCloudModels,
+  OpenRouterSpeechError,
+  transcribeWithOpenRouter,
+  verifyOpenRouterKey,
+} from "./openRouter.ts";
+
+const CLOUD_KEY_SECRET = "speech-openrouter-api-key";
+const CLOUD_CATALOG_TTL_MS = 10 * 60_000;
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
@@ -116,13 +129,14 @@ export class SpeechDownloadCancelledError extends Schema.TaggedError<SpeechDownl
   { modelId: Schema.String },
 ) {}
 
-type SpeechError =
+export type SpeechError =
   | SpeechOperationError
   | SpeechInvalidAudioError
   | SpeechUnsupportedPlatformError
   | SpeechModelNotFoundError
   | SpeechDownloadCancelledError
-  | SpeechBusyError;
+  | SpeechBusyError
+  | OpenRouterSpeechError;
 
 const isSpeechError = Schema.is(
   Schema.Union([
@@ -132,6 +146,7 @@ const isSpeechError = Schema.is(
     SpeechModelNotFoundError,
     SpeechDownloadCancelledError,
     SpeechOperationError,
+    OpenRouterSpeechError,
   ]),
 );
 
@@ -204,6 +219,18 @@ export class SpeechService extends Context.Service<
       projectName?: string,
     ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly updateEngine: (
+      engine: SpeechEngine,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly cloudModels: Effect.Effect<
+      { readonly models: ReadonlyArray<EnvironmentSpeechCloudModel> },
+      SpeechError
+    >;
+    readonly selectCloudModel: (
+      modelId: string,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly saveCloudKey: (apiKey: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly removeCloudKey: Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
 >()("t3/speech/SpeechService") {}
 
@@ -220,6 +247,7 @@ export const make = Effect.gen(function* () {
   const architecture = yield* HostProcess.Architecture;
   const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const clock = yield* Clock.Clock;
@@ -339,6 +367,46 @@ export const make = Effect.gen(function* () {
   const selectedModel = (settings: SettingsSnapshot) => {
     return getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
   };
+
+  const readCloudKey = secretStore.get(CLOUD_KEY_SECRET).pipe(
+    Effect.map((bytes) =>
+      Option.getOrUndefined(bytes.pipe(Option.map((value) => new TextDecoder().decode(value)))),
+    ),
+    Effect.mapError((cause) => new SpeechOperationError({ operation: "cloud key read", cause })),
+  );
+
+  let cloudCatalog:
+    | { readonly fetchedAt: number; readonly models: EnvironmentSpeechCloudModel[] }
+    | undefined;
+  let cloudCatalogLoading: Promise<EnvironmentSpeechCloudModel[]> | undefined;
+  // OpenRouter adds and retires models, so the catalog is live data, refreshed after its TTL.
+  const loadCloudCatalog = async () => {
+    if (cloudCatalog && now() - cloudCatalog.fetchedAt < CLOUD_CATALOG_TTL_MS)
+      return cloudCatalog.models;
+    cloudCatalogLoading ??= fetchSpeechCloudModels(lifetime)
+      .then((models) => {
+        cloudCatalog = { fetchedAt: now(), models };
+        return models;
+      })
+      .finally(() => {
+        cloudCatalogLoading = undefined;
+      });
+    return cloudCatalogLoading;
+  };
+  const cachedCloudModels = () => cloudCatalog?.models;
+
+  /** The chosen model while OpenRouter still lists it, else the catalog's first model. */
+  const cloudModelFor = (
+    settings: SettingsSnapshot,
+    models: ReadonlyArray<EnvironmentSpeechCloudModel> | undefined,
+  ) => {
+    const chosen = settings.speechCloudModelId;
+    if (!models) return chosen ? { id: chosen, name: chosen } : undefined;
+    return models.find((model) => model.id === chosen) ?? models[0];
+  };
+
+  const cloudEngineActive = (settings: SettingsSnapshot, key: string | undefined) =>
+    settings.speechEngine === "openrouter" && key !== undefined;
 
   const download = async (modelId: string, settings: SettingsSnapshot, signal = lifetime) => {
     const definition = getSpeechModel(modelId);
@@ -616,11 +684,51 @@ export const make = Effect.gen(function* () {
       catch: (cause) => speechError(operation, cause),
     });
 
-  const currentStatus = async (settings: SettingsSnapshot): Promise<EnvironmentSpeechStatus> => {
+  const currentStatus = async (
+    settings: SettingsSnapshot,
+    cloudKey: string | undefined,
+  ): Promise<EnvironmentSpeechStatus> => {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
+    const cloudActive = cloudEngineActive(settings, cloudKey);
+    const cloudModel = cloudModelFor(
+      settings,
+      cloudActive ? await loadCloudCatalog().catch(cachedCloudModels) : cachedCloudModels(),
+    );
+    const cloud = {
+      keyConfigured: cloudKey !== undefined,
+      ...(cloudKey ? { keyHint: cloudKey.slice(-4) } : {}),
+      ...(cloudModel ? { modelId: cloudModel.id } : {}),
+    };
+    const shared = {
+      language: settings.speechLanguage,
+      acceleration: settings.speechAcceleration,
+      modelUnloadTimeout: settings.speechModelUnloadTimeout,
+      gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
+      customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
+      removeFillerWords: settings.speechRemoveFillerWords,
+      modelDirectories: settings.speechModelDirectories,
+      cloud,
+    };
+    if (cloudActive) {
+      return {
+        supported: true,
+        state: activeTranscriptions > 0 ? "transcribing" : "ready",
+        modelId: cloudModel?.id ?? "openrouter",
+        model: cloudModel?.name ?? "OpenRouter",
+        size: 0,
+        supportsStreaming: false,
+        supportsTranslation: false,
+        translateToEnglish: false,
+        effectiveLanguage: settings.speechLanguage,
+        engine: "openrouter",
+        ...shared,
+      };
+    }
     return {
       supported: true,
+      engine: "local",
+      ...shared,
       state:
         activeTranscriptions > 0
           ? "transcribing"
@@ -633,14 +741,7 @@ export const make = Effect.gen(function* () {
       supportsStreaming: definition.supportsStreaming,
       supportsTranslation: definition.supportsTranslation,
       translateToEnglish: settings.speechTranslateToEnglish,
-      language: settings.speechLanguage,
       effectiveLanguage: effectiveSpeechLanguage(definition, settings.speechLanguage),
-      acceleration: settings.speechAcceleration,
-      modelUnloadTimeout: settings.speechModelUnloadTimeout,
-      gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
-      customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
-      removeFillerWords: settings.speechRemoveFillerWords,
-      modelDirectories: settings.speechModelDirectories,
     };
   };
 
@@ -685,9 +786,86 @@ export const make = Effect.gen(function* () {
   };
 
   const freshStatus = (operation: string) =>
-    readSettings(operation).pipe(
-      Effect.flatMap((settings) => attempt(operation, () => currentStatus(settings))),
+    Effect.all([readSettings(operation), readCloudKey]).pipe(
+      Effect.flatMap(([settings, cloudKey]) =>
+        attempt(operation, () => currentStatus(settings, cloudKey)),
+      ),
     );
+
+  /** Dictionary aliases and filler-word removal, the same for every engine. */
+  const polishTranscript = (
+    text: string,
+    settings: SettingsSnapshot,
+    dictionary: SpeechCustomWords,
+    fillerWordLanguage: string | undefined,
+  ) => {
+    const corrected = applySpeechAliases(text, dictionary);
+    return (
+      settings.speechRemoveFillerWords
+        ? removeSpeechFillerWords(
+            corrected,
+            fillerWordLanguage,
+            settings.speechPostProcessingEnabled ? settings.speechCorrectionWord : undefined,
+          )
+        : corrected
+    ).trim();
+  };
+
+  const transcribeCloud = Effect.fn("SpeechService.transcribeCloud")(function* (
+    pcmBytes: Uint8Array,
+    projectName: string | undefined,
+    settings: SettingsSnapshot,
+    apiKey: string,
+  ) {
+    const pcm = yield* Effect.try({
+      try: () => decodeSpeechPcm(pcmBytes),
+      catch: (cause) => speechError("transcription", cause),
+    });
+    if (pcm.length === 0)
+      return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
+    activeTranscriptions += 1;
+    return yield* Effect.gen(function* () {
+      const prepareStartedAt = performance.now();
+      const cloudModel = cloudModelFor(
+        settings,
+        yield* attemptSpeech("cloud model listing", loadCloudCatalog),
+      );
+      if (!cloudModel) return yield* new SpeechModelNotFoundError({ modelId: "openrouter" });
+      const prepareDurationMs = performance.now() - prepareStartedAt;
+      const inferenceStartedAt = performance.now();
+      const language = settings.speechLanguage === "auto" ? undefined : settings.speechLanguage;
+      const raw = yield* Effect.tryPromise({
+        try: (signal) =>
+          transcribeWithOpenRouter({
+            apiKey,
+            modelId: cloudModel.id,
+            pcm,
+            language,
+            signal: AbortSignal.any([signal, lifetime]),
+          }),
+        catch: (cause) => speechError("cloud transcription", cause),
+      });
+      // Cloud models take no prompt, so custom words correct the text like non-Whisper models.
+      const customWords = transcriptionCustomWords(settings, projectName);
+      return {
+        text: polishTranscript(
+          applySpeechCustomWords(raw, customWords),
+          settings,
+          normalizeSpeechCustomWords(settings.speechCustomWords),
+          language,
+        ),
+        backend: `openrouter:${cloudModel.id}`,
+        prepareDurationMs,
+        inferenceDurationMs: performance.now() - inferenceStartedAt,
+      };
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          activeTranscriptions -= 1;
+        }),
+      ),
+    );
+  });
 
   const statusEffect = freshStatus("status");
   const modelsEffect = readSettings("model listing").pipe(
@@ -706,26 +884,28 @@ export const make = Effect.gen(function* () {
       Effect.scoped,
       Effect.mapError((cause) => new SpeechOperationError({ operation: "post-processing", cause })),
     ),
-    prepareModel: readSettings("model preparation").pipe(
-      Effect.flatMap((settings) =>
-        exclusiveEffect(
-          "model preparation",
-          preemptOrphaned.pipe(
-            Effect.andThen(
-              // Keep ownership until the native load settles, even if its request is cancelled.
-              attemptSpeech("model preparation", async () => {
-                if (unsupportedReason)
-                  throw new SpeechUnsupportedPlatformError({ platform, architecture });
-                await loadModel(
-                  selectedModel(settings),
-                  settings,
-                  lifetime,
-                  settings.speechAcceleration,
-                );
-              }).pipe(Effect.uninterruptible),
+    prepareModel: Effect.all([readSettings("model preparation"), readCloudKey]).pipe(
+      Effect.flatMap(([settings, cloudKey]) =>
+        cloudEngineActive(settings, cloudKey)
+          ? Effect.void
+          : exclusiveEffect(
+              "model preparation",
+              preemptOrphaned.pipe(
+                Effect.andThen(
+                  // Keep ownership until the native load settles, even if its request is cancelled.
+                  attemptSpeech("model preparation", async () => {
+                    if (unsupportedReason)
+                      throw new SpeechUnsupportedPlatformError({ platform, architecture });
+                    await loadModel(
+                      selectedModel(settings),
+                      settings,
+                      lifetime,
+                      settings.speechAcceleration,
+                    );
+                  }).pipe(Effect.uninterruptible),
+                ),
+              ),
             ),
-          ),
-        ),
       ),
     ),
     startStream: Effect.fn("SpeechService.startStream")(function* (projectName?: string) {
@@ -962,148 +1142,146 @@ export const make = Effect.gen(function* () {
       ),
     ),
     transcribe: Effect.fn("SpeechService.transcribe")((pcmBytes, projectName) =>
-      readSettings("transcription").pipe(
-        Effect.flatMap((settings) =>
-          exclusiveEffect(
-            "transcription",
-            Effect.gen(function* () {
-              if (unsupportedReason)
-                return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
-              const pcm = yield* Effect.try({
-                try: () => decodeSpeechPcm(pcmBytes),
-                catch: (cause) => speechError("transcription", cause),
-              });
-              if (pcm.length === 0)
-                return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
-              activeTranscriptions += 1;
-              return yield* Effect.gen(function* () {
-                const definition = selectedModel(settings);
-                const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
-                const translateToEnglish =
-                  settings.speechTranslateToEnglish &&
-                  definition.supportsTranslation &&
-                  language !== "en";
-                const prepareStartedAt = performance.now();
-                yield* preemptOrphaned;
-                const loaded = yield* Effect.tryPromise({
-                  try: (signal) =>
-                    loadModel(
-                      definition,
-                      settings,
-                      AbortSignal.any([signal, lifetime]),
-                      settings.speechAcceleration,
-                    ),
-                  catch: (cause) => speechError("model preparation", cause),
-                });
-                const prepareDurationMs = performance.now() - prepareStartedAt;
-                const inferenceStartedAt = performance.now();
-                let inferenceModel = loaded;
-                const customWords = transcriptionCustomWords(settings, projectName);
-                const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
-                const removeFillerWords = settings.speechRemoveFillerWords;
-                const fillerWordLanguage = translateToEnglish
-                  ? "en"
-                  : language === "auto"
-                    ? undefined
-                    : language;
-                const options = {
-                  timestamps: "none" as const,
-                  ...(language === "auto" ? {} : { language }),
-                  ...(translateToEnglish
-                    ? { task: "translate" as const, targetLanguage: "en" as const }
-                    : {}),
-                  ...(customWords.length > 0 && loaded.supportsInitialPrompt
-                    ? {
-                        family: {
-                          kind: "whisper" as const,
-                          initialPrompt: customWords.join(", "),
-                        },
-                      }
-                    : {}),
-                };
-                const result = yield* transcribeAbortable(
-                  inferenceModel,
-                  pcm,
-                  options,
-                  detachTranscribeModel,
-                ).pipe(
-                  Effect.catch((cause) =>
-                    Effect.gen(function* () {
-                      if (model === inferenceModel) {
-                        model = undefined;
-                        loadedModelId = undefined;
-                        loadedAcceleration = undefined;
-                        loading = undefined;
-                      }
-                      if (
-                        settings.speechAcceleration !== "auto" ||
-                        inferenceModel.backend.toLowerCase() === "cpu"
-                      ) {
-                        yield* Effect.tryPromise({
-                          try: () => Promise.resolve().then(() => inferenceModel.dispose()),
-                          catch: (disposeCause) => speechError("transcription", disposeCause),
-                        });
-                        return yield* speechError("inference", cause);
-                      }
-                      yield* Effect.tryPromise({
-                        try: () => Promise.resolve().then(() => inferenceModel.dispose()),
-                        catch: (disposeCause) => speechError("transcription", disposeCause),
-                      });
-                      const cpu = yield* Effect.tryPromise({
-                        try: (signal) =>
-                          loadModel(
-                            definition,
-                            settings,
-                            AbortSignal.any([signal, lifetime]),
-                            "cpu",
-                          ),
-                        catch: (loadCause) => speechError("transcription", loadCause),
-                      });
-                      inferenceModel = cpu;
-                      return yield* transcribeAbortable(
-                        cpu,
-                        pcm,
-                        options,
-                        detachTranscribeModel,
-                      ).pipe(
-                        Effect.catch((fallbackCause) => {
-                          dropCachedModel(cpu);
-                          return Effect.fail(speechError("inference", fallbackCause));
+      Effect.all([readSettings("transcription"), readCloudKey]).pipe(
+        Effect.flatMap(([settings, cloudKey]) =>
+          cloudKey !== undefined && cloudEngineActive(settings, cloudKey)
+            ? transcribeCloud(pcmBytes, projectName, settings, cloudKey)
+            : exclusiveEffect(
+                "transcription",
+                Effect.gen(function* () {
+                  if (unsupportedReason)
+                    return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
+                  const pcm = yield* Effect.try({
+                    try: () => decodeSpeechPcm(pcmBytes),
+                    catch: (cause) => speechError("transcription", cause),
+                  });
+                  if (pcm.length === 0)
+                    return {
+                      text: "",
+                      backend: "none",
+                      prepareDurationMs: 0,
+                      inferenceDurationMs: 0,
+                    };
+                  activeTranscriptions += 1;
+                  return yield* Effect.gen(function* () {
+                    const definition = selectedModel(settings);
+                    const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
+                    const translateToEnglish =
+                      settings.speechTranslateToEnglish &&
+                      definition.supportsTranslation &&
+                      language !== "en";
+                    const prepareStartedAt = performance.now();
+                    yield* preemptOrphaned;
+                    const loaded = yield* Effect.tryPromise({
+                      try: (signal) =>
+                        loadModel(
+                          definition,
+                          settings,
+                          AbortSignal.any([signal, lifetime]),
+                          settings.speechAcceleration,
+                        ),
+                      catch: (cause) => speechError("model preparation", cause),
+                    });
+                    const prepareDurationMs = performance.now() - prepareStartedAt;
+                    const inferenceStartedAt = performance.now();
+                    let inferenceModel = loaded;
+                    const customWords = transcriptionCustomWords(settings, projectName);
+                    const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
+                    const fillerWordLanguage = translateToEnglish
+                      ? "en"
+                      : language === "auto"
+                        ? undefined
+                        : language;
+                    const options = {
+                      timestamps: "none" as const,
+                      ...(language === "auto" ? {} : { language }),
+                      ...(translateToEnglish
+                        ? { task: "translate" as const, targetLanguage: "en" as const }
+                        : {}),
+                      ...(customWords.length > 0 && loaded.supportsInitialPrompt
+                        ? {
+                            family: {
+                              kind: "whisper" as const,
+                              initialPrompt: customWords.join(", "),
+                            },
+                          }
+                        : {}),
+                    };
+                    const result = yield* transcribeAbortable(
+                      inferenceModel,
+                      pcm,
+                      options,
+                      detachTranscribeModel,
+                    ).pipe(
+                      Effect.catch((cause) =>
+                        Effect.gen(function* () {
+                          if (model === inferenceModel) {
+                            model = undefined;
+                            loadedModelId = undefined;
+                            loadedAcceleration = undefined;
+                            loading = undefined;
+                          }
+                          if (
+                            settings.speechAcceleration !== "auto" ||
+                            inferenceModel.backend.toLowerCase() === "cpu"
+                          ) {
+                            yield* Effect.tryPromise({
+                              try: () => Promise.resolve().then(() => inferenceModel.dispose()),
+                              catch: (disposeCause) => speechError("transcription", disposeCause),
+                            });
+                            return yield* speechError("inference", cause);
+                          }
+                          yield* Effect.tryPromise({
+                            try: () => Promise.resolve().then(() => inferenceModel.dispose()),
+                            catch: (disposeCause) => speechError("transcription", disposeCause),
+                          });
+                          const cpu = yield* Effect.tryPromise({
+                            try: (signal) =>
+                              loadModel(
+                                definition,
+                                settings,
+                                AbortSignal.any([signal, lifetime]),
+                                "cpu",
+                              ),
+                            catch: (loadCause) => speechError("transcription", loadCause),
+                          });
+                          inferenceModel = cpu;
+                          return yield* transcribeAbortable(
+                            cpu,
+                            pcm,
+                            options,
+                            detachTranscribeModel,
+                          ).pipe(
+                            Effect.catch((fallbackCause) => {
+                              dropCachedModel(cpu);
+                              return Effect.fail(speechError("inference", fallbackCause));
+                            }),
+                          );
                         }),
-                      );
-                    }),
-                  ),
-                );
-                const corrected = applySpeechAliases(
-                  loaded.supportsInitialPrompt
-                    ? result.text
-                    : applySpeechCustomWords(result.text, customWords),
-                  dictionary,
-                );
-                return {
-                  text: (removeFillerWords
-                    ? removeSpeechFillerWords(
-                        corrected,
+                      ),
+                    );
+                    return {
+                      text: polishTranscript(
+                        loaded.supportsInitialPrompt
+                          ? result.text
+                          : applySpeechCustomWords(result.text, customWords),
+                        settings,
+                        dictionary,
                         fillerWordLanguage,
-                        settings.speechPostProcessingEnabled
-                          ? settings.speechCorrectionWord
-                          : undefined,
-                      )
-                    : corrected
-                  ).trim(),
-                  backend: inferenceModel.backend,
-                  prepareDurationMs,
-                  inferenceDurationMs: performance.now() - inferenceStartedAt,
-                };
-              }).pipe(
-                Effect.ensuring(
-                  Effect.sync(() => {
-                    activeTranscriptions -= 1;
-                  }),
-                ),
-              );
-            }),
-          ),
+                      ),
+                      backend: inferenceModel.backend,
+                      prepareDurationMs,
+                      inferenceDurationMs: performance.now() - inferenceStartedAt,
+                    };
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        activeTranscriptions -= 1;
+                      }),
+                    ),
+                  );
+                }),
+              ),
         ),
         Effect.tap(({ backend, prepareDurationMs, inferenceDurationMs }) =>
           Effect.logInfo("Speech transcription completed", {
@@ -1158,6 +1336,49 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
+    ),
+    updateEngine: Effect.fn("SpeechService.updateEngine")(function* (engine) {
+      // Cloud needs a key; saving one switches to cloud, so a missing key is a stale client.
+      if (engine === "openrouter" && (yield* readCloudKey) === undefined)
+        return yield* new OpenRouterSpeechError({
+          failure: "key_invalid",
+          detail: "Save an OpenRouter API key before using cloud transcription.",
+        });
+      yield* writeSettings("engine update", { speechEngine: engine });
+      return yield* freshStatus("engine update");
+    }),
+    cloudModels: attemptSpeech("cloud model listing", loadCloudCatalog).pipe(
+      Effect.map((models) => ({ models })),
+    ),
+    selectCloudModel: Effect.fn("SpeechService.selectCloudModel")(function* (modelId) {
+      const models = yield* attemptSpeech("cloud model selection", loadCloudCatalog);
+      if (!models.some((model) => model.id === modelId))
+        return yield* new SpeechModelNotFoundError({ modelId });
+      yield* writeSettings("cloud model selection", { speechCloudModelId: modelId });
+      return yield* freshStatus("cloud model selection");
+    }),
+    saveCloudKey: Effect.fn("SpeechService.saveCloudKey")(function* (apiKey) {
+      const key = apiKey.trim();
+      yield* Effect.tryPromise({
+        try: (signal) => verifyOpenRouterKey(key, AbortSignal.any([signal, lifetime])),
+        catch: (cause) => speechError("cloud key check", cause),
+      });
+      yield* secretStore
+        .set(CLOUD_KEY_SECRET, new TextEncoder().encode(key))
+        .pipe(
+          Effect.mapError(
+            (cause) => new SpeechOperationError({ operation: "cloud key save", cause }),
+          ),
+        );
+      yield* writeSettings("cloud key save", { speechEngine: "openrouter" });
+      return yield* freshStatus("cloud key save");
+    }),
+    removeCloudKey: secretStore.remove(CLOUD_KEY_SECRET).pipe(
+      Effect.mapError(
+        (cause) => new SpeechOperationError({ operation: "cloud key removal", cause }),
+      ),
+      Effect.andThen(writeSettings("cloud key removal", { speechEngine: "local" })),
+      Effect.andThen(freshStatus("cloud key removal")),
     ),
   });
 });

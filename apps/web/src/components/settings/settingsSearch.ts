@@ -523,7 +523,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Transcription models",
     to: "/settings/voice",
     desktopOnly: true,
-    searchTerms: ["speech voice stt download local whisper parakeet canary moonshine"],
+    searchTerms: [
+      "speech voice stt download local whisper parakeet canary moonshine cloud openrouter api key gemini",
+    ],
   },
   {
     id: "microphone",

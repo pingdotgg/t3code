@@ -3,6 +3,16 @@ import * as Schema from "effect/Schema";
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;
 
+/** Where transcription runs: models on the environment, or OpenRouter with the user's key. */
+export const SpeechEngine = Schema.Literals(["local", "openrouter"]);
+export type SpeechEngine = typeof SpeechEngine.Type;
+
+export const SpeechCloudModelId = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+);
+export type SpeechCloudModelId = typeof SpeechCloudModelId.Type;
+
 export const SpeechCustomWord = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(50));
 export const SpeechCustomWords = Schema.Array(
   Schema.Struct({
@@ -86,6 +96,45 @@ export type EnvironmentSpeechModelRequest = typeof EnvironmentSpeechModelRequest
 export const EnvironmentSpeechState = Schema.Literals(["missing-model", "ready", "transcribing"]);
 export type EnvironmentSpeechState = typeof EnvironmentSpeechState.Type;
 
+/** OpenRouter as this environment sees it. The key itself never leaves the server. */
+export const EnvironmentSpeechCloud = Schema.Struct({
+  keyConfigured: Schema.Boolean,
+  /** The key's last characters, so a user can tell which key is saved. */
+  keyHint: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8))),
+  /** The model cloud transcription uses, after falling back from a delisted choice. */
+  modelId: Schema.optionalKey(SpeechCloudModelId),
+});
+export type EnvironmentSpeechCloud = typeof EnvironmentSpeechCloud.Type;
+
+/**
+ * OpenRouter's price strings, per its models API. Units differ by model: a model
+ * that bills output prices tokens; the rest price audio per second or per hour.
+ */
+export const SpeechCloudModelPricing = Schema.Struct({
+  prompt: Schema.String,
+  completion: Schema.String,
+});
+export type SpeechCloudModelPricing = typeof SpeechCloudModelPricing.Type;
+
+export const EnvironmentSpeechCloudModel = Schema.Struct({
+  id: SpeechCloudModelId,
+  name: Schema.String,
+  description: Schema.String,
+  pricing: SpeechCloudModelPricing,
+});
+export type EnvironmentSpeechCloudModel = typeof EnvironmentSpeechCloudModel.Type;
+
+export const EnvironmentSpeechCloudModels = Schema.Struct({
+  models: Schema.Array(EnvironmentSpeechCloudModel),
+});
+export type EnvironmentSpeechCloudModels = typeof EnvironmentSpeechCloudModels.Type;
+
+export const EnvironmentSpeechEngineRequest = Schema.Struct({ engine: SpeechEngine });
+export const EnvironmentSpeechCloudKeyRequest = Schema.Struct({
+  apiKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+});
+export const EnvironmentSpeechCloudModelRequest = Schema.Struct({ modelId: SpeechCloudModelId });
+
 export const EnvironmentSpeechStatus = Schema.Union([
   Schema.Struct({
     supported: Schema.Literal(false),
@@ -108,6 +157,9 @@ export const EnvironmentSpeechStatus = Schema.Union([
     customWords: SpeechCustomWords,
     removeFillerWords: Schema.Boolean,
     modelDirectories: Schema.optionalKey(SpeechModelDirectories),
+    // Optional so a newer client still reads an environment that predates cloud speech.
+    engine: Schema.optionalKey(SpeechEngine),
+    cloud: Schema.optionalKey(EnvironmentSpeechCloud),
   }),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;

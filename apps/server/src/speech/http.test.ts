@@ -87,6 +87,11 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           transcribe,
           startStream: () => Effect.die("not used"),
           removeModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          updateEngine: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          cloudModels: Effect.succeed({ models: [] }),
+          selectCloudModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          saveCloudKey: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          removeCloudKey: Effect.succeed({ supported: false as const, reason: "test" }),
         }),
       ),
     );
@@ -177,6 +182,11 @@ effectIt.effect.each([
         transcribe: () => Effect.fail(error),
         startStream: () => Effect.fail(error),
         removeModel: () => Effect.fail(error),
+        updateEngine: () => Effect.fail(error),
+        cloudModels: Effect.fail(error),
+        selectCloudModel: () => Effect.fail(error),
+        saveCloudKey: () => Effect.fail(error),
+        removeCloudKey: Effect.fail(error),
       });
       const api = HttpApi.make("environment").add(EnvironmentVoiceHttpApi);
       const { handler, dispose } = HttpRouter.toWebHandler(

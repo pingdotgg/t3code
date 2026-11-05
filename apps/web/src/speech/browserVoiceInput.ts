@@ -13,6 +13,7 @@ import {
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 
 import { runtime } from "../lib/runtime";
+import { speechCloudFailureMessage } from "./speechErrors";
 import workletUrl from "./pcmWorklet.ts?worker&url";
 
 export function createBrowserVoiceInputPlatform(input: {
@@ -172,7 +173,7 @@ export function createBrowserVoiceInputPlatform(input: {
       throwIfVoiceTranscriptionAborted(transcriptionSignal);
       throw new VoiceTranscriptionError(
         "transcription-failed",
-        "Voice transcription on this environment failed.",
+        speechCloudFailureMessage(cause) ?? "Voice transcription on this environment failed.",
         { cause },
       );
     }

@@ -805,7 +805,11 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(PeerLinkRequests.layer),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
-  Layer.provide(SpeechService.layer.pipe(Layer.provide(layerServerSettings))),
+  Layer.provide(
+    SpeechService.layer.pipe(
+      Layer.provide(Layer.merge(layerServerSettings, ServerSecretStore.layer)),
+    ),
+  ),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
     ServerBrowser.layer.pipe(

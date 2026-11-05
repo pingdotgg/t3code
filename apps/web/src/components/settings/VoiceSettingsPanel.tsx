@@ -12,6 +12,7 @@ import {
   updateEnvironmentSpeechModelUnloadTimeout,
   updateEnvironmentSpeechLanguage,
   updateEnvironmentSpeechTranslation,
+  updateEnvironmentSpeechEngine,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
@@ -19,6 +20,7 @@ import type {
   EnvironmentSpeechStatus,
   SpeechAcceleration,
   SpeechCustomWords,
+  SpeechEngine,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -73,12 +75,14 @@ import {
 } from "../ui/combobox";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Textarea } from "../ui/textarea";
 import { Text } from "../ui/text";
 import { toastManager } from "../ui/toast";
 import { VoiceModelDownloadProgress } from "../chat/VoiceModelDownloadProgress";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { VoiceCloudSettings } from "./VoiceCloudSettings";
 import { VoicePostProcessingSettings } from "./VoicePostProcessingSettings";
 
 const SYSTEM_DEFAULT = "system-default";
@@ -389,6 +393,11 @@ export function VoiceSettingsPanel() {
   const [languageSearch, setLanguageSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
   const [showAllModels, setShowAllModels] = useState(false);
+  // Choosing Cloud before a key exists shows the key form while local models keep working.
+  const [sourceView, setSourceView] = useState<{
+    readonly prepared: NonNullable<typeof prepared>;
+    readonly engine: SpeechEngine;
+  } | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<{
     readonly environmentId: EnvironmentId | null;
     readonly code: string;
@@ -618,6 +627,30 @@ export function VoiceSettingsPanel() {
   };
   const currentModels = currentStatus?.supported ? models : [];
   const activeModel = currentModels.find((model) => model.active);
+  const supportedStatus = currentStatus?.supported ? currentStatus : null;
+  // An environment from before cloud transcription reports no cloud state; it only runs local models.
+  const cloudAvailable = supportedStatus?.cloud !== undefined;
+  const engine = supportedStatus?.engine ?? "local";
+  const cloudActive = engine === "openrouter";
+  const sourceShown = sourceView?.prepared === prepared ? sourceView.engine : engine;
+  const chooseSource = (next: SpeechEngine) => {
+    if (!prepared || !supportedStatus) return;
+    setSourceView({ prepared, engine: next });
+    const wanted = next === "openrouter" && !supportedStatus.cloud?.keyConfigured ? "local" : next;
+    if (wanted === engine) return;
+    setOperation("engine");
+    void runtime
+      .runPromise(updateEnvironmentSpeechEngine(prepared, wanted))
+      .then((value) => setStatus({ prepared, value }))
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not switch transcription models",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => setOperation(null));
+  };
   const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort(
     compareLanguages,
   );
@@ -806,12 +839,16 @@ export function VoiceSettingsPanel() {
           description={
             currentStatus && !currentStatus.supported
               ? currentStatus.reason
-              : "Recordings are deleted after transcription."
+              : cloudActive
+                ? "Runs on OpenRouter. Recordings are deleted after transcription."
+                : "Recordings are deleted after transcription."
           }
           control={
             <span className="text-body text-muted-foreground">
-              {currentStatus?.supported
-                ? (activeModel?.name ?? "No model selected")
+              {supportedStatus
+                ? cloudActive
+                  ? supportedStatus.model
+                  : (activeModel?.name ?? "No model selected")
                 : "Unavailable"}
             </span>
           }
@@ -819,21 +856,22 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           title="Language"
           description={
-            !activeModel
-              ? "Download a model to choose a language."
-              : activeModel.languages.length === 1
-                ? `This model only supports ${languageLabel(activeModel.languages[0]!)}.`
-                : activeModel.supportsLanguageDetection
-                  ? "Choose your language or detect it automatically."
-                  : "Choose the language you speak."
+            cloudActive
+              ? "Choose your language or detect it automatically."
+              : !activeModel
+                ? "Download a model to choose a language."
+                : activeModel.languages.length === 1
+                  ? `This model only supports ${languageLabel(activeModel.languages[0]!)}.`
+                  : activeModel.supportsLanguageDetection
+                    ? "Choose your language or detect it automatically."
+                    : "Choose the language you speak."
           }
           control={
             <Select
               disabled={
                 !prepared ||
-                !activeModel ||
-                activeModel.languages.length === 1 ||
-                operation !== null
+                operation !== null ||
+                (!cloudActive && (!activeModel || activeModel.languages.length === 1))
               }
               value={
                 currentStatus?.supported
@@ -868,10 +906,13 @@ export function VoiceSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                {activeModel?.supportsLanguageDetection ? (
+                {cloudActive || activeModel?.supportsLanguageDetection ? (
                   <SelectItem value="auto">Auto</SelectItem>
                 ) : null}
-                {[...(activeModel?.languages ?? [])].sort(compareLanguages).map((code) => (
+                {(cloudActive
+                  ? languages
+                  : [...(activeModel?.languages ?? [])].sort(compareLanguages)
+                ).map((code) => (
                   <SelectItem key={code} value={code}>
                     {languageLabel(code)}
                   </SelectItem>
@@ -885,9 +926,46 @@ export function VoiceSettingsPanel() {
         id={searchableSetting("local-voice-input").id}
         headerPlacement="outside"
         title="Transcription models"
-        summary={activeModel?.name ?? "Choose a model"}
+        summary={
+          cloudActive && supportedStatus
+            ? supportedStatus.model
+            : (activeModel?.name ?? "Choose a model")
+        }
       >
-        {currentStatus?.supported && prepared ? (
+        {supportedStatus && prepared && cloudAvailable ? (
+          <SettingsRow
+            title="Run models"
+            description={
+              sourceShown === "openrouter"
+                ? "In the cloud with OpenRouter, using your API key."
+                : "On this environment, after a one-time download."
+            }
+            control={
+              <ToggleGroup
+                aria-label="Where transcription runs"
+                variant="segmented"
+                value={[sourceShown]}
+                onValueChange={(next) => {
+                  if (next[0] === "local" || next[0] === "openrouter") chooseSource(next[0]);
+                }}
+              >
+                <Toggle value="local" disabled={operation !== null}>
+                  Local
+                </Toggle>
+                <Toggle value="openrouter" disabled={operation !== null}>
+                  Cloud
+                </Toggle>
+              </ToggleGroup>
+            }
+          />
+        ) : null}
+        {supportedStatus && prepared && cloudAvailable && sourceShown === "openrouter" ? (
+          <VoiceCloudSettings
+            prepared={prepared}
+            status={supportedStatus}
+            onStatus={(value) => setStatus({ prepared, value })}
+          />
+        ) : currentStatus?.supported && prepared ? (
           <>
             {currentStatus.modelDirectories !== undefined ? (
               <SettingsRow

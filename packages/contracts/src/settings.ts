@@ -56,7 +56,9 @@ import {
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
   SpeechAcceleration,
+  SpeechCloudModelId,
   SpeechCustomWords,
+  SpeechEngine,
   SpeechLanguage,
   SpeechModelDirectories,
   SpeechModelUnloadTimeout,
@@ -1357,6 +1359,11 @@ export const ServerSettings = Schema.Struct({
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
+  speechEngine: SpeechEngine.pipe(Schema.withDecodingDefault(Effect.succeed("local"))),
+  // Empty follows the catalog's first model, which may change as OpenRouter's list does.
+  speechCloudModelId: Schema.Union([Schema.Literal(""), SpeechCloudModelId]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
   speechAcceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechModelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
     Schema.withDecodingDefault(Effect.succeed("min_15")),
@@ -1798,6 +1805,8 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   speechModelId: Schema.optionalKey(Schema.String),
+  speechEngine: Schema.optionalKey(SpeechEngine),
+  speechCloudModelId: Schema.optionalKey(Schema.Union([Schema.Literal(""), SpeechCloudModelId])),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
   speechLanguage: Schema.optionalKey(SpeechLanguage),

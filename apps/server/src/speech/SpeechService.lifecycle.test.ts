@@ -8,6 +8,8 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ServerSettingsError } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -103,6 +105,7 @@ vi.mock("./model.ts", () => ({
   speechModelPath: () => "test.gguf",
 }));
 const layer = SpeechService.layer.pipe(
+  Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-review-" })),
   Layer.provide(ServerSettings.layerTest({ speechModelId: "test-model" })),
   Layer.provide(NodeServices.layer),
@@ -120,6 +123,7 @@ beforeEach(() => {
 });
 
 const customWordsLayer = SpeechService.layer.pipe(
+  Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-custom-words-" })),
   Layer.provide(
     ServerSettings.layerTest({
@@ -131,6 +135,7 @@ const customWordsLayer = SpeechService.layer.pipe(
 );
 
 const correctionWordLayer = SpeechService.layer.pipe(
+  Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-correction-word-" })),
   Layer.provide(
     ServerSettings.layerTest({
@@ -362,6 +367,7 @@ it.effect("applies aliases even when the model accepts a vocabulary prompt", () 
   }).pipe(
     Effect.provide(
       SpeechService.layer.pipe(
+        Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
         Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-aliases-" })),
         Layer.provide(
           ServerSettings.layerTest({
@@ -397,6 +403,7 @@ it.effect("removes filler words when a stream is finalized", () =>
 
 it.effect("preserves filler words when removal is disabled", () => {
   const disabledLayer = SpeechService.layer.pipe(
+    Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
     Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-fillers-disabled-" })),
     Layer.provide(
       ServerSettings.layerTest({
@@ -518,6 +525,7 @@ it.effect("releases a stream cancelled while settings are loading", () =>
       }),
     ).pipe(Layer.provide(ServerSettings.layerTest({ speechModelId: "test-model" })));
     const testLayer = SpeechService.layer.pipe(
+      Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
       Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-cancel-settings-" })),
       Layer.provide(delayedSettings),
       Layer.provide(NodeServices.layer),
@@ -561,6 +569,7 @@ it.effect("recovers the busy slot when a settings read fails", () =>
       }),
     ).pipe(Layer.provide(ServerSettings.layerTest({ speechModelId: "test-model" })));
     const testLayer = SpeechService.layer.pipe(
+      Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
       Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-failing-settings-" })),
       Layer.provide(failingSettings),
       Layer.provide(NodeServices.layer),
@@ -1062,4 +1071,106 @@ it.effect("failed CPU fallback is disposed", () =>
     });
     expect(native.dispose).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
+);
+
+/** OpenRouter as the server sees it over fetch; `models` can change between calls. */
+function fakeOpenRouter(options: { models: string[]; transcript?: string; keyStatus?: number }) {
+  const transcriptions: Array<{ authorization: string | null; body: Record<string, unknown> }> = [];
+  const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/key")) return new Response("{}", { status: options.keyStatus ?? 200 });
+    if (url.includes("/models"))
+      return Response.json({
+        data: options.models.map((id) => ({
+          id,
+          name: `Model ${id}`,
+          pricing: { prompt: "0.0001", completion: "0" },
+        })),
+      });
+    transcriptions.push({
+      authorization: new Headers(init?.headers).get("authorization"),
+      body: JSON.parse(String(init?.body)),
+    });
+    return Response.json({ text: options.transcript ?? "hello" });
+  });
+  vi.stubGlobal("fetch", fetch);
+  return { options, transcriptions };
+}
+
+const unstubFetch = Effect.sync(() => vi.unstubAllGlobals());
+
+it.effect("transcribes through OpenRouter once a key is saved, correcting like local models", () =>
+  Effect.gen(function* () {
+    const cloud = fakeOpenRouter({ models: ["a/one", "b/two"], transcript: "uhh, open t 3 code" });
+    const speech = yield* SpeechService.SpeechService;
+    const status = yield* speech.saveCloudKey(" sk-or-secret-abcd ");
+    expect(status).toMatchObject({
+      engine: "openrouter",
+      supportsStreaming: false,
+      modelId: "a/one",
+      cloud: { keyConfigured: true, keyHint: "abcd", modelId: "a/one" },
+    });
+    expect(JSON.stringify(status)).not.toContain("sk-or-secret");
+    yield* speech.prepareModel;
+    expect(yield* speech.transcribe(pcm())).toBe("open T3 Code");
+    expect(loadNative).not.toHaveBeenCalled();
+    expect(cloud.transcriptions).toEqual([
+      {
+        authorization: "Bearer sk-or-secret-abcd",
+        body: expect.objectContaining({
+          model: "a/one",
+          input_audio: { data: expect.any(String), format: "wav" },
+        }),
+      },
+    ]);
+  }).pipe(Effect.ensuring(unstubFetch), Effect.provide(customWordsLayer)),
+);
+
+it.effect("follows the live catalog when a chosen cloud model is delisted", () =>
+  Effect.gen(function* () {
+    const cloud = fakeOpenRouter({ models: ["a/one", "b/two"] });
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.saveCloudKey("sk-or-key");
+    expect(yield* speech.selectCloudModel("b/two")).toMatchObject({ modelId: "b/two" });
+    expect(yield* Effect.flip(speech.selectCloudModel("c/three"))).toMatchObject({
+      _tag: "SpeechModelNotFoundError",
+    });
+    cloud.options.models = ["a/one"];
+    yield* TestClock.adjust(10 * 60_000);
+    expect(yield* speech.status).toMatchObject({ modelId: "a/one" });
+    yield* speech.transcribe(pcm());
+    expect(cloud.transcriptions.at(-1)?.body).toMatchObject({ model: "a/one" });
+  }).pipe(Effect.ensuring(unstubFetch), Effect.provide(layer)),
+);
+
+it.effect("returns to local models when the cloud key is removed", () =>
+  Effect.gen(function* () {
+    fakeOpenRouter({ models: ["a/one"] });
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.saveCloudKey("sk-or-key");
+    expect(yield* speech.removeCloudKey).toMatchObject({
+      engine: "local",
+      cloud: { keyConfigured: false },
+    });
+    expect(yield* Effect.flip(speech.updateEngine("openrouter"))).toMatchObject({
+      failure: "key_invalid",
+    });
+    expect(yield* speech.transcribe(pcm())).toBe("hello");
+    expect(loadNative).toHaveBeenCalledOnce();
+  }).pipe(Effect.ensuring(unstubFetch), Effect.provide(layer)),
+);
+
+it.effect("does not save a key OpenRouter rejects", () =>
+  Effect.gen(function* () {
+    fakeOpenRouter({ models: ["a/one"], keyStatus: 401 });
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* Effect.flip(speech.saveCloudKey("sk-or-wrong"))).toMatchObject({
+      _tag: "OpenRouterSpeechError",
+      failure: "key_invalid",
+    });
+    expect(yield* speech.status).toMatchObject({
+      engine: "local",
+      cloud: { keyConfigured: false },
+    });
+  }).pipe(Effect.ensuring(unstubFetch), Effect.provide(layer)),
 );

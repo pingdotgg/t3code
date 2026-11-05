@@ -57,6 +57,10 @@ import {
 } from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
+  EnvironmentSpeechCloudKeyRequest,
+  EnvironmentSpeechCloudModelRequest,
+  EnvironmentSpeechCloudModels,
+  EnvironmentSpeechEngineRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
   EnvironmentSpeechStatus,
@@ -111,6 +115,9 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_audio",
   "speech_unavailable",
   "speech_busy",
+  "speech_cloud_key_invalid",
+  "speech_cloud_credits",
+  "speech_cloud_failed",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -908,6 +915,44 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       payload: EnvironmentSpeechModelRequest,
       success: EnvironmentSpeechModels,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateEngine", "/api/voice/engine", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechEngineRequest,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("cloudModels", "/api/voice/cloud/models", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentSpeechCloudModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("selectCloudModel", "/api/voice/cloud/models/select", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechCloudModelRequest,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("saveCloudKey", "/api/voice/cloud/key", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechCloudKeyRequest,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeCloudKey", "/api/voice/cloud/key/remove", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentSpeechStatus,
+      error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
