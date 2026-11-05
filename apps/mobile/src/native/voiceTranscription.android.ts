@@ -73,14 +73,15 @@ async function runOperation<T>(
     throwIfVoiceTranscriptionAborted(signal);
     const code =
       typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-    throw new VoiceTranscriptionError(
-      code === "unavailable" || code === "unsupported-locale" ? code : fallbackCode,
-      (typeof code === "string" ? nativeErrorMessages[code] : undefined) ??
+    throw new VoiceTranscriptionError({
+      code: code === "unavailable" || code === "unsupported-locale" ? code : fallbackCode,
+      message:
+        (typeof code === "string" ? nativeErrorMessages[code] : undefined) ??
         (fallbackCode === "preparation-failed"
           ? "Voice transcription could not prepare this language. Check Google speech services and try again."
           : "Voice transcription failed."),
-      { cause: error },
-    );
+      cause: error,
+    });
   } finally {
     signal.removeEventListener("abort", abort);
     await cancellation;

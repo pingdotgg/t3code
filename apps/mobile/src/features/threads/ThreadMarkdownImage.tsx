@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import { createContext, useContext, useId, useState } from "react";
@@ -33,7 +33,9 @@ export const MarkdownImageAvailableWidthContext = createContext(0);
 
 type ImageSize = { readonly width: number; readonly height: number };
 
-class SvgLoadError extends Data.TaggedError("SvgLoadError")<{ readonly cause: unknown }> {}
+class SvgLoadError extends Schema.TaggedError<SvgLoadError>()("SvgLoadError", {
+  cause: Schema.Defect(),
+}) {}
 
 async function readSvgXml(uri: string, signal: AbortSignal): Promise<string> {
   if (uri.startsWith("data:image/svg+xml")) {

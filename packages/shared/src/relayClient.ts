@@ -66,24 +66,33 @@ class RelayClientLockRemoveError extends Schema.TaggedError<RelayClientLockRemov
   }
 }
 
-export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
-  readonly reason:
-    | "download_failed"
-    | "invalid_checksum"
-    | "install_locked"
-    | "managed_by_policy"
-    | "override_missing"
-    | "unsupported_platform"
-    | "validation_failed"
-    | "write_failed";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class RelayClientInstallError extends Schema.TaggedError<RelayClientInstallError>()(
+  "RelayClientInstallError",
+  {
+    reason: Schema.Literals([
+      "download_failed",
+      "invalid_checksum",
+      "install_locked",
+      "managed_by_policy",
+      "override_missing",
+      "unsupported_platform",
+      "validation_failed",
+      "write_failed",
+    ]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
-class CloudflaredCommandError extends Data.TaggedError("CloudflaredCommandError")<{
-  readonly command: string;
-  readonly exitCode: number;
-}> {}
+const isRelayClientInstallError = Schema.is(RelayClientInstallError);
+
+class CloudflaredCommandError extends Schema.TaggedError<CloudflaredCommandError>()(
+  "CloudflaredCommandError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {}
 
 export interface CloudflaredReleaseAsset {
   readonly url: string;
@@ -668,7 +677,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.catchIf(
-        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) => !isRelayClientInstallError(cause),
         (cause) =>
           Effect.fail(
             new RelayClientInstallError({

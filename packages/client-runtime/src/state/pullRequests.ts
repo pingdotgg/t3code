@@ -24,7 +24,6 @@ import {
   type PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
@@ -53,9 +52,10 @@ export {
 export * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 
 /** @public Required to name the error in consumers' inferred pull request results. */
-export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
+export class EnvironmentHttpConnectionNotReadyError extends Schema.TaggedError<EnvironmentHttpConnectionNotReadyError>()(
   "EnvironmentHttpConnectionNotReadyError",
-)<{ readonly message: string }> {}
+  { message: Schema.String },
+) {}
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 

@@ -1285,14 +1285,19 @@ function xAiPromptFailure(
       code: -32603,
       errorMessage: "Grok ended the turn with an error.",
       operation: "receive-response",
-      ...(agentResult === undefined ? {} : { cause: new XAiPromptFailureText(agentResult) }),
+      ...(agentResult === undefined
+        ? {}
+        : { cause: new XAiPromptFailureText({ message: agentResult }) }),
     });
   }
   return null;
 }
 
 /** Keep unbounded provider text out of structured attributes; read only at presentation. */
-export class XAiPromptFailureText extends Error {}
+export class XAiPromptFailureText extends Schema.TaggedError<XAiPromptFailureText>()(
+  "XAiPromptFailureText",
+  { message: Schema.String },
+) {}
 
 const registerXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,

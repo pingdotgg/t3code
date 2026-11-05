@@ -35,6 +35,8 @@ import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
+const isInvalidThreadHistoryCursorError = Schema.is(InvalidThreadHistoryCursorError);
+
 const isThreadTranscriptTooLargeError = Schema.is(
   ThreadManagementService.ThreadTranscriptTooLargeError,
 );
@@ -249,7 +251,7 @@ export const layer = HttpApiBuilder.group(
           const decoded = Result.try(() => decodeThreadHistoryCursor(args.query.cursor));
           if (Result.isFailure(decoded)) {
             const cause = decoded.failure;
-            if (cause instanceof InvalidThreadHistoryCursorError)
+            if (isInvalidThreadHistoryCursorError(cause))
               return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
             return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
           }

@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import AppleTranscription from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { File } from "expo-file-system";
 
@@ -9,6 +10,8 @@ import {
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 
+const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
+
 function getDeviceLocale(): string {
   return Intl.DateTimeFormat().resolvedOptions().locale;
 }
@@ -18,11 +21,11 @@ function wrapError(
   message: string,
   cause: unknown,
 ): VoiceTranscriptionError {
-  if (cause instanceof VoiceTranscriptionError) {
+  if (isVoiceTranscriptionError(cause)) {
     return cause;
   }
 
-  return new VoiceTranscriptionError(code, message, { cause });
+  return new VoiceTranscriptionError({ code, message, cause });
 }
 
 function getNativeErrorCode(error: unknown): string | undefined {
@@ -45,10 +48,10 @@ async function prepareVoiceTranscription(
 ): Promise<PreparedVoiceTranscription> {
   throwIfVoiceTranscriptionAborted(signal);
   if (!AppleTranscription.isAvailable(locale)) {
-    throw new VoiceTranscriptionError(
-      "unavailable",
-      "Voice transcription requires a supported device with iOS 26 or later.",
-    );
+    throw new VoiceTranscriptionError({
+      code: "unavailable",
+      message: "Voice transcription requires a supported device with iOS 26 or later.",
+    });
   }
 
   try {
@@ -61,11 +64,11 @@ async function prepareVoiceTranscription(
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
     if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
-      throw new VoiceTranscriptionError(
-        "unsupported-locale",
-        "Voice transcription does not support this device language.",
-        { cause: error },
-      );
+      throw new VoiceTranscriptionError({
+        code: "unsupported-locale",
+        message: "Voice transcription does not support this device language.",
+        cause: error,
+      });
     }
 
     throw wrapError(

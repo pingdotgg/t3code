@@ -5,6 +5,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 /**
  * Every window stops at the byte budget. A window that holds a user turn also
@@ -84,11 +85,12 @@ export type BoundedProjectionResult = {
   readonly latestLocalTurnOrdinal: number | null;
 };
 
-export class InvalidThreadHistoryCursorError extends Error {
-  readonly _tag = "InvalidThreadHistoryCursorError";
-  constructor(message = "Invalid thread history cursor.") {
-    super(message);
-    this.name = "InvalidThreadHistoryCursorError";
+export class InvalidThreadHistoryCursorError extends Schema.TaggedError<InvalidThreadHistoryCursorError>()(
+  "InvalidThreadHistoryCursorError",
+  {},
+) {
+  override get message(): string {
+    return "Invalid thread history cursor.";
   }
 }
 

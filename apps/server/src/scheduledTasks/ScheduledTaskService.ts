@@ -31,7 +31,6 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -122,9 +121,10 @@ export class ScheduledTaskWebhookOrigin extends Context.Reference<Effect.Effect<
   },
 ) {}
 
-class WebhookDeliverySkipped extends Data.TaggedError("WebhookDeliverySkipped")<{
-  readonly reason: string;
-}> {}
+class WebhookDeliverySkipped extends Schema.TaggedError<WebhookDeliverySkipped>()(
+  "WebhookDeliverySkipped",
+  { reason: Schema.String },
+) {}
 
 interface RateWindow {
   readonly accepted: ReadonlyArray<{ readonly at: number }>;
