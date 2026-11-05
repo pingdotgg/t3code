@@ -953,7 +953,6 @@ export function ThemeLibrary({
   );
 
   return (
-    // Appearance headings carry 24px actions, 10px above the cards (pen eWIa5).
     <div className="space-y-7">
       <div className="space-y-2.5">
         <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
@@ -969,12 +968,12 @@ export function ThemeLibrary({
         <div className="flex min-h-6.5 flex-wrap items-center justify-between gap-3">
           <h3 className="text-meta text-dim-foreground">{searchableSetting("theme").title}</h3>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button size="xs" variant="secondary" onClick={() => onImportOpenChange(true)}>
+            <Button size="standard" variant="secondary" onClick={() => onImportOpenChange(true)}>
               <UploadIcon />
               Import
             </Button>
             <Button
-              size="xs"
+              size="standard"
               variant="secondary"
               onClick={() =>
                 openThemeEditor({
