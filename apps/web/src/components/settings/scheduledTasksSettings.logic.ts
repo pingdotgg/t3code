@@ -323,7 +323,11 @@ export function scheduledTaskDefaultModel(
   }
   const models = available.flatMap((entry) =>
     entry.models
-      .filter((model) => !model.isLegacy)
+      .filter(
+        (model) =>
+          !model.isLegacy &&
+          !settings.providerModelPreferences?.[entry.instanceId]?.hiddenModels.includes(model.slug),
+      )
       .map((model) => ({ instanceId: entry.instanceId, model })),
   );
   const fallback = models.find(({ model }) => model.isDefault) ?? models[0];

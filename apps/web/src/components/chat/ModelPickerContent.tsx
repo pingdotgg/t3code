@@ -89,7 +89,8 @@ export function resolveModelPickerSelectedModel(input: {
 }) {
   if (input.driverKind === "antigravity" && input.model === ANTIGRAVITY_DEFAULT_MODEL) {
     const availableModels = input.options.filter(
-      (option) => option.slug !== ANTIGRAVITY_DEFAULT_MODEL && !option.isUnavailable,
+      (option) =>
+        option.slug !== ANTIGRAVITY_DEFAULT_MODEL && !option.isUnavailable && !option.isHidden,
     );
     return (
       availableModels.find((option) => option.aliases?.includes(ANTIGRAVITY_DEFAULT_MODEL)) ??
@@ -105,6 +106,7 @@ function shouldIncludeModelPickerOption(input: {
   readonly activeInstanceId: ProviderInstanceId;
   readonly activeModel: string;
 }): boolean {
+  if (input.option.isHidden) return false;
   if (input.entry.driverKind === "antigravity" && input.option.slug === ANTIGRAVITY_DEFAULT_MODEL) {
     return false;
   }
@@ -496,7 +498,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (!entry) {
       return null;
     }
-    const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
+    const resolvedModel = resolveSelectableModel(
+      entry.driverKind,
+      modelSlug,
+      options.filter((option) => !option.isHidden),
+    );
     if (!resolvedModel) return null;
     if (additive && onToggleModel) {
       onToggleModel(instanceId, resolvedModel);
@@ -1070,7 +1076,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               emptyLabel={
                 selectedInstanceId === "favorites" && !isSearching
                   ? "No favorites yet"
-                  : "No models found"
+                  : !isSearching && flatModels.length === 0
+                    ? "No visible models. Show one in Settings → Providers."
+                    : "No models found"
               }
               onRequestClose={onRequestClose}
               onOpenProviderSetup={onOpenProviderSetup}

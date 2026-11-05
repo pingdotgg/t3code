@@ -1,5 +1,6 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -14,6 +15,7 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   resolveDefaultProviderModelSelection,
+  resolveProjectDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
 } from "./providerInstances";
@@ -364,6 +366,33 @@ describe("resolveSelectableProviderInstance", () => {
 });
 
 describe("getDefaultProviderInstanceModel", () => {
+  it.each([false, true])(
+    "does not automatically select a hidden model (all hidden: %s)",
+    (allHidden) => {
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const providers = [
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId,
+          models: [model("hidden-custom", true, true), model("visible")],
+        }),
+      ];
+      const selection = resolveProjectDefaultProviderModelSelection(
+        providers,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerModelPreferences: {
+            [instanceId]: {
+              hiddenModels: allHidden ? ["hidden-custom", "visible"] : ["hidden-custom"],
+              modelOrder: [],
+            },
+          },
+        },
+        null,
+      );
+      expect(selection).toEqual(allHidden ? null : { instanceId, model: "visible" });
+    },
+  );
   it("uses the instance's own models, not the default instance of the kind", () => {
     const providers = [
       provider({

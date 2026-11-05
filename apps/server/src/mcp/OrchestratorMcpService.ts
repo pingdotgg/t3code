@@ -303,7 +303,7 @@ function listCapabilityModels(input: {
 }) {
   const rank = new Map(input.preferences?.modelOrder.map((slug, index) => [slug, index]));
   const visible = input.provider.models
-    .filter((model) => model.isCustom || !input.preferences?.hiddenModels.includes(model.slug))
+    .filter((model) => !input.preferences?.hiddenModels.includes(model.slug))
     .toSorted((a, b) => (rank.get(a.slug) ?? rank.size) - (rank.get(b.slug) ?? rank.size));
   const { instanceId, driver, displayName } = input.provider;
   const providerText = `${instanceId} ${driver} ${displayName ?? ""}`.toLowerCase();
@@ -1339,6 +1339,23 @@ const make = Effect.gen(function* () {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+    const requestedModel = input.target?.model;
+    // Replays prefer the visible model the accepted request chose, but never fail on visibility.
+    const settings =
+      requestedModel === undefined
+        ? yield* serverSettings.getSettings.pipe(
+            Effect.mapError(() =>
+              failure("orchestration_error", "Unable to read server settings."),
+            ),
+          )
+        : undefined;
+    const fallbackModel = (provider: ServerProvider) => {
+      const hiddenModels = settings?.providerModelPreferences?.[provider.instanceId]?.hiddenModels;
+      return (
+        provider.models.find((candidate) => !hiddenModels?.includes(candidate.slug))?.slug ??
+        (input.skipProjectEnablementFilter ? provider.models[0]?.slug : undefined)
+      );
+    };
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1363,6 +1380,7 @@ const make = Effect.gen(function* () {
         ...(inheritedCandidate === undefined ? [] : [inheritedCandidate]),
         ...healthyCandidates.filter((candidate) => candidate !== inheritedCandidate),
       ];
+      let enabledCandidateHidesEveryModel = false;
       for (const candidate of orderedCandidates) {
         const enabledForProject =
           input.skipProjectEnablementFilter === true ||
@@ -1370,10 +1388,23 @@ const make = Effect.gen(function* () {
             projectId: input.parent.thread.projectId,
             instanceId: candidate.instanceId,
           }));
-        if (enabledForProject) {
-          instanceId = candidate.instanceId;
-          break;
+        if (!enabledForProject) continue;
+        if (
+          requestedModel === undefined &&
+          candidate !== inheritedCandidate &&
+          fallbackModel(candidate) === undefined
+        ) {
+          enabledCandidateHidesEveryModel = true;
+          continue;
         }
+        instanceId = candidate.instanceId;
+        break;
+      }
+      if (instanceId === undefined && enabledCandidateHidesEveryModel) {
+        return yield* failure(
+          "model_unavailable",
+          `Every enabled instance of driver ${requestedDriver} has all its models hidden. Pass target.model, or unhide a model in Settings.`,
+        );
       }
       if (instanceId === undefined) {
         return yield* failure(
@@ -1411,12 +1442,11 @@ const make = Effect.gen(function* () {
     }
 
     const inheritedSelection = input.parent.thread.modelSelection;
-    const requestedModel = input.target?.model;
     const model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
         ? inheritedSelection.model
-        : provider.models[0]?.slug);
+        : fallbackModel(provider));
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",
@@ -1439,7 +1469,8 @@ const make = Effect.gen(function* () {
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
-      if (invalid.length > 0) {
+      // A replay may resolve another model than the accepted request; it starts no work.
+      if (invalid.length > 0 && input.skipProjectEnablementFilter !== true) {
         return yield* failure(
           "invalid_request",
           `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,

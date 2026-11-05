@@ -128,7 +128,14 @@ export function createNewThreadHandler(router: AnyRouter) {
     const composerModelSelection = composerActiveProvider
       ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
       : null;
-    const carryModelSelection = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+    const carryCandidate = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+    const carryModelSelection =
+      carryCandidate &&
+      !targetServerSettings.providerModelPreferences?.[
+        carryCandidate.instanceId
+      ]?.hiddenModels.includes(carryCandidate.model)
+        ? carryCandidate
+        : null;
     const carryInteractionMode =
       carrySourceComposer?.interactionMode ??
       carrySourceShell?.interactionMode ??
@@ -147,10 +154,19 @@ export function createNewThreadHandler(router: AnyRouter) {
       project,
     );
     const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
+    const stickyState = useComposerDraftStore.getState();
+    const stickySelection = stickyState.stickyActiveProvider
+      ? stickyState.stickyModelSelectionByProvider[stickyState.stickyActiveProvider]
+      : null;
+    const hasVisibleStickySelection =
+      stickySelection &&
+      !targetServerSettings.providerModelPreferences?.[
+        stickySelection.instanceId
+      ]?.hiddenModels.includes(stickySelection.model);
     const fallbackResolution = resolveNewThreadModelSelection({
       defaultSelection:
         configuredDefaultModelSelection ??
-        (carryModelSelection || useComposerDraftStore.getState().stickyActiveProvider !== null
+        (carryModelSelection || hasVisibleStickySelection
           ? null
           : resolveProjectDefaultProviderModelSelection(
               environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
@@ -163,9 +179,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       projectId: projectRef.projectId,
       now: Date.now(),
     });
-    const projectDefaultModelSelection = fallbackResolution.fallback
-      ? fallbackResolution.selection
-      : configuredDefaultModelSelection;
+    const projectDefaultModelSelection = fallbackResolution.selection;
     const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
     const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
       resolveNewThreadModelSelectionOverride({
@@ -290,7 +304,10 @@ export function createNewThreadHandler(router: AnyRouter) {
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
         if (!storedDraftHasExplicitModelPick) {
-          applyStickyState(emptyStoredDraftThread.draftId);
+          applyStickyState(
+            emptyStoredDraftThread.draftId,
+            targetServerSettings.providerModelPreferences,
+          );
           const modelSelectionOverride = resolveModelSelectionOverride(
             emptyStoredDraftThread.draftId,
           );
@@ -407,7 +424,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
-      applyStickyState(draftId);
+      applyStickyState(draftId, targetServerSettings.providerModelPreferences);
       const modelSelectionOverride = resolveModelSelectionOverride(draftId);
       if (modelSelectionOverride) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });

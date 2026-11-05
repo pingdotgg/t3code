@@ -71,6 +71,7 @@ export interface AppModelOption {
   isDefault?: boolean;
   isLegacy?: boolean;
   isUnavailable?: boolean;
+  isHidden?: boolean;
 }
 
 function appendUnavailableDynamicModelSelection(
@@ -132,7 +133,9 @@ function applyInstanceModelPreferences(
 ): AppModelOption[] {
   const hiddenModels = new Set(preferences.hiddenModels);
   return sortModelsForProviderInstance(
-    options.filter((option) => option.isCustom || !hiddenModels.has(option.slug)),
+    options.map((option) =>
+      hiddenModels.has(option.slug) ? { ...option, isHidden: true } : option,
+    ),
     { modelOrder: preferences.modelOrder },
   );
 }
@@ -160,55 +163,37 @@ function normalizeCustomModelEntries(
   return normalizedModels;
 }
 
-function getAppModelOptions(
+export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
-  providers: ReadonlyArray<ServerProvider>,
-  provider: ProviderDriverKind,
+  entry: Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "models">,
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const rawModels = getProviderModels(providers, provider);
-  // Server custom-model snapshots can lag removals; rebuild custom rows from settings.
-  const options: AppModelOption[] = rawModels
-    .filter((model) => !model.isCustom)
-    .map((model) => toAppModelOption(model, provider));
-  const seen = new Set(options.map((option) => option.slug));
-  const builtInModelSlugs = new Set(
-    Arr.filterMap(getProviderModels(providers, provider), (model) =>
-      model.isCustom ? Result.failVoid : Result.succeed(model.slug),
-    ),
+  return getAppModelCatalogForInstance(settings, entry, selectedModel).filter(
+    (option) => !option.isHidden,
   );
+}
 
-  const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
-  for (const entry of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
-    if (seen.has(entry.slug)) {
-      continue;
-    }
-
-    seen.add(entry.slug);
-    const shortName = resolveModelShortName(entry, provider);
-    options.push({
-      slug: entry.slug,
-      name: entry.name,
-      isCustom: true,
-      ...(shortName ? { shortName } : {}),
-    });
-  }
-
-  const preferences = readInstanceModelPreferences(settings, defaultInstanceId);
+export function getAppModelCatalogForInstance(
+  settings: UnifiedSettings,
+  entry: Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "models">,
+  selectedModel?: string | null,
+): AppModelOption[] {
+  const preferences = readInstanceModelPreferences(settings, entry.instanceId);
   return appendUnavailableDynamicModelSelection(
-    applyInstanceModelPreferences(options, preferences),
-    rawModels,
-    provider,
+    applyInstanceModelPreferences(
+      getConfiguredAppModelOptionsForInstance(settings, entry),
+      preferences,
+    ),
+    entry.models,
+    entry.driverKind,
     selectedModel,
     preferences.hiddenModels,
   );
 }
 
-export function getAppModelOptionsForInstance(
+function getConfiguredAppModelOptionsForInstance(
   settings: UnifiedSettings,
-  entry: ProviderInstanceEntry,
-  selectedModel?: string | null,
+  entry: Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "models">,
 ): AppModelOption[] {
   const options: AppModelOption[] = entry.models
     .filter((model) => !model.isCustom)
@@ -236,14 +221,21 @@ export function getAppModelOptionsForInstance(
     });
   }
 
-  const preferences = readInstanceModelPreferences(settings, entry.instanceId);
-  return appendUnavailableDynamicModelSelection(
-    applyInstanceModelPreferences(options, preferences),
-    entry.models,
-    entry.driverKind,
-    selectedModel,
-    preferences.hiddenModels,
+  return options;
+}
+
+function resolveConfiguredAppModelSelection(
+  settings: UnifiedSettings,
+  entry: Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "models">,
+  selectedModel: string | null | undefined,
+): string | null {
+  const hiddenModels = new Set(
+    readInstanceModelPreferences(settings, entry.instanceId).hiddenModels,
   );
+  const options = getConfiguredAppModelOptionsForInstance(settings, entry).filter(
+    (option) => option.isCustom || !hiddenModels.has(option.slug),
+  );
+  return resolveSelectableModel(entry.driverKind, selectedModel, options);
 }
 
 export function resolveAppModelSelection(
@@ -253,10 +245,20 @@ export function resolveAppModelSelection(
   selectedModel: string | null | undefined,
 ): string {
   const resolvedProvider = resolveSelectableProvider(providers, provider);
-  const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
+  const entry = {
+    instanceId: defaultInstanceIdForDriver(resolvedProvider),
+    driverKind: resolvedProvider,
+    models: getProviderModels(providers, resolvedProvider),
+  };
+  const options = getAppModelOptionsForInstance(settings, entry, selectedModel);
   return (
+    resolveConfiguredAppModelSelection(settings, entry, selectedModel) ??
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
-    getDefaultServerModel(providers, resolvedProvider)
+    options.find((option) => option.isDefault)?.slug ??
+    options[0]?.slug ??
+    (readInstanceModelPreferences(settings, entry.instanceId).hiddenModels.length > 0
+      ? ""
+      : getDefaultServerModel(providers, resolvedProvider))
   );
 }
 
@@ -276,7 +278,7 @@ export function resolveAppModelSelectionForInstance(
     entry,
     resolutionOptions?.preserveUnavailableSelection ? selectedModel : null,
   );
-  const resolvedSelection = resolveSelectableModel(entry.driverKind, selectedModel, options);
+  const resolvedSelection = resolveConfiguredAppModelSelection(settings, entry, selectedModel);
   if (resolvedSelection) {
     return resolvedSelection;
   }
@@ -356,7 +358,7 @@ export function getCustomModelOptionsByInstance(
   for (const entry of deriveProviderInstanceEntries(providers)) {
     out.set(
       entry.instanceId,
-      getAppModelOptionsForInstance(
+      getAppModelCatalogForInstance(
         settings,
         entry,
         entry.instanceId === selectedInstanceId ? selectedModel : null,
@@ -392,7 +394,7 @@ export function resolveAppModelSelectionState(
     // Use the cheap generation default; the catalog default is the expensive chat flagship.
     const options = getAppModelOptionsForInstance(settings, entry);
     const model =
-      resolveSelectableModel(entry.driverKind, selectedModel, options) ??
+      resolveConfiguredAppModelSelection(settings, entry, selectedModel) ??
       resolveSelectableModel(
         entry.driverKind,
         DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
@@ -404,8 +406,9 @@ export function resolveAppModelSelectionState(
         supportedProviders,
         selectedModel,
       ) ??
-      entry.models[0]?.slug ??
-      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
+      (readInstanceModelPreferences(settings, entry.instanceId).hiddenModels.length > 0
+        ? ""
+        : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]);
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
     }

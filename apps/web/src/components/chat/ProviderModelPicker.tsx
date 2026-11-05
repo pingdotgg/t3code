@@ -135,14 +135,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }) ??
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
-      : selectedInstanceOptions[0]);
+      : selectedInstanceOptions.find((option) => !option.isHidden));
   const triggerTitle = selectedModel
     ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? "Choose model"
       : props.model || "Choose model";
   const triggerLabel = selectedModel
-    ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}${selectedModel.isHidden ? " (Hidden from picker)" : ""}`
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -208,13 +208,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
     });
     const unavailable = model?.isUnavailable ? " (Unavailable)" : "";
+    const hidden = model?.isHidden ? " (Hidden)" : "";
     return {
       ...selection,
       entry,
       label: model
-        ? `${getTriggerDisplayModelName(model, entry?.driverKind)}${unavailable}`
+        ? `${getTriggerDisplayModelName(model, entry?.driverKind)}${unavailable}${hidden}`
         : selection.model,
-      fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
+      fullLabel: model ? `${getDisplayModelName(model)}${unavailable}${hidden}` : selection.model,
     };
   });
   const multipleLabel = selectedEntries
@@ -396,6 +397,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </Tooltip>
           )}
           {props.triggerSuffix}
+          {selectedModel?.isHidden && !selectedEntries && props.triggerLabel === undefined ? (
+            <Badge variant="outline" size="sm">
+              Hidden
+            </Badge>
+          ) : null}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
               Unavailable
