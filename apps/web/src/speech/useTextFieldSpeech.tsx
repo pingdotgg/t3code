@@ -1,16 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useRef, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
-import {
-  ComposerSpeechButton,
-  ComposerSpeechCancelButton,
-  ComposerSpeechRecordingPill,
-  ComposerSpeechStatus,
-} from "~/components/chat/ComposerSpeechButton";
+import { ComposerSpeechMicButton } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 
 /** Bind dictation to a plain-text draft and keep the insertion cursor in that editor. */
@@ -68,42 +63,21 @@ export function TextFieldSpeechControls({
   speech: ReturnType<typeof useTextFieldSpeech>;
   disabled?: boolean;
 }) {
-  const level = useSyncExternalStore(speech.level.subscribe, speech.level.getSnapshot);
   return (
     <>
-      {speech.preview ? (
-        <p role="status" className="text-body text-muted-foreground">
-          {speech.preview.committed}
-          {speech.preview.tentative}
-        </p>
-      ) : null}
-      <div className="flex min-w-0 items-center gap-1">
-        <ComposerSpeechRecordingPill
+      {speech.available ? (
+        <ComposerSpeechMicButton
+          appearance="field"
           state={speech.state}
-          progress={speech.progress}
-          level={level}
-          finishShortcutLabel={speech.shortcutLabel}
+          level={speech.level}
+          shortcutLabel={speech.shortcutLabel}
+          disabled={disabled}
+          onStart={() => void speech.start()}
           onStop={() => void speech.stop()}
           onCancel={speech.cancel}
           onSkipPostProcessing={speech.skipPostProcessing}
         />
-        {speech.state.phase === "error" ? (
-          <>
-            <ComposerSpeechStatus state={speech.state} progress={speech.progress} level={level} />
-            <ComposerSpeechCancelButton state={speech.state} onCancel={speech.cancel} />
-          </>
-        ) : null}
-        {speech.available ? (
-          <ComposerSpeechButton
-            state={speech.state}
-            progress={speech.progress}
-            shortcutLabel={speech.shortcutLabel}
-            disabled={disabled}
-            onStart={() => void speech.start()}
-            onCancel={speech.cancel}
-          />
-        ) : null}
-      </div>
+      ) : null}
       <VoiceInputSetup
         environmentId={speech.transcriptionEnvironmentId}
         open={speech.setup.open}

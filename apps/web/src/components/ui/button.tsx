@@ -82,6 +82,14 @@ const buttonVariants = cva(
           "surface-tint [--surface-tint:var(--success-foreground)] text-success-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--success-foreground),var(--foreground)_20%)]",
         "warning-outline":
           "surface-tint [--surface-tint:var(--warning-foreground)] text-warning-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--warning-foreground),var(--foreground)_20%)]",
+        // Tinted by what the control says happened or needs doing: a conflict, a closed or merged
+        // pull request, an armed auto-merge.
+        "destructive-tint":
+          "surface-tint [--surface-tint:var(--destructive-foreground)] text-destructive-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--destructive-foreground),var(--foreground)_20%)]",
+        "merged-tint":
+          "surface-tint [--surface-tint:var(--merged-foreground)] text-merged-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--merged-foreground),var(--foreground)_20%)]",
+        "info-tint":
+          "surface-tint [--surface-tint:var(--info-foreground)] text-info-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--info-foreground),var(--foreground)_20%)]",
       },
     },
   },

@@ -19,9 +19,7 @@ vi.mock("./useEnvironmentSpeechInput", () => ({
       state: { phase: mocks.busy ? "recording" : "idle", error: null, errorAction: null },
       blocksSubmission: mocks.busy,
       freezesEditor: mocks.busy,
-      progress: null,
       level: { getSnapshot: () => 0, subscribe: () => () => {} },
-      preview: null,
       start: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       cancel: vi.fn(),
@@ -49,10 +47,7 @@ vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("~/hooks/useSettings", () => ({ useClientSettings: () => "toggle" }));
 vi.mock("~/components/chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
 vi.mock("~/components/chat/ComposerSpeechButton", () => ({
-  ComposerSpeechButton: () => null,
-  ComposerSpeechCancelButton: () => null,
-  ComposerSpeechRecordingPill: () => null,
-  ComposerSpeechStatus: () => null,
+  ComposerSpeechMicButton: () => null,
 }));
 
 const environmentId = EnvironmentId.make("test-environment");

@@ -4,8 +4,9 @@ import {
   type PullRequestMergeMethod,
   type PullRequestUpdateMethod,
 } from "@t3tools/contracts";
-import { CheckIcon, FolderGit2Icon, GitBranchIcon } from "lucide-react";
+import { CheckIcon, FolderGit2Icon, GitBranchIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import type { ReactNode } from "react";
+import { cn } from "~/lib/utils";
 import {
   PULL_REQUEST_MERGE_METHOD_LABELS,
   resolvePullRequestPrimaryControl,
@@ -174,7 +175,7 @@ export function PullRequestPrimaryAction({
     primaryAction === "resolve" ? (
       <Button
         size="sm"
-        variant="destructive-outline"
+        variant="destructive-tint"
         className="flex-1"
         disabled={handoff !== null || unavailable}
         onClick={onResolve}
@@ -242,12 +243,107 @@ export function PullRequestPrimaryAction({
     ) : null;
   const primaryStatus =
     primaryButton !== null ? null : primaryAction === "auto-merge-armed" ? (
-      <p className="flex h-8 flex-1 items-center justify-center gap-1.5 text-meta text-info-foreground sm:h-7">
+      <PullRequestStateBadge tone="info">
         <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-        {armedAutoMergeLabel}: the host merges this once its requirements are met
-      </p>
-    ) : null; // Merged and closed lead the readiness card instead.
+        {armedAutoMergeLabel}
+      </PullRequestStateBadge>
+    ) : null; // Merged and closed show their own badge in the same slot.
   return primaryButton ?? primaryStatus;
+}
+
+const STATE_BADGE_TONES = {
+  info: "[--surface-tint:var(--info-foreground)] text-info-foreground",
+  merged: "[--surface-tint:var(--merged-foreground)] text-merged-foreground",
+  destructive: "[--surface-tint:var(--destructive-foreground)] text-destructive-foreground",
+} as const;
+
+/** What happened to the pull request, in the readiness card's action slot and its tint. */
+export function PullRequestStateBadge({
+  tone,
+  children,
+}: {
+  tone: keyof typeof STATE_BADGE_TONES;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      data-slot="state-badge"
+      className={cn(
+        "surface-tint flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control px-3 text-label sm:h-7",
+        STATE_BADGE_TONES[tone],
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The chevron's options once a pull request is merged or closed. */
+export function PullRequestFinishedMenuItems({
+  state,
+  singular,
+  headBranch,
+  canReopen,
+  canRevert,
+  showsDeleteBranch,
+  environmentConnected,
+  pendingAction,
+  perform,
+  inlineConfirm,
+  confirmDeleteBranch,
+}: {
+  state: "merged" | "closed";
+  singular: string;
+  headBranch: string;
+  canReopen: boolean;
+  canRevert: boolean;
+  showsDeleteBranch: boolean;
+  environmentConnected: boolean;
+  pendingAction: PullRequestAction | null;
+  perform: PerformPullRequestAction;
+  inlineConfirm: ReturnType<typeof useInlineActionConfirm>;
+  confirmDeleteBranch: () => Promise<void>;
+}) {
+  const actionPending = pendingAction !== null;
+  return (
+    <>
+      {state === "closed" && canReopen ? (
+        <MenuItem disabled={actionPending} onClick={() => void perform("reopen")}>
+          <PullRequestGlyph.reopen className="size-3.5" />
+          Reopen {singular}
+        </MenuItem>
+      ) : null}
+      {state === "merged" && canRevert ? (
+        <MenuItem
+          closeOnClick={inlineConfirm.isArmed("revert")}
+          aria-label={inlineConfirm.isArmed("revert") ? "Confirm revert?" : "Revert changes"}
+          variant={inlineConfirm.isArmed("revert") ? "destructive" : "default"}
+          disabled={actionPending}
+          {...inlineConfirm.props("revert", () => void perform("revert"))}
+        >
+          <RotateCcwIcon className="size-3.5" />
+          {inlineConfirm.isArmed("revert") ? "Confirm revert?" : "Revert changes"}
+        </MenuItem>
+      ) : null}
+      {showsDeleteBranch ? (
+        <MenuItem
+          variant="destructive"
+          disabled={actionPending || !environmentConnected}
+          onClick={() => void confirmDeleteBranch()}
+        >
+          <Trash2Icon className="mt-1 size-3.5 shrink-0 self-start" />
+          <span className="flex min-w-0 flex-col">
+            <span>
+              {pendingAction === "delete-branch" ? "Deleting branch..." : "Delete branch"}
+            </span>
+            <span className="truncate text-caption text-muted-foreground">
+              {environmentConnected ? headBranch : "Reconnect to delete this branch"}
+            </span>
+          </span>
+        </MenuItem>
+      ) : null}
+    </>
+  );
 }
 
 /** Merge methods, host updates and page checkout behind the readiness action. */

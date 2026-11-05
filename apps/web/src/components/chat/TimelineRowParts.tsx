@@ -1,4 +1,4 @@
-import { type ReactNode, type ComponentProps } from "react";
+import { type ReactNode, type ComponentProps, useLayoutEffect, useRef } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -11,6 +11,36 @@ import { ChevronDown, ChevronRight } from "lucide";
 import { MorphIcon } from "../MorphIcon";
 
 export const MESSAGE_HEADING_LEVEL = 3;
+
+const TEXT_FADE_MS = 200;
+const fadesInFlight = new Map<string, { opacity: number; at: number }>();
+
+/**
+ * A message's text moves from the answer row into the work window when a tool call follows,
+ * which remounts it. The new copy resumes the fade the old one was in the middle of.
+ */
+export function useCarriedTextFade(messageId: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads and resumes the old copy's computed opacity across a remount
+  useLayoutEffect(() => {
+    const root = ref.current;
+    const lastBlock = () => root?.querySelector(".chat-markdown")?.lastElementChild ?? null;
+    const carried = fadesInFlight.get(messageId);
+    fadesInFlight.delete(messageId);
+    if (carried && performance.now() - carried.at < TEXT_FADE_MS) {
+      lastBlock()?.animate(
+        { opacity: [carried.opacity, 1] },
+        { duration: TEXT_FADE_MS, easing: "ease-out" },
+      );
+    }
+    return () => {
+      const block = lastBlock();
+      const opacity = block ? Number(getComputedStyle(block).opacity) : 1;
+      if (opacity < 1) fadesInFlight.set(messageId, { opacity, at: performance.now() });
+    };
+  }, [messageId]);
+  return ref;
+}
 
 export function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;

@@ -13,12 +13,17 @@ import type {
   PullRequestUpdateMethod,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon, HammerIcon, PlayIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  GitCompareArrowsIcon,
+  HammerIcon,
+  PlayIcon,
+} from "lucide-react";
 import { useState, type MouseEvent, type ReactNode, type RefCallback } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button, ContentButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -40,7 +45,6 @@ import {
   PullRequestReviewOutcomeIcon,
   PullRequestReviewOutcomeAvatarBadge,
   pullRequestReviewOutcomeLabel,
-  PullRequestStateGlyph,
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
@@ -165,7 +169,7 @@ export function PullRequestReadinessCard({
   /** The split button's menu, when the primary is a button with more than one way to merge. */
   primaryMenu: ReactNode;
   /** The menu half matches the button it is welded to. */
-  primaryMenuVariant?: "default" | "destructive-outline";
+  primaryMenuVariant?: "default" | "destructive-tint" | "merged-tint" | "info-tint";
   /** A line under the merge control, such as an auto-merge that is already armed. */
   note?: ReactNode;
 }) {
@@ -259,40 +263,20 @@ export function PullRequestReadinessCard({
     : detail.mergeability === "unknown"
       ? `Checking for conflicts with ${detail.baseBranch}`
       : freshness
-        ? `Behind ${detail.baseBranch}${
-            freshness.behindBy === null
-              ? ""
-              : ` by ${freshness.behindBy.toLocaleString()} ${
-                  freshness.behindBy === 1 ? "commit" : "commits"
-                }`
-          }`
+        ? freshness.behindBy === null
+          ? `Behind ${detail.baseBranch}`
+          : `${freshness.behindBy.toLocaleString()} ${
+              freshness.behindBy === 1 ? "commit" : "commits"
+            } behind ${detail.baseBranch}`
         : `No conflicts with ${detail.baseBranch}`;
   const commitCount = activityPending
     ? null
     : `${detail.commits.length.toLocaleString()} ${detail.commits.length === 1 ? "commit" : "commits"}`;
-  const conflictsMeta = commitCount;
+  const conflictsMeta = !conflicting && freshness ? "no conflicts" : commitCount;
 
   return (
     <div className="surface-panel min-w-0 overflow-hidden rounded-xl">
       <div>
-        {/* A finished pull request leads with how it ended; the rows below are its record. */}
-        {open ? null : (
-          <div className="flex min-h-8 min-w-0 items-center gap-2 px-2 text-meta">
-            <PullRequestStateGlyph state={detail.state} isDraft={false} className="size-3.5" />
-            <span className="min-w-0 flex-1 truncate text-foreground">
-              {detail.state === "merged"
-                ? `Merged into ${detail.baseBranch}`
-                : "Closed without merging"}
-            </span>
-            {(detail.state === "merged" ? detail.mergedAt : detail.closedAt) ? (
-              <span className="shrink-0 text-muted-foreground">
-                <RelativeTime
-                  timestamp={(detail.state === "merged" ? detail.mergedAt : detail.closedAt) ?? ""}
-                />
-              </span>
-            ) : null}
-          </div>
-        )}
         <ReadinessRow
           icon={checksIcon}
           label={
@@ -476,7 +460,10 @@ export function PullRequestReadinessCard({
               ) : detail.mergeability === "unknown" ? (
                 <PullRequestCheckStatusIcon status="pending" />
               ) : freshness ? (
-                <PullRequestCheckStatusIcon status="action-required" />
+                <GitCompareArrowsIcon
+                  aria-hidden
+                  className="size-3.5 shrink-0 text-warning-foreground"
+                />
               ) : (
                 <PullRequestCheckStatusIcon status="success" />
               )
@@ -519,7 +506,7 @@ export function PullRequestReadinessCard({
         <div className="border-t border-border bg-foreground/[0.02] px-3 py-2.5">
           <div className="flex min-w-0 items-stretch">
             {primaryMenu ? (
-              <Group className="w-full">
+              <Group split className="w-full">
                 {primary}
                 <Menu>
                   <MenuTrigger
