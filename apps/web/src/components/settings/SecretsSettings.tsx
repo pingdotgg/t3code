@@ -254,7 +254,7 @@ function SecretProviderUses({
       <AlertDialogDescription>
         These read from {label} and will be unset. The secrets themselves are untouched.
       </AlertDialogDescription>
-      <ul className="list-disc space-y-0.5 ps-5 text-sm wrap-anywhere">
+      <ul className="max-h-48 list-disc space-y-0.5 overflow-y-auto ps-5 text-sm wrap-anywhere">
         {uses.map((use) => (
           <li key={use.id}>{use.label}</li>
         ))}

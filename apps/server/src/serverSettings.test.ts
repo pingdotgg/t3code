@@ -1723,8 +1723,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         ],
       });
 
+      // An older client's save echoes a reference it cannot decode as the redacted marker.
       const removed = yield* service.updateSettings({
         secretProviders: { [SecretProviderId.make("personal")]: null },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: SECRET_REDACTED,
+            enabled: true,
+          },
+        },
       });
       assert.notInclude(JSON.stringify(removed), "op://Private");
       assert.deepEqual(removed.providerInstances[instanceId]?.environment, [

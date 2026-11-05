@@ -249,7 +249,7 @@ export function withoutRemovedSecretProviderReferences(
   next: ServerSettings,
 ): ServerSettings {
   const removed = new Set(
-    Object.keys(current.secretProviders).filter((id) => !(id in next.secretProviders)),
+    Object.keys(current.secretProviders).filter((id) => !Object.hasOwn(next.secretProviders, id)),
   );
   if (removed.size === 0) return next;
   const isRemoved = (value: unknown) => isSecretReference(value) && removed.has(value.provider);

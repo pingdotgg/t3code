@@ -1172,7 +1172,12 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const updated = withoutRemovedSecretProviderReferences(current, yield* update(current));
+        // An older client echoes a reference as the redacted marker; restore it so a removed
+        // provider's reference is cleared rather than restored after the cleanup.
+        const updated = withoutRemovedSecretProviderReferences(
+          current,
+          withEchoedSecretReferences(current, yield* update(current)),
+        );
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
