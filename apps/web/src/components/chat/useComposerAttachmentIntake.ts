@@ -8,7 +8,6 @@ import {
 import {
   type ComposerContextReference,
   collectInlineContextIds,
-  stripInlineContextReferences,
 } from "~/lib/composerContextReferences";
 import {
   type ComposerFileAttachment,
@@ -63,7 +62,6 @@ export function useComposerAttachmentIntake(input: {
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly supportsQuestionAttachments: boolean;
   readonly isLiteralPendingAnswer: boolean;
-  readonly projectSelectionRequired: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly attachmentTargetKey: string;
   readonly fileStagingLimit: number | null;
@@ -90,7 +88,6 @@ export function useComposerAttachmentIntake(input: {
     pendingUserInputs,
     supportsQuestionAttachments,
     isLiteralPendingAnswer,
-    projectSelectionRequired,
     questionAttachmentTarget,
     attachmentTargetKey,
     fileStagingLimit,
@@ -117,7 +114,6 @@ export function useComposerAttachmentIntake(input: {
     options?: {
       readonly source?: ChatFileAttachment["source"];
       readonly selection?: { start: number; end: number };
-      readonly skipImageInlineChip?: boolean;
     },
   ): Promise<boolean> => {
     if (!activeThreadId || files.length === 0 || isRevertingCheckpointRef.current) return false;
@@ -137,12 +133,6 @@ export function useComposerAttachmentIntake(input: {
     // large image is being compressed, and the attachments and errors belong
     // to the thread the paste happened in.
     const threadId = activeThreadId;
-    const imageAttachmentsGetChips =
-      !options?.skipImageInlineChip &&
-      (options?.selection !== undefined ||
-        pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
-        stripInlineContextReferences(promptRef.current).trim().length > 0);
 
     // Validation happens synchronously so concurrent pastes see each other:
     // accepted files reserve their attachment slots (as preparing images)
@@ -305,15 +295,11 @@ export function useComposerAttachmentIntake(input: {
           ? addComposerImagesToDraft(nextImages)
           : [],
     );
-    const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
     // The draft may be gone by now; revoking a URL the store already revoked is harmless.
     for (const image of nextImages) {
       if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
     }
-    if (storedImages.length > 0 && imageAttachmentsGetChips) {
-      insertedAny =
-        insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
-    }
+
     // Only failures are reported here. Success must not pass `null`: by
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would
@@ -345,7 +331,7 @@ export function useComposerAttachmentIntake(input: {
     }
     const confirmation = requestConfirmDialog(
       `Remove ${image?.name ?? "this image"} from the message?\nIt is referenced in your text; removing it also removes every reference.`,
-      { variant: "destructive" },
+      { variant: "destructive", confirmLabel: "Remove" },
     );
     if (!confirmation) {
       removeComposerImageFromDraft(imageId);
