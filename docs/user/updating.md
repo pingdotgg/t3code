@@ -6,9 +6,10 @@ of the sidebar and **Settings → Environments** offer to update it.
 
 ## Update everything at once
 
-The update button at the bottom of the sidebar updates every connected machine
-in one step. It updates outdated providers, then servers that are behind, then
-the desktop app you are using. Servers move to the
+The update button at the bottom of the sidebar, like the update button in
+**Settings → About**, updates every connected machine in one step. It updates
+outdated providers, then servers that are behind, then the desktop app you are
+using. Servers move to the
 version your desktop app is installing, or to your web app's version. A
 background service stays on its current release channel. A remote desktop app
 installs the latest release from its own channel. Hover the button to see what
