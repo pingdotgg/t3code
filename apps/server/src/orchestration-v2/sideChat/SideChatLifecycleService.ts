@@ -12,6 +12,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -68,7 +69,8 @@ export class SideChatLifecycleService extends Context.Service<
     /**
      * Archives, unarchives or deletes the side chats directly below the thread, as the thread's
      * own `commandId` did to it. Each one's own command does the same to the side chats below it.
-     * Never fails: interrupts propagate, and anything else is logged, child by child.
+     * Tries every child, logs failures, and fails if any child could not follow the parent so the
+     * outbox retries it. Children already in the target state are skipped on retry.
      */
     readonly cascade: (input: {
       readonly threadId: ThreadId;
@@ -390,41 +392,42 @@ const make = Effect.gen(function* () {
         }),
         thread.id,
       ).filter((child) => !isInCascadeTargetState(child, input.action));
-      yield* Effect.forEach(
+      const failures = yield* Effect.forEach(
         children,
-        (child) =>
-          threads
-            .dispatch({
-              type: SIDE_CHAT_CASCADE_COMMAND_TYPES[input.action],
-              commandId: CommandId.make(`${input.commandId}:side-chat-cascade:${child.id}`),
+        (child) => {
+          const command = {
+            type: SIDE_CHAT_CASCADE_COMMAND_TYPES[input.action],
+            commandId: CommandId.make(`${input.commandId}:side-chat-cascade:${child.id}`),
+            threadId: child.id,
+          } as const;
+          return Effect.gen(function* () {
+            const exit = yield* Effect.exit(threads.dispatch(command));
+            if (Exit.isSuccess(exit)) return Option.none<string>();
+            if (Cause.hasInterruptsOnly(exit.cause)) return yield* Effect.failCause(exit.cause);
+            yield* Effect.logWarning("Side chat could not follow its parent", {
+              parentThreadId: input.threadId,
               threadId: child.id,
-            })
-            .pipe(
-              Effect.asVoid,
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.interrupt
-                  : Effect.logWarning("Side chat could not follow its parent", {
-                      parentThreadId: input.threadId,
-                      threadId: child.id,
-                      action: input.action,
-                      cause,
-                    }),
-              ),
-            ),
-        { discard: true },
+              action: input.action,
+              cause: exit.cause,
+            });
+            return Option.some(Cause.pretty(exit.cause));
+          });
+        },
+        { discard: false },
       );
+      const firstFailure = failures.find(Option.isSome);
+      if (firstFailure !== undefined) {
+        return yield* Effect.die(firstFailure.value);
+      }
     },
-    (effect, input) =>
+    (effect) =>
       effect.pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.interrupt
-            : Effect.logWarning("Side chats could not follow their parent", {
-                threadId: input.threadId,
-                action: input.action,
-                cause,
-              }),
+            : Effect.logWarning("Side chats could not follow their parent", { cause }).pipe(
+                Effect.andThen(Effect.die(Cause.pretty(cause))),
+              ),
         ),
       ),
   );
