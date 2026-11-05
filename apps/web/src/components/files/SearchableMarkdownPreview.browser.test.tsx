@@ -139,23 +139,29 @@ it("reveals code matches inside horizontal and vertical scroll containers withou
     expect(rect.top).toBeGreaterThanOrEqual(viewport.getBoundingClientRect().top);
     expect(rect.bottom).toBeLessThanOrEqual(viewport.getBoundingClientRect().bottom);
   });
-  expect(window.scrollY).toBe(pageTop);
+  await vi.waitFor(() => expect(window.scrollY).toBe(pageTop));
   await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
-  expect(pre.scrollLeft).toBe(0);
+  await vi.waitFor(() => expect(pre.scrollLeft).toBe(0));
   viewport.scrollTop = 0;
   await screen.rerender(content(" needle"));
-  await vi.waitFor(() => expect(highlighted("t3-markdown-find")).toHaveLength(2));
-  expect(viewport.scrollTop).toBe(0);
-  expect(pre.scrollLeft).toBe(0);
+  await vi.waitFor(() => {
+    expect(highlighted("t3-markdown-find")).toHaveLength(2);
+    expect(viewport.scrollTop).toBe(0);
+    expect(pre.scrollLeft).toBe(0);
+  });
   await userEvent.keyboard("{Enter}");
-  expect(viewport.scrollTop).toBeGreaterThan(0);
-  expect(pre.scrollLeft).toBeGreaterThan(0);
+  await vi.waitFor(() => {
+    expect(viewport.scrollTop).toBeGreaterThan(0);
+    expect(pre.scrollLeft).toBeGreaterThan(0);
+  });
   await userEvent.fill(screen.getByRole("searchbox"), "absent");
   await vi.waitFor(() => expect(highlighted()).toEqual([]));
   viewport.scrollTop = 0;
   await screen.rerender(content(" absent"));
-  await vi.waitFor(() => expect(highlighted()).toEqual(["absent"]));
-  expect(viewport.scrollTop).toBe(0);
+  await vi.waitFor(() => {
+    expect(highlighted()).toEqual(["absent"]);
+    expect(viewport.scrollTop).toBe(0);
+  });
 });
 
 it("routes file toolbar focus to the visible preview, leaving hidden tabs and chat alone", async () => {
