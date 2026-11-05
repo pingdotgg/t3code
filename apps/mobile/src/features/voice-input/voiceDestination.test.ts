@@ -32,7 +32,10 @@ vi.mock("expo-secure-store", () => ({
   setItem: mocks.write,
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 6,
 }));
-vi.mock("../../lib/uuid", () => ({ uuidv4: () => globalThis.crypto.randomUUID() }));
+vi.mock("../../lib/uuid", () => {
+  let nextGrant = 0;
+  return { uuidv4: () => `test-grant-${++nextGrant}` };
+});
 vi.mock("../../lib/protectedData", () => ({ whenProtectedDataAvailable: async () => {} }));
 vi.mock("../../connection/runtime", async () => ({
   connectionAtomRuntime: Atom.runtime((await import("effect/http")).FetchHttpClient.layer),
