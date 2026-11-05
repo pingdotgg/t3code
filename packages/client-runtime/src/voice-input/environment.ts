@@ -5,6 +5,7 @@ import type {
   SpeechAcceleration,
   SpeechCustomWords,
   SpeechLanguage,
+  SpeechModelDirectories,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
@@ -203,6 +204,19 @@ export const updateEnvironmentSpeechCustomWords = (
     method: "POST",
     path: (urls) => urls.updateCustomWords(),
     run: ({ client, headers }) => client.updateCustomWords({ headers, payload: { words } }),
+  });
+
+export const updateEnvironmentSpeechModelDirectories = (
+  prepared: PreparedConnection,
+  directories: SpeechModelDirectories,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateModelDirectories(),
+    run: ({ client, headers }) =>
+      client.updateModelDirectories({ headers, payload: { directories } }),
   });
 
 export const updateEnvironmentSpeechFillerWordRemoval = (

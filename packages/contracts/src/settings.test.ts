@@ -415,6 +415,7 @@ describe("ServerSettings speech model", () => {
     expect(DEFAULT_SERVER_SETTINGS.speechModelUnloadTimeout).toBe("min_15");
     expect(DEFAULT_SERVER_SETTINGS.speechLanguage).toBe("auto");
     expect(DEFAULT_SERVER_SETTINGS.speechCustomWords).toEqual([]);
+    expect(DEFAULT_SERVER_SETTINGS.speechModelDirectories).toEqual([]);
     expect(DEFAULT_SERVER_SETTINGS.speechRemoveFillerWords).toBe(true);
     expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingEnabled).toBe(true);
     expect(DEFAULT_SERVER_SETTINGS.speechCorrectionWord).toBe("");

@@ -61,6 +61,7 @@ import {
   EnvironmentSpeechModels,
   EnvironmentSpeechStatus,
   EnvironmentSpeechCustomWordsRequest,
+  EnvironmentSpeechModelDirectoriesRequest,
   EnvironmentSpeechFillerWordsRequest,
   EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelUnloadTimeoutRequest,
@@ -828,6 +829,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("updateCustomWords", "/api/voice/custom-words", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechCustomWordsRequest,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateModelDirectories", "/api/voice/model-directories", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelDirectoriesRequest,
       success: EnvironmentSpeechStatus,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),

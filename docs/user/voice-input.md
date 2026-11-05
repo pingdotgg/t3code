@@ -25,6 +25,11 @@ select a transcription model. Models vary in download size, supported languages,
 speed, and accuracy. If the selected environment is remote, the audio is sent to
 that machine for transcription.
 
+A model downloaded elsewhere, such as by Hex or Handy, can be reused instead
+of downloaded again: add its folder under Settings, then Voice, then
+Transcription models, then Model folders. T3 Code only reads those folders,
+so those models can't be deleted from Voice settings.
+
 Models marked Streaming show a live preview while you speak. The tentative ending
 may change as the model hears more. Stop recording to finish and insert the text;
 cancel to discard the preview without changing your draft. Other models transcribe

@@ -52,6 +52,7 @@ const downloadModel = vi.hoisted(() =>
   ),
 );
 const readyModels = vi.hoisted(() => new Set(["test-model", "fallback-model"]));
+const folderModels = vi.hoisted(() => new Map<string, string>());
 const modelDefinitions = vi.hoisted(() => [
   {
     id: "test-model",
@@ -91,8 +92,11 @@ vi.mock("./model.ts", () => ({
   effectiveSpeechLanguage: (model: { languages: string[] }, intent: string) =>
     intent !== "auto" && model.languages.includes(intent) ? intent : "en",
   downloadSpeechModel: downloadModel,
-  isSpeechModelReady: async (_directory: string, model: { id: string }) =>
-    readyModels.has(model.id),
+  findInstalledSpeechModel: async (directories: readonly string[], model: { id: string }) => {
+    if (readyModels.has(model.id)) return `${directories[0]}/test.gguf`;
+    const folder = folderModels.get(model.id);
+    return folder !== undefined && directories.includes(folder) ? `${folder}/test.gguf` : undefined;
+  },
   removeSpeechModel: async (_directory: string, model: { id: string }) => {
     readyModels.delete(model.id);
   },
@@ -111,6 +115,7 @@ beforeEach(() => {
   readyModels.clear();
   readyModels.add("test-model");
   readyModels.add("fallback-model");
+  folderModels.clear();
   downloadModel.mockImplementation(async () => "test.gguf");
 });
 
@@ -1017,6 +1022,28 @@ it.effect("a failed stream begin does not poison the next stream", () =>
     expect(native.dispose).toHaveBeenCalledOnce();
     yield* speech.startStream().pipe(Effect.scoped);
     expect(loadNative).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("checks user model folders for installed catalog models", () =>
+  Effect.gen(function* () {
+    readyModels.delete("fallback-model");
+    folderModels.set("fallback-model", "/models/extra");
+    const speech = yield* SpeechService.SpeechService;
+    const status = yield* speech.updateModelDirectories([
+      " /models/extra ",
+      "/models/extra",
+      "relative/dir",
+      "",
+    ]);
+    expect(status).toMatchObject({ modelDirectories: ["/models/extra"] });
+    expect(
+      (yield* speech.models).models.find((model) => model.id === "fallback-model"),
+    ).toMatchObject({ state: "installed", shared: true });
+    yield* speech.updateModelDirectories([]);
+    expect(
+      (yield* speech.models).models.find((model) => model.id === "fallback-model"),
+    ).toMatchObject({ state: "downloadable" });
   }).pipe(Effect.provide(layer)),
 );
 
