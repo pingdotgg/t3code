@@ -182,6 +182,8 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
     case "skill":
       return "Skills";
     case "path":
+      return "Mentions";
+    case "file":
       return "Files";
     default:
       return null;
@@ -202,7 +204,9 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
               ? "Finding GitHub issues…"
               : triggerKind === "thread"
                 ? "Finding threads…"
-                : "Loading…";
+                : triggerKind === "file"
+                  ? "Searching files…"
+                  : "Loading…";
   }
   switch (triggerKind) {
     case "pull-request":
@@ -218,6 +222,8 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
     case "thread":
       return "No matching threads.";
     case "path":
+      return "No matching threads, machines, or files.";
+    case "file":
       return "No matching files or folders.";
     case "skill":
       return "No skills found.";

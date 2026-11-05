@@ -1,5 +1,6 @@
 export type ComposerTriggerKind =
   | "path"
+  | "file"
   | "thread"
   | "pull-request"
   | "jira"
@@ -19,7 +20,7 @@ export interface ComposerTrigger {
 }
 
 const AT_MENTION_KIND_BY_ALIAS = {
-  file: "path",
+  file: "file",
   thread: "thread",
   pr: "pull-request",
   jira: "jira",
@@ -28,7 +29,8 @@ const AT_MENTION_KIND_BY_ALIAS = {
 } as const satisfies Record<string, ComposerTriggerKind>;
 
 /**
- * `@file:`, `@thread:`, `@pr:`, `@jira:`, `@issue:`, `@figma:` are explicit scopes. Bare `@` is `@file:`.
+ * Bare `@` keeps the classic mixed menu (threads, machines, files).
+ * `@file:`, `@thread:`, `@pr:`, `@jira:`, `@issue:`, `@figma:` filter that menu by type.
  * `#` opens pull requests and GitHub issues together (`@pr:` / `@issue:` stay scoped).
  */
 export function detectAtMentionTrigger(

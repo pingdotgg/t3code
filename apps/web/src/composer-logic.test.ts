@@ -309,7 +309,7 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("scopes @kind: mentions; bare @ is @file:; # is PRs and issues", () => {
+  it("keeps bare @ unscoped and treats @kind: as type filters; # is PRs and issues", () => {
     expect(detectComposerTrigger("@jira:", "@jira:".length)).toEqual({
       kind: "jira",
       query: "",
@@ -323,7 +323,7 @@ describe("detectComposerTrigger", () => {
       rangeEnd: "See @jira:ABC-12".length,
     });
     expect(detectComposerTrigger("@file:app.ts", "@file:app.ts".length)).toMatchObject({
-      kind: "path",
+      kind: "file",
       query: "app.ts",
     });
     expect(detectComposerTrigger("@thread:review", "@thread:review".length)).toMatchObject({

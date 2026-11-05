@@ -1930,6 +1930,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { snapshot, trigger } = resolveActiveComposerTrigger();
     if (!trigger) return;
     if (item.type === "path") {
+      if (trigger.kind !== "path" && trigger.kind !== "file") return;
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -2047,7 +2048,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "thread") {
-      if (trigger.kind !== "thread") return;
+      if (trigger.kind !== "path" && trigger.kind !== "thread") return;
       const shell = readThreadShell(item.thread);
       const record = threadContextRecord(item.thread, shell?.title ?? item.label);
       const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
@@ -2664,9 +2665,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
 
   const onComposerCommandKeyStable = useStableCallback(onComposerCommandKey);
-  const isPathQueryActiveStable = useStableCallback(
-    () => resolveActiveComposerTrigger().trigger?.kind === "path",
-  );
+  const isPathQueryActiveStable = useStableCallback(() => {
+    const kind = resolveActiveComposerTrigger().trigger?.kind;
+    return kind === "path" || kind === "file";
+  });
 
   const insertComposerTextAtEnd: ChatComposerHandle["insertTextAtEnd"] = (text, options) => {
     const inserted = insertComposerText(text, "end", options);

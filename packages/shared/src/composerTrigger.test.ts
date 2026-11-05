@@ -71,7 +71,7 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("scopes @kind: mentions and keeps bare @ as @file:", () => {
+  it("keeps bare @ unscoped and treats @kind: as type filters", () => {
     expect(detectComposerTrigger("@jira:login", "@jira:login".length)).toEqual({
       kind: "jira",
       query: "login",
@@ -85,7 +85,7 @@ describe("detectComposerTrigger", () => {
       rangeEnd: "@figma:checkout".length,
     });
     expect(detectComposerTrigger("@file:src/", "@file:src/".length)).toEqual({
-      kind: "path",
+      kind: "file",
       query: "src/",
       rangeStart: 0,
       rangeEnd: "@file:src/".length,
@@ -113,6 +113,12 @@ describe("detectComposerTrigger", () => {
       query: "src/",
       rangeStart: 0,
       rangeEnd: "@src/".length,
+    });
+    expect(detectComposerTrigger("@", "@".length)).toEqual({
+      kind: "path",
+      query: "",
+      rangeStart: 0,
+      rangeEnd: 1,
     });
     expect(detectComposerTrigger("#12", "#12".length)).toEqual({
       kind: "hash",

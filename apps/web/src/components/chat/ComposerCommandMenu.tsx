@@ -229,23 +229,27 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                             ? "Finding GitHub issues..."
                             : props.triggerKind === "thread"
                               ? "Finding threads..."
-                              : "Searching workspace files..."
+                              : props.triggerKind === "path"
+                                ? "Finding mentions..."
+                                : "Searching workspace files..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
                     ? "No skills found. Try / to browse provider commands."
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : props.triggerKind === "thread"
-                        ? "No matching threads."
-                        : props.triggerKind === "jira"
-                          ? "No matching Jira issues."
-                          : props.triggerKind === "figma"
-                            ? "No matching Figma designs."
-                            : props.triggerKind === "issue"
-                              ? "No matching GitHub issues."
-                              : props.triggerKind === "hash"
-                                ? "No matching pull requests or issues."
-                                : "No matching command."))}
+                      ? "No matching threads, machines, or files."
+                      : props.triggerKind === "file"
+                        ? "No matching files or folders."
+                        : props.triggerKind === "thread"
+                          ? "No matching threads."
+                          : props.triggerKind === "jira"
+                            ? "No matching Jira issues."
+                            : props.triggerKind === "figma"
+                              ? "No matching Figma designs."
+                              : props.triggerKind === "issue"
+                                ? "No matching GitHub issues."
+                                : props.triggerKind === "hash"
+                                  ? "No matching pull requests or issues."
+                                  : "No matching command."))}
             </p>
           </div>
         )}
@@ -420,7 +424,8 @@ const FigmaComposerCommandCard = memo(function FigmaComposerCommandCard(props: {
 });
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
-  path: "Files and folders",
+  path: "Threads, machines, and files",
+  file: "Files and folders",
   thread: "Threads",
   "pull-request": "Pull requests",
   jira: "Jira issues",

@@ -40,7 +40,7 @@ export function isPathSuggestionCurrent(
   cwd: string | null,
 ) {
   return (
-    trigger?.kind === "path" &&
+    (trigger?.kind === "path" || trigger?.kind === "file") &&
     searchTarget.environmentId === environmentId &&
     searchTarget.cwd === cwd &&
     searchTarget.query === trigger.query.trim()
@@ -294,7 +294,8 @@ export function pastedPathQueryLength(
   pathQueryActive = true,
 ): number {
   if (!pathQueryActive) return 0;
-  if (detectComposerTrigger(lineBefore, lineBefore.length)?.kind !== "path") return 0;
+  const triggerKind = detectComposerTrigger(lineBefore, lineBefore.length)?.kind;
+  if (triggerKind !== "path" && triggerKind !== "file") return 0;
   return /^\S*/.exec(pasted)![0].length;
 }
 

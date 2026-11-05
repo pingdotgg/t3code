@@ -87,7 +87,12 @@ export function useComposerMenuItems({
   const wantsPullRequests =
     composerTriggerKind === "pull-request" || composerTriggerKind === "hash";
   const wantsIssues = composerTriggerKind === "issue" || composerTriggerKind === "hash";
-  const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
+  const wantsThreads = composerTriggerKind === "path" || composerTriggerKind === "thread";
+  const wantsFiles = composerTriggerKind === "path" || composerTriggerKind === "file";
+  const pathTriggerQuery =
+    composerTriggerKind === "path" || composerTriggerKind === "file"
+      ? (composerTrigger?.query ?? "")
+      : "";
   const pullRequestTriggerQuery = wantsPullRequests ? (composerTrigger?.query ?? "") : "";
   const pullRequestTextQuery =
     wantsPullRequests &&
@@ -98,15 +103,13 @@ export function useComposerMenuItems({
   const debouncedPullRequestTextQuery = useDebouncedValue(pullRequestTextQuery, 180);
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
-  const isPathTrigger = composerTriggerKind === "path";
-  const isThreadTrigger = composerTriggerKind === "thread";
-  const threadTriggerQuery = composerTrigger?.kind === "thread" ? composerTrigger.query : "";
-  const environmentThreadShells = useVisibleThreadShells(isThreadTrigger);
+  const threadTriggerQuery = wantsThreads ? (composerTrigger?.query ?? "") : "";
+  const environmentThreadShells = useVisibleThreadShells(wantsThreads);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isThreadTrigger ? [environmentId] : [], threadTriggerQuery, {
+  useThreadSearch(wantsThreads ? [environmentId] : [], threadTriggerQuery, {
     titlesOnly: true,
   });
-  // The user's machines feed `@` / `@file:` machine matches; the catalog summary is cheap and stable.
+  // The user's machines feed bare `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
@@ -116,8 +119,8 @@ export function useComposerMenuItems({
   }));
   const workspaceEntries = useComposerPathSearch({
     environmentId,
-    cwd: isPathTrigger ? gitCwd : null,
-    query: isPathTrigger ? pathTriggerQuery : null,
+    cwd: wantsFiles ? gitCwd : null,
+    query: wantsFiles ? pathTriggerQuery : null,
   });
 
   const mentionQueryForIndex = wantsPullRequests
@@ -137,10 +140,10 @@ export function useComposerMenuItems({
           }),
         }),
   );
-  const threadMentionQuery = isThreadTrigger ? threadTriggerQuery : null;
+  const threadMentionQuery = wantsThreads ? threadTriggerQuery : null;
   const debouncedThreadMentionQuery = useDebouncedValue(threadMentionQuery, 180);
   const threadMentionIndexLookup = useEnvironmentQuery(
-    !isThreadTrigger ||
+    !wantsThreads ||
       pullRequestProjectId === null ||
       threadMentionQuery !== debouncedThreadMentionQuery
       ? null
@@ -248,7 +251,7 @@ export function useComposerMenuItems({
 
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
-    if (composerTrigger.kind === "thread") {
+    const threadItems = (): ComposerCommandItem[] => {
       const shellThreadItems = matchComposerThreadItems({
         shells: environmentThreadShells,
         environmentId,
@@ -276,27 +279,31 @@ export function useComposerMenuItems({
         ];
       });
       return [...shellThreadItems, ...indexedThreadItems];
-    }
+    };
+    const fileItems = (): ComposerCommandItem[] =>
+      workspaceEntries.entries.map((entry) => ({
+        id: `path:${entry.kind}:${entry.path}`,
+        type: "path" as const,
+        path: entry.path,
+        pathKind: entry.kind,
+        searchTarget: workspaceEntries.searchedTarget,
+        label: basenameOfPath(entry.path),
+        description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+      }));
+    const machineItems = (): ComposerCommandItem[] =>
+      // An answer to an agent's question carries thread links, not machines.
+      questionAttachmentTarget === null && offersMachines
+        ? matchComposerEnvironmentItems({
+            environments: mentionableEnvironments,
+            environmentId,
+            query: composerTrigger.query,
+          })
+        : [];
+    if (composerTrigger.kind === "thread") return threadItems();
+    if (composerTrigger.kind === "file") return fileItems();
     if (composerTrigger.kind === "path") {
-      return [
-        // An answer to an agent's question carries thread links, not machines.
-        ...(questionAttachmentTarget === null && offersMachines
-          ? matchComposerEnvironmentItems({
-              environments: mentionableEnvironments,
-              environmentId,
-              query: composerTrigger.query,
-            })
-          : []),
-        ...workspaceEntries.entries.map((entry) => ({
-          id: `path:${entry.kind}:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          pathKind: entry.kind,
-          searchTarget: workspaceEntries.searchedTarget,
-          label: basenameOfPath(entry.path),
-          description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
-        })),
-      ];
+      // Bare `@` keeps the classic mixed menu; `@thread:` / `@file:` filter by type.
+      return [...threadItems(), ...machineItems(), ...fileItems()];
     }
     if (composerTrigger.kind === "jira") {
       return (jiraMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
@@ -559,8 +566,8 @@ export function useComposerMenuItems({
     issueMentionIndexLookup.refresh,
   ]);
   const isLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
-    (composerTriggerKind === "thread" &&
+    (wantsFiles && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (wantsThreads &&
       (threadMentionIndexSyncingEmpty ||
         threadMentionIndexLookup.isPending ||
         threadMentionQuery !== debouncedThreadMentionQuery)) ||
@@ -597,6 +604,9 @@ export function useComposerMenuItems({
       return composerTrigger?.query
         ? `No thread matches ${composerTrigger.query}.`
         : "No matching threads.";
+    }
+    if (composerTriggerKind === "file") {
+      return "No matching files or folders.";
     }
     if (composerTriggerKind === "jira") {
       if (pullRequestProjectId === null) {
@@ -684,7 +694,7 @@ export function useComposerMenuItems({
         : "No pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
+      ? "No matching threads, machines, or files."
       : "No matching command.";
   })();
 

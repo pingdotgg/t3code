@@ -34,9 +34,6 @@ function parseJsonOrNull(raw: string): unknown | null {
 
 export class MentionIndexMcpError extends Error {
   readonly _tag = "MentionIndexMcpError";
-  constructor(message: string, options?: { readonly cause?: unknown }) {
-    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
-  }
 }
 
 export type MentionMcpKind = "jira" | "figma";

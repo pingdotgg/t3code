@@ -306,19 +306,21 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end);
   })();
+  const wantsThreads = trigger?.kind === "path" || trigger?.kind === "thread";
+  const wantsFiles = trigger?.kind === "path" || trigger?.kind === "file";
+  const wantsPullRequests = trigger?.kind === "pull-request" || trigger?.kind === "hash";
+  const wantsIssues = trigger?.kind === "issue" || trigger?.kind === "hash";
   const pathSearch = useComposerPathSearch({
     environmentId,
-    cwd: trigger?.kind === "path" ? projectCwd : null,
-    query: trigger?.kind === "path" ? trigger.query : null,
+    cwd: wantsFiles ? projectCwd : null,
+    query: wantsFiles ? (trigger?.query ?? null) : null,
   });
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
-    trigger?.kind === "thread" && environmentId ? [environmentId] : [],
-    trigger?.kind === "thread" ? trigger.query : "",
+    wantsThreads && environmentId ? [environmentId] : [],
+    wantsThreads ? (trigger?.query ?? "") : "",
     { titlesOnly: true },
   );
-  const wantsPullRequests = trigger?.kind === "pull-request" || trigger?.kind === "hash";
-  const wantsIssues = trigger?.kind === "issue" || trigger?.kind === "hash";
   const pullRequestSearch = useComposerPullRequestSearch({
     environmentId,
     projectId: pullRequestProjectId,
@@ -380,10 +382,10 @@ export function useComposerCommandMenu({
           }),
         }),
   );
-  const threadTriggerQuery = trigger?.kind === "thread" ? trigger.query : null;
+  const threadTriggerQuery = wantsThreads ? (trigger?.query ?? null) : null;
   const debouncedThreadTriggerQuery = useDebouncedValue(threadTriggerQuery, 180);
   const threadMentionIndexLookup = useEnvironmentQuery(
-    trigger?.kind !== "thread" ||
+    !wantsThreads ||
       environmentId === null ||
       pullRequestProjectId === null ||
       threadTriggerQuery !== debouncedThreadTriggerQuery
@@ -600,7 +602,7 @@ export function useComposerCommandMenu({
       }));
     }
 
-    if (trigger.kind === "thread") {
+    const threadItems = (): ComposerCommandItem[] => {
       if (!environmentId) return [];
       const shellThreadItems = matchComposerThreadItems({
         shells: threadShells,
@@ -629,26 +631,28 @@ export function useComposerCommandMenu({
         ];
       });
       return [...shellThreadItems, ...indexedThreadItems];
-    }
-
-    if (trigger.kind === "path") {
-      const environmentItems = environmentId
+    };
+    const fileItems = (): ComposerCommandItem[] =>
+      pathSearch.entries.map((entry) => {
+        const parts = entry.path.split("/");
+        return {
+          id: `path:${entry.path}`,
+          type: "path" as const,
+          path: entry.path,
+          kind: entry.kind,
+          label: parts[parts.length - 1] ?? entry.path,
+          description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+        };
+      });
+    const machineItems = (): ComposerCommandItem[] =>
+      environmentId
         ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
         : [];
-      return [
-        ...environmentItems,
-        ...pathSearch.entries.map((entry) => {
-          const parts = entry.path.split("/");
-          return {
-            id: `path:${entry.path}`,
-            type: "path" as const,
-            path: entry.path,
-            kind: entry.kind,
-            label: parts[parts.length - 1] ?? entry.path,
-            description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-          };
-        }),
-      ];
+    if (trigger.kind === "thread") return threadItems();
+    if (trigger.kind === "file") return fileItems();
+    if (trigger.kind === "path") {
+      // Bare `@` keeps the classic mixed menu; `@thread:` / `@file:` filter by type.
+      return [...threadItems(), ...machineItems(), ...fileItems()];
     }
 
     return [];
@@ -657,7 +661,7 @@ export function useComposerCommandMenu({
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
     if (item.type === "environment") {
-      if (!ownerKey || trigger.kind !== "path") return;
+      if (!ownerKey || trigger.kind !== "path") return; // machines stay on bare `@` only
       const record = environmentComposerContext(item.environmentId, item.label);
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
@@ -683,7 +687,7 @@ export function useComposerCommandMenu({
       return;
     }
     if (item.type === "thread") {
-      if (!ownerKey || trigger.kind !== "thread") return;
+      if (!ownerKey || (trigger.kind !== "path" && trigger.kind !== "thread")) return;
       const shell = threadShells.find(
         (candidate) =>
           candidate.environmentId === item.thread.environmentId &&
@@ -915,11 +919,14 @@ export function useComposerCommandMenu({
             ? figmaMentionIndexLookup.isPending ||
               figmaMentionIndexSyncingEmpty ||
               figmaTriggerQuery !== debouncedFigmaTriggerQuery
-            : trigger?.kind === "thread"
+            : wantsThreads
               ? threadMentionIndexLookup.isPending ||
                 threadMentionIndexSyncingEmpty ||
-                threadTriggerQuery !== debouncedThreadTriggerQuery
-              : pathSearch.isPending,
+                threadTriggerQuery !== debouncedThreadTriggerQuery ||
+                (wantsFiles && pathSearch.isPending)
+              : wantsFiles
+                ? pathSearch.isPending
+                : false,
     error:
       trigger?.kind === "hash"
         ? pullRequestProjectId === null || pullRequestRepository === null
