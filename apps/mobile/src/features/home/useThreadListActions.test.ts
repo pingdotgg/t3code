@@ -722,4 +722,15 @@ describe("settleThread close open pull requests", () => {
     expect(state.requests.map(({ action }) => action)).toEqual(["settle", "closePullRequest"]);
     expect(state.alerts.at(-1)?.title).toBe("Closed 0 of 1 pull requests");
   });
+
+  it("resolves when cancel runs twice after a replaced confirm", async () => {
+    const settling = useThreadListActions().settleThread(
+      makeThread({ pullRequests: [openPullRequestLink(8)] }),
+    );
+    const dialog = state.dialogs[0]!;
+    dialog.onCancel?.();
+    dialog.onCancel?.();
+    expect(await settling).toBe(true);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle"]);
+  });
 });

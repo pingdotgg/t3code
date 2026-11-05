@@ -336,6 +336,12 @@ export function useThreadListActions(): {
     };
     if (!askToClose) return performSettle(false);
     return await new Promise<boolean>((resolve) => {
+      let started = false;
+      const choose = (shouldClosePullRequests: boolean) => {
+        if (started) return;
+        started = true;
+        void performSettle(shouldClosePullRequests).then(resolve);
+      };
       Dialog.confirm({
         title: "Close open pull requests?",
         message: settleClosePullRequestsMessage(openPullRequests.length),
@@ -343,10 +349,12 @@ export function useThreadListActions(): {
         cancelText: "Settle",
         destructive: true,
         onConfirm: () => {
-          void performSettle(true).then(resolve);
+          choose(true);
         },
+        // Cancel, dismiss, and Android replacement all land here so moveThread
+        // can clear threadDropBusyAtom even when another dialog takes over.
         onCancel: () => {
-          void performSettle(false).then(resolve);
+          choose(false);
         },
       });
     });
