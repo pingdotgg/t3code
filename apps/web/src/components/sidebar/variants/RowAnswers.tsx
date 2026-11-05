@@ -93,7 +93,6 @@ function RowAnswerContent(props: {
         error={error}
       >
         <ComposerPendingApprovalActions
-          presentation="composer"
           requestId={approval.requestId}
           isResponding={responding}
           canRespond={approval.responseCapability === "live"}
