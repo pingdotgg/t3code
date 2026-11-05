@@ -873,12 +873,20 @@ describe("AcpRegistrySupport", () => {
         status: "denied",
         message: denial,
       });
-      expect(
-        yield* catalog.inspect(
-          decodeAcpRegistrySettings({ source: "local" }),
-          toolchain.environment,
-        ),
-      ).toEqual({ status: "denied", message: localDenial });
+      for (const decoded of [
+        decodeAcpRegistrySettings({ source: "local" }),
+        decodeAcpRegistrySettings({ source: "local", commandPath: toolchain.executablePath }),
+        settings({ commandPath: toolchain.executablePath }),
+      ]) {
+        expect(yield* catalog.inspect(decoded, toolchain.environment)).toEqual({
+          status: "denied",
+          message: localDenial,
+        });
+        const error = yield* Effect.flip(
+          catalog.resolve(decoded, "/workspace", toolchain.environment),
+        );
+        expect(error.detail).toBe(localDenial);
+      }
       const commands = yield* fileSystem
         .readFileString(toolchain.logPath)
         .pipe(Effect.orElseSucceed(() => ""));

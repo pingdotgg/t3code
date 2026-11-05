@@ -1611,6 +1611,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       : Effect.fail(new AcpRegistryError({ reason: "agent_not_found", detail }));
   };
 
+  const commandDenial = (settings: AcpRegistrySettings) =>
+    settings.source === "local" || settings.commandPath.trim().length > 0
+      ? localCommandDenial
+      : undefined;
+
   const findAgent = Effect.fn("AcpRegistryCatalog.findAgent")(function* (
     registry: AcpRegistryIndex,
     agentId: string,
@@ -1733,13 +1738,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const inspect: AcpRegistryCatalog["Service"]["inspect"] = Effect.fn("AcpRegistryCatalog.inspect")(
     function* (settings, environment) {
+      const refusal = commandDenial(settings);
+      if (refusal !== undefined) return { status: "denied", message: refusal } as const;
       if (settings.source === "local") {
         const command = settings.commandPath.trim();
-        if (!command) {
-          return localCommandDenial === undefined
-            ? ({ status: "unconfigured" } as const)
-            : ({ status: "denied", message: localCommandDenial } as const);
-        }
+        if (!command) return { status: "unconfigured" } as const;
         const executable = resolveExecutable(command, platform, environment ?? hostEnvironment);
         if (executable !== undefined) yield* validateLocalExecutable(executable);
         return executable === undefined
@@ -1853,6 +1856,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const resolve: AcpRegistryCatalog["Service"]["resolve"] = Effect.fn("AcpRegistryCatalog.resolve")(
     function* (settings, cwd, environment) {
+      const refusal = commandDenial(settings);
+      if (refusal !== undefined) {
+        return yield* new AcpRegistryError({ reason: "agent_not_found", detail: refusal });
+      }
       if (settings.source === "local") {
         const executable = settings.commandPath.trim();
         if (!executable) {
