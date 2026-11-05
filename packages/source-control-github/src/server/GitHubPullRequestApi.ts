@@ -2208,11 +2208,7 @@ export const make = Effect.gen(function* () {
           50,
           (requestedReviewers) =>
             client.ReviewThreads({ owner, name, number: input.number, requestedReviewers }),
-        ).pipe(
-          graphql(target),
-          Effect.map(toReviewThreadPage),
-          Effect.flatMap(found(target)),
-        );
+        ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [...first.threads];
         const avatarsByLogin = new Map(first.avatarsByLogin);
         const botLogins = new Set(first.botLogins);
