@@ -62,6 +62,7 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
@@ -85,6 +86,9 @@ const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
 );
 const layerIsolatedOutbox = Layer.fresh(EffectOutbox.layer.pipe(Layer.provideMerge(layerDatabase)));
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+  Layer.provide(layerDatabase),
+);
+const layerProjectionReplayProvided = ProjectionReplay.layer.pipe(
   Layer.provide(layerStoresProvided),
 );
 const layerTest = Layer.mergeAll(
@@ -94,6 +98,7 @@ const layerTest = Layer.mergeAll(
   layerCommandReceiptStoreProvided,
   IdAllocator.layer,
   layerProjectionMaintenanceProvided,
+  layerProjectionReplayProvided,
 );
 
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -148,85 +153,6 @@ function threadCreatedEvent(input: {
   };
 }
 
-it.effect("rebuilds event history one bounded page at a time", () =>
-  Effect.gen(function* () {
-    const eventStore = yield* EventStore.EventStoreV2;
-    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-    const now = yield* DateTime.now;
-    const threadId = ThreadId.make("thread:foundation-paged-rebuild");
-    const thread = makeThread(threadId, now);
-    const eventCount = 1_005;
-    yield* eventStore.append({
-      events: [
-        threadCreatedEvent({ id: "event:paged-rebuild:0", thread, now }),
-        ...Array.from({ length: eventCount - 1 }, (_, index) => ({
-          id: EventId.make(`event:paged-rebuild:${index + 1}`),
-          type: "thread.metadata-updated" as const,
-          threadId,
-          occurredAt: now,
-          payload: { ...thread, title: `Rebuilt update ${index + 1}` },
-        })),
-      ],
-    });
-    let applied = 0;
-    let failAfterFirstPage = false;
-    const appliedAtRead: Array<number> = [];
-    const layerObservedStores = Layer.mergeAll(
-      Layer.succeed(EventStore.EventStoreV2, {
-        ...eventStore,
-        read: (input) =>
-          Stream.suspend(() => {
-            appliedAtRead.push(applied);
-            if (failAfterFirstPage && applied >= 500) {
-              return Stream.fail(
-                new EventStore.EventStoreReadEventsError({ afterSequence: input?.afterSequence }),
-              );
-            }
-            return eventStore.read(input);
-          }),
-      }),
-      Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-        ...projectionStore,
-        apply: (event) =>
-          projectionStore.apply(event).pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                applied += 1;
-              }),
-            ),
-          ),
-      }),
-    );
-    const rebuild = Effect.gen(function* () {
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      return yield* maintenance.rebuild;
-    }).pipe(
-      Effect.provide(
-        Layer.fresh(ProjectionMaintenance.layer.pipe(Layer.provide(layerObservedStores))),
-      ),
-    );
-    const rebuilt = yield* rebuild;
-    assert.isTrue(rebuilt.valid);
-    assert.equal(applied, eventCount);
-    assert.deepEqual(appliedAtRead, [0, 500, 1_000]);
-    assert.equal(
-      (yield* projectionStore.getThreadProjection(threadId)).thread.title,
-      "Rebuilt update 1004",
-    );
-    applied = 0;
-    failAfterFirstPage = true;
-    const failed = yield* Effect.exit(rebuild);
-    assert.equal(failed._tag, "Failure");
-    assert.equal(applied, 500);
-    assert.equal(
-      (yield* projectionStore.getThreadProjection(threadId)).thread.title,
-      "Rebuilt update 1004",
-    );
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-    assert.isTrue((yield* maintenance.verify).valid);
-  }).pipe(Effect.provide(layerTest)),
-);
-
 const seedCompaction = Effect.fnUntraced(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO orchestration_v2_legacy_imports (
@@ -240,6 +166,13 @@ const seedCompaction = Effect.fnUntraced(function* () {
   ) SELECT 'event-' || n, 'thread', 'thread', n,
     CASE WHEN n IN (1, 51, 101) THEN 'message.updated' ELSE 'thread.visited' END,
     '2026-10-17', 'server', '{"id":"message"}', '{}', 2 FROM history`;
+  // A pass a day ago marked the whole log; projections cover it.
+  yield* sql`INSERT INTO orchestration_v2_projection_metadata (
+    projection_name, schema_version, last_sequence, updated_at
+  ) VALUES
+    ('event-log-prune-mark', 2, 151, '1969-12-30T00:00:00.000Z'),
+    ('thread-projections', 2, 151, '1969-12-30T00:00:00.000Z')
+  ON CONFLICT(projection_name) DO UPDATE SET last_sequence = excluded.last_sequence`;
   yield* sql`WITH RECURSIVE history(n) AS (
     SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 100
   ) INSERT INTO orchestration_command_receipts (
@@ -284,11 +217,12 @@ it.effect("discovers on the reader worker and deletes on the writer", () =>
           }),
       );
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      const result = yield* maintenance.compactEventStore();
-      assert.equal(result.deletedEventCount, 148);
+      const result = yield* maintenance.pruneEventStore();
+      assert.equal(result.deletedEventCount, 150);
       assert.equal(result.deletedReceiptCount, 100);
+      // Only the in-transaction check for rows appended during the pass reads on the writer.
       assert.deepEqual(
-        reads.filter((query) => /\bSELECT\b/.test(query)),
+        reads.filter((query) => /\bSELECT\b/.test(query) && !query.includes("AS prompt_sequence")),
         [],
       );
       assert(writes.some((query) => query.includes("DELETE FROM orchestration_events")));
@@ -296,7 +230,6 @@ it.effect("discovers on the reader worker and deletes on the writer", () =>
     }).pipe(
       Effect.provide(
         ProjectionMaintenance.layer.pipe(
-          Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
           Layer.provideMerge(SqlitePersistence.layerFromPath(filename)),
         ),
       ),
@@ -318,7 +251,7 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
     const tracer = Tracer.make({
       span(options) {
         const span = new Tracer.NativeSpan(options);
-        if (span.name === "ProjectionMaintenance.compactEventStore") compactionSpans.push(span);
+        if (span.name === "ProjectionMaintenance.pruneEventStore") compactionSpans.push(span);
         const end = span.end.bind(span);
         span.end = (time, exit) => {
           end(time, exit);
@@ -377,15 +310,13 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
         },
       }),
     );
-    assert.deepEqual(pauses, Array(5).fill(270));
+    assert.deepEqual(pauses, Array(8).fill(270));
     assert.deepEqual(
       compactionSpans.map((span) => span.status._tag),
       ["Ended"],
     );
+    // 151 stopped being the stream head when 152 committed mid-pass; 152 is past the bound.
     assert.deepEqual(yield* sql`SELECT sequence FROM orchestration_events ORDER BY sequence`, [
-      { sequence: 1 },
-      { sequence: 101 },
-      { sequence: 151 },
       { sequence: 152 },
     ]);
     assert.deepEqual(yield* sql`SELECT command_id FROM orchestration_command_receipts`, [
@@ -768,7 +699,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       const now = yield* DateTime.now;
       const firstThreadId = ThreadId.make("thread:foundation-shared-session:first");
       const secondThreadId = ThreadId.make("thread:foundation-shared-session:second");
@@ -829,7 +760,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("compacts superseded state events, imported v1 events, and legacy receipts", () =>
+  it.effect("prunes covered history, imported v1 events, and legacy receipts", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
@@ -983,9 +914,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ON CONFLICT(command_id) DO NOTHING
       `;
 
-      const summary = yield* maintenance.compactEventStore();
+      // The first pass only marks the head and drops imported legacy rows.
+      const marked = yield* maintenance.pruneEventStore();
+      yield* TestClock.adjust("1 day");
+      const summary = yield* maintenance.pruneEventStore();
       assert.isAtLeast(summary.deletedEventCount, 504);
-      assert.isAtLeast(summary.deletedReceiptCount, 1);
+      assert.equal(marked.deletedReceiptCount + summary.deletedReceiptCount, 1);
 
       const remaining = yield* sql<{ readonly event_id: string }>`
         SELECT event_id
@@ -996,18 +930,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       `;
       assert.deepEqual(
         remaining.map((row) => row.event_id),
-        [
-          "event:foundation-compact:create",
-          "event:foundation-compact:meta",
-          "event:foundation-compact:message-1",
-          "event:foundation-compact:node-1",
-          "event:foundation-compact:item-1",
-          "event:foundation-compact:visit-2",
-          "event:foundation-compact:message-2",
-          "event:foundation-compact:node-2",
-          "event:foundation-compact:item-2",
-          "event:foundation-compact:tags-2",
-        ],
+        ["event:foundation-compact:create", "event:foundation-compact:tags-2"],
       );
 
       const remainingV1 = yield* sql<{ readonly stream_id: string }>`
@@ -1031,8 +954,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ["command:foundation-compact:pending"],
       );
 
-      assert.isTrue((yield* maintenance.verify).valid);
-      assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
     }),
   );
@@ -1041,7 +962,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;
       const parentThreadId = ThreadId.make("thread:foundation-cross-thread:parent");
@@ -1939,6 +1860,65 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue(Option.isSome(cancelled));
       if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
     }),
+  );
+
+  it.effect("does not resolve awaitSettled waiters until the cancel is signalled", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-settle-on-cancel");
+      const threadId = ThreadId.make("thread:foundation-settle-on-cancel");
+      const effectId = "effect:foundation-settle-on-cancel";
+      yield* outbox.enqueue([
+        {
+          id: effectId,
+          commandId,
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-settle-on-cancel"),
+          },
+        },
+      ]);
+
+      const waiterRegistered = yield* Deferred.make<void>();
+      const waiterFiber = yield* Deferred.succeed(waiterRegistered, undefined).pipe(
+        Effect.andThen(outbox.awaitSettled(effectId)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(waiterRegistered);
+
+      // Padding enqueues keep the waiter running so its row read lands before
+      // the cancel: registration is synchronous and the read dispatches first.
+      // A stronger milestone would need a test-only seam in the service, which
+      // the codebase avoids.
+      const paddingCommandId = CommandId.make("command:foundation-settle-on-cancel:padding");
+      yield* Effect.forEach(
+        Array.from({ length: 100 }, (_, index) => index),
+        (index) =>
+          outbox.enqueue([
+            {
+              id: `effect:foundation-settle-on-cancel:padding-${index}`,
+              commandId: paddingCommandId,
+              threadId: ThreadId.make("thread:foundation-settle-on-cancel:padding"),
+              request: { type: "terminal.cleanup" as const },
+            },
+          ]),
+        { discard: true },
+      );
+
+      const cancelledEffectIds = yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["provider-turn.start"],
+        reason: "Test settle on cancel.",
+      });
+      assert.deepEqual(cancelledEffectIds, [effectId]);
+      // The cancel runs inside the commit transaction; waiters resolve only via
+      // the post-commit signalCancellations, never from the cancel itself.
+      yield* Effect.yieldNow;
+      assert.isUndefined(waiterFiber.pollUnsafe());
+      yield* outbox.signalCancellations(cancelledEffectIds);
+      yield* Fiber.join(waiterFiber);
+    }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
   );
 
   it.effect("does not start an effect that was cancelled during claim registration", () =>
@@ -3152,7 +3132,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:foundation-many-items");
@@ -3384,10 +3364,7 @@ it.effect.each(["events", "receipts"] as const)(
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "compaction-reader-" });
       const database = SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"));
-      const maintenanceLayer = ProjectionMaintenance.layer.pipe(
-        Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-        Layer.provideMerge(database),
-      );
+      const maintenanceLayer = ProjectionMaintenance.layer.pipe(Layer.provideMerge(database));
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
@@ -3434,7 +3411,7 @@ it.effect.each(["events", "receipts"] as const)(
             : Effect.succeed(statement);
         };
         const compacted = yield* Deferred.make<void>();
-        const compaction = yield* maintenance.compactEventStore().pipe(
+        const compaction = yield* maintenance.pruneEventStore().pipe(
           Effect.provideService(Statement.CurrentTransformer, observeDiscovery),
           Effect.provideService(Statement.SpanPropagationEnabled, true),
           Effect.tap(() => Deferred.succeed(compacted, undefined)),
