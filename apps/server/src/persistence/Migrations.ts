@@ -262,9 +262,11 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     yield* sql`
       CREATE INDEX IF NOT EXISTS orchestration_v2_projection_threads_side_chat_anchor_idx
       ON orchestration_v2_projection_threads(
-        json_extract(payload_json, '$.sideChat.anchor.threadId')
+        CASE WHEN json_valid(payload_json)
+          THEN json_extract(payload_json, '$.sideChat.anchor.threadId') END
       )
-      WHERE json_extract(payload_json, '$.sideChat.anchor.threadId') IS NOT NULL
+      WHERE CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.sideChat.anchor.threadId') END IS NOT NULL
     `.pipe(Effect.catch((cause) => Effect.logWarning("Side-chat anchor index failed", { cause })));
   }
   return executedMigrations;

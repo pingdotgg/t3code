@@ -126,7 +126,8 @@ describe("runMigrations", () => {
         SELECT EXISTS (
           SELECT 1 FROM orchestration_v2_projection_threads
           WHERE project_id = 'project-1' AND deleted_at IS NULL
-            AND json_extract(payload_json, '$.sideChat.anchor.threadId') = 'thread-1'
+            AND CASE WHEN json_valid(payload_json)
+              THEN json_extract(payload_json, '$.sideChat.anchor.threadId') END = 'thread-1'
         ) AS found
       `;
 
