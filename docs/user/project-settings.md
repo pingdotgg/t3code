@@ -195,6 +195,11 @@ applies when the project and environment are both on **Inherit**.
 
 ## Worktree location
 
+To create a worktree, add the repository root as your project. If your project is a subfolder
+of another repository, T3 Code stops and shows that repository's root instead of checking out
+the whole parent tree. To make the project independent, run `git init` in its folder and create
+an initial commit before starting a worktree thread.
+
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,
 such as another drive, set **Settings → Worktrees → Worktree location** to an absolute path like
 `D:\worktrees` or `~/worktrees`. The setting is per machine. Existing worktrees stay where they

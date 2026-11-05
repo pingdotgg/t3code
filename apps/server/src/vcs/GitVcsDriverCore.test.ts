@@ -511,63 +511,122 @@ it.effect.each([
     ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"] as const)(
-  "discovers only the common directory during worktree creation from %s",
-  (location) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const spawnedArgs: Array<ReadonlyArray<string>> = [];
-        const spawner = ChildProcessSpawner.make((command) => {
-          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
-          return delegate.spawn(command);
-        });
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const path = yield* Path.Path;
-        if (location === "detached") yield* git(cwd, ["checkout", "--detach"]);
-        const isNested = location === "nested" || location === "aliased-nested";
-        const physicalCwd = isNested ? path.join(cwd, "nested") : cwd;
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.makeDirectory(physicalCwd, { recursive: true });
-        const isAliased = location === "aliased-root" || location === "aliased-nested";
-        const creationCwd = isAliased
-          ? path.join(yield* makeTmpDir("git-alias-"), "link")
-          : physicalCwd;
-        if (isAliased) NodeFS.symlinkSync(physicalCwd, creationCwd, "junction");
-        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "cold");
+it.effect.each([
+  "branch",
+  "detached",
+  "nested",
+  "unborn",
+  "alias",
+  "alias-nested",
+  "aliased-git-root",
+  "root-lookup-failure",
+] as const)("checks the repository root before creating a worktree from %s", (location) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnedArgs: Array<ReadonlyArray<string>> = [];
+      let rootOutput: string | undefined;
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) {
+          spawnedArgs.push(command.args.map(String));
+          if (command.args.includes("--show-toplevel") && rootOutput !== undefined) {
+            const output = rootOutput;
+            rootOutput = undefined;
+            return Effect.succeed(
+              output === "" ? makeFailedHandle("root lookup failed") : makeSuccessfulHandle(output),
+            );
+          }
+        }
+        return delegate.spawn(command);
+      });
+      const cwd = yield* makeTmpDir();
+      let initialBranch = "HEAD";
+      if (location === "unborn") {
+        yield* git(cwd, ["init"]);
+      } else {
+        initialBranch = (yield* initRepoWithCommit(cwd)).initialBranch;
+      }
+      const path = yield* Path.Path;
+      if (location === "detached") yield* git(cwd, ["checkout", "--detach"]);
+      const isNested =
+        location === "nested" ||
+        location === "unborn" ||
+        location === "alias-nested" ||
+        location === "root-lookup-failure";
+      const physicalCwd = isNested ? path.join(cwd, "nested") : cwd;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(physicalCwd, { recursive: true });
+      const isAliased = location === "alias" || location === "alias-nested";
+      const creationCwd = isAliased
+        ? path.join(yield* makeTmpDir("git-alias-"), "link")
+        : physicalCwd;
+      if (isAliased) NodeFS.symlinkSync(physicalCwd, creationCwd, "junction");
+      const rootAlias = path.join(yield* makeTmpDir("git-root-alias-"), "link");
+      if (location === "aliased-git-root") {
+        NodeFS.symlinkSync(cwd, rootAlias, "junction");
+        rootOutput = `${rootAlias}\n`;
+      } else if (location === "root-lookup-failure") {
+        rootOutput = "";
+      }
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          // Windows' JS realpath can retain 8.3 names even when they identify the same directory.
+          realPath: (target) =>
+            target === rootAlias ? Effect.succeed(target) : fs.realPath(target),
+        }),
+      );
+      const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "cold");
 
-        yield* driver.createWorktree({
+      const created = yield* driver
+        .createWorktree({
           cwd: creationCwd,
           path: worktreePath,
           refName: initialBranch,
           newRefName: "feature/cold",
-        });
+        })
+        .pipe(Effect.result);
 
-        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
-        assert.isFalse(spawnedArgs.some((args) => args.includes("--show-toplevel")));
-        assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
-        spawnedArgs.length = 0;
-        const originalStatus = yield* driver.statusDetailsLocal(creationCwd);
-        assert.equal(originalStatus.branch, location === "detached" ? null : initialBranch);
-        const originalRefs = yield* driver.listRefs({ cwd: creationCwd });
-        assert.equal(originalRefs.isAtRepositoryRoot, !isNested);
-        assert.deepStrictEqual(
-          originalRefs.refs.filter((ref) => ref.current).map((ref) => ref.name),
-          location === "detached" ? [] : [initialBranch],
-        );
-        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
-        const refs = yield* driver.listRefs({ cwd: worktreePath });
-        assert.isTrue(refs.refs.find((ref) => ref.name === "feature/cold")?.current);
-        assert.equal(
-          yield* git(worktreePath, ["rev-parse", "HEAD"]),
-          yield* git(cwd, ["rev-parse", "HEAD"]),
-        );
-      }),
-    ).pipe(Effect.provide(layerTest)),
+      if (isNested) {
+        assert.isTrue(Result.isFailure(created));
+        if (Result.isFailure(created)) {
+          assert.equal(created.failure.operation, "GitVcsDriver.createWorktree");
+          assert.include(created.failure.message, creationCwd);
+          if (location === "root-lookup-failure") {
+            assert.include(created.failure.message, "Could not determine the Git repository root");
+          } else {
+            assert.include(created.failure.message, NodeFS.realpathSync.native(cwd));
+            assert.include(created.failure.message, "git init");
+          }
+        }
+        assert.isFalse(yield* fs.exists(worktreePath));
+        assert.isEmpty(yield* git(cwd, ["branch", "--list", "feature/cold"]));
+        return;
+      }
+      assert.isTrue(Result.isSuccess(created));
+
+      assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
+      assert.equal(spawnedArgs.filter((args) => args.includes("--show-toplevel")).length, 1);
+      assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
+      spawnedArgs.length = 0;
+      const originalStatus = yield* driver.statusDetailsLocal(creationCwd);
+      assert.equal(originalStatus.branch, location === "detached" ? null : initialBranch);
+      const originalRefs = yield* driver.listRefs({ cwd: creationCwd });
+      assert.equal(originalRefs.isAtRepositoryRoot, !isNested);
+      assert.deepStrictEqual(
+        originalRefs.refs.filter((ref) => ref.current).map((ref) => ref.name),
+        location === "detached" ? [] : [initialBranch],
+      );
+      assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
+      const refs = yield* driver.listRefs({ cwd: worktreePath });
+      assert.isTrue(refs.refs.find((ref) => ref.name === "feature/cold")?.current);
+      assert.equal(
+        yield* git(worktreePath, ["rev-parse", "HEAD"]),
+        yield* git(cwd, ["rev-parse", "HEAD"]),
+      );
+    }),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["bare", "unborn"] as const)(
@@ -1608,10 +1667,12 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
   Effect.gen(function* () {
     const checkoutStarted = yield* Deferred.make<void>();
     const checkoutFinished = yield* Deferred.make<void>();
+    const cwd = yield* makeTmpDir();
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (!ChildProcess.isStandardCommand(command))
           return yield* Effect.die("expected Git command");
+        if (command.args.includes("--show-toplevel")) return makeSuccessfulHandle(`${cwd}\n`);
         if (!command.args.includes("worktree")) return makeSuccessfulHandle("");
         yield* Deferred.succeed(checkoutStarted, undefined);
         return ChildProcessSpawner.makeHandle({
@@ -1636,7 +1697,6 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const path = yield* Path.Path;
-    const cwd = yield* makeTmpDir();
     const worktreePath = path.join(cwd, "worktree");
 
     const creation = yield* driver
@@ -1664,7 +1724,11 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
     const updateStopped = yield* Deferred.make<void>();
     const finished = yield* Ref.make<ReadonlyArray<{ ok: boolean; detail: string | null }>>([]);
     const claimed = yield* Ref.make<string | null>(null);
+    const cwd = yield* makeTmpDir();
     const spawner = ChildProcessSpawner.make((command) => {
+      if (ChildProcess.isStandardCommand(command) && command.args.includes("--show-toplevel")) {
+        return Effect.succeed(makeSuccessfulHandle(`${cwd}\n`));
+      }
       if (
         ChildProcess.isStandardCommand(command) &&
         command.args[0] === "submodule" &&
@@ -1687,7 +1751,6 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
     const driver = yield* makeGitVcsDriverCore().pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
-    const cwd = yield* makeTmpDir();
     const path = yield* Path.Path;
     const worktreePath = path.join(cwd, "worktree");
     yield* writeTextFile(worktreePath, ".gitmodules", "");
@@ -3704,7 +3767,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.isTrue(refs.refs.some((ref) => ref.name === "real-only"));
 
           yield* driver.createWorktree({
-            cwd: link,
+            cwd: repo,
             path: pathService.join(yield* makeTmpDir("git-worktrees-"), "real"),
             refName: "real-only",
             newRefName: "feature/real-created",
