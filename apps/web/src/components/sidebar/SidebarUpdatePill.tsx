@@ -282,8 +282,8 @@ function SidebarUpdateControl() {
 
   const handleAction = useStableCallback(async () => {
     const bridge = window.desktopBridge;
-    setIsInstallRequested(false);
     if (isInteractionDisabled) return;
+    setIsInstallRequested(false);
 
     if (runsEverything) {
       setIsConfirmingEverything(true);
@@ -359,10 +359,10 @@ function SidebarUpdateControl() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribes to the desktop menu.
   useEffect(() => registerMenuAction("install-update", () => setIsInstallRequested(true)), []);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The menu can outrun the update state.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Runs the menu request once the button can act.
   useEffect(() => {
-    if (isInstallRequested && action === "install") void handleAction();
-  }, [action, handleAction, isInstallRequested]);
+    if (isInstallRequested && action === "install" && !isInteractionDisabled) void handleAction();
+  }, [action, handleAction, isInstallRequested, isInteractionDisabled]);
 
   const runEverything = async () => {
     const bridge = window.desktopBridge;

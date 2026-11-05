@@ -149,6 +149,36 @@ describe("SidebarUpdatePill menu install request", () => {
     await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
     expect(installUpdate).not.toHaveBeenCalled();
   });
+
+  it("opens the confirm once the check animation releases the button", async () => {
+    window.desktopBridge = {
+      getLocalEnvironmentEnabled: () => false,
+      getLocalEnvironmentBootstraps: () => [],
+    } as unknown as DesktopBridge;
+    using _bridge = { [Symbol.dispose]: () => delete window.desktopBridge };
+    const downloaded = {
+      ...nightlyUpdate([]),
+      status: "downloaded",
+      downloadedVersion: "0.0.50-nightly.2",
+    } as const;
+    setup({ ...downloaded, status: "checking" });
+    await using _screen = await render(
+      <>
+        <ConfirmDialogHost />
+        <SidebarUpdatePill />
+      </>,
+    );
+
+    await publish(downloaded);
+    await act(() => dispatchMenuAction("install-update"));
+    const checkIcon = document.querySelector('[class*="visible-animate-spin"]');
+    expect(checkIcon).not.toBeNull();
+    await act(() => {
+      checkIcon?.dispatchEvent(new AnimationEvent("animationiteration", { bubbles: true }));
+    });
+
+    await expect.element(page.getByRole("alertdialog")).toBeVisible();
+  });
 });
 
 describe("SidebarUpdatePill update everything", () => {
