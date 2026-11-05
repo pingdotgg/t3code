@@ -1244,7 +1244,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   className={cn(
                     "flex shrink-0 items-center transition-opacity",
                     (!props.isActive || variantAction === "unsettle") &&
-                      "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
+                      "opacity-40 transition-opacity grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
                   )}
                 >
                   {props.project ? (
@@ -1725,7 +1725,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                 props.isSettled &&
                   !props.isRouteActive &&
                   !props.isHighlighted &&
-                  "opacity-40 grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
+                  "opacity-40 transition-opacity grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             />
           ) : null}

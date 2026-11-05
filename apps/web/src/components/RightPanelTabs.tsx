@@ -83,6 +83,7 @@ import {
 } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { SlidingIndicator } from "~/components/SlidingIndicator";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
@@ -1009,10 +1010,10 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        "relative cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
-          ? "bg-accent text-foreground"
+          ? "text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
         isDragging && "relative z-10",
       )}
@@ -1349,7 +1350,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           className="min-w-0 flex-1"
           data-right-panel-tab-list
         >
-          <div className="flex h-full w-max min-w-full items-center gap-1">
+          <div className="relative flex h-full w-max min-w-full items-center gap-1">
+            <SlidingIndicator
+              selector='[data-active-tab="true"]'
+              className="rounded-md bg-accent"
+            />
             <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
               {props.surfaces.map((surface) => {
                 const previewTabId = previewTabIdOf(surface, props.previewSessions);

@@ -17,7 +17,7 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
     >
       {/* Keep an inner gap in the focus outline. Explicit glyph colors resist row icon-muting rules. */}
       <CheckboxPrimitive.Indicator
-        className={indicatorClassName}
+        className={cn(indicatorClassName, "enter-pop")}
         data-slot="checkbox-indicator"
         render={(props, state) => (
           <span {...props}>

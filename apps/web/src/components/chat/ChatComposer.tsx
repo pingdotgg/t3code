@@ -203,6 +203,7 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { AnimatedHeight } from "../AnimatedHeight";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -3191,7 +3192,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />
           {showComposerTopDrawer ? (
-            <ComposerBanner.Attachment>
+            <ComposerBanner.Attachment className="enter-rise">
               <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
                 {pendingUserInputs.length > 0 ? (
                   <ComposerPendingUserInputPanel
@@ -3238,7 +3239,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             data-chat-composer-surface="true"
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
-              "rounded-2xl transition-[background-color] duration-200",
+              "rounded-2xl transition-[background-color,box-shadow,opacity] duration-200",
               "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-inset in-data-[thread-context-over]:ring-primary/70",
               isDragOverComposer ? "bg-accent/45 ring-1 ring-inset ring-primary/70" : null,
               projectSelectionRequired ? "opacity-75" : null,
@@ -3379,61 +3380,63 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
-                  <ComposerPromptEditor
-                    draftKey={composerDraftTargetKey}
-                    // Switching threads lands focus here, so the label names the thread.
-                    ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
-                    suggestionListId={composerSuggestionListId}
-                    activeSuggestionId={
-                      composerSuggestionListVisible && activeComposerMenuItem
-                        ? composerSuggestionOptionId(
-                            composerSuggestionListId,
-                            activeComposerMenuItem.id,
-                          )
-                        : undefined
-                    }
-                    editorRef={composerEditorRef}
-                    richTextEnabled={settings.composerRichTextEnabled}
-                    literalText={isLiteralPendingAnswer}
-                    isPathQueryActive={isPathQueryActiveStable}
-                    value={activePendingProgress ? activePendingProgress.customAnswer : prompt}
-                    cursor={composerCursor}
-                    contextRecords={composerContextRecords}
-                    buildContextClipboardFragment={buildContextClipboardFragmentStable}
-                    importContextFragment={importContextFragmentStable}
-                    skills={selectedProviderSkills}
-                    className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
-                    onChange={onPromptChangeStable}
-                    onCommandKeyDown={onComposerCommandKeyStable}
-                    onPageScrollKeyDown={onPageScrollKeyDown}
-                    onPageScrollKeyUp={onPageScrollKeyUp}
-                    onPageScrollRelease={onPageScrollRelease}
-                    onCitationSubmitAndSend={submitCitationAndSendStable}
-                    onCitationDraftSave={saveCitationDraftToPromptStable}
-                    onPaste={onComposerPasteStable}
-                    placeholder={
-                      isComposerApprovalState
-                        ? activePendingApproval?.supportsFeedback
-                          ? "Send feedback to decline this request"
-                          : "Send a message to decline and redirect the agent"
-                        : activePendingProgress
-                          ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : DEFAULT_COMPOSER_PLACEHOLDER
-                    }
-                    disabled={
-                      projectSelectionRequired ||
-                      isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
-                    }
-                  />
+                  <AnimatedHeight>
+                    <ComposerPromptEditor
+                      draftKey={composerDraftTargetKey}
+                      // Switching threads lands focus here, so the label names the thread.
+                      ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
+                      suggestionListId={composerSuggestionListId}
+                      activeSuggestionId={
+                        composerSuggestionListVisible && activeComposerMenuItem
+                          ? composerSuggestionOptionId(
+                              composerSuggestionListId,
+                              activeComposerMenuItem.id,
+                            )
+                          : undefined
+                      }
+                      editorRef={composerEditorRef}
+                      richTextEnabled={settings.composerRichTextEnabled}
+                      literalText={isLiteralPendingAnswer}
+                      isPathQueryActive={isPathQueryActiveStable}
+                      value={activePendingProgress ? activePendingProgress.customAnswer : prompt}
+                      cursor={composerCursor}
+                      contextRecords={composerContextRecords}
+                      buildContextClipboardFragment={buildContextClipboardFragmentStable}
+                      importContextFragment={importContextFragmentStable}
+                      skills={selectedProviderSkills}
+                      className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
+                      onChange={onPromptChangeStable}
+                      onCommandKeyDown={onComposerCommandKeyStable}
+                      onPageScrollKeyDown={onPageScrollKeyDown}
+                      onPageScrollKeyUp={onPageScrollKeyUp}
+                      onPageScrollRelease={onPageScrollRelease}
+                      onCitationSubmitAndSend={submitCitationAndSendStable}
+                      onCitationDraftSave={saveCitationDraftToPromptStable}
+                      onPaste={onComposerPasteStable}
+                      placeholder={
+                        isComposerApprovalState
+                          ? activePendingApproval?.supportsFeedback
+                            ? "Send feedback to decline this request"
+                            : "Send a message to decline and redirect the agent"
+                          : activePendingProgress
+                            ? isChoiceOnlyPendingQuestion
+                              ? "Choose an option above"
+                              : "Type your own answer, or leave this blank to use the selected option"
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : projectSelectionRequired
+                                ? "Choose a project above to start a thread"
+                                : showProviderUnavailable
+                                  ? "Enable a provider in Settings to send a message"
+                                  : DEFAULT_COMPOSER_PLACEHOLDER
+                      }
+                      disabled={
+                        projectSelectionRequired ||
+                        isChoiceOnlyPendingQuestion ||
+                        activePendingIsResponding
+                      }
+                    />
+                  </AnimatedHeight>
                 </ComposerContextActionsContext>
                 {showMobilePendingAnswerActions ? (
                   <div

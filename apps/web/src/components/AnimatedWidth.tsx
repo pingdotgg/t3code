@@ -27,7 +27,7 @@ export function AnimatedWidth({
     <span
       data-slot="animated-width"
       className={cn(
-        "inline-block overflow-hidden transition-[width] duration-150 ease-out motion-reduce:transition-none",
+        "inline-block overflow-hidden transition-[width] duration-250 ease-(--ease-spring) motion-reduce:transition-none",
         className,
       )}
       style={width === null ? undefined : { width }}

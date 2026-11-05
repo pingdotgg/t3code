@@ -222,7 +222,10 @@ function UsageRow({
                         ? "bg-muted-foreground"
                         : "bg-foreground/80",
                 )}
-                style={{ width: `max(${fill}%, 6px)` }}
+                style={{
+                  width: `max(${fill}%, 6px)`,
+                  transition: "width 500ms var(--ease-spring)",
+                }}
               />
             ) : null}
             {tick !== null ? (

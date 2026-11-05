@@ -962,7 +962,7 @@ function UsageOverview({
                         {hasBar ? (
                           <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
                             <div
-                              className="h-full rounded-full"
+                              className="h-full rounded-full transition-[width] duration-500"
                               style={{
                                 width: `max(0.5rem, ${(value / breakdownPeak) * 100}%)`,
                                 backgroundColor: PROVIDER_PRESENTATION[model.provider].color,

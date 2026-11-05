@@ -347,7 +347,7 @@ function ConversationGroup({
           </CollapsibleTrigger>
           <CollapsiblePanel>
             {open ? (
-              <div className="mt-1 space-y-1">
+              <div className="enter-rise [--enter-distance:4px] mt-1 space-y-1">
                 {events.map((event) => (
                   <ConversationCard
                     // Host comment ids can collide across pull requests.

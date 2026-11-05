@@ -5,6 +5,9 @@ import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { observeResize } from "../../lib/observeResize";
+import { usePanelAnimationSettings } from "../../panelAnimations";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useChatLaneFreeze } from "./useChatLaneFreeze";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 export function ChatCanvas({
@@ -27,6 +30,11 @@ export function ChatCanvas({
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
+  const measureRef = useRef<((heldWidth?: number) => void) | null>(null);
+  useChatLaneFreeze(
+    elementRef,
+    useStableCallback((heldWidth?: number) => measureRef.current?.(heldWidth)),
+  );
   const measurements = useStore(store, (state) => state.measurements);
   const detailsCardMeasurement = useStore(store, (state) => state.detailsCardMeasurement);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes canvas, find bar and timeline resizes and writes the measurements to the canvas store
@@ -36,7 +44,9 @@ export function ChatCanvas({
     if (!element || !probe) return;
     const findBar =
       detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
-    const measure = () => {
+    const measure = (heldWidth?: number) => {
+      // While the lane is held, lay out once for the width it will land on, then stop following.
+      if (heldWidth === undefined && element.dataset.laneHeld !== undefined) return;
       const canvasBounds = element.getBoundingClientRect();
       const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
@@ -49,7 +59,7 @@ export function ChatCanvas({
                 bottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
               }
             : null,
-        width: element.clientWidth,
+        width: heldWidth ?? element.clientWidth,
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
         maxChatWidth: Number.parseFloat(styles.width),
@@ -61,17 +71,19 @@ export function ChatCanvas({
       });
     };
     measure();
+    measureRef.current = measure;
     const observed: Element[] = [element, probe];
     if (findBar) observed.push(findBar);
     if (composerOverlayElement) observed.push(composerOverlayElement);
     if (timelineElement) observed.push(timelineElement);
-    return observeResize(observed, measure);
+    return observeResize(observed, () => measure());
   }, [store, composerOverlayElement, timelineElement, detailsCardTopInset]);
   const detailsCardInlineOpen = useRightPanelStore((state) =>
     threadRef === null
       ? false
       : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
   );
+  const { active: panelAnimationsActive, durationMs } = usePanelAnimationSettings();
   const model = resolveChatCanvasModel({
     measurements,
     detailsCardMeasurement,
@@ -91,6 +103,26 @@ export function ChatCanvas({
     detailsCardPlacement: model.detailsCardPlacement,
   };
   const { layout } = context;
+  const laneCenterOffset = (layout.chat.insetStart - layout.chat.insetEnd) / 2;
+  const laneMotion = useRef({ open: detailsCardInlineOpen, offset: laneCenterOffset });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- plays a compositor-only glide from the old lane position; the layout itself changes once, so long threads pay no per-frame reflow
+  useLayoutEffect(() => {
+    const previous = laneMotion.current;
+    laneMotion.current = { open: detailsCardInlineOpen, offset: laneCenterOffset };
+    if (previous.open === detailsCardInlineOpen || !panelAnimationsActive) return;
+    const canvas = elementRef.current;
+    const distance = previous.offset - laneCenterOffset;
+    if (!canvas?.animate || distance === 0) return;
+    const direction = getComputedStyle(canvas).direction === "rtl" ? -1 : 1;
+    for (const target of canvas.querySelectorAll<HTMLElement>(
+      "[data-assistant-citation-viewport], [data-chat-composer-overlay]",
+    )) {
+      target.animate([{ translate: `${distance * direction}px 0` }, { translate: "0 0" }], {
+        duration: durationMs,
+        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+      });
+    }
+  }, [detailsCardInlineOpen, durationMs, laneCenterOffset, panelAnimationsActive]);
   return (
     <ChatCanvasContext value={context}>
       <div

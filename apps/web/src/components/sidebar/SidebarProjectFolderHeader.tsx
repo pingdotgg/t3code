@@ -98,7 +98,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         />
       </button>
       {/* Sits over the count, which hides on hover, and left of the chevron. */}
-      <span className="absolute inset-y-0 right-6 flex items-center opacity-0 focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
+      <span className="absolute inset-y-0 right-6 flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
         <Tooltip>
           <TooltipTrigger
             render={

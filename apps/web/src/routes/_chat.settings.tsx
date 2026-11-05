@@ -1,5 +1,11 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
-import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
+import {
+  Outlet,
+  createFileRoute,
+  redirect,
+  useLocation,
+  useRouterState,
+} from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -12,6 +18,7 @@ import {
   SettingsScopeProvider,
   useSettingsScope,
 } from "../components/settings/SettingsScopeContext";
+import { useEnterMotion } from "../hooks/useEnterMotion";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
@@ -25,6 +32,7 @@ import {
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
+  SETTINGS_NAV_GROUPS,
 } from "../components/settings/settingsSearch";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
@@ -106,6 +114,15 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   return children;
 }
 
+const SETTINGS_PAGE_ORDER: ReadonlyArray<string> = SETTINGS_NAV_GROUPS.flatMap(
+  (group) => group.paths,
+);
+
+/** Pages sit in nav order, so moving down the list rises and moving up it falls. */
+function settingsPageDistance(previous: string, next: string) {
+  return SETTINGS_PAGE_ORDER.indexOf(next) >= SETTINGS_PAGE_ORDER.indexOf(previous) ? 10 : -10;
+}
+
 function SettingsContentLayout() {
   const contentArea = workspaceAreaProps("settings", 1, "Settings content");
   const location = useLocation();
@@ -115,6 +132,12 @@ function SettingsContentLayout() {
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
+  const [contentElement, setContentElement] = useState<HTMLElement | null>(null);
+  // Keyed on the resolved page, so the entrance plays on the new content, not the outgoing page.
+  const resolvedPathname = useRouterState({
+    select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname,
+  });
+  useEnterMotion(contentElement, resolvedPathname, { distance: settingsPageDistance });
 
   return (
     <AppRouteModal label="Settings">
@@ -132,7 +155,11 @@ function SettingsContentLayout() {
               <AppRouteModalClose />
             </div>
           </header>
-          <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
+          <div
+            key={`${contentScopeKey}:${restoreSignal}`}
+            ref={setContentElement}
+            className="min-h-0 flex flex-1 flex-col"
+          >
             <SettingsScopeBoundary pathname={location.pathname}>
               <Outlet />
             </SettingsScopeBoundary>

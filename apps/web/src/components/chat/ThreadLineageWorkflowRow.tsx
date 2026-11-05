@@ -1,3 +1,4 @@
+import { Presence } from "../Presence";
 import type {
   SubagentWorkflowGroup,
   RuntimeSubagent,
@@ -149,7 +150,7 @@ export function ThreadLineageWorkflowRow({
       <div className={cn("relative", THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS)}>
         {header}
         {onStop ? (
-          <div className="pointer-events-none absolute right-9 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+          <div className="pointer-events-none absolute right-9 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -192,7 +193,7 @@ export function ThreadLineageWorkflowRow({
           />
         </ThreadDetailsControl>
       </div>
-      {expanded ? (
+      <Presence show={expanded} variant="collapse">
         <ul className="m-0 list-none p-0 ps-6.5">
           {phases.map((phase) => {
             const open = phaseOpen.get(phase.index) ?? phase.state === "running";
@@ -257,7 +258,7 @@ export function ThreadLineageWorkflowRow({
             <li className="px-2.5 py-1.5 text-2xs text-muted-foreground/70">No agents yet</li>
           ) : null}
         </ul>
-      ) : null}
+      </Presence>
     </li>
   );
 }

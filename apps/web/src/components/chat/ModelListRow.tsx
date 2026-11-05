@@ -122,7 +122,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                     "size-3.5 sm:size-3",
                     props.isFavorite && "fill-current text-warning",
                     (!props.isFavorite || props.favoriteStarOnHover) &&
-                      "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
+                      "opacity-0 transition-opacity group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
                   )}
                 />
               </Button>

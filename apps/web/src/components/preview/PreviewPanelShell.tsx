@@ -3,6 +3,7 @@ import {
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
+import { useEnterMotion } from "~/hooks/useEnterMotion";
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
@@ -114,6 +115,9 @@ function PreviewPanelShellFrame(
     }
     host.toggleAttribute("inert", collapsed);
   }, [collapsible, open, hostRef]);
+  const [contentElement, setContentElement] = useState<HTMLElement | null>(null);
+  useEnterMotion(contentElement, props.workspaceFocusKey ?? "", { distance: 0, durationMs: 200 });
+
   return (
     <div
       ref={attachHost}
@@ -129,7 +133,7 @@ function PreviewPanelShellFrame(
             : "shrink-0 border-l border-border"
           : "w-full",
         collapsible &&
-          "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
+          "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-(--ease-spring)",
         collapsible && open && "[[data-panel-animations=true]_&]:starting:w-0!",
         collapsible && !open && "pointer-events-none",
       )}
@@ -160,6 +164,7 @@ function PreviewPanelShellFrame(
         )}
       >
         <div
+          ref={setContentElement}
           className={cn(
             "flex h-full min-h-0 min-w-0 flex-col",
             collapsible && !maximized && "shrink-0",

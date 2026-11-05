@@ -10,7 +10,9 @@ import {
   type ScopedThreadRef,
   type ThreadGuestShare,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, UserIcon } from "lucide-react";
+import { Check, Copy } from "lucide";
+import { UserIcon } from "lucide-react";
+import { MorphIcon } from "../MorphIcon";
 import { useState } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -126,7 +128,7 @@ function GuestShareDialog({
                 onFocus={(event) => event.currentTarget.select()}
               />
               <Button size="sm" variant="outline" onClick={() => copyToClipboard(state.url)}>
-                {isCopied ? <CheckIcon /> : <CopyIcon />}
+                <MorphIcon icon={isCopied ? Check : Copy} />
                 {isCopied ? "Copied" : "Copy"}
               </Button>
             </div>

@@ -1,3 +1,4 @@
+import { Presence } from "../Presence";
 import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
@@ -103,7 +104,7 @@ export function ThreadDetailsPrRows({
   return (
     <>
       {currentRow}
-      {expanded ? (
+      <Presence show={expanded} variant="collapse">
         <div data-thread-details-pr-list className="flex flex-col">
           {rest.map((link) => (
             <ThreadDetailsPrLinkRow
@@ -116,7 +117,7 @@ export function ThreadDetailsPrRows({
             />
           ))}
         </div>
-      ) : null}
+      </Presence>
       <ThreadDetailsControl
         variant="ghost"
         size="sm"

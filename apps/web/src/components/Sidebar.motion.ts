@@ -1,4 +1,5 @@
-const motionTiming = { duration: 150, easing: "ease-out" };
+const motionTiming = { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" };
+const ABOVE_NEIGHBORS = { zIndex: 2, backgroundColor: "var(--sidebar)" };
 const rowTravel = (height: number) => Math.min(height, 40);
 // Fades clone removed rows and animate clones and entries; intervening layout reads force reflows.
 const MAX_FADED_ROWS_PER_UPDATE = 40;
@@ -103,8 +104,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     const entry = entering.get(node);
     if (entry) entry.travel = 0;
     if (offset === 0 && !entry) return;
+    // A row jumping past its neighbors rides above them on a solid fill, so labels never overlap.
+    const lifted = Math.abs(offset) > node.offsetHeight ? ABOVE_NEIGHBORS : null;
     const animation = node.animate(
-      [{ transform: `translateY(${offset}px)` }, { transform: "translateY(0px)" }],
+      [
+        { transform: `translateY(${offset}px)`, ...lifted },
+        { transform: "translateY(0px)", ...lifted },
+      ],
       motionTiming,
     );
     running.set(node, { animation, offset });

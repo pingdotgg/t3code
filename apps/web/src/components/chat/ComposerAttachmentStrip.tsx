@@ -97,6 +97,7 @@ function SnapShotAttachmentFrame({
     <div
       ref={frameRef}
       className={cn(
+        !animateArrival && !animationId && "enter-pop",
         animateArrival &&
           !animationId &&
           "origin-center transition-[opacity,scale] duration-300 ease-drawer starting:scale-95 starting:opacity-0 motion-reduce:transition-none motion-reduce:starting:scale-100 motion-reduce:starting:opacity-100",

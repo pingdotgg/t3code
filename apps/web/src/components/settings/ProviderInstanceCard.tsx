@@ -1082,7 +1082,7 @@ export function ProviderInstanceCard({
         <div
           className={cn(
             "pointer-events-none relative flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
-            !enabled && !selected && "opacity-60 group-hover:opacity-100",
+            !enabled && !selected && "opacity-60 transition-opacity group-hover:opacity-100",
           )}
         >
           <button

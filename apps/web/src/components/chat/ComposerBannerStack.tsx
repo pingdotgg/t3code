@@ -1,5 +1,5 @@
 import { InfoIcon } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -27,8 +27,39 @@ export interface ComposerBannerStackItem {
 
 const GROUPS = ["environment", "attention"] as const;
 
-const FADE_IN =
-  "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none";
+const NOTICE_MOTION =
+  "transition-[opacity,translate,height] duration-300 starting:translate-y-1.5 starting:opacity-0 data-closing:pointer-events-none data-closing:h-0 data-closing:translate-y-1.5 data-closing:overflow-clip data-closing:opacity-0 data-closing:duration-150 motion-reduce:transition-none";
+const NOTICE_EXIT_MS = 160;
+
+interface LeavingNotice {
+  readonly item: ComposerBannerStackItem;
+  readonly index: number;
+}
+
+/** Keeps removed notices at their old position long enough to fold away, then lets them go. */
+function useLeavingNotices(items: ReadonlyArray<ComposerBannerStackItem>) {
+  const [previous, setPrevious] = useState(items);
+  const [leaving, setLeaving] = useState<ReadonlyArray<LeavingNotice>>([]);
+  if (previous !== items) {
+    setPrevious(items);
+    const ids = new Set(items.map((item) => item.id));
+    const removed = previous.flatMap((item, index) => (ids.has(item.id) ? [] : [{ item, index }]));
+    const removedIds = new Set(removed.map((notice) => notice.item.id));
+    const stillLeaving = leaving.filter(
+      (notice) => !ids.has(notice.item.id) && !removedIds.has(notice.item.id),
+    );
+    if (removed.length > 0 || stillLeaving.length !== leaving.length) {
+      setLeaving([...stillLeaving, ...removed]);
+    }
+  }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- removes a notice from the DOM once its CSS exit has played; the timer is cleared if more notices leave
+  useEffect(() => {
+    if (leaving.length === 0) return;
+    const timeout = window.setTimeout(() => setLeaving([]), NOTICE_EXIT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [leaving]);
+  return leaving;
+}
 
 /**
  * Notices about sending from this composer, each its own attached card. Consecutive cards join
@@ -42,18 +73,36 @@ export function ComposerBannerStack({
   readonly items: ReadonlyArray<ComposerBannerStackItem>;
   readonly detached?: boolean;
 }) {
+  const leaving = useLeavingNotices(items);
+  const leavingIds = new Set(leaving.map((notice) => notice.item.id));
+  const merged = [...items];
+  for (const notice of [...leaving].sort((a, b) => a.index - b.index)) {
+    merged.splice(Math.min(notice.index, merged.length), 0, notice.item);
+  }
   const ordered = GROUPS.flatMap((group) =>
-    items.filter((item) => (item.group ?? "attention") === group),
+    merged.filter((item) => (item.group ?? "attention") === group),
   );
   if (detached) {
     return ordered.map((item) => (
-      <div key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
+      <div
+        key={item.id}
+        data-composer-banner-stack="true"
+        data-closing={leavingIds.has(item.id) ? "" : undefined}
+        inert={leavingIds.has(item.id)}
+        className={NOTICE_MOTION}
+      >
         <NoticeCard item={item} detached />
       </div>
     ));
   }
   return ordered.map((item) => (
-    <ComposerBanner.Attachment key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
+    <ComposerBanner.Attachment
+      key={item.id}
+      data-composer-banner-stack="true"
+      data-closing={leavingIds.has(item.id) ? "" : undefined}
+      inert={leavingIds.has(item.id)}
+      className={NOTICE_MOTION}
+    >
       <NoticeCard item={item} />
     </ComposerBanner.Attachment>
   ));

@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
+import { Presence } from "../Presence";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
 import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadErrorBanner";
 
@@ -42,22 +43,26 @@ export function ChatBannerLane(props: {
   } = props;
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
-      <ProviderStatusBanner
-        environmentId={props.environmentId}
-        status={providerStatus}
-        onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
-        onOpenProviderSetup={onOpenProviderSetup}
-      />
-      <ThreadErrorBanner
-        error={threadError}
-        errorClass={threadErrorClass}
-        errorCode={threadErrorCode}
-        onDismiss={() => {
-          setThreadError(threadId, null);
-          dismissThreadErrorBannerForSession(threadErrorBannerKey);
-          setThreadErrorBannerDismissTick((tick) => tick + 1);
-        }}
-      />
+      <Presence show={providerStatus !== null}>
+        <ProviderStatusBanner
+          environmentId={props.environmentId}
+          status={providerStatus}
+          onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
+          onOpenProviderSetup={onOpenProviderSetup}
+        />
+      </Presence>
+      <Presence show={threadError !== null}>
+        <ThreadErrorBanner
+          error={threadError}
+          errorClass={threadErrorClass}
+          errorCode={threadErrorCode}
+          onDismiss={() => {
+            setThreadError(threadId, null);
+            dismissThreadErrorBannerForSession(threadErrorBannerKey);
+            setThreadErrorBannerDismissTick((tick) => tick + 1);
+          }}
+        />
+      </Presence>
     </div>
   );
 }

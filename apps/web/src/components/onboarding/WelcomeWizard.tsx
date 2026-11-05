@@ -261,39 +261,41 @@ export function WelcomeWizard({
         </WizardHeader>
 
         <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "connection" ? (
-            <ConnectionStep
-              expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
-              selectedIds={selectedIds}
-              autoSelectedComputers={autoSelectedComputers}
-              onSelectionChange={setSelection}
-              onToggleEnvironment={(environmentId, checked) =>
-                setSelection((current) => {
-                  const next = new Set(current ?? selectedIds);
-                  if (checked) next.add(environmentId);
-                  else next.delete(environmentId);
-                  return next;
-                })
-              }
-              onContinue={() =>
-                startSetup(resolveOnboardingSetup(environments, selectedIds).environmentIds)
-              }
-              onPaired={(environmentId) => {
-                setSelection(new Set([...selectedIds, environmentId]));
-              }}
-            />
-          ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
-          ) : (
-            <ImportStep
-              scans={scans}
-              importSelection={importSelection}
-              onImportSelectionChange={setImportSelection}
-              isImporting={isImporting}
-              setIsImporting={setIsImporting}
-              onDone={finish}
-            />
-          )}
+          <div key={step} className="enter-rise [--enter-distance:4px]">
+            {step === "connection" ? (
+              <ConnectionStep
+                expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
+                selectedIds={selectedIds}
+                autoSelectedComputers={autoSelectedComputers}
+                onSelectionChange={setSelection}
+                onToggleEnvironment={(environmentId, checked) =>
+                  setSelection((current) => {
+                    const next = new Set(current ?? selectedIds);
+                    if (checked) next.add(environmentId);
+                    else next.delete(environmentId);
+                    return next;
+                  })
+                }
+                onContinue={() =>
+                  startSetup(resolveOnboardingSetup(environments, selectedIds).environmentIds)
+                }
+                onPaired={(environmentId) => {
+                  setSelection(new Set([...selectedIds, environmentId]));
+                }}
+              />
+            ) : step === "agents" ? (
+              <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
+            ) : (
+              <ImportStep
+                scans={scans}
+                importSelection={importSelection}
+                onImportSelectionChange={setImportSelection}
+                isImporting={isImporting}
+                setIsImporting={setIsImporting}
+                onDone={finish}
+              />
+            )}
+          </div>
         </WizardPanel>
       </WizardPopup>
       <ChatGptWelcomeCoordinator />

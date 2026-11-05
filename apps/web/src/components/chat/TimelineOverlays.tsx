@@ -1,3 +1,4 @@
+import { Presence } from "../Presence";
 import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -24,12 +25,14 @@ export function WorkspaceFileDropOverlay() {
  * what waits at the end of the timeline, which is out of view while it shows.
  */
 export function ScrollToEndButton(props: {
+  readonly show: boolean;
   readonly bottom: number;
   readonly summary: string | null;
   readonly onScrollToEnd: () => void;
 }) {
   return (
-    <div
+    <Presence
+      show={props.show}
       className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
       style={{ bottom: props.bottom }}
     >
@@ -50,6 +53,6 @@ export function ScrollToEndButton(props: {
           </span>
         )}
       </Button>
-    </div>
+    </Presence>
   );
 }

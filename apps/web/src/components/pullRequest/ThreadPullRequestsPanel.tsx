@@ -289,7 +289,7 @@ function LinkRowImpl({
           "absolute right-0 bottom-0.5 flex items-center rounded-r-md bg-background pr-1 pl-5",
           "[mask-image:linear-gradient(to_right,transparent,black_1rem)]",
           // Hidden controls would intercept link taps on touch screens.
-          "pointer-events-none opacity-0 group-hover/pr-row:pointer-events-auto group-hover/pr-row:opacity-100",
+          "pointer-events-none opacity-0 transition-opacity group-hover/pr-row:pointer-events-auto group-hover/pr-row:opacity-100",
           "has-[[data-popup-open]]:pointer-events-auto has-[[data-popup-open]]:opacity-100",
           "has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100",
           "group-has-[[data-pull-request-action-pending=true]]/pr-row:hidden",

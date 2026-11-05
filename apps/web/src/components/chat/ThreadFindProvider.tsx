@@ -1,3 +1,4 @@
+import { Presence } from "../Presence";
 import { createContext, use, type ReactNode, type ComponentProps } from "react";
 import { useThreadFind } from "./useThreadFind";
 import { ThreadFindBar } from "./ThreadFindBar";
@@ -37,12 +38,17 @@ export function ThreadFind({ onClose }: { onClose: () => void }) {
   const bar = use(ThreadFindBarContext);
   if (!bar) return null;
   return (
-    <ThreadFindBar
-      {...bar}
-      onClose={() => {
-        bar.onClose();
-        onClose();
-      }}
-    />
+    <Presence
+      show={bar.open}
+      className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))]"
+    >
+      <ThreadFindBar
+        {...bar}
+        onClose={() => {
+          bar.onClose();
+          onClose();
+        }}
+      />
+    </Presence>
   );
 }

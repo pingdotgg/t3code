@@ -3,6 +3,7 @@ import { ToggleGroup as ToggleGroupPrimitive } from "@base-ui/react/toggle-group
 import type { VariantProps } from "class-variance-authority";
 import * as React from "react";
 
+import { SlidingIndicator } from "~/components/SlidingIndicator";
 import { cn } from "~/lib/utils";
 import { Toggle as ToggleComponent, type toggleVariants } from "~/components/ui/toggle";
 
@@ -30,7 +31,7 @@ function ToggleGroup({
           ? "*:pointer-coarse:after:min-w-auto"
           : "*:pointer-coarse:after:min-h-auto",
         variant === "segmented"
-          ? "gap-0.5 rounded-lg bg-input/40 p-0.5"
+          ? "relative gap-0.5 rounded-lg bg-input/40 p-0.5"
           : variant === "default"
             ? "gap-0.5"
             : orientation === "horizontal"
@@ -44,6 +45,12 @@ function ToggleGroup({
       orientation={orientation}
       {...props}
     >
+      {variant === "segmented" ? (
+        <SlidingIndicator
+          selector="[data-pressed]"
+          className="rounded-md bg-background shadow-xs/10 dark:bg-input/72"
+        />
+      ) : null}
       <ToggleGroupContext value={value}>{children}</ToggleGroupContext>
     </ToggleGroupPrimitive>
   );

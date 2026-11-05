@@ -1,3 +1,4 @@
+import { SlidingIndicator } from "../SlidingIndicator";
 import {
   lazy,
   Suspense,
@@ -380,8 +381,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   {...sectionNavigation.containerProps}
                   role="tree"
                   aria-label="Settings sections"
-                  className="flex flex-col gap-4"
+                  className="relative flex flex-col gap-4"
                 >
+                  <SlidingIndicator
+                    selector='[aria-current="page"]'
+                    className="rounded-md bg-sidebar-row-selected"
+                  />
                   {SETTINGS_NAV_GROUPS.map((group, index) => (
                     <div
                       key={group.heading ?? index}

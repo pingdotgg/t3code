@@ -64,7 +64,7 @@ export function TunnelUsageMeter({
         ) : (
           <span className="flex-1 overflow-hidden rounded-full bg-muted">
             <span
-              className={cn("block h-full rounded-full", fill)}
+              className={cn("block h-full rounded-full transition-[width] duration-500", fill)}
               style={{ width: `${Math.min(100, (used / limit) * 100)}%` }}
             />
           </span>

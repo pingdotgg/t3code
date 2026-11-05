@@ -1,4 +1,5 @@
-import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
+import { Check, Copy } from "lucide";
+import { DownloadIcon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -1630,7 +1631,7 @@ export function WorkspaceLargeTextPreview(props: {
               .catch(showError);
           }}
         >
-          {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+          <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
         </FileSurfaceAction>
         <FileSurfaceAction
           label={saving ? "Preparing file…" : "Save file"}

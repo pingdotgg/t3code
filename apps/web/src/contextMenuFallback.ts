@@ -230,6 +230,20 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
 
 let activeContextMenuDismiss: ((restoreFocus?: boolean) => void) | null = null;
 
+function removeMenu(menu: HTMLDivElement) {
+  if (
+    typeof menu.animate !== "function" ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  ) {
+    menu.remove();
+    return;
+  }
+  menu.style.pointerEvents = "none";
+  menu
+    .animate([{ opacity: 0, scale: 0.97 }], { duration: 120, easing: "cubic-bezier(0.4, 0, 1, 1)" })
+    .finished.finally(() => menu.remove());
+}
+
 export function isContextMenuOpen(): boolean {
   return activeContextMenuDismiss !== null;
 }
@@ -273,7 +287,7 @@ export function showContextMenuFallback<T extends string>(
       const shouldRestoreFocus =
         restoreFocus && isNodeWithinMenuStack(document.activeElement, menuStack);
       for (const menu of menuStack) {
-        menu.remove();
+        removeMenu(menu);
       }
       if (shouldRestoreFocus && previouslyFocusedElement?.isConnected) {
         previouslyFocusedElement.focus({ preventScroll: true });
@@ -372,7 +386,8 @@ export function showContextMenuFallback<T extends string>(
     const closeMenusFromLevel = (level: number) => {
       while (menuStack.length > level) {
         submenuTriggerStack.pop()?.setAttribute("aria-expanded", "false");
-        menuStack.pop()?.remove();
+        const menu = menuStack.pop();
+        if (menu) removeMenu(menu);
       }
     };
 
@@ -387,7 +402,7 @@ export function showContextMenuFallback<T extends string>(
 
       const menu = document.createElement("div");
       menu.className =
-        "dropdown-glass fixed z-[10000] min-w-32 max-w-sm overflow-hidden rounded-lg bg-clip-padding text-popover-foreground outline-none";
+        "dropdown-glass fixed z-[10000] min-w-32 max-w-sm origin-top-left overflow-hidden rounded-lg bg-clip-padding text-popover-foreground outline-none transition-[scale,opacity] [transition-duration:340ms,160ms] starting:scale-94 starting:opacity-0 motion-reduce:starting:scale-100";
       menu.style.cssText =
         "position:fixed;z-index:10000;min-width:8rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-lg);background-clip:padding-box;color:var(--contrast-popover-foreground);outline:none;pointer-events:auto;";
       menu.style.left = `${preferredLeft}px`;

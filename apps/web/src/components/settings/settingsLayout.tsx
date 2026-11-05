@@ -509,7 +509,7 @@ export function SettingsRow({
                   // Values set right here explain nothing new, so their marker waits for hover or focus.
                   (inheritance.state === "default" || inheritance.state === "environment") &&
                     overridingProjects.length === 0 &&
-                    "opacity-0 group-hover/settings-row:opacity-100 has-focus-visible:opacity-100 has-data-popup-open:opacity-100",
+                    "opacity-0 transition-opacity group-hover/settings-row:opacity-100 has-focus-visible:opacity-100 has-data-popup-open:opacity-100",
                 )}
               >
                 {renderedInheritance}

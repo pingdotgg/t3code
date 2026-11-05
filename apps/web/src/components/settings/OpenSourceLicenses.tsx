@@ -105,7 +105,7 @@ function LicenseNoticeRow({
         </div>
         <CollapsiblePanel>
           {open ? (
-            <div className="px-9 pt-1 pb-4 sm:px-10">
+            <div className="enter-rise [--enter-distance:4px] px-9 pt-1 pb-4 sm:px-10">
               <pre className="max-w-[76ch] whitespace-pre-wrap break-words font-mono text-xs/5 text-foreground/80">
                 {entry.noticeText}
               </pre>

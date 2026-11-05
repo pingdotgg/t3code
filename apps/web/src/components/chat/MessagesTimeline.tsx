@@ -42,6 +42,7 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -93,6 +94,7 @@ import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { useEnterMotion } from "~/hooks/useEnterMotion";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
@@ -134,7 +136,12 @@ import {
 } from "./timelineViewport";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
-import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
+import {
+  useStableHandoffRuns,
+  useIncrementalTimelineRows,
+  useStableRows,
+  useTimelineRowArrivals,
+} from "./useTimelineRows";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -681,6 +688,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
+  const rowArrivals = useTimelineRowArrivals(rows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =
@@ -754,6 +762,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  useEnterMotion(timelineViewportElement, listIdentityKey, { distance: 4, durationMs: 220 });
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -1220,7 +1229,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
       <div
-        className="messages-timeline-row-frame"
+        className={cn("messages-timeline-row-frame", rowArrivals.has(item.id) && "enter-rise")}
+        style={rowEnterStyle(item, rowArrivals.get(item.id))}
         onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
@@ -1278,7 +1288,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       <>
         {activityAnnouncer}
         <div
-          className="flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
+          className="enter-fade flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
           style={{ paddingBottom: emptyPlaceholderInset }}
         >
           <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
@@ -1403,6 +1413,18 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
       </div>
     </div>
   );
+}
+
+function rowEnterStyle(
+  row: MessagesTimelineRow,
+  arrivalIndex: number | undefined,
+): CSSProperties | undefined {
+  if (arrivalIndex === undefined) return undefined;
+  const isUserMessage = row.kind === "message" && row.message.role === "user";
+  return {
+    "--enter-distance": isUserMessage ? "18px" : "6px",
+    "--enter-delay": `${Math.min(arrivalIndex, 8) * 22}ms`,
+  } as CSSProperties;
 }
 
 function isMessageRow(row: MessagesTimelineRow) {

@@ -17,7 +17,7 @@ function Empty({
   return (
     <div
       className={cn(
-        "flex min-w-0 flex-1 flex-col items-center justify-center text-balance text-center",
+        "enter-rise flex min-w-0 flex-1 flex-col items-center justify-center text-balance text-center",
         emptySizeClassName[size],
         className,
       )}

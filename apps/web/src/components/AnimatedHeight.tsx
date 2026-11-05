@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { observeResize } from "../lib/observeResize";
 
-const HEIGHT_TRANSITION_FALLBACK_MS = 250;
+const HEIGHT_TRANSITION_FALLBACK_MS = 380;
 
 export function AnimatedHeight({
   children,
@@ -73,7 +73,14 @@ export function AnimatedHeight({
     };
 
     updateHeightAfterPaint();
-    const stopObserving = observeResize(element, updateHeightAfterPaint);
+    // Width-only resizes, like a neighboring panel sliding, must not force layout reads every frame.
+    let observedHeight: number | undefined;
+    const stopObserving = observeResize(element, (entries) => {
+      const height = entries.at(-1)?.contentRect.height;
+      if (height === observedHeight) return;
+      observedHeight = height;
+      updateHeightAfterPaint();
+    });
     return () => {
       stopObserving();
       cancelPendingFrames();
@@ -83,7 +90,7 @@ export function AnimatedHeight({
   return (
     <div
       data-slot="animated-height"
-      className="transition-[height] duration-200 ease-out motion-reduce:transition-none [overflow-clip-margin:2px]"
+      className="transition-[height] duration-300 ease-(--ease-spring) motion-reduce:transition-none [overflow-clip-margin:2px]"
       style={
         heightState.height === null
           ? undefined

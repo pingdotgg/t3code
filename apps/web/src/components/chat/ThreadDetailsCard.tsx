@@ -18,6 +18,7 @@ import {
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
+import { usePanelAnimationSettings, usePanelPresence } from "../../panelAnimations";
 
 export function ThreadDetailsCard({
   threadRef,
@@ -54,6 +55,15 @@ export function ThreadDetailsCard({
   });
   const contentHeights =
     measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
+  const { active: inlineAnimated, durationMs } = usePanelAnimationSettings();
+  const inlinePresence = usePanelPresence(
+    placement !== null && inlineOpen,
+    placement,
+    inlineAnimated,
+    `${threadRef.environmentId}:${threadRef.threadId}`,
+    durationMs,
+  );
+  const inlinePlacement = inlinePresence.value;
   const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
   const density = resolveThreadDetailsCardDensity(height, contentHeights);
   const measureDetailsCard = canvas?.measureDetailsCard;
@@ -119,7 +129,11 @@ export function ThreadDetailsCard({
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
-      style={placement ? { maxHeight: height } : undefined}
+      style={
+        placement || inlinePlacement
+          ? { maxHeight: placement ? height : inlinePlacement?.height }
+          : undefined
+      }
       onContextMenu={onContextMenu}
       data-thread-details-card
     >
@@ -146,20 +160,26 @@ export function ThreadDetailsCard({
         useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open);
       }}
     >
-      {placement && inlineOpen ? (
+      {inlinePresence.present && inlinePlacement ? (
         <aside
           {...detailsArea}
           data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
           // Skip the return transition to avoid overlapping the rising preview.
           className={cn(
-            "absolute z-20",
+            "absolute z-20 origin-top-right",
             topInset > 0 && "transition-[top] duration-150 ease-out motion-reduce:transition-none",
+            inlineAnimated &&
+              "duration-(--panel-animation-duration) starting:scale-96 starting:opacity-0",
+            inlineAnimated &&
+              (topInset > 0 ? "transition-[top,opacity,scale]" : "transition-[opacity,scale]"),
+            inlineAnimated && !inlineOpen && "pointer-events-none scale-96 opacity-0",
           )}
+          inert={!inlineOpen}
           style={{
-            right: placement.right,
-            top: placement.y,
-            width: placement.width,
-            maxHeight: height,
+            right: inlinePlacement.right,
+            top: inlinePlacement.y,
+            width: inlinePlacement.width,
+            maxHeight: inlinePlacement.height,
           }}
           data-density={density}
           data-thread-details-panel="inline"

@@ -193,6 +193,66 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --inset-shadow-control-highlight: 0 1px rgb(255 255 255 / 16%);
   --inset-shadow-control-pressed: 0 1px rgb(0 0 0 / 8%);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Sampled damped springs. spring (no overshoot) is the default for every
+     transition utility; spring-bounce overshoots ~4%, so keep it to small
+     discrete moves like a switch thumb, never panels or large surfaces. */
+  --ease-spring: linear(
+    0,
+    0.057,
+    0.18,
+    0.321,
+    0.455,
+    0.573,
+    0.671,
+    0.75,
+    0.812,
+    0.86,
+    0.896,
+    0.924,
+    0.944,
+    0.96,
+    0.971,
+    0.979,
+    0.985,
+    0.989,
+    0.992,
+    0.994,
+    0.996,
+    0.997,
+    0.998,
+    0.999,
+    1
+  );
+  --ease-spring-bounce: linear(
+    0,
+    0.075,
+    0.242,
+    0.436,
+    0.62,
+    0.772,
+    0.887,
+    0.965,
+    1.013,
+    1.037,
+    1.046,
+    1.044,
+    1.037,
+    1.028,
+    1.02,
+    1.012,
+    1.006,
+    1.002,
+    1,
+    0.998,
+    0.998,
+    0.998,
+    0.998,
+    0.999,
+    1
+  );
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: var(--ease-spring);
+  --default-transition-timing-function: var(--ease-spring);
   /* The composer's elevation: a soft drop pulled in under the surface, shared
      by the composer, its context strip and attached banners. */
   --shadow-composer: 0 1px 2px rgb(0 0 0 / 5%);
@@ -448,6 +508,211 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     background: color-mix(in srgb, var(--background) 64%, transparent);
+  }
+}
+
+/* One-shot entrances for anything that mounts. They run on insertion, so only put them on
+   elements that are genuinely new, and only backwards-fill so nothing is left transformed. */
+@keyframes enter-rise {
+  from {
+    opacity: 0;
+    translate: 0 var(--enter-distance, 8px);
+  }
+}
+@keyframes enter-pop {
+  from {
+    opacity: 0;
+    scale: 0.92;
+  }
+}
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes enter-drop {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--enter-distance, 8px) * -1);
+  }
+}
+@keyframes enter-modal {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+@utility enter-modal {
+  animation: enter-modal 380ms var(--ease-spring) backwards;
+  @media (prefers-reduced-motion: reduce) {
+    animation-name: enter-fade;
+  }
+}
+@utility enter-rise {
+  animation: enter-rise 380ms var(--ease-spring) backwards;
+  animation-delay: var(--enter-delay, 0ms);
+  @media (prefers-reduced-motion: reduce) {
+    animation-name: enter-fade;
+  }
+}
+@utility enter-drop {
+  animation: enter-drop 340ms var(--ease-spring) backwards;
+  @media (prefers-reduced-motion: reduce) {
+    animation-name: enter-fade;
+  }
+}
+@utility enter-pop {
+  animation: enter-pop 320ms var(--ease-spring-bounce) backwards;
+  @media (prefers-reduced-motion: reduce) {
+    animation-name: enter-fade;
+  }
+}
+@utility enter-fade {
+  animation: enter-fade 240ms var(--ease-spring) backwards;
+}
+
+/* A retained element from <Presence>: pops in, then leaves quickly once data-closing is set. */
+@utility presence-pop {
+  transition:
+    opacity 180ms var(--ease-spring),
+    scale 340ms var(--ease-spring),
+    translate 340ms var(--ease-spring);
+  @starting-style {
+    opacity: 0;
+    scale: 0.94;
+    translate: 0 6px;
+  }
+  &[data-closing] {
+    opacity: 0;
+    scale: 0.96;
+    translate: 0 4px;
+    pointer-events: none;
+    transition-duration: 130ms;
+    transition-timing-function: var(--ease-exit);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    scale: 1 !important;
+    translate: none !important;
+  }
+}
+
+/* New streamed blocks fade in; settled blocks keep their elements, so they never replay. */
+.chat-markdown[data-streaming] > * {
+  animation: enter-fade 280ms var(--ease-spring) backwards;
+}
+
+/* The pill floats over message text, so it needs a real surface behind its label. */
+[data-scroll-to-end] {
+  background: color-mix(in srgb, var(--popover) 92%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+/* Route modals mount already open, so their backdrop has no starting style to transition from. */
+[data-slot="dialog-backdrop"]:has(+ * > .enter-modal) {
+  animation: enter-fade 280ms var(--ease-spring) backwards;
+}
+
+/* See useChatLaneFreeze: the chat keeps its final width, centered, while a neighbor slides. */
+[data-chat-canvas][data-lane-held] [data-assistant-citation-viewport],
+[data-chat-canvas][data-lane-held] [data-chat-composer-overlay] {
+  left: 50%;
+  right: auto;
+  width: var(--chat-held-width);
+  max-width: none;
+  translate: -50% 0;
+}
+
+/* The nav's sliding highlight replaces the row's own selected fill. */
+[data-settings-section][data-active="true"] {
+  position: relative;
+  background: transparent;
+}
+
+/* Disclosure content from <Presence variant="collapse">: folds open and shut around its height. */
+@utility presence-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 300ms var(--ease-spring),
+    opacity 200ms var(--ease-spring);
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  & > * {
+    min-height: 0;
+    overflow: clip;
+    overflow-clip-margin: 2px;
+  }
+  &[data-closing] {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    pointer-events: none;
+    transition-duration: 200ms;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+
+/* Set from JS once placed, so the indicator doesn't fly in from the corner on first paint. */
+.sliding-indicator {
+  opacity: 0;
+  &[data-ready] {
+    transition:
+      translate 340ms var(--ease-spring),
+      width 340ms var(--ease-spring),
+      height 340ms var(--ease-spring),
+      opacity 160ms var(--ease-spring);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none !important;
+  }
+}
+
+/* Popups grow out of their trigger and settle on a spring; they leave faster than they arrive.
+   Combobox and autocomplete style a wrapper around the popup, so state is read through :has(). */
+@utility popup-motion {
+  transition-property: scale, translate, opacity, width, height;
+  transition-duration: 340ms, 340ms, 160ms, 150ms, 150ms;
+  transition-timing-function: var(--ease-spring);
+  &:is([data-starting-style], :has(> [data-starting-style])) {
+    opacity: 0;
+    scale: 0.94;
+  }
+  &:is(
+    [data-starting-style][data-side="bottom"],
+    :has(> [data-starting-style][data-side="bottom"])
+  ) {
+    translate: 0 -4px;
+  }
+  &:is([data-starting-style][data-side="top"], :has(> [data-starting-style][data-side="top"])) {
+    translate: 0 4px;
+  }
+  &:is([data-ending-style], :has(> [data-ending-style])) {
+    opacity: 0;
+    scale: 0.97;
+    transition-duration: 140ms;
+    transition-timing-function: var(--ease-exit);
+  }
+  /* The popup unmounts when its own transitions finish, so give it one as long as the wrapper's exit. */
+  & > [data-ending-style] {
+    opacity: 0;
+    transition: opacity 140ms var(--ease-exit);
+  }
+  &[data-instant] {
+    transition-duration: 0ms;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &:is(
+      [data-starting-style],
+      [data-ending-style],
+      :has(> [data-starting-style], > [data-ending-style])
+    ) {
+      scale: 1;
+      translate: none;
+    }
   }
 }
 
@@ -1728,6 +1993,73 @@ body {
 @layer base {
   :where(svg.lucide[stroke-width="2"]) {
     stroke-width: 1.75;
+  }
+}
+
+/* Every control eases between states, even ones that only set hover colors. Base layer and
+   zero specificity, so any transition utility on the element replaces this. */
+@layer base {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+  :where(
+    a,
+    button,
+    summary,
+    [role="button"],
+    [role="tab"],
+    [role="treeitem"],
+    [data-slot="toggle"],
+    [data-slot="badge"]
+  ) {
+    transition-property: color, background-color, border-color, opacity;
+    transition-duration: 160ms;
+    transition-timing-function: var(--ease-spring);
+  }
+  :where(input, textarea, select, [contenteditable="true"]) {
+    transition-property: border-color, box-shadow, background-color;
+    transition-duration: 160ms;
+    transition-timing-function: var(--ease-spring);
+  }
+  /* Disclosure chevrons rotate instead of snapping. */
+  :where(
+    svg.lucide-chevron-right,
+    svg.lucide-chevron-down,
+    svg.lucide-chevron-up,
+    svg.lucide-chevron-left
+  ) {
+    transition-property: rotate, transform, opacity, color;
+    transition-duration: 260ms;
+    transition-timing-function: var(--ease-spring);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where(
+      svg.lucide-chevron-right,
+      svg.lucide-chevron-down,
+      svg.lucide-chevron-up,
+      svg.lucide-chevron-left
+    ) {
+      transition-property: opacity, color;
+    }
+  }
+  /* Native disclosure content, Chromium and Safari. Elsewhere it opens instantly. */
+  details::details-content {
+    block-size: 0;
+    overflow: clip;
+    opacity: 0;
+    transition:
+      block-size 300ms var(--ease-spring),
+      opacity 200ms var(--ease-spring),
+      content-visibility 300ms allow-discrete;
+  }
+  details[open]::details-content {
+    block-size: auto;
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    details::details-content {
+      transition: none;
+    }
   }
 }
 

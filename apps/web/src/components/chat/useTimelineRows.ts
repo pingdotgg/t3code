@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   computeStableMessagesTimelineRows,
   handoffRunsSignature,
@@ -75,4 +75,67 @@ export function useStableRows(
   );
   setState({ identity, source: rows, stable });
   return stable.result;
+}
+
+const ROW_ARRIVAL_WINDOW_MS = 600;
+const MAX_ANIMATED_ARRIVALS = 16;
+
+/**
+ * Rows that joined the list since the last update, with their position in the batch. Opening a
+ * thread is not an arrival, and neither is a batch too large to read as individual rows.
+ */
+export function useTimelineRowArrivals(
+  rows: MessagesTimelineRow[],
+  identity: string,
+): ReadonlyMap<string, number> {
+  const [state, setState] = useState<{
+    readonly identity: string;
+    readonly rows: MessagesTimelineRow[];
+    readonly known: ReadonlySet<string>;
+    readonly arrivals: ReadonlyMap<string, number>;
+  }>({
+    identity,
+    rows,
+    known: new Set(rows.map((row) => row.id)),
+    arrivals: new Map(),
+  });
+  let current = state;
+  if (state.identity !== identity) {
+    current = { identity, rows, known: new Set(rows.map((row) => row.id)), arrivals: new Map() };
+    setState(current);
+  } else if (state.rows !== rows) {
+    const added = rows.filter((row) => !state.known.has(row.id));
+    const arrivals = new Map(state.arrivals);
+    const rowIds = new Set(rows.map((row) => row.id));
+    const removedCount = state.rows.filter((row) => !rowIds.has(row.id)).length;
+    // A live row settling into its final row swaps ids in place; fading that would read as a blink.
+    const isReplacement = removedCount >= added.length;
+    if (state.known.size > 0 && !isReplacement && added.length <= MAX_ANIMATED_ARRIVALS) {
+      added.forEach((row, index) => arrivals.set(row.id, index));
+    }
+    current = {
+      identity,
+      rows,
+      known: added.length === 0 ? state.known : rowIds,
+      arrivals,
+    };
+    setState(current);
+  }
+
+  const hasArrivals = current.arrivals.size > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arrivals expire on a timer so a row scrolled back into view later does not replay its entrance
+  useEffect(() => {
+    if (!hasArrivals) return;
+    const timeout = window.setTimeout(
+      () => setState((latest) => ({ ...latest, arrivals: new Map() })),
+      ROW_ARRIVAL_WINDOW_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each new batch restarts the window so it stays visible for its full entrance
+    current.arrivals,
+    hasArrivals,
+  ]);
+
+  return current.arrivals;
 }

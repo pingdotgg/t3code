@@ -279,7 +279,7 @@ function CollapsedComment({
         </div>
         <CollapsiblePanel>
           {open ? (
-            <div className="px-3 pb-3">
+            <div className="enter-rise [--enter-distance:4px] px-3 pb-3">
               {body === null && !editing.canEdit(comment) ? null : (
                 <CommentBody className="mt-2" comment={comment} editing={editing} />
               )}
