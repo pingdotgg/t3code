@@ -8,7 +8,6 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
 import { useDictationShortcut, type DictationKeyHandlers } from "~/speech/useDictationShortcut";
-import { resolveSpeechPresentation } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 import { previewBridge } from "./previewBridge";
 import { toastManager } from "~/components/ui/toast";
@@ -63,7 +62,7 @@ export function PreviewAnnotationSpeech({
     ownsFocus: () => true,
     subscribeKeys,
   });
-  const { available, state, preview, freezesEditor, blocksSubmission, cancel, progress } = speech;
+  const { available, state, freezesEditor, blocksSubmission, cancel } = speech;
   const level = useSyncExternalStore(speech.level.subscribe, speech.level.getSnapshot);
   const publish = async (nextDraft: { text: string; cursor: number } | null = null) => {
     try {
@@ -73,8 +72,8 @@ export function PreviewAnnotationSpeech({
         available: available,
         phase: state.phase,
         errorAction: state.errorAction,
-        status: resolveSpeechPresentation(state, progress).status,
-        preview: preview ? preview.committed + preview.tentative : null,
+        status: null,
+        preview: null,
         level,
         shortcutLabel,
         freezesEditor: freezesEditor,

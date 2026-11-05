@@ -2,9 +2,11 @@
 
 Voice input is available in supported browsers, in the desktop app, and on iOS
 26 or newer. Select the microphone button beside Send to record, then finish recording
-to transcribe. On web and desktop, select the microphone again to finish, or select
-the X button to cancel. The transcript is inserted into the composer for editing
-and is never sent automatically.
+to transcribe. On web and desktop, the microphone turns into bars that move with
+your voice while it records, and Send becomes Stop. Select either one to finish, or
+press Esc to cancel.
+The transcript is inserted into the composer for editing and is never sent
+automatically.
 
 On web and desktop, the first microphone click opens voice setup if the selected
 environment has no transcription model. Download the recommended English model,
@@ -30,10 +32,8 @@ of downloaded again: add its folder under Settings, then Voice, then
 Transcription models, then Model folders. T3 Code only reads those folders,
 so those models can't be deleted from Voice settings.
 
-Models marked Streaming show a live preview while you speak. The tentative ending
-may change as the model hears more. Stop recording to finish and insert the text;
-cancel to discard the preview without changing your draft. Other models transcribe
-after recording stops.
+Models marked Streaming transcribe while you speak, so the text is ready sooner
+after you stop. Other models transcribe after recording stops.
 
 In Voice settings, you can also choose the microphone used by this browser or
 app, switch between downloaded models, or remove models from the environment.
@@ -65,8 +65,8 @@ prompt are independent from the environment's general text generation model.
 Enable it and choose its model and prompt under Settings, then Voice.
 If automatic cleanup misses your spoken corrections, add the word or phrase you
 use to signal them as an **Explicit correction cue** in Voice settings.
-While it runs, the composer shows a post-processing state. Select **Skip** to
-stop processing and insert the original transcript instead. If processing fails,
+While it runs, the microphone button shows a spinner. Select it to skip
+processing and insert the original transcript instead. If processing fails,
 T3 Code preserves the original transcript.
 
 On iOS 26 or newer, transcription uses Apple's on-device speech model instead of

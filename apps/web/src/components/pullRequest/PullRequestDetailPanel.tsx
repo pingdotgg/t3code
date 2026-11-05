@@ -4,9 +4,11 @@ import { PullRequestTitleEditor } from "./PullRequestTitleEditor";
 import { PullRequestBaseBranch } from "./PullRequestBaseBranch";
 import {
   PullRequestCheckoutMenuItems,
+  PullRequestFinishedMenuItems,
   PullRequestResolveConflictsButton,
   PullRequestPrimaryAction,
   PullRequestPrimaryActionMenu,
+  PullRequestStateBadge,
 } from "./PullRequestDetailActions";
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
@@ -1282,8 +1284,9 @@ export function PullRequestDetailPanel({
     showsAutoMerge ||
     updateMethods.length > 0 ||
     context === "page";
+  const armedPrimary = primaryAction === "auto-merge-armed";
   const splitMenu =
-    !hasPrimaryButton || !splitMenuHasItems || detail === null ? null : (
+    !(hasPrimaryButton || armedPrimary) || !splitMenuHasItems || detail === null ? null : (
       <PullRequestPrimaryActionMenu
         showsMergeMethods={showsMergeMethods}
         showsMergeNow={showsMergeNow}
@@ -1304,6 +1307,35 @@ export function PullRequestDetailPanel({
         checkoutMenuItems={checkoutMenuItems}
       />
     );
+  const finishedState =
+    detail?.state === "merged" || detail?.state === "closed" ? detail.state : null;
+  const finishedBadge =
+    detail && finishedState ? (
+      <PullRequestStateBadge tone={finishedState === "merged" ? "merged" : "destructive"}>
+        {finishedState === "merged" ? (
+          <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+        ) : (
+          <PullRequestGlyph.closed aria-hidden className="size-3.5" />
+        )}
+        {finishedState === "merged" ? `Merged into ${detail.baseBranch}` : "Closed without merging"}
+      </PullRequestStateBadge>
+    ) : null;
+  const finishedMenu =
+    detail && finishedState && (can("reopen") || can("revert") || showsDeleteBranch) ? (
+      <PullRequestFinishedMenuItems
+        state={finishedState}
+        singular={terminology.singular}
+        headBranch={detail.headBranch}
+        canReopen={can("reopen")}
+        canRevert={can("revert")}
+        showsDeleteBranch={showsDeleteBranch}
+        environmentConnected={environmentConnected}
+        pendingAction={pendingAction}
+        perform={perform}
+        inlineConfirm={inlineConfirm}
+        confirmDeleteBranch={confirmDeleteBranch}
+      />
+    ) : null;
   const readinessCard =
     detail === null ? null : (
       <TooltipProvider delay={150} closeDelay={150} timeout={400}>
@@ -1333,12 +1365,21 @@ export function PullRequestDetailPanel({
           actionPending={actionPending}
           onUpdateBranch={(method) => void perform("update-branch", undefined, method)}
           resolveConflicts={primaryAction === "resolve" ? null : resolveConflictsControl}
-          primary={primaryControl ?? stackMergeButton}
-          primaryMenu={splitMenu}
-          primaryMenuVariant={primaryAction === "resolve" ? "destructive-outline" : "default"}
+          primary={primaryControl ?? finishedBadge ?? stackMergeButton}
+          primaryMenu={splitMenu ?? finishedMenu}
+          primaryMenuVariant={
+            primaryAction === "resolve" || finishedState === "closed"
+              ? "destructive-tint"
+              : finishedState === "merged"
+                ? "merged-tint"
+                : armedPrimary
+                  ? "info-tint"
+                  : "default"
+          }
           note={
-            showsArmedNote || noteStackMerge !== null ? (
+            armedPrimary || showsArmedNote || noteStackMerge !== null ? (
               <>
+                {armedPrimary ? <p>The host merges this once its requirements are met.</p> : null}
                 {/* Said under the merge button, because it is the answer to why nobody has */}
                 {showsArmedNote ? (
                   <p className="flex items-center gap-1.5 text-info-foreground">

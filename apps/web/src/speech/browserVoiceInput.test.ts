@@ -68,7 +68,6 @@ it.each([false, true])("keeps pending streaming audio unless cancelled: %s", asy
     getMicrophoneId: () => "",
     onLevel,
     onDurationLimit() {},
-    onText() {},
     onError: vi.fn(),
   });
   const released = Promise.withResolvers<void>();

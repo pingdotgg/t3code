@@ -14,7 +14,6 @@ import type {
   EnvironmentId,
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
-  SpeechStreamText,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
@@ -104,7 +103,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     readonly request: number;
   } | null>(null);
   const [level] = useState(createSpeechLevel);
-  const [preview, setPreview] = useState<SpeechStreamText | null>(null);
   const controllerChanged =
     controllerState.prepared !== prepared ||
     controllerState.postProcessingEnabled !== postProcessingEnabled ||
@@ -116,7 +114,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       postProcessingPrepared,
       value: INITIAL_STATE,
     });
-    setPreview(null);
   }
   const state: VoiceInputState<true> =
     queuedStart?.prepared === prepared
@@ -180,6 +177,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
 
     let disposed = false;
+    let lastPhase: VoiceInputState<true>["phase"] = "idle";
     let controller: VoiceInputController<true>;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
@@ -190,9 +188,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       getMicrophoneId: () => microphoneIdRef.current,
       onLevel: level.set,
       onDurationLimit: () => void controller.stop(),
-      onText: (text) => {
-        if (!disposed) setPreview(text);
-      },
       onError: (message) => {
         if (!disposed) void controller.interruptRecording(message);
       },
@@ -229,7 +224,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       onStateChange: (value) => {
         if (!disposed) {
           setControllerState({ prepared, postProcessingEnabled, postProcessingPrepared, value });
-          if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
+          if (value.phase === "error" && lastPhase !== "error") {
+            toastManager.add({
+              type: "error",
+              title: "Voice input failed",
+              description: value.error ?? "Try again.",
+            });
+          }
+          lastPhase = value.phase;
         }
       },
     });
@@ -440,11 +442,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       startRecording: startAfterSetup,
     },
     state,
-    progress: null,
-    preview: state.phase === "recording" || state.phase === "transcribing" ? preview : null,
     level,
     blocksSubmission: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),
+    skipPostProcessing: () => controllerRef.current?.skipPostProcessing(),
     start,
     startPending: () => pendingStartRef.current !== null,
     stop: () => controllerRef.current?.stop() ?? Promise.resolve(),
@@ -454,6 +455,5 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       setQueuedStart(null);
       controllerRef.current?.cancel();
     },
-    skipPostProcessing: () => controllerRef.current?.skipPostProcessing(),
   };
 }
