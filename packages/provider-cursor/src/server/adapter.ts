@@ -85,7 +85,7 @@ export const CursorProviderCapabilitiesV2 = {
   threads: {
     canCreateEmptyThread: true,
     canReadThreadSnapshot: true,
-    canRollbackThread: false,
+    canRollbackThread: true,
     canForkThread: false,
     canForkFromTurn: false,
     canForkFromSubagentThread: false,
@@ -2855,7 +2855,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 Effect.onError(() => agent.session.close.pipe(Effect.ignore)),
                 Effect.ensuring(Ref.set(liveAgent, null)),
               );
-              yield* Ref.set(told, null);
+              yield* Ref.set(
+                told,
+                target.type === "thread_start"
+                  ? {
+                      agent: agent.nativeThreadId,
+                      orchestration: false,
+                      device: false,
+                    }
+                  : null,
+              );
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,

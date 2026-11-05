@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
+  CheckpointId,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -809,6 +810,25 @@ describe("CursorAdapterV2", () => {
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
       assert.deepEqual(yield* send(), told(false, false));
+      yield* runtime.rollbackThread({
+        providerThread,
+        providerThreadTurns: [],
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("cursor-start"),
+          appRunOrdinal: 0,
+        },
+      });
+      assert.deepEqual(
+        yield* send(),
+        told(true, true),
+        "thread-start rollback drops all instructions despite the increasing run ordinal",
+      );
+      assert.deepEqual(
+        yield* send(),
+        told(false, false),
+        "instructions are sent only once after rollback",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
