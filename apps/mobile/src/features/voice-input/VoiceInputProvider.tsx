@@ -121,6 +121,7 @@ const voiceInputAtom = Atom.make((get) => {
       const transcriber = registry.get(localVoiceTranscriberAtom);
       if (transcriber === "checking" || transcriber === null) return null;
       const preferences = registry.get(mobilePreferencesAtom);
+      if (AsyncResult.isInitial(preferences)) return null;
       const locale = AsyncResult.isSuccess(preferences)
         ? preferences.value.dictationLocale
         : undefined;
