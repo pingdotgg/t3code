@@ -1447,6 +1447,36 @@ describe("MessagesTimeline thread find", () => {
     expect(navigations).toEqual([released]);
   });
 
+  it("hears an upward scroll without input only from an embedded frame", async () => {
+    setup();
+    const { navigations, element } = renderObserved();
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      message(`Turn ${index}: ${"x ".repeat(200)}`, {}, `turn-${index}`),
+    );
+    await using screen = await renderElement(element({ timelineEntries: entries }));
+    const viewport = screen.container.querySelector<HTMLElement>(".messages-timeline-scroll")!;
+    await vi.waitFor(() => {
+      expect(screen.text()).toContain("Turn 39:");
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+    });
+    const scrollUp = async () => {
+      const scrolled = new Promise((resolve) =>
+        viewport.addEventListener("scroll", resolve, { once: true }),
+      );
+      viewport.scrollTop -= 200;
+      await scrolled;
+    };
+
+    await scrollUp();
+    expect(navigations).toEqual([]);
+
+    const frame = document.createElement("iframe");
+    viewport.querySelector("[data-timeline-row-id]")!.append(frame);
+    frame.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    await scrollUp();
+    expect(navigations).toEqual([{ source: "scroll" }]);
+  });
+
   it("releases follow once when it mounts on a thread whose find is open", async () => {
     setup();
     const { navigations, element } = renderObserved();
