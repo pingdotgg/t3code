@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { I18nManager, Platform, Pressable, View } from "react-native";
-import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
+import Animated, {
+  useAnimatedStyle,
+  useDerivedValue,
+  useReducedMotion,
+  withTiming,
+} from "react-native-reanimated";
 
 import { segmentedControlColors } from "./segmentedControlColors";
 import { AppText } from "./AppText";
@@ -18,10 +23,14 @@ export function SegmentedControl<Value extends string | number>(
   const reduceMotion = useReducedMotion();
   const selectedIndex = props.options.findIndex((option) => option.value === props.selected);
   const segmentWidth = props.options.length ? Math.max(0, width - 6) / props.options.length : 0;
-  const selectionOffset = selectedIndex * segmentWidth * (I18nManager.isRTL ? -1 : 1);
+  const direction = I18nManager.isRTL ? -1 : 1;
+  // The index animates, not the offset, so a resize moves the selection without sliding it.
+  const selectedPosition = useDerivedValue(() =>
+    withTiming(selectedIndex, { duration: reduceMotion ? 0 : 160 }),
+  );
   const selectionStyle = useAnimatedStyle(() => ({
     width: segmentWidth,
-    transform: [{ translateX: withTiming(selectionOffset, { duration: reduceMotion ? 0 : 160 }) }],
+    transform: [{ translateX: selectedPosition.value * segmentWidth * direction }],
   }));
   const { trackColor, selectedColor, selectedTextColor, mutedColor } = segmentedControlColors(
     colors,
