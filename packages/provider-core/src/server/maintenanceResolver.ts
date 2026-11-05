@@ -486,7 +486,9 @@ export function parseBunReleaseAgeConfig(
     if (age) seconds = Number(age[1]);
     const list = /^minimumReleaseAgeExcludes\s*=\s*\[(.*)\]$/.exec(line);
     if (list) {
-      excludes = [...list[1]!.matchAll(/"([^"]*)"|'([^']*)'/g)].map((match) => match[1] ?? match[2]!);
+      excludes = [...list[1]!.matchAll(/"([^"]*)"|'([^']*)'/g)].map(
+        (match) => match[1] ?? match[2]!,
+      );
     }
   }
   return seconds === null ? null : { seconds, excludes };
