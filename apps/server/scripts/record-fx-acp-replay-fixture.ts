@@ -13,6 +13,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -322,7 +324,19 @@ function normalizeEntries(input: {
 
 const DEFAULT_FX_SETTINGS = Schema.decodeSync(FxSettings)({});
 
+const RecorderEnv = Config.all({
+  T3_FX_BIN: Config.String("T3_FX_BIN").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  HOME: Config.String("HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  USER: Config.String("USER").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  AI_GATEWAY_API_KEY: Config.String("AI_GATEWAY_API_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  TMPDIR: Config.String("TMPDIR").pipe(Config.option, Config.map(Option.getOrUndefined)),
+});
+
 const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: string) {
+  const recorderEnv = yield* RecorderEnv;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === FX_DRIVER_KIND);
   if (fixture === undefined || variant === undefined) {
@@ -359,7 +373,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   };
 
   const tee = makeWireTee();
-  const settings = { ...DEFAULT_FX_SETTINGS, binaryPath: process.env.T3_FX_BIN ?? "fx" };
+  const settings = { ...DEFAULT_FX_SETTINGS, binaryPath: recorderEnv.T3_FX_BIN ?? "fx" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const environment = yield* HostProcess.Environment;
@@ -455,7 +469,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
     isRecord(initialize.frame.result.agentInfo)
       ? initialize.frame.result.agentInfo
       : {};
-  const home = process.env.HOME ?? "";
+  const home = recorderEnv.HOME ?? "";
   const transcript = {
     provider: FX_DRIVER_KIND,
     protocol: ACP_PROTOCOL,
@@ -473,11 +487,11 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
         entries,
         workspace: realWorkspace,
         home,
-        user: process.env.USER ?? "",
+        user: recorderEnv.USER ?? "",
         skillNames: yield* readUserSkillNames(home),
-        ...(process.env.AI_GATEWAY_API_KEY === undefined
+        ...(recorderEnv.AI_GATEWAY_API_KEY === undefined
           ? {}
-          : { gatewayApiKey: process.env.AI_GATEWAY_API_KEY }),
+          : { gatewayApiKey: recorderEnv.AI_GATEWAY_API_KEY }),
         runtimeInstructions: buildRuntimeInstructions({
           harness: "fx",
           model: variant.modelSelection.model,
@@ -494,7 +508,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   );
   if (liveFailure._tag === "Some") {
     const dumpPath = path.join(
-      process.env.TMPDIR ?? "/tmp",
+      recorderEnv.TMPDIR ?? "/tmp",
       `fx-replay-${fixtureName}-failed.json`,
     );
     yield* fs.writeFileString(dumpPath, encodeJson(transcript));
