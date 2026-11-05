@@ -1,8 +1,10 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
@@ -510,30 +512,52 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
-  it.effect("answers an incoming request whose handler dies", () =>
-    Effect.gen(function* () {
-      const { stdio, input, output } = yield* makeInMemoryStdio();
-      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
-        stdio,
-        onRequest: () => Effect.die(new Error("Injected handler defect")),
-      });
+  it.effect.each(["dies", "throws"] as const)(
+    "answers an incoming request whose handler %s, keeping its text out of logs",
+    (outcome) =>
+      Effect.gen(function* () {
+        const secret = "codex-handler-secret-sentinel";
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const logged: Array<string> = [];
+        yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+          stdio,
+          onRequest: () => {
+            if (outcome === "throws") throw new Error(secret);
+            return Effect.die(new Error(secret));
+          },
+        }).pipe(
+          Effect.provide(
+            Logger.layer([
+              Logger.make(({ logLevel, message, fiber }) => {
+                if (logLevel === "Error") {
+                  logged.push(
+                    String([message].flat()),
+                    JSON.stringify(fiber.getRef(References.CurrentLogAnnotations)),
+                  );
+                }
+              }),
+            ]),
+          ),
+        );
 
-      const request = encodeUnknownJsonString({
-        id: 1,
-        method: "item/tool/requestUserInput",
-        params: {},
-      });
-      yield* Queue.offer(
-        input,
-        encoder.encode(`${request}
+        const request = encodeUnknownJsonString({
+          id: 1,
+          method: "item/tool/requestUserInput",
+          params: {},
+        });
+        yield* Queue.offer(
+          input,
+          encoder.encode(`${request}
 `),
-      );
+        );
 
-      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
-        id: 1,
-        error: { code: -32603, message: "Internal error" },
-      });
-    }),
+        assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+          id: 1,
+          error: { code: -32603, message: "Internal error" },
+        });
+        assert.lengthOf(logged, 2);
+        assert.notInclude(logged.join(), secret);
+      }),
   );
 
   it.effect("releases a waiting request handler when Codex resolves its request", () =>

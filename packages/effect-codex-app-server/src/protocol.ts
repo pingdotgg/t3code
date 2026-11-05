@@ -326,10 +326,14 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                 );
               }
 
-              return handler(request).pipe(
+              return Effect.suspend(() => handler(request)).pipe(
                 // Adapter handlers end in Effect.orDie; Codex waits for an answer regardless.
                 Effect.catchDefect((defect) =>
-                  Effect.logError("Codex request handler failed", defect).pipe(
+                  Effect.logError("Codex request handler failed").pipe(
+                    Effect.annotateLogs({
+                      method: request.method,
+                      defect: defect instanceof Error ? defect.name : typeof defect,
+                    }),
                     Effect.andThen(
                       Effect.fail(CodexError.CodexAppServerRequestError.internalError()),
                     ),
