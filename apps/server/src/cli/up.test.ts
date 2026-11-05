@@ -162,6 +162,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    readonly fails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
@@ -253,6 +254,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       envAfter: "T3CODE_LAN=false\n",
     },
     {
+      label: "a service for another home is refused without a restart",
+      installed: true,
+      status: { current: false, otherBaseDir: "/srv/t3 home" },
+      fails: true,
+      answer: "y",
+      env: "T3CODE_LAN=false\n",
+      args: ["--lan"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_LAN=false\n",
+    },
+    {
       label: "no service manager still records the choice",
       installed: false,
       status: { supported: false },
@@ -298,19 +311,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
               ),
             ),
             install: () =>
-              input.installFails === true
+              status.otherBaseDir !== undefined
                 ? Effect.fail(
-                    new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" }),
-                  )
-                : Effect.sync(() => {
-                    installs++;
-                    return {
-                      program: ["t3"],
+                    new BootService.BootServiceOtherBaseDirError({
+                      installedBaseDir: status.otherBaseDir,
                       baseDir,
-                      unitPath: status.unitPath,
-                      logPath: status.logPath,
-                    };
-                  }),
+                    }),
+                  )
+                : input.installFails === true
+                  ? Effect.fail(
+                      new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" }),
+                    )
+                  : Effect.sync(() => {
+                      installs++;
+                      return {
+                        program: ["t3"],
+                        baseDir,
+                        unitPath: status.unitPath,
+                        logPath: status.logPath,
+                      };
+                    }),
             uninstall: Effect.succeed(false),
           }),
         ),
@@ -340,7 +360,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       if (input.prints !== undefined) {
         expect(lines.join("\n")).toContain(input.prints.replace("<baseDir>", baseDir));
       }
-      expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
+      expect(exit._tag).toBe(
+        input.restartFails === true || input.fails === true ? "Failure" : "Success",
+      );
       expect({ installs, restarts }).toEqual({
         installs: input.installs,
         restarts: input.restarts,

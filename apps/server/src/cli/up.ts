@@ -125,6 +125,14 @@ const CHOICES = {
 
 const formatSetup = (setup: Setup) => {
   const { service } = setup;
+  // This home's access settings reach no service, so only the service is shown.
+  if (service.otherBaseDir !== undefined) {
+    return [
+      `  ${"Service".padEnd(15)}installed for another T3 home · ${service.otherBaseDir}`,
+      "",
+      `Pass \`${BootService.formatBootServiceBaseDirOption(service.otherBaseDir)}\` to manage it.`,
+    ].join("\n");
+  }
   const rows: ReadonlyArray<readonly [string, string]> = [
     [
       "Service",
@@ -203,6 +211,13 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   });
   const { command: pairCommand } = yield* resolveHostCliCommand("pair", baseDirArgs);
   const before = yield* readSetup();
+  // Before any question or write: install would refuse only after both.
+  if (before.service.otherBaseDir !== undefined) {
+    return yield* new BootService.BootServiceOtherBaseDirError({
+      installedBaseDir: before.service.otherBaseDir,
+      baseDir,
+    });
+  }
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
     return yield* new CliError.UserError({
       cause: "connect",
@@ -480,6 +495,7 @@ const setupJson = (setup: Setup) =>
         supported: setup.service.supported,
         installed: setup.service.installed,
         installedVersion: setup.service.installedVersion ?? null,
+        otherBaseDir: setup.service.otherBaseDir ?? null,
       },
       connect:
         setup.connect === null ? null : { enabled: setup.connect, revoked: setup.connectRevoked },
