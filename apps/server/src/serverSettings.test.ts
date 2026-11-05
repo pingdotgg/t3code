@@ -1292,10 +1292,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         redactedLast: true,
       },
       { label: "redacted then plain", duplicate: { value: "plain-foo", sensitive: false } },
+      {
+        label: "inline seed, redacted then empty sensitive",
+        duplicate: { value: "", sensitive: true },
+        inline: true,
+      },
     ].map((testCase) => [testCase.label, testCase] as const),
   )(
     "keeps a stored secret a redacted row still claims when a duplicate name is saved (%s)",
-    ([, { duplicate, redactedLast }]) =>
+    ([, { duplicate, redactedLast, inline }]) =>
       Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
         const instanceId = ProviderInstanceId.make("codex_personal");
@@ -1305,7 +1310,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
             },
           });
-        yield* save([{ name: "FOO", value: "stored-foo", sensitive: true }]);
+        if (inline) {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.writeFileString(
+            config.settingsPath,
+            '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"FOO","value":"stored-foo","sensitive":true}],"config":{}}}}',
+          );
+          yield* service.getSettings;
+        } else {
+          yield* save([{ name: "FOO", value: "stored-foo", sensitive: true }]);
+        }
         const redacted = { name: "FOO", value: "", sensitive: true, valueRedacted: true };
         const copy = { name: "FOO", ...duplicate };
         yield* save(redactedLast ? [copy, redacted] : [redacted, copy]);

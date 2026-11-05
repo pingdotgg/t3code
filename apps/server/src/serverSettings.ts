@@ -1048,13 +1048,13 @@ const make = Effect.gen(function* () {
           changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
           return { value: secret.value, redacted: false };
         }
+        if (secret.redacted) keptSecretNames.add(secret.secretName);
         const old = previous.get(secret.secretName);
         const inlineValue =
           old?.sensitive && !old.redacted && old.value.length > 0 ? old.value : undefined;
         const value = secret.redacted ? inlineValue : secret.value;
         if (value === undefined) {
           nextSecretNames.add(secret.secretName);
-          keptSecretNames.add(secret.secretName);
           return { value: "", redacted: true };
         }
         if (value.length === 0) {
