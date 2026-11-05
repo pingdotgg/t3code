@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { SecretProviderId } from "@t3tools/contracts";
+import { DeviceHostId, SecretProviderId, UsageLimitSourceId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 
@@ -125,12 +125,44 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         }),
     });
     const read = () => resolveSourceControlHostSecrets(resolver, hosts, "bitbucket");
+    const usageLimitSources = {
+      [UsageLimitSourceId.make("referenced")]: {
+        kind: "cliproxy",
+        url: "https://hub.test",
+        managementKey: source("cliproxy#key"),
+        enabled: true,
+      },
+      [UsageLimitSourceId.make("literal")]: {
+        kind: "cliproxy",
+        url: "https://hub.test",
+        managementKey: "plain-key",
+        enabled: true,
+      },
+    } as const;
+    const easDeviceHosts = [
+      {
+        kind: "eas" as const,
+        id: DeviceHostId.make("ref"),
+        label: "Ref",
+        maxSessionMinutes: 30,
+        idleMinutes: 10,
+        maxConcurrentSessions: 2,
+        accessToken: source("expo#token"),
+      },
+    ];
+    cache.set("cliproxy#key", "stale");
+    cache.set("expo#token", "stale");
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "stale",
     });
     current = "rotated";
-    yield* invalidateSettingsSecrets(resolver, Effect.succeed({ sourceControlHosts: hosts }));
+    yield* invalidateSettingsSecrets(
+      resolver,
+      Effect.succeed({ sourceControlHosts: hosts, usageLimitSources, easDeviceHosts }),
+    );
+    assert.isFalse(cache.has("cliproxy#key"));
+    assert.isFalse(cache.has("expo#token"));
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "rotated",

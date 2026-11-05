@@ -25,7 +25,7 @@ import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -195,11 +195,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title="Environment"
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
+        <AppBar embedded title="Environment" hideBottomBorder onBack={() => navigation.goBack()} />
       ) : null}
       <ScreenContent>
         <ScrollView
@@ -485,11 +481,7 @@ export function BranchPickerScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader
-          title={props.title}
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
+        <AppBar embedded title={props.title} hideBottomBorder onBack={() => navigation.goBack()} />
         <View className="bg-header px-4 pb-3 pt-1">
           <SearchField
             inputRef={searchRef}
