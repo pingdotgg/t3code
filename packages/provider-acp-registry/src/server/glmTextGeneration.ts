@@ -253,7 +253,7 @@ export const makeGlmTextGeneration = Effect.fn("makeGlmTextGeneration")(function
                     Effect.logWarning("GLM session rejected a configuration option value", {
                       optionId: option.id,
                       value: selection.value,
-                      detail: error.message,
+                      code: error.code,
                     }),
                 }),
               );
