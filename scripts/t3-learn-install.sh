@@ -18,7 +18,8 @@ set -eu
 
 repo="aabdel0181/t3-learn"
 base_url="${T3LEARN_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-app_name="T3 Learn"
+app_name="OminaX"
+old_app_name="T3 Learn"
 bundle_id="io.github.aabdel0181.t3learn"
 data_dir="$HOME/.t3-learn"
 # The Linux executable, WM class and deb package, like upstream's t3code.
@@ -85,7 +86,7 @@ case "$(uname -m)" in
 esac
 
 mac_app_dir() {
-  if [ -d "/Applications/${app_name}.app" ] || [ -w /Applications ]; then
+  if [ -d "/Applications/${app_name}.app" ] || [ -d "/Applications/${old_app_name}.app" ] || [ -w /Applications ]; then
     printf '/Applications'
   else
     printf '%s/Applications' "$HOME"
@@ -118,21 +119,22 @@ remove_appimage() {
 
 uninstall() {
   if [ "$platform" = mac ]; then
-    app="$(mac_app_dir)/${app_name}.app"
-    if [ -d "$app" ]; then
+    dest="$(mac_app_dir)"
+    for app in "${dest}/${app_name}.app" "${dest}/${old_app_name}.app"; do
+      [ -d "$app" ] || continue
       osascript -e "tell application id \"${bundle_id}\" to quit" >/dev/null 2>&1 || true
       rm -rf "$app"
       say "Removed ${app}."
-    fi
+    done
   else
     if deb_installed; then
       say "Removing the ${exe} package (sudo may ask for your password)..."
       sudo apt-get purge -y "$exe" >/dev/null
     fi
     remove_appimage
-    say "Removed T3 Learn."
+    say "Removed OminaX."
   fi
-  say "Your T3 Learn projects and settings are still in ${data_dir}; delete that folder to remove them too."
+  say "Your OminaX projects and settings are still in ${data_dir}; delete that folder to remove them too."
   exit 0
 }
 
@@ -142,7 +144,7 @@ case "${1:-}" in
   *) fail "unknown option $1 (the only option is --uninstall)" ;;
 esac
 
-printf '\n  %sT3 Learn%s %sinstaller%s\n\n' "$bold" "$reset" "$muted" "$reset" >&2
+printf '\n  %sOminaX%s %sinstaller%s\n\n' "$bold" "$reset" "$muted" "$reset" >&2
 
 if [ "$platform" = linux ]; then
   format="${T3LEARN_FORMAT:-}"
@@ -151,20 +153,20 @@ if [ "$platform" = linux ]; then
     # The .deb keeps Chromium's sandbox on Ubuntu, where AppImages run without it.
     if command -v apt-get >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
       say "Installing the .deb package needs sudo, which may ask for your password."
-      if sudo -v; then format=deb; else say "Without sudo, T3 Learn installs as an AppImage in your home folder."; fi
+      if sudo -v; then format=deb; else say "Without sudo, OminaX installs as an AppImage in your home folder."; fi
     fi
   fi
   case "$format" in
     deb)
-      [ "$arch" = x64 ] && pattern='T3-Learn-.*-amd64\.deb' || pattern='T3-Learn-.*-arm64\.deb'
+      [ "$arch" = x64 ] && pattern='(OminaX|T3-Learn)-.*-amd64\.deb' || pattern='(OminaX|T3-Learn)-.*-arm64\.deb'
       ;;
     appimage)
-      [ "$arch" = x64 ] && pattern='T3-Learn-.*-x86_64\.AppImage' || pattern='T3-Learn-.*-arm64\.AppImage'
+      [ "$arch" = x64 ] && pattern='(OminaX|T3-Learn)-.*-x86_64\.AppImage' || pattern='(OminaX|T3-Learn)-.*-arm64\.AppImage'
       ;;
     *) fail "T3LEARN_FORMAT must be deb or appimage" ;;
   esac
 else
-  pattern="T3-Learn-.*-${arch}\\.zip"
+  pattern="(OminaX|T3-Learn)-.*-${arch}\\.zip"
 fi
 
 step "Finding the latest release..."
@@ -181,7 +183,7 @@ else
 fi
 fetch_status=0
 fetch "$sums_url" quiet "$work/SHA256SUMS" || fetch_status=$?
-[ "$fetch_status" -ne 44 ] || fail "no T3 Learn release found at ${sums_url}"
+[ "$fetch_status" -ne 44 ] || fail "no OminaX release found at ${sums_url}"
 [ "$fetch_status" -eq 0 ] || fail "could not reach GitHub to find the release"
 
 line="$(grep -E " \*?${pattern}\$" "$work/SHA256SUMS" | head -n 1 || true)"
@@ -189,12 +191,12 @@ line="$(grep -E " \*?${pattern}\$" "$work/SHA256SUMS" | head -n 1 || true)"
 expected="${line%% *}"
 asset="${line##* }"
 asset="${asset#\*}"
-version="$(printf '%s' "$asset" | sed -E 's/^T3-Learn-(.*)-(arm64|x64|x86_64|amd64)\.[A-Za-z]+$/\1/')"
+version="$(printf '%s' "$asset" | sed -E 's/^(OminaX|T3-Learn)-(.*)-(arm64|x64|x86_64|amd64)\.[A-Za-z]+$/\2/')"
 
 if t3_code_installed; then
-  say "Found T3 Code. It stays installed with its own data; T3 Learn installs next to it."
+  say "Found T3 Code. It stays installed with its own data; OminaX installs next to it."
 fi
-say "Installing ${bold}T3 Learn ${version}${reset}"
+say "Installing ${bold}OminaX ${version}${reset}"
 printf '\n' >&2
 fetch "${base_url}/v${version}/${asset}" progress "$work/$asset" || fail "could not download ${asset}"
 step "Verifying the download..."
@@ -205,26 +207,28 @@ launch=true
 
 if [ "$platform" = mac ]; then
   dest="$(mac_app_dir)"
-  app="${dest}/${app_name}.app"
-  if pgrep -f "${app}/Contents/MacOS/" >/dev/null 2>&1; then
-    step "Closing T3 Learn to update it..."
+  if pgrep -f "${dest}/(${app_name}|${old_app_name})\.app/Contents/MacOS/" >/dev/null 2>&1; then
+    step "Closing OminaX to update it..."
     osascript -e "tell application id \"${bundle_id}\" to quit" >/dev/null 2>&1 || true
     tries=0
-    while pgrep -f "${app}/Contents/MacOS/" >/dev/null 2>&1; do
+    while pgrep -f "${dest}/(${app_name}|${old_app_name})\.app/Contents/MacOS/" >/dev/null 2>&1; do
       tries=$((tries + 1))
-      [ "$tries" -le 40 ] || fail "quit T3 Learn, then run the installer again"
+      [ "$tries" -le 40 ] || fail "quit OminaX, then run the installer again"
       sleep 0.25
     done
   fi
   step "Installing to ${dest}..."
   mkdir -p "$dest" "$work/unpacked"
   ditto -x -k "$work/$asset" "$work/unpacked"
-  [ -d "$work/unpacked/${app_name}.app" ] || fail "the download did not contain ${app_name}.app"
+  unpacked_app="$(ls -d "$work/unpacked"/*.app 2>/dev/null | head -n 1 || true)"
+  [ -n "$unpacked_app" ] || fail "the download did not contain an OminaX or T3 Learn app bundle"
   # The build is not notarized. curl leaves no quarantine flag, so Gatekeeper
   # never blocks it; clear one anyway in case a proxy or mirror added it.
-  xattr -dr com.apple.quarantine "$work/unpacked/${app_name}.app" 2>/dev/null || true
+  xattr -dr com.apple.quarantine "$unpacked_app" 2>/dev/null || true
+  app="${dest}/$(basename "$unpacked_app")"
   rm -rf "$app"
-  mv "$work/unpacked/${app_name}.app" "$app"
+  mv "$unpacked_app" "$app"
+  [ "$(basename "$app")" = "${app_name}.app" ] && rm -rf "${dest}/${old_app_name}.app"
   if "$launch"; then open "$app"; fi
 elif [ "$format" = deb ]; then
   step "Installing the package..."
@@ -254,14 +258,14 @@ else
   exec_line="\"${appimage_path}\" %U"
   extract_and_run=
   if [ ! -e /dev/fuse ] || ! { command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; }; then
-    say "FUSE is not available, so T3 Learn unpacks itself on each start (slower)."
+    say "FUSE is not available, so OminaX unpacks itself on each start (slower)."
     exec_line="env APPIMAGE_EXTRACT_AND_RUN=1 ${exec_line}"
     extract_and_run=1
   fi
   cat > "$desktop_file" <<EOF
 [Desktop Entry]
 Type=Application
-Name=T3 Learn
+Name=OminaX
 Comment=Learn with AI coding agents
 Exec=${exec_line}
 Icon=${exe}
@@ -272,7 +276,7 @@ EOF
   command -v update-desktop-database >/dev/null 2>&1 &&
     update-desktop-database "$(dirname "$desktop_file")" >/dev/null 2>&1 || true
   if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ]; then
-    say "This system blocks the sandbox AppImages use, so T3 Learn runs without it."
+    say "This system blocks the sandbox AppImages use, so OminaX runs without it."
     say "For a sandboxed install, run the installer again with T3LEARN_FORMAT=deb."
   fi
   if "$launch" && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
@@ -282,12 +286,12 @@ EOF
   fi
 fi
 
-printf '\n  %sInstalled T3 Learn %s%s\n' "$green" "$version" "$reset" >&2
+printf '\n  %sInstalled OminaX %s%s\n' "$green" "$version" "$reset" >&2
 if [ "$platform" = mac ]; then
   say "Open it from ${dest} or Spotlight. It updates itself."
 else
   say "Open it from your app menu. It updates itself."
-  if pgrep -u "$(id -u)" -x "$exe" >/dev/null 2>&1; then say "If T3 Learn was already open, restart it to use this version."; fi
+  if pgrep -u "$(id -u)" -x "$exe" >/dev/null 2>&1; then say "If OminaX was already open, restart it to use this version."; fi
 fi
 say "Projects and settings live in ${data_dir}."
 printf '\n' >&2

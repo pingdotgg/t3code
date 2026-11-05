@@ -1,8 +1,8 @@
-# T3 Learn
+# OminaX
 
-T3 Learn is a fork of [T3 Code](https://github.com/pingdotgg/t3code) for learning with AI.
+OminaX (formerly T3 Learn) is a fork of [T3 Code](https://github.com/pingdotgg/t3code) for learning with AI.
 
-When a reply uses something you don't know yet, highlight it and choose **Ask in side chat** (⌥⌘S on a Mac, Ctrl+Alt+S elsewhere). A side chat opens next to the lesson. It sees your highlight and a short summary of the lesson, and nothing you say in it lands in the lesson. Side chats nest, so you can follow a question as deep as it goes. The side-chat header's map toggle (⌥⌘G on a Mac, Ctrl+Alt+G elsewhere) shows where you are without leaving the chat. Press **Done** to climb back out: the AI writes a short note, and your next lesson message carries it so the lesson picks up where you left off. The first time you open T3 Learn, a short guide walks you through this; open it again from Settings.
+When a reply uses something you don't know yet, highlight it and choose **Ask in side chat** (⌥⌘S on a Mac, Ctrl+Alt+S elsewhere). A side chat opens next to the lesson. It sees your highlight and a short summary of the lesson, and nothing you say in it lands in the lesson. Side chats nest, so you can follow a question as deep as it goes. The side-chat header's map toggle (⌥⌘G on a Mac, Ctrl+Alt+G elsewhere) shows where you are without leaving the chat. Press **Done** to climb back out: the AI writes a short note, and your next lesson message carries it so the lesson picks up where you left off. The first time you open OminaX, a short guide walks you through this; open it again from Settings.
 
 See [Side chats](docs/user/side-chats.md) for settings and provider details.
 
@@ -20,29 +20,29 @@ curl -fsSL https://github.com/aabdel0181/t3-learn/releases/latest/download/insta
 irm https://github.com/aabdel0181/t3-learn/releases/latest/download/install.ps1 | iex
 ```
 
-T3 Learn opens when the installer finishes. After that, open it like any other app; it updates itself. You also need at least one provider set up, such as Claude Code or Codex (see [Installation](#installation)).
+OminaX opens when the installer finishes. After that, open it like any other app; it updates itself. You also need at least one provider set up, such as Claude Code or Codex (see [Installation](#installation)).
 
-**Already using T3 Code?** Run the same command. T3 Learn installs next to T3 Code instead of over it, and keeps its own projects and settings in `~/.t3-learn`. T3 Code keeps its threads, settings, updates and `t3` command, and both apps can run at once. Providers you're already signed in to work in both.
+**Already using T3 Code?** Run the same command. OminaX installs next to T3 Code instead of over it, and keeps its own projects and settings in `~/.t3-learn`. T3 Code keeps its threads, settings, updates and `t3` command, and both apps can run at once. Providers you're already signed in to work in both.
 
 <details>
 <summary>Other ways to install, and how to remove it</summary>
 
 - **Download it yourself** from [Releases](https://github.com/aabdel0181/t3-learn/releases/latest): `.dmg` for macOS, `.exe` for Windows, `.deb` or `.AppImage` for Linux. These builds are not signed. macOS blocks the app the first time you open it: go to **System Settings → Privacy & Security** and choose **Open Anyway**. Windows may warn that it doesn't recognize the app: choose **More info → Run anyway**. The install command avoids both prompts.
-- **macOS updates:** because the app isn't signed, macOS may ask once after an update to let T3 Learn use its saved keychain item. Choose **Always Allow**. Screen Recording permission, used for window capture, has to be turned on again.
+- **macOS updates:** because the app isn't signed, macOS may ask once after an update to let OminaX use its saved keychain item. Choose **Always Allow**. Screen Recording permission, used for window capture, has to be turned on again.
 - **Linux:** the command installs the `.deb` where `apt` and `sudo` are available, so the app keeps Chromium's sandbox, and an AppImage in your home folder otherwise. Set `T3LEARN_FORMAT=appimage` or `T3LEARN_FORMAT=deb` to choose.
 - **A specific version:** set `T3LEARN_VERSION`, for example `T3LEARN_VERSION=0.1.3-learn.1`.
-- **Remove it:** on macOS and Linux, run the install command with `sh -s -- --uninstall` in place of `sh`. On Windows, uninstall **T3 Learn** from **Settings → Apps**. Your projects and settings stay in `~/.t3-learn`; delete that folder to remove them too.
+- **Remove it:** on macOS and Linux, run the install command with `sh -s -- --uninstall` in place of `sh`. On Windows, uninstall **OminaX** from **Settings → Apps**. Your projects and settings stay in `~/.t3-learn`; delete that folder to remove them too.
 - **From source:** you need [`vp`](#install-vp). Run `vp i`, then `vp run --filter t3 build`, then `vp env exec -- node apps/server/dist/bin.mjs serve --base-dir ~/.t3-learn`, and open the pairing URL it prints.
 
 </details>
 
 ### Updating
 
-New T3 Learn versions are released automatically from `main` after CI and the install tests pass. The app shows an update button that updates the app and its connected server together. On the server box, update the launcher with `t3-learn update --yes`; with the plain CLI, point `T3CODE_HOME` at `~/.t3-learn` first.
+New OminaX versions are released automatically from `main` after CI and the install tests pass. The app shows an update button that updates the app and its connected server together. On the server box, update the launcher with `t3-learn update --yes`; with the plain CLI, point `T3CODE_HOME` at `~/.t3-learn` first.
 
-The phone app pairs with T3 Learn the same way it pairs with T3 Code. T3 Connect isn't available in T3 Learn's builds. To use T3 Learn's command line, choose **Install** next to **t3-learn command** in **Settings → About**.
+The phone app pairs with OminaX the same way it pairs with T3 Code. T3 Connect isn't available in OminaX's builds. To use OminaX's command line, choose **Install** next to **t3-learn command** in **Settings → About**.
 
-**Want an agent to set it up, with your T3 Code chats along?** Give it [Set up T3 Learn with an agent](docs/user/t3-learn-agent-setup.md).
+**Want an agent to set it up, with your T3 Code chats along?** Give it [Set up OminaX with an agent](docs/user/t3-learn-agent-setup.md).
 
 ---
 

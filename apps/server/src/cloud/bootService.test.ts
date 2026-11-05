@@ -54,14 +54,14 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
 });
 
-it("describes the unit as T3 Learn, not T3 Code", () => {
+it("describes the unit as OminaX, not T3 Code", () => {
   const unit = BootService.renderBootServiceUnit({
     program: ["/home/theo/.t3-learn/runtime/versions/1.2.3/t3", "__service-launcher"],
     baseDir: "/home/theo/.t3-learn",
     logPath: "/home/theo/.t3-learn/userdata/logs/boot-service.log",
     unitPath: "/home/theo/.config/systemd/user/t3learn.service",
   });
-  expect(unit.split("\n")).toContain("Description=T3 Learn server");
+  expect(unit.split("\n")).toContain("Description=OminaX server");
 });
 
 it("protects the server unit from agents under CPU and memory pressure", () => {
