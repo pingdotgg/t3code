@@ -5223,6 +5223,18 @@ body {
   }
 }
 
+@keyframes timeline-fold-reveal {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .messages-timeline-row-frame[data-fold-reveal] {
+    animation: timeline-fold-reveal 200ms ease-out;
+  }
+}
+
 /* The board draws the working bar rule white, which vanishes on a light pane. */
 :root:not(.dark) {
   --timeline-working-rule: var(--border);
