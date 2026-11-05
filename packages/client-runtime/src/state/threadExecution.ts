@@ -155,6 +155,8 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  // Pi's level; last so a dedicated effort id wins when a model also has a thinking toggle.
+  "thinking",
 ];
 
 export function formatModelSelectionEffort(
