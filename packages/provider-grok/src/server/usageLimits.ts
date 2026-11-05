@@ -1,4 +1,7 @@
-import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
+import {
+  UsageAccountIdentity,
+  usageResponseCheckedAt,
+} from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
@@ -217,6 +220,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
     );
     return grokUsageResponseToLimits(body, usageResponseCheckedAt(response, checkedAt));
   }).pipe(
+    Effect.provideService(UsageAccountIdentity, credentialFingerprint),
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() => probeFailed),
   );

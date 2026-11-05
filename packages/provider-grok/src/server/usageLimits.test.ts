@@ -30,7 +30,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
                 Effect.gen(function* () {
                   requests += 1;
                   if (requests > 2)
-                    return HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }));
+                    return HttpClientResponse.fromWeb(
+                      request,
+                      new Response(null, { status: 503, headers: { "retry-after": "600" } }),
+                    );
                   const first = request.headers.authorization === "Bearer account-a";
                   if (first) {
                     yield* Deferred.succeed(started, undefined);
@@ -91,6 +94,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
                 ?.windows,
             ).toEqual([]);
             const renewed = yield* read("account-b-renewed");
+            expect(requests).toBe(withEmail ? 3 : 4);
             const retained = resolveUsageLimitsAfterProbe({
               published: previous.usageLimits,
               probed: renewed.usageLimits,
