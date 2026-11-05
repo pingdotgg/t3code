@@ -18,15 +18,22 @@ describe("elicitationContent", () => {
 
   it("keeps the typed text when it doesn't parse as the schema type", () => {
     const content = elicitationContent(
-      { confirm: "maybe", count: "2.5", ratio: "", other: "x" },
+      { confirm: "maybe", count: "2.5", big: "9007199254740993", ratio: "", other: "x" },
       {
         confirm: { type: "boolean" },
         count: { type: "integer" },
+        big: { type: "integer" },
         ratio: { type: "number" },
         other: {},
       },
     );
-    assert.deepStrictEqual(content, { confirm: "maybe", count: "2.5", ratio: "", other: "x" });
+    assert.deepStrictEqual(content, {
+      confirm: "maybe",
+      count: "2.5",
+      big: "9007199254740993",
+      ratio: "",
+      other: "x",
+    });
   });
 
   it("drops keys outside the schema and keeps string arrays", () => {
@@ -35,5 +42,14 @@ describe("elicitationContent", () => {
       { tags: { type: "array", items: { type: "string" } } },
     );
     assert.deepStrictEqual(content, { tags: ["a", "b"] });
+  });
+
+  it("keeps only the allowed choices for array enums", () => {
+    const schema = { type: "array", items: { type: "string", enum: ["PostgreSQL", "SQLite"] } };
+    const content = elicitationContent(
+      { picked: ["SQLite", "MySQL"], typed: "PostgreSQL", other: "MySQL" },
+      { picked: schema, typed: schema, other: schema },
+    );
+    assert.deepStrictEqual(content, { picked: ["SQLite"], typed: ["PostgreSQL"], other: [] });
   });
 });

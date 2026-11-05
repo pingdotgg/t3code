@@ -1292,10 +1292,22 @@ function selectAutoApprovedPermissionOption(
   );
 }
 
+function elicitationArrayValue(
+  values: ReadonlyArray<unknown>,
+  schema: Record<string, unknown> | undefined,
+): ReadonlyArray<string> {
+  const allowed = unknownRecord(schema?.items)?.enum;
+  const strings = values.filter((entry): entry is string => typeof entry === "string");
+  return Array.isArray(allowed) ? strings.filter((entry) => allowed.includes(entry)) : strings;
+}
+
 function elicitationAnswerValue(
   answer: string,
   schema: Record<string, unknown> | undefined,
 ): EffectAcpSchema.ElicitationContentValue {
+  if (schema?.type === "array") {
+    return elicitationArrayValue([answer], schema);
+  }
   if (schema?.type === "boolean") {
     return answer === "true" ? true : answer === "false" ? false : answer;
   }
@@ -1320,7 +1332,7 @@ export function elicitationContent(
     } else if (typeof value === "number" || typeof value === "boolean") {
       content[key] = value;
     } else if (Array.isArray(value)) {
-      content[key] = value.filter((entry): entry is string => typeof entry === "string");
+      content[key] = elicitationArrayValue(value, unknownRecord(properties[key]));
     }
   }
   return content;
