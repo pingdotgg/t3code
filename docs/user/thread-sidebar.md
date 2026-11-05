@@ -61,10 +61,11 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 ## See references to a thread
 
 On web and desktop, hover a thread link or focus it with the keyboard to highlight
-its row and visible threads that mention it or wait for it. Hovering a sidebar row
-shows counts, including matches in collapsed sections. Offline machines may leave
-results incomplete. On mobile, touch and hold a thread link and choose **Show
-references** to see the related threads.
+its row and visible threads that mention it or wait for it. Click the link to keep
+those highlights while you open the thread; click the same link again to clear
+them. Hovering a sidebar row shows counts, including matches in collapsed sections.
+Offline machines may leave results incomplete. On mobile, touch and hold a thread
+link and choose **Show references** to see the related threads.
 
 ## Pin and reorder threads
 

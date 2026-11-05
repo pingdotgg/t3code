@@ -18,6 +18,7 @@ export function ThreadContextChip(props: {
   const shell = useThreadShell({ environmentId, threadId });
   const enter = useThreadReferenceHighlight((state) => state.enter);
   const leave = useThreadReferenceHighlight((state) => state.leave);
+  const togglePinned = useThreadReferenceHighlight((state) => state.togglePinned);
   const project = useProject(shell ? scopeProjectRef(environmentId, shell.projectId) : null);
   const title = shell?.title?.trim() || props.record.title;
   return (
@@ -31,6 +32,7 @@ export function ThreadContextChip(props: {
               if (!event.currentTarget.matches(":focus-within")) leave({ environmentId, threadId });
             }}
             onFocus={() => enter({ environmentId, threadId })}
+            onClick={() => togglePinned({ environmentId, threadId })}
             onBlur={(event) => {
               if (!event.currentTarget.matches(":hover")) leave({ environmentId, threadId });
             }}

@@ -17,16 +17,25 @@ import { useEnvironments } from "./state/environments";
 import { useDebouncedValue } from "./state/queries";
 
 interface HighlightState {
-  target: ScopedThreadRef | null;
+  hovered: ScopedThreadRef | null;
+  pinned: ScopedThreadRef | null;
   enter: (target: ScopedThreadRef) => void;
   leave: (target: ScopedThreadRef) => void;
+  togglePinned: (target: ScopedThreadRef) => void;
 }
 const key = (ref: ScopedThreadRef) => scopedThreadKey(ref);
 export const useThreadReferenceHighlight = create<HighlightState>((set) => ({
-  target: null,
-  enter: (target) => set({ target }),
+  hovered: null,
+  pinned: null,
+  enter: (target) => set({ hovered: target }),
   leave: (target) =>
-    set((state) => (state.target && key(state.target) === key(target) ? { target: null } : state)),
+    set((state) =>
+      state.hovered && key(state.hovered) === key(target) ? { hovered: null } : state,
+    ),
+  togglePinned: (target) =>
+    set((state) => ({
+      pinned: state.pinned && key(state.pinned) === key(target) ? null : target,
+    })),
 }));
 
 const references = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
@@ -104,7 +113,9 @@ export const useReferenceInfo = (threadKey: string) => {
 };
 
 export function ThreadReferenceHighlightProvider({ children }: { children: ReactNode }) {
-  const target = useThreadReferenceHighlight((state) => state.target);
+  const hovered = useThreadReferenceHighlight((state) => state.hovered);
+  const pinned = useThreadReferenceHighlight((state) => state.pinned);
+  const target = hovered ?? pinned;
   const settledTarget = useDebouncedValue(target, 200);
   const current =
     target !== null && settledTarget !== null && key(target) === key(settledTarget) ? target : null;
