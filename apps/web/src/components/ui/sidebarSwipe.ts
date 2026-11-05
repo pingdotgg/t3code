@@ -97,6 +97,7 @@ export function useSidebarSwipe(input: {
     input.setOpen(open);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers window touch and pointer listeners for the swipe gesture while mounted and removes them on cleanup
   useEffect(() => {
     if (!enabled) return;
 
