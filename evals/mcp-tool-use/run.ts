@@ -1428,7 +1428,8 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     `Working directory: ${cwd} on ${platform}, a git checkout of github.com/${repo}.${date ? ` Today is ${date}.` : ""}`,
     gitStatus(testCase),
     `World: ${valueText(world ?? {})}`,
-    ...(shellMocks.length > 0
+    // A read of a `secret: false` field's file gets an ordinary value, not a secret's mock.
+    ...(shellMocks.length > 0 && !(typeof command === "string" && readsPlainFile(sample, command))
       ? [`Commands that match these regexes print exactly this output: ${valueText(shellMocks)}`]
       : []),
     // Which device each launcher and session drives, and which of this call's opens are refused.
@@ -1497,10 +1498,12 @@ export const shellOutput = (content: ReadonlyArray<Block>) => {
 };
 
 /** A shell mock's output, when the command is one simple command that the mock matches. */
+const readsPlainFile = (sample: Sample, command: string) =>
+  sample.plainFiles.some(({ file }) => command.includes(file.slice(-32)));
+
 export const mockOutput = (sample: Sample, command: string) =>
   // A file for a `secret: false` field holds an ordinary value, not what a secret's mock prints.
-  /&&|\|\||[;|\n]/.test(command.trim()) ||
-  sample.plainFiles.some(({ file }) => command.includes(file.slice(-32)))
+  /&&|\|\||[;|\n]/.test(command.trim()) || readsPlainFile(sample, command)
     ? undefined
     : sample.testCase.setup.shellMocks?.find((mock) => new RegExp(mock.match).test(command))
         ?.output;

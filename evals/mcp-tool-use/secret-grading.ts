@@ -1534,11 +1534,15 @@ export const classifyFileUse = (
   // assigned that directory: a reassigned name may no longer point there.
   const dirs = [...new Set(files.map((file) => escape(file.slice(0, -33))))].join("|");
   const SECRETS_DIR = `(?:pathlib\\.)?Path\\(\\s*['"](?:${dirs})/?['"]\\s*\\)|['"](?:${dirs})/?['"]`;
+  // Assignments are counted in live code only: comments and strings don't rebind a name.
+  const code = maskProgram(command, "python");
   const assigned = (name: string) =>
-    command.match(new RegExp(`(?<![\\w.])${name}\\s*=(?!=)`, "g"))?.length ?? 0;
+    code.match(new RegExp(`(?<![\\w.])${name}\\s*=(?!=)`, "g"))?.length ?? 0;
   const dirAssignments = [
     ...command.matchAll(new RegExp(`(?<![\\w.])([A-Za-z_]\\w*)\\s*=\\s*(?:${SECRETS_DIR})`, "g")),
-  ].map((match) => match[1]!);
+  ]
+    .filter((match) => code.startsWith(match[1]!, match.index))
+    .map((match) => match[1]!);
   const dirNames = [...new Set(dirAssignments)].filter(
     (name) => assigned(name) === dirAssignments.filter((other) => other === name).length,
   );
