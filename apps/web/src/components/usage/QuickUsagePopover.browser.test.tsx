@@ -40,11 +40,6 @@ vi.mock(import("../../state/usage"), () => ({
   useUsage: (() => usageState.value) as never,
 }));
 
-vi.mock(import("@t3tools/client-runtime/state/usage"), async (original) => ({
-  ...(await original()),
-  refreshUsage: refreshUsageMock.action,
-}));
-
 vi.mock(import("../ui/toast"), async (original) => {
   const module = await original();
   return {
@@ -124,7 +119,13 @@ function setup(
   usage: unknown = { shown: null, merged: { daily: [] }, selectedEnvironments: [] },
 ) {
   presentationsState.value = presentations;
-  usageState.value = usage;
+  usageState.value = {
+    shown: null,
+    merged: { daily: [] },
+    selectedEnvironments: [],
+    ...(usage as Record<string, unknown> | undefined),
+    refresh: refreshUsageMock.action,
+  };
   refreshCommand.action.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   refreshUsageMock.action.mockReset().mockResolvedValue(undefined);
   toastMock.add.mockReset();
@@ -277,9 +278,10 @@ describe("QuickUsagePopover", () => {
 
     finishRefresh?.();
     await expect.element(refreshButton).not.toBeDisabled();
+    expect(refreshUsageMock.action).toHaveBeenCalledTimes(1);
   });
 
-  it("reports ordinary provider refresh failures without refreshing usage", async () => {
+  it("reports ordinary provider refresh failures and still refreshes usage", async () => {
     const presentations = envPresentations([provider("codex", { session: 22, weekly: 42 })]);
     const element = view(presentations);
     refreshCommand.action.mockResolvedValue(
@@ -297,6 +299,27 @@ describe("QuickUsagePopover", () => {
       title: "Could not refresh usage limits",
       description: "Refresh failed for Desk.",
     });
-    expect(refreshUsageMock.action).not.toHaveBeenCalled();
+    expect(refreshUsageMock.action).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports provider refresh defects without leaving a rejection", async () => {
+    const presentations = envPresentations([provider("codex", { session: 22, weekly: 42 })]);
+    const element = view(presentations);
+    refreshCommand.action.mockResolvedValue(
+      AsyncResult.failure(Cause.die(new Error("Unexpected provider refresh defect"))),
+    );
+    await using screen = await render(element);
+
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    const refreshButton = page.getByRole("button", { name: "Refresh usage" });
+    await userEvent.click(refreshButton);
+    await expect.element(refreshButton).not.toBeDisabled();
+
+    expect(toastMock.add).toHaveBeenCalledWith({
+      type: "error",
+      title: "Could not refresh usage limits",
+      description: "Refresh failed for Desk.",
+    });
+    expect(refreshUsageMock.action).toHaveBeenCalledTimes(1);
   });
 });

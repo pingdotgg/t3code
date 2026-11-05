@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { refreshUsage, refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
 import { collectLimitAccounts, limitsNotice, remainingPercent } from "@t3tools/shared/usageLimits";
 import { summarizeTodayUsage } from "@t3tools/shared/usageToday";
@@ -17,7 +17,6 @@ import { useRef, useState, type ReactNode } from "react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 
-import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -249,30 +248,37 @@ export function QuickUsagePopover({
     )
       .then(async (result) => {
         setNow(Date.now());
-        if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
-        const failures = result.value.flatMap((environment) =>
-          environment !== undefined &&
-          environment.result !== undefined &&
-          AsyncResult.isFailure(environment.result)
-            ? [{ ...environment, failure: environment.result }]
-            : [],
-        );
-        const defect = failures.find(({ failure }) => Cause.hasDies(failure.cause));
-        if (defect !== undefined) throw Cause.squash(defect.failure.cause);
-        if (failures.length > 0) {
+        if (!AsyncResult.isSuccess(result)) {
+          console.error("[quick-usage] Provider limit refresh failed", result.cause);
           toastManager.add({
             type: "error",
             title: "Could not refresh usage limits",
-            description: `Refresh failed for ${failures.map(({ label }) => label).join(", ")}.`,
+            description: Cause.pretty(result.cause),
           });
-          return;
+        } else {
+          const failures = result.value.flatMap((environment) =>
+            environment !== undefined &&
+            environment.result !== undefined &&
+            AsyncResult.isFailure(environment.result)
+              ? [{ ...environment, failure: environment.result }]
+              : [],
+          );
+          if (failures.length > 0) {
+            toastManager.add({
+              type: "error",
+              title: "Could not refresh usage limits",
+              description: `Refresh failed for ${failures.map(({ label }) => label).join(", ")}.`,
+            });
+          }
         }
-        await refreshUsage({
-          registry: appAtomRegistry,
-          server: serverEnvironment,
-          presentations: environmentPresentations,
-          environmentIds: usage.selectedEnvironments.map(({ environmentId }) => environmentId),
-          input: todayWindow,
+        await usage.refresh(todayWindow);
+      })
+      .catch((error: unknown) => {
+        console.error("[quick-usage] Refresh failed", error);
+        toastManager.add({
+          type: "error",
+          title: "Could not refresh usage",
+          description: error instanceof Error ? error.message : "Try again.",
         });
       })
       .finally(() => {
