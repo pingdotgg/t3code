@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import * as Cause from "effect/Cause";
-import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 type RefreshResult = AsyncResult.AsyncResult<void, string>;
@@ -22,6 +22,7 @@ vi.mock("../../state/server", () => ({
       run: (_registry: unknown, input: { readonly environmentId: string }) =>
         state.refresh(input.environmentId),
     },
+    configValueAtom: () => Atom.make(null),
   },
 }));
 

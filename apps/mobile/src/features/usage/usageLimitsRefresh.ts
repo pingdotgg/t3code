@@ -14,6 +14,12 @@ const limitsRefreshFailedAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make(false).pipe(Atom.withLabel(`mobile:limits-refresh-failed:${environmentId}`)),
 );
 
+// Shares per-provider deadlines with the thread usage panel, which refreshes one driver.
+function limitsResources(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
+  const providers = registry.get(serverEnvironment.configValueAtom(environmentId))?.providers ?? [];
+  return [...new Set(providers.map((provider) => provider.driver))];
+}
+
 export async function refreshEnvironmentLimits(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
@@ -33,6 +39,8 @@ export async function refreshEnvironmentLimits(
       ),
     options.automatic,
     options.afterPending,
+    "",
+    limitsResources(registry, environmentId),
   );
   if (result === undefined) return;
   registry.set(limitsRefreshFailedAtom(environmentId), result._tag === "Failure");
@@ -54,9 +62,16 @@ const limitsAutoRefreshAtom = Atom.family((environmentId: EnvironmentId) =>
       } finally {
         pending = false;
         if (!disposed)
-          timer = setTimeout(() => {
-            void refresh();
-          }, usageLimitsRefreshDelay(environmentId));
+          timer = setTimeout(
+            () => {
+              void refresh();
+            },
+            usageLimitsRefreshDelay(
+              environmentId,
+              "",
+              limitsResources(get.registry, environmentId),
+            ),
+          );
       }
     };
     void refresh();

@@ -19,6 +19,7 @@ export function useInstanceLimitsRefresh(
   useEffect(() => {
     if (!visible || !focused) return;
     const selectionKey = JSON.stringify([instanceId, driver]);
+    const resources = [driver ?? instanceId];
     let disposed = false;
     let pending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -29,7 +30,10 @@ export function useInstanceLimitsRefresh(
       const completed = () => {
         pending = false;
         if (!disposed)
-          timer = setTimeout(refresh, usageLimitsRefreshDelay(environmentId, selectionKey));
+          timer = setTimeout(
+            refresh,
+            usageLimitsRefreshDelay(environmentId, selectionKey, resources),
+          );
       };
       void refreshUsageLimits(
         environmentId,
@@ -48,6 +52,7 @@ export function useInstanceLimitsRefresh(
         true,
         false,
         selectionKey,
+        resources,
       ).then(completed, completed);
     };
     void refresh();

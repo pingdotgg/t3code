@@ -55,8 +55,22 @@ export function usageSummaryInput(
 const limitsRefreshAfter = new Map<string, number>();
 const limitsRefreshes = new Map<string, Promise<unknown>>();
 
-export function usageLimitsRefreshDelay(environmentId: EnvironmentId, selectionKey = ""): number {
-  const refreshAfter = limitsRefreshAfter.get(JSON.stringify([environmentId, selectionKey])) ?? 0;
+const resourceRefreshAfter = new Map<string, number>();
+
+/** With `resources`, the delay ends when the first of those per-provider deadlines passes. */
+export function usageLimitsRefreshDelay(
+  environmentId: EnvironmentId,
+  selectionKey = "",
+  resources: readonly string[] = [],
+): number {
+  const refreshAfter =
+    resources.length === 0
+      ? (limitsRefreshAfter.get(JSON.stringify([environmentId, selectionKey])) ?? 0)
+      : Math.min(
+          ...resources.map(
+            (resource) => resourceRefreshAfter.get(JSON.stringify([environmentId, resource])) ?? 0,
+          ),
+        );
   // @effect-diagnostics-next-line globalDate:off
   return Math.max(0, refreshAfter - Date.now());
 }
@@ -67,6 +81,7 @@ export async function refreshUsageLimits<A>(
   automatic = false,
   afterPending = false,
   selectionKey = "",
+  resources: readonly string[] = [],
 ): Promise<A | undefined> {
   const key = JSON.stringify([environmentId, selectionKey]);
   const pending = limitsRefreshes.get(key);
@@ -75,17 +90,25 @@ export async function refreshUsageLimits<A>(
       try {
         await pending;
       } catch {}
-      return refreshUsageLimits(environmentId, refresh, false, true, selectionKey);
+      return refreshUsageLimits(environmentId, refresh, false, true, selectionKey, resources);
     }
     return (await pending) as A;
   }
-  if (automatic && usageLimitsRefreshDelay(environmentId, selectionKey) > 0) return;
+  if (automatic && usageLimitsRefreshDelay(environmentId, selectionKey, resources) > 0) return;
+  // The server skips quota reads for providers read in the last five minutes, so only due
+  // providers move their deadline.
+  const dueResources = resources
+    .map((resource) => JSON.stringify([environmentId, resource]))
+    // @effect-diagnostics-next-line globalDate:off
+    .filter((resourceKey) => (resourceRefreshAfter.get(resourceKey) ?? 0) <= Date.now());
   const current = Promise.resolve()
     .then(refresh)
     .finally(() => {
       limitsRefreshes.delete(key);
       // @effect-diagnostics-next-line globalDate:off
-      limitsRefreshAfter.set(key, Date.now() + 5 * 60_000);
+      const refreshAfter = Date.now() + 5 * 60_000;
+      limitsRefreshAfter.set(key, refreshAfter);
+      for (const resourceKey of dueResources) resourceRefreshAfter.set(resourceKey, refreshAfter);
     });
   limitsRefreshes.set(key, current);
   return await current;

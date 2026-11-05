@@ -19,6 +19,7 @@ import {
   needsCursorKeychainAccess,
   refreshUsage,
   refreshUsageLimits,
+  usageLimitsRefreshDelay,
 } from "./usage.ts";
 
 const input = {
@@ -222,6 +223,22 @@ describe("limits refresh cooldown", () => {
     expect(await otherProviders).toBe("claude limits");
     expect(await afterEnable).toBe("new limits");
     expect(newCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a provider's deadline when a wider refresh runs before it is due", async () => {
+    const id = EnvironmentId.make("limits-shared-deadlines");
+    using now = vi.spyOn(Date, "now").mockReturnValue(0);
+    await refreshUsageLimits(id, async () => "claude", true, false, "thread", ["claude"]);
+    now.mockReturnValue(4 * 60_000);
+    await refreshUsageLimits(id, async () => "all", true, false, "", ["claude", "codex"]);
+    expect(usageLimitsRefreshDelay(id, "", ["claude", "codex"])).toBe(60_000);
+    now.mockReturnValue(5 * 60_000);
+    const due = vi.fn(async () => "claude due");
+    expect(await refreshUsageLimits(id, due, true, false, "", ["claude", "codex"])).toBe(
+      "claude due",
+    );
+    expect(usageLimitsRefreshDelay(id, "thread", ["claude"])).toBe(5 * 60_000);
+    expect(usageLimitsRefreshDelay(id, "", ["claude", "codex"])).toBe(4 * 60_000);
   });
 });
 
