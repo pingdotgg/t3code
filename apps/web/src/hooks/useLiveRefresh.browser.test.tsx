@@ -213,21 +213,31 @@ describe("useLiveRefresh", () => {
   it("with intervalMs null, never refreshes on a timer", async () => {
     const periodic = vi.fn();
     const untimed = vi.fn();
+    const shared = vi.fn();
     // The interaction clock starts when the first view mounts.
     using _timers = fakeTimers({ now: 1_000_000 });
     await using _screen = await render(
       <>
         <Probe refresh={periodic} viewKey="periodic" intervalMs={60_000} />
         <Probe refresh={untimed} viewKey="untimed" intervalMs={null} />
+        <Probe
+          refresh={shared}
+          viewKey="shared-default"
+          refreshKeys={["default-provider"]}
+          refreshWhileIdle
+        />
       </>,
       // A bare hook probe; nothing here navigates.
       { router: false },
     );
+
+    expect(shared).not.toHaveBeenCalled();
 
     // Past the default 5 minute interval, but inside the 6 minute idle cutoff.
     await act(() => vi.advanceTimersByTime(5.5 * 60_000));
 
     expect(periodic).toHaveBeenCalledTimes(5);
     expect(untimed).not.toHaveBeenCalled();
+    expect(shared).toHaveBeenCalledTimes(1);
   });
 });

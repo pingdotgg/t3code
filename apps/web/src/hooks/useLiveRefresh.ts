@@ -161,8 +161,11 @@ export function useLiveRefresh(
       }
       const lastRefreshedAt = lastRefresh();
       if (lastRefreshedAt === undefined) {
-        if (!refreshOnShow) lastRefreshedAtByView.set(viewId, now);
-        else if (visible()) read(now);
+        if (!refreshOnShow) {
+          for (const key of resourceKeys) {
+            if (!lastRefreshedAtByView.has(key)) lastRefreshedAtByView.set(key, now);
+          }
+        } else if (visible()) read(now);
         return;
       }
       if (refreshWhileIdle && now - lastRefreshedAt < refreshFloorMs) return;
