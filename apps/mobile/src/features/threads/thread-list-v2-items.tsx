@@ -41,6 +41,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -67,6 +68,7 @@ import { threadCanArchive } from "../home/threadArchive";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListMessagePreview,
+  resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
@@ -726,6 +728,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
+  const { providerDrivers, providerIconUrl } = useMemo(() => {
+    const provider = props.providers?.find(
+      (candidate) =>
+        candidate.instanceId ===
+        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+    );
+    return {
+      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
+      providerIconUrl: provider?.iconUrl,
+    };
+  }, [thread, props.providers]);
+  const providerInstance = props.providerInstance;
   const pr = useThreadPr(thread);
   const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
   const handleOpenPullRequests = useCallback(() => {
@@ -755,9 +769,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAccessibilityLabel = [
     thread.title,
     contextLabel,
+    statusLabel?.label ?? null,
+    showsWoke ? "woke" : null,
     isUnread ? "unread" : null,
     snoozedRow ? "snoozed" : null,
     wakeLabel != null ? `wakes in ${wakeLabel}` : null,
+    wakeLabel == null && !showsWoke && statusLabel === undefined && props.timeLabel
+      ? props.timeLabel
+      : null,
+    providerInstance?.displayName ?? null,
     props.hasQueuedMessages ? "messages queued to send" : null,
     isRegeneratingTitle ? "regenerating title" : null,
   ]
@@ -1274,6 +1294,29 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             }
           />
         </Pressable>
+      ) : null}
+      {providerInstance ? (
+        <View className="flex-row items-center">
+          {providerDrivers.slice(0, -1).map(
+            (driver, index) => (
+              /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
+                key={`${driver}:${index}`}
+                className="-mr-1 opacity-30"
+              >
+                <ProviderIcon provider={driver} size={12} />
+              </View>
+            ) /* oxlint-enable react/no-array-index-key */,
+          )}
+          <ProviderInstanceIcon
+            iconUrl={providerIconUrl}
+            provider={providerInstance.driverKind}
+            size={14}
+            displayName={providerInstance.displayName}
+            accentColor={providerInstance.accentColor}
+            showBadge={providerInstance.showBadge}
+            surfaceColor={rowAppearance.providerIconSurfaceColor}
+          />
+        </View>
       ) : null}
       <SymbolView
         name="chevron.right"
