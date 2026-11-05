@@ -469,7 +469,7 @@ describe("CLIProxyAPI built-in management API", () => {
               consumed = true;
               return { status: 200, body: { code } };
             }
-            if (consumed) return { status: 503, body: {} };
+            if (request.auth_index === "a" || consumed) return { status: 503, body: {} };
             if (request.url?.endsWith("/rate-limit-reset-credits"))
               return { status: 200, body: { credits: [credit("credit-b")] } };
             return {
@@ -501,6 +501,19 @@ describe("CLIProxyAPI built-in management API", () => {
             .filter((request) => request.path.endsWith("/reset-quota"))
             .map((request) => request.body?.auth_index),
         ).toEqual(code === "no_credit" ? [] : ["b", "b"]);
+        yield* api.readAccounts(config);
+        expect(
+          test.requests.filter(
+            (request) => request.body?.auth_index === "a" && request.body.url?.endsWith("/usage"),
+          ),
+        ).toHaveLength(1);
+        yield* TestClock.adjust("5 minutes");
+        yield* api.readAccounts(config);
+        expect(
+          test.requests.filter(
+            (request) => request.body?.auth_index === "a" && request.body.url?.endsWith("/usage"),
+          ),
+        ).toHaveLength(2);
       }),
   );
 

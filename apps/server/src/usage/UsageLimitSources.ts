@@ -133,10 +133,19 @@ export const make = Effect.gen(function* () {
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
     next: ReadonlyArray<UsageLimitSourceSnapshot>,
   ) {
+    // Hub routing fingerprints identify local retention ownership, not a shared credential.
+    const snapshots = next.map((source) => ({
+      ...source,
+      accounts: source.accounts.map((account) => {
+        const { credentialFingerprint: _credentialFingerprint, ...usageLimits } =
+          account.usageLimits;
+        return { ...account, usageLimits };
+      }),
+    }));
     const changed = yield* Ref.modify(stateRef, (previous) =>
-      Equal.equals(previous, next) ? [false, previous] : [true, next],
+      Equal.equals(previous, snapshots) ? [false, previous] : [true, snapshots],
     );
-    if (changed) yield* PubSub.publish(changes, next);
+    if (changed) yield* PubSub.publish(changes, snapshots);
   });
 
   // Serialize refreshes so slow old-settings reads cannot resurrect removed sources after newer refreshes.

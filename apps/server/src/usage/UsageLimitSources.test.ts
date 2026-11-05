@@ -1,7 +1,13 @@
 import { UsageProviderFilter } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
+import {
+  EnvironmentId,
+  SecretProviderId,
+  ServerConfigStreamEvent,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -307,6 +313,22 @@ it.effect.each([
         Stream.runHead,
         Effect.flatMap(Effect.fromOption),
       );
+      expect(
+        collectLimitAccounts(
+          new Map(
+            initial.map(
+              (source, index) =>
+                [
+                  EnvironmentId.make(`env-${index}`),
+                  {
+                    entry: { target: { label: `Environment ${index}` } },
+                    serverConfig: { providers: [], usageLimitSources: [source] },
+                  },
+                ] as const,
+            ),
+          ),
+        ),
+      ).toHaveLength(4);
       const before = initial.find((source) => source.id === sourceId)!;
       expect(before.accounts[0]?.usageLimits.resetCredits?.nextCreditId).toBe("credit");
       const outcome =

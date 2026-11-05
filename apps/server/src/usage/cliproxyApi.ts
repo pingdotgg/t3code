@@ -514,7 +514,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
         );
       }
       if (outcome !== "reset" && outcome !== "alreadyRedeemed") return { outcome };
-      yield* Cache.invalidateAll(usageCache);
+      for (const url of [`${CODEX_BASE}/usage`, CREDIT_URL]) {
+        yield* Cache.invalidateWhen(
+          usageCache,
+          yield* encodeJson({ hub, account, url }),
+          () => true,
+        );
+      }
       const cleared = yield* management(hub, "reset-quota", {
         auth_index: account.auth_index,
       }).pipe(Effect.result);
