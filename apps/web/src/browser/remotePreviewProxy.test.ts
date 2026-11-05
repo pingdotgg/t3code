@@ -169,3 +169,20 @@ it("refuses a port beyond the grant limit and keeps the ports already approved",
   expect(mocks.command.mock.lastCall?.[2].input.ports).toContain(5000);
   expect(mocks.command.mock.lastCall?.[2].input.ports).not.toContain(5001);
 });
+
+it("keeps a requested port when reading the desktop proxy status fails", async () => {
+  using h = await setup();
+  mocks.command.mockImplementation(
+    async (_registry, _command, args: { input: { ports: number[] } }) => ({
+      _tag: "Success",
+      value: { grant: "g", ports: args.input.ports, expiresAt: DateTime.makeUnsafe(600_000) },
+    }),
+  );
+  h.bridge.getStatus.mockRejectedValueOnce(new Error("status unavailable"));
+  await expect(h.module.approveRemotePreviewPorts(ENV, [4000])).rejects.toThrow(
+    "status unavailable",
+  );
+
+  await h.module.approveRemotePreviewPorts(ENV, [], { refresh: true });
+  expect(mocks.command.mock.lastCall?.[2].input.ports).toContain(4000);
+});

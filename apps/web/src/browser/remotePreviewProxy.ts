@@ -131,21 +131,24 @@ export function approveRemotePreviewPorts(
     .catch(() => null)
     .then(async () => {
       if (generationOf(environmentId) !== generation) return null;
+      // Wanted as soon as this request's turn starts, so a failure from here on, offline or
+      // local, keeps it for the next approval or reconnect.
+      const wantedPorts = wanted.get(environmentId) ?? new Set<number>();
+      const added = ports.filter((port) => !wantedPorts.has(port));
+      for (const port of added) wantedPorts.add(port);
+      wanted.set(environmentId, wantedPorts);
       const status = await bridge.getStatus(environmentId);
       if (generationOf(environmentId) !== generation) return null;
       const approved = new Set(status?.ports ?? []);
-      const wantedPorts = wanted.get(environmentId) ?? new Set<number>();
-      const all = new Set([...approved, ...wantedPorts, ...ports]);
+      const all = new Set([...approved, ...wantedPorts]);
       if (all.size === 0) return status ?? null;
-      // Checked in queue order, so a refused request never takes a slot from a later one.
+      // Turns run one at a time, so a refused request never takes a slot from a later one.
       if (all.size > PREVIEW_PROXY_MAX_PORTS) {
+        for (const port of added) wantedPorts.delete(port);
         throw new Error(
           `Remote preview can open at most ${PREVIEW_PROXY_MAX_PORTS} ports per environment. Turn off remote access to start over.`,
         );
       }
-      // Wanted before issuing, so a grant that fails offline finishes after reconnecting.
-      for (const port of ports) wantedPorts.add(port);
-      wanted.set(environmentId, wantedPorts);
       if (
         status?.state === "ready" &&
         options.refresh !== true &&
