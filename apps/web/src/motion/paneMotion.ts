@@ -493,11 +493,15 @@ export function usePaneMotion(
       );
     }
     if (!before || !animate) return;
+    const paneWas = new Map<string, PaneBox>();
+    for (const box of previousBoxes.values()) paneWas.set(box.paneId, box);
+    const wasOf = (tabId: string, box: PaneBox) =>
+      previousBoxes.get(tabId) ?? paneWas.get(box.paneId);
     // Where each pane shows now against its new place, before any slide
     // below retargets it: its move plus what a running slide still owes.
     const shows = new Map<string, { dx: number; dy: number }>();
     for (const [tabId, box] of boxes) {
-      const was = previousBoxes.get(tabId);
+      const was = wasOf(tabId, box);
       const running = slides.get(box.element);
       const owed = running ? running.run.value() : 0;
       shows.set(tabId, {
@@ -549,11 +553,20 @@ export function usePaneMotion(
         if (travel - own <= 1 || own < 0) return undefined;
         return makeEdge(stage, box, side, beside.gap, radius ?? 0, travel, false);
       };
-    const panesBefore = new Set([...previousBoxes.values()].map((box) => box.paneId));
+    const panesBefore = new Set(paneWas.keys());
+    const raised: HTMLElement[] = [];
+    let moving = 1;
+    const settle = () => {
+      moving -= 1;
+      if (moving > 0) return;
+      for (const element of raised) {
+        if (element.style.zIndex === "1") element.style.zIndex = "";
+      }
+    };
     for (const [tabId, box] of boxes) {
-      const was = previousBoxes.get(tabId);
+      const was = wasOf(tabId, box);
       if (!was) {
-        if (panesBefore.has(box.paneId) || previousBoxes.size === 0) continue;
+        if (previousBoxes.size === 0) continue;
         const donor = findDonor(
           box,
           [...boxes]
@@ -590,11 +603,17 @@ export function usePaneMotion(
         });
         continue;
       }
+      if (!panesBefore.has(box.paneId)) {
+        box.element.style.zIndex = "1";
+        raised.push(box.element);
+      }
       const dx = was.x - box.x;
       const dy = was.y - box.y;
       if ((Math.abs(dx) >= 1 || Math.abs(dy) >= 1) && !unseen(box, dx, view)) {
-        slide(box.element, dx, dy, undefined, openingEdge(box));
+        moving += 1;
+        slide(box.element, dx, dy, settle, openingEdge(box));
       }
     }
+    settle();
   }, [framed, key, placement, stageRef]);
 }
