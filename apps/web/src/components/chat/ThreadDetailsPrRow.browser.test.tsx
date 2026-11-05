@@ -6,6 +6,7 @@ import { expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
+  mergeability: "mergeable" as "mergeable" | "conflicting",
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
   newThread: vi.fn(),
@@ -34,7 +35,7 @@ const queryData = () => ({
   title: "Test PR",
   state: "open",
   isDraft: false,
-  mergeability: "mergeable",
+  mergeability: state.mergeability,
   headBranch: "feature",
   baseBranch: "main",
   changedFiles: 1,
@@ -226,6 +227,30 @@ it("adds the failing checks to the current composer instead of opening a thread"
   const prompt = useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt;
   expect(prompt).toContain("https://github.com/owner/repo/pull/1");
   expect(prompt).toContain("CI-failure");
+  await act(async () => {
+    state.mergeability = "conflicting";
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerDraftTarget={draftId}
+      />,
+    );
+  });
+  await act(async () => {
+    [...screen.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Resolve")!
+      .click();
+  });
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toContain(
+    "conflicts with its base branch",
+  );
   expect(state.newThread).not.toHaveBeenCalled();
   expect(state.prepareThread).not.toHaveBeenCalled();
 });
@@ -243,6 +268,7 @@ async function setup() {
 
   state.status = "success";
   state.extraStatus = null;
+  state.mergeability = "mergeable";
   state.mergeMethods = ["merge"];
   useUiStateStore.getState().setPullRequestMergeMethod("merge");
   return renderUi(null);
