@@ -1,40 +1,12 @@
 name: Check
 
-# Validates the repository type graph and website docs.
+# Validates repository formatting, the type graph, and website docs.
 
 on:
   push:
     branches: [main]
-    paths:
-      - "submodules/distilled"
-      - "benchmark/**"
-      - "examples/**"
-      - "packages/**"
-      - "website/**"
-      - "scripts/**"
-      - "patches/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "turbo.json"
-      - "tsconfig.json"
-      - ".github/workflows/check.yml"
   pull_request:
     types: [opened, reopened, synchronize]
-    paths:
-      - "submodules/distilled"
-      - "benchmark/**"
-      - "examples/**"
-      - "packages/**"
-      - "website/**"
-      - "scripts/**"
-      - "patches/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "turbo.json"
-      - "tsconfig.json"
-      - ".github/workflows/check.yml"
   workflow_dispatch:
 
 permissions:
@@ -65,15 +37,6 @@ jobs:
             website-astro-check-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-
             website-astro-check-${{ runner.os }}-main-
 
-      - name: Restore Turbo cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
-            turbo-${{ runner.os }}-${{ github.repository_id }}-
-
       - name: Setup pnpm, Node.js, Bun and install dependencies
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
@@ -81,25 +44,47 @@ jobs:
           install: true
           require-lockfile: true
 
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Check package versions
+        run: pnpm validate:publish-packages
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Must run after the type check: it reads distilled's emitted `lib/*.d.ts`,
+      # and stale/missing declarations resolve to `any`.
+      - name: Lint providers
+        run: pnpm lint:providers
+
+      # Type-aware, so it also needs the build above.
+      - name: Run Lint
+        run: pnpm lint
+
       - name: Run Node Utils tests
         run: pnpm -C packages/node-utils test
 
       - name: Run pkg tests
         run: pnpm -C packages/pkg test
 
-      - name: Run Typecheck
-        run: pnpm tsc -b
+      - name: Run core engine tests
+        run: timeout 300 pnpm test test/plan.test.ts test/apply.test.ts --retry 0 --concurrency unbounded
 
-      # Must run after `tsc -b`: it reads distilled's emitted `lib/*.d.ts`,
-      # and stale/missing declarations resolve to `any`.
-      - name: Lint providers
-        run: pnpm lint:providers
+      # In memory: no cloud credentials.
+      - name: Run Domain tests
+        run: timeout 240 pnpm test:integration test/Domain --retry 0
 
       - name: Test CLI launcher
-        run: timeout 240 pnpm test test/Cli/launcher.test.ts test/Cli/exitCodes.test.ts --retry 0 --concurrency 1
+        run: |
+          timeout 240 pnpm test test/Cli/launcher.test.ts test/Cli/exitCodes.test.ts --retry 0 --concurrency 1
+          timeout 120 pnpm test:integration test/Cli/ProviderCheckEnv.test.ts --retry 0 --concurrency 1
 
       - name: Check API JSDocs
         run: pnpm docs:check-jsdoc
+
+      - name: Check package exports
+        run: pnpm exports:check
 
       # An internal PR carrying `deploy-website` gets a full Astro build in
       # website.yml via StaticSite. That build runs the same output validators,

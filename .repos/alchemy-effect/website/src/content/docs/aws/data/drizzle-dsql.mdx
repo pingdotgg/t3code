@@ -14,7 +14,7 @@ pnpm install
 cd examples/aws-dsql-drizzle
 ```
 
-Use a DSQL-supported region such as `us-west-2`. Deployment needs `dsql:DbConnectAdmin` and access to the cluster on port 5432. The example includes Effect 4, Effect-native Drizzle, `@effect/sql-pg`, and `pg`; it is not an RDS Data API integration.
+Use a DSQL-supported region such as `us-west-2`. Deployment needs `dsql:DbConnectAdmin` and access to the cluster on port 5432. The example includes Effect 4, Effect-native Drizzle, and `@effect/sql-pg`; it is not an RDS Data API integration.
 
 :::caution
 These resources are billable. Deletion protection is disabled; destroy deletes the database data.
@@ -23,7 +23,7 @@ These resources are billable. Deletion protection is disabled; destroy deletes t
 ## Create the cluster
 
 ```typescript
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 export const Database = AWS.DSQL.Cluster("Database", {
   deletionProtectionEnabled: false,
@@ -64,7 +64,7 @@ The [deployment Action](https://github.com/alchemy-run/alchemy/blob/main/example
 ## Connect from Lambda
 
 ```typescript
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
@@ -83,7 +83,7 @@ const db = yield* Drizzle.Postgres(
 
 Provide `AWS.DSQL.ConnectHttp` on the Lambda Effect. It grants cluster-scoped `dsql:DbConnect`, not `dsql:DbConnectAdmin`, and signs a fresh IAM token locally when the connection effect runs. The binding does not create the database role or SQL grants.
 
-`Drizzle.Postgres` resolves the redacted URL on the first query and scopes its pool to the invocation, rather than retaining a pool with an old token across warm invocations. The [complete handler](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-dsql-drizzle/src/Api.ts) uses `build: { install: ["pg"] }` to package the CommonJS driver intact. [Connection lifecycle](/sql/effect-sql/lifecycle).
+`Drizzle.Postgres` resolves the redacted URL on the first query and scopes its pool to the invocation, rather than retaining a pool with an old token across warm invocations. See the [complete handler](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-dsql-drizzle/src/Api.ts). [Connection lifecycle](/sql/effect-sql/lifecycle).
 
 ## Query with Drizzle
 
@@ -104,7 +104,7 @@ const [created] = yield* db.insert(Todos).values({
 pnpm deploy --profile testing
 ```
 
-The example's Action performs the initial bootstrap. Neither `AWS.DSQL.Cluster` nor the runtime `Drizzle.Postgres` wrapper applies generated migration files automatically.
+The example's Action performs the initial bootstrap. To apply versioned migrations on deploy instead, pass them to the cluster's `migrations` prop; see [Apply the committed SQL](#apply-the-committed-sql).
 
 ## Verify the connection
 
@@ -128,7 +128,7 @@ Initial setup does not alter existing tables. The Action's `version` input is no
 ### Configure SQL generation
 
 ```sh
-pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+pnpm add -D drizzle-kit@1.0.0-rc.5
 ```
 
 ```typescript
@@ -182,9 +182,15 @@ This operator connection uses AWS CLI credentials authorized for `dsql:DbConnect
 
 ### Apply the committed SQL
 
-Use a validated DSQL-compatible migration runner in the release process before deploying dependent application code. It must record applied versions, handle partial failures, execute DDL as separate autocommit statements, and wait for asynchronous indexes. A plain `psql --file` has no migration history or safe replay; do not wrap the file in `BEGIN` or `--single-transaction`.
+Pass the committed directory to the cluster. `alchemy deploy` applies pending migrations before anything that depends on the cluster:
 
-Keep an existing validated DSQL migration workflow separate from `alchemy deploy`; the example's bootstrap Action is not its replacement. Do not expose schema administration through an HTTP `/setup` route.
+```typescript
+const database = yield* AWS.DSQL.Cluster("Database", {
+  migrations: "./migrations",
+});
+```
+
+Each statement runs separately, `CREATE INDEX` becomes `CREATE INDEX ASYNC` and is awaited, and applied migrations are recorded in `__alchemy_migrations`. Editing or deleting an applied migration fails the deploy; add a new migration instead. Don't wrap migration files in `BEGIN`/`COMMIT`, and don't expose schema administration through an HTTP `/setup` route.
 
 ## Clean up
 

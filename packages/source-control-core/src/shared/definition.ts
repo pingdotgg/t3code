@@ -3,12 +3,14 @@ import {
   type PullRequestReviewVerdict,
   type RepositoryIdentity,
   secretSetting,
+  SettingsSecretValue,
   SourceControlProviderKind,
   type SourceControlProviderInfo,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
+import { userlessScpRemoteHost } from "@t3tools/shared/sourceControl";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -101,6 +103,8 @@ export interface SourceControlMediaUrl {
   readonly fileName: string;
   /** Set when the URL alone says what the media is, as an extensionless upload can. */
   readonly kind?: "image" | "video";
+  /** Set when the bytes behind `fetchUrl` can never change, so a client may cache them by it. */
+  readonly immutable?: true;
 }
 
 export interface ReferenceAutolink {
@@ -212,7 +216,7 @@ export const hostCredentialSettingsFields = {
     Schema.withDecodingDefault(Effect.succeed({})),
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
   ),
-  tokens: Schema.Record(SourceControlHostName, TrimmedString).pipe(
+  tokens: Schema.Record(SourceControlHostName, SettingsSecretValue).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
     secretSetting,
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -495,7 +499,7 @@ export function parseGitRemoteHost(remoteUrl: string): GitRemoteHost | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) return null;
   let host: string;
-  const scpHost = SCP_REMOTE.exec(trimmed)?.[1];
+  const scpHost = SCP_REMOTE.exec(trimmed)?.[1] ?? userlessScpRemoteHost(trimmed);
   if (scpHost) {
     host = scpHost.toLowerCase();
   } else {
