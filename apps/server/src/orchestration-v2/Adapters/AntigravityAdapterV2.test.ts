@@ -367,8 +367,7 @@ describe("AntigravityAdapterV2 prompt recovery", () => {
             }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto));
           }),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const threadId = ThreadId.make("thread-antigravity-recovery");
       const modelSelection = { instanceId, model: ANTIGRAVITY_DEFAULT_MODEL } as const;
