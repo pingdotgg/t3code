@@ -131,16 +131,21 @@ export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
   directories: Effect.fn("piUsageReader.directories")(function* ({ environment }) {
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
-    const sessionDir = environment.PI_CODING_AGENT_SESSION_DIR?.trim();
-    if (sessionDir) return [{ dir: path.resolve(expandHomePath(sessionDir, home)) }];
-    const agentDir = environment.PI_CODING_AGENT_DIR?.trim();
-    return [
-      {
-        dir: path.resolve(
-          agentDir ? expandHomePath(agentDir, home) : path.join(home, ".pi", "agent"),
-          "sessions",
-        ),
-      },
-    ];
+    return [{ dir: resolvePiSessionsDir(environment, home, path) }];
   }),
 };
+
+/** Where Pi stores session JSONL files for a provider environment, matching Pi's own lookup. */
+export function resolvePiSessionsDir(
+  environment: NodeJS.ProcessEnv,
+  home: string,
+  path: Path.Path,
+): string {
+  const sessionDir = environment.PI_CODING_AGENT_SESSION_DIR?.trim();
+  if (sessionDir) return path.resolve(expandHomePath(sessionDir, home));
+  const agentDir = environment.PI_CODING_AGENT_DIR?.trim();
+  return path.resolve(
+    agentDir ? expandHomePath(agentDir, home) : path.join(home, ".pi", "agent"),
+    "sessions",
+  );
+}

@@ -3,7 +3,7 @@ import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-i
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
+import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
   createThreadMovePlanner,
@@ -25,6 +25,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import type { MenuAction } from "@react-native-menu/menu";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -34,7 +35,9 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  layoutThreadListV2RowMenuActions,
   resolveThreadListV2SnoozeMenuSelection,
+  resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
@@ -58,21 +61,90 @@ function makeThread(
 const NOW = "2026-06-02T00:00:00.000Z";
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
-  it("recomputes presets that remain available instead of using old timestamps", () => {
-    const displayedPresets = resolveSnoozePresets(new Date(2026, 4, 8, 10));
+  it("recomputes the environment's presets instead of using old timestamps", () => {
+    const presets = [{ kind: "after", minutes: 360 }] as const;
+    const displayedPresets = resolveSnoozePresets(new Date(2026, 4, 8, 10), { presets });
     const selectedAt = new Date(2026, 4, 8, 10, 30);
     const selection = resolveThreadListV2SnoozeMenuSelection({
-      event: "snooze:hour",
+      event: "snooze:after:360",
       displayedPresets,
       now: selectedAt,
+      presets,
     });
 
     expect(selection._tag).toBe("selected");
     if (selection._tag === "selected") {
       expect(selection.preset.snoozedUntil).toBe(
-        new Date(selectedAt.getTime() + 60 * 60 * 1_000).toISOString(),
+        new Date(selectedAt.getTime() + 6 * 60 * 60 * 1_000).toISOString(),
       );
     }
+  });
+});
+
+describe("resolveThreadListV2SnoozePresets", () => {
+  it("reads preset times from the list minute, not the clock at first render", () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: new Date(2026, 4, 8, 10) });
+    const laterMinute = new Date(2026, 4, 8, 19, 15).toISOString();
+
+    const presets = resolveThreadListV2SnoozePresets({
+      secondary: "snooze",
+      now: laterMinute,
+      presets: undefined,
+    });
+
+    expect(presets.find((preset) => preset.id === "after:60")?.snoozedUntil).toBe(
+      new Date(2026, 4, 8, 20, 15).toISOString(),
+    );
+    // The evening preset is gone by 19:15; a reading from 10:00 would still offer it.
+    expect(presets.map((preset) => preset.id)).not.toContain("at:today:18:00");
+  });
+});
+
+describe("layoutThreadListV2RowMenuActions", () => {
+  const actions = (...ids: string[]): MenuAction[] => ids.map((id) => ({ id, title: id }));
+  const leafIds = (items: readonly MenuAction[]): string[] =>
+    items.flatMap((item) => (item.subactions ? leafIds(item.subactions) : [item.id!]));
+
+  it("keeps every action once while nesting iOS secondary actions under More", () => {
+    const full = {
+      direct: actions("new-thread-on-branch", "copy-thread", "copy-thread-id", "settle", "snooze"),
+      reorder: actions("arrange", "move-up", "move-down"),
+      pin: actions("unpin"),
+      secondary: actions("rename", "regenerate-title", "turn-into-project", "archive", "delete"),
+    };
+    const flat = layoutThreadListV2RowMenuActions({ ...full, nested: false });
+    const nested = layoutThreadListV2RowMenuActions({ ...full, nested: true });
+
+    expect(flat.map((action) => action.id)).toEqual(
+      [...full.direct, ...full.reorder, ...full.pin, ...full.secondary].map((action) => action.id),
+    );
+    expect(nested.map((action) => action.id)).toEqual([
+      "new-thread-on-branch",
+      "copy-thread",
+      "copy-thread-id",
+      "settle",
+      "snooze",
+      "unpin",
+      "more",
+    ]);
+    expect(nested.at(-1)?.subactions?.map((action) => action.id)).toEqual([
+      "arrange-menu",
+      "rename",
+      "regenerate-title",
+      "turn-into-project",
+      "archive",
+      "delete",
+    ]);
+    expect(leafIds(nested).toSorted()).toEqual(leafIds(flat).toSorted());
+
+    // Slim rows only offer "Arrange threads…", which needs no submenu of its own.
+    const slim = layoutThreadListV2RowMenuActions({
+      ...full,
+      reorder: actions("arrange"),
+      nested: true,
+    });
+    expect(slim.at(-1)?.subactions?.[0]?.id).toBe("arrange");
   });
 });
 
@@ -728,7 +800,6 @@ describe("buildThreadListV2ListItems", () => {
           projectId: ProjectId.make("project-1"),
           projectTitle: undefined,
           projectCwd: undefined,
-          branch: null,
           title: "unsent",
           createdAt: NOW,
           draftKey: "new-task:unsent",
@@ -823,11 +894,10 @@ describe("pending mobile thread moves", () => {
     const ordered = getThreadListV2OrderedSection({ threads: rows, section, now: NOW });
     const orderedIds = ordered.map((row) => `${row.environmentId}:${row.id}`);
     const movedId = orderedIds[2]!;
-    const assignments = planPinnedMove({
-      orderedIds,
+    const assignments = planPinnedReorder({
+      orderedIds: orderedIds.toSpliced(2, 1).toSpliced(1, 0, movedId),
       keysById: new Map(orderedIds.map((id) => [id, null])),
       movedId,
-      direction: "up",
     })!;
     const pending = createPendingThreadOrder({
       section,

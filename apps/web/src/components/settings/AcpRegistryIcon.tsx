@@ -1,4 +1,7 @@
-import { useEffect, useId, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { useId, useState } from "react";
 import {
   resolveOfficialAcpRegistryIconUrl,
   officialAcpRegistryIconUrlForAgentId,
@@ -66,6 +69,33 @@ export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
   return load;
 }
 
+// Falls back to the raw allowlisted CDN URL when the validating fetch fails: the
+// CDN serves no CORS headers, so the fetch is often blocked cross-origin while
+// native <img> loading still works. The object URL is shared per agent and
+// revoked when the last icon unmounts.
+const acpRegistryIconSourceAtom = Atom.family((iconUrl: string) =>
+  Atom.make((get) => {
+    let disposed = false;
+    let objectUrl: string | null = null;
+    get.addFinalizer(() => {
+      disposed = true;
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+    });
+    return Effect.promise(() =>
+      loadCachedAcpRegistryIcon(iconUrl).then(
+        (blob) => {
+          if (disposed) return iconUrl;
+          objectUrl = URL.createObjectURL(blob);
+          return objectUrl;
+        },
+        () => iconUrl,
+      ),
+    );
+  }).pipe(Atom.withLabel(`acp-registry-icon:${iconUrl}`)),
+);
+
+const NO_ICON_SOURCE_ATOM = Atom.make(AsyncResult.initial<string>());
+
 export function AcpRegistryAgentIcon({
   icon,
   className,
@@ -77,37 +107,17 @@ export function AcpRegistryAgentIcon({
 }) {
   const colorFilterId = useId();
   const iconUrl = resolveOfficialAcpRegistryIconUrl(icon);
+  // Render only after the load pipeline resolves, so the fallback icon does
+  // not flash a broken image.
+  const source = AsyncResult.getOrElse(
+    useAtomValue(iconUrl === null ? NO_ICON_SOURCE_ATOM : acpRegistryIconSourceAtom(iconUrl)),
+    () => null,
+  );
   const [image, setImage] = useState<{
-    readonly iconUrl: string;
     readonly source: string;
-    readonly status: "loading" | "loaded" | "failed";
+    readonly status: "loaded" | "failed";
   } | null>(null);
-  const currentImage = image?.iconUrl === iconUrl ? image : null;
-  // The CDN lacks CORS headers; native img loading can succeed after a validating fetch fails.
-  const source = currentImage?.source ?? null;
-  const status = currentImage?.status ?? "loading";
-
-  useEffect(() => {
-    if (iconUrl === null) return;
-    let active = true;
-    let objectUrl: string | null = null;
-    void loadCachedAcpRegistryIcon(iconUrl)
-      .then((blob) => {
-        if (!active) return;
-        objectUrl = URL.createObjectURL(blob);
-        setImage({ iconUrl, source: objectUrl, status: "loading" });
-      })
-      .catch(() => {
-        if (!active) return;
-        setImage((current) =>
-          current?.iconUrl === iconUrl ? current : { iconUrl, source: iconUrl, status: "loading" },
-        );
-      });
-    return () => {
-      active = false;
-      if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
-    };
-  }, [iconUrl]);
+  const status = source !== null && image?.source === source ? image.status : "loading";
 
   return (
     <span
@@ -144,17 +154,8 @@ export function AcpRegistryAgentIcon({
           decoding="async"
           referrerPolicy="no-referrer"
           src={source}
-          onError={() => {
-            if (iconUrl === null) return;
-            setImage((current) =>
-              current?.iconUrl === iconUrl && current.source !== source
-                ? current
-                : { iconUrl, source, status: "failed" },
-            );
-          }}
-          onLoad={() => {
-            if (iconUrl !== null) setImage({ iconUrl, source, status: "loaded" });
-          }}
+          onError={() => setImage({ source, status: "failed" })}
+          onLoad={() => setImage({ source, status: "loaded" })}
         />
       ) : null}
     </span>

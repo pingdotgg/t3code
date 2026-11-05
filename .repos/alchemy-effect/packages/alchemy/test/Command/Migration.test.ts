@@ -1,11 +1,11 @@
-import * as Command from "@/Command";
-import { Stack } from "@/Stack";
-import { type ResourceState, State } from "@/State";
-import * as Test from "@/Test/Alchemy";
-import { expect } from "alchemy-test";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as pathe from "pathe";
+import * as Command from "@/Command";
+import { Stack } from "@/Stack";
+import { type ResourceState, State } from "@/State";
 
 const { test } = Test.make({ providers: Command.providers(), dev: true });
 
@@ -22,10 +22,7 @@ const makeTemporaryFixture = Effect.fn(function* () {
 // simulating state written by an older provider version. Both the test body and
 // the deploys driven through `stack` read/write the same store keyed by
 // (stack, stage, fqn).
-const seedLegacyState = Effect.fn(function* (
-  fqn: string,
-  value: ResourceState,
-) {
+const seedLegacyState = Effect.fn(function* (fqn: string, value: ResourceState) {
   const state = yield* yield* State;
   const stk = yield* Stack;
   yield* state.set({ stack: stk.name, stage: stk.stage, fqn, value });

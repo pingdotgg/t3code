@@ -1,6 +1,6 @@
 /** Keep bundler externals and staged runtime dependency roots aligned. */
 // Filesystem-loaded externals need dependencies outside the bundle.
-export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
+const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // Cursor ships computed Webpack imports and platform helper packages.
   "@cursor/sdk",
   // Playwright reads package.json and browsers.json beside its runtime modules.

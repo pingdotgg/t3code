@@ -3,7 +3,7 @@ import {
   NAVIGATION_TAB_ICONS,
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
 import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
@@ -18,7 +18,11 @@ import {
   NativeWorkspaceTabActivityContext,
   WorkspaceSlotOptionsContext,
 } from "../../native/v5-workspace-context";
-import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
+import {
+  useCompactWorkspaceTabs,
+  useFloatingWorkspaceTabs,
+  useSystemWorkspaceTabBar,
+} from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
@@ -36,30 +40,22 @@ function RetainedWorkspaceTab(props: {
   const workspace = useWorkspaceTabs()!;
   // Whether this slot is the visible one, read by cleanups after the switch has committed.
   const activeRef = useRef(props.active);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed active flag to a ref that header cleanups read after the tab switch commits
   useLayoutEffect(() => {
     activeRef.current = props.active;
   }, [props.active]);
-  const isActive = useCallback(() => activeRef.current, []);
-  const activity = useMemo(
-    () => ({
-      active: props.active,
-      isActive,
-    }),
-    [props.active, isActive],
-  );
+  const isActive = () => activeRef.current;
+  const activity = {
+    active: props.active,
+    isActive,
+  };
   const [optionsByRoute, setOptionsByRoute] = useState<ReadonlyMap<string, object>>(new Map());
   // Stable, so writers and the cleanups that depend on them don't re-run on every write.
-  const setRouteOptions = useCallback(
-    (routeKey: string, options: object) =>
-      setOptionsByRoute((current) =>
-        new Map(current).set(routeKey, { ...current.get(routeKey), ...options }),
-      ),
-    [],
-  );
-  const slotOptions = useMemo(
-    () => ({ byRoute: optionsByRoute, set: setRouteOptions }),
-    [optionsByRoute, setRouteOptions],
-  );
+  const setRouteOptions = (routeKey: string, options: object) =>
+    setOptionsByRoute((current) =>
+      new Map(current).set(routeKey, { ...current.get(routeKey), ...options }),
+    );
+  const slotOptions = { byRoute: optionsByRoute, set: setRouteOptions };
   const [content, setContent] = useState(
     props.active ? { workspace, children: props.children } : null,
   );
@@ -77,6 +73,8 @@ function RetainedWorkspaceTab(props: {
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
+  /** The sidebar column draws the tabs itself, so they leave with it. */
+  readonly tabsInSidebarColumn?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
@@ -87,20 +85,22 @@ export function WorkspaceNativeTabs(props: {
   const systemTabBar = useSystemWorkspaceTabBar();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
-  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
-  const compactSidebarTabs = deviceType === "phone" || !layout.usesSplitView;
+  const { layout, panes } = useAdaptiveWorkspaceLayout();
+  // The tabs belong to the sidebar; over a page with the sidebar hidden they'd cover the composer.
+  const hiddenWithSidebar =
+    deviceType === "pad" &&
+    layout.usesSplitView &&
+    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
+    !panes.primarySidebarVisible;
+  const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
-  const request = useMemo(
-    () => ({
-      selectedScreenKey:
-        selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!,
-      baseProvenance: provenance,
-    }),
-    [selectedSlot, provenance],
-  );
+  const request = {
+    selectedScreenKey: selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!,
+    baseProvenance: provenance,
+  };
   return (
     <View style={{ flex: 1 }}>
       <Tabs.Host
@@ -159,30 +159,46 @@ export function WorkspaceNativeTabs(props: {
       </Tabs.Host>
       {(deviceType === "pad" ||
         compactTabs ||
-        (layout.primarySidebarOverlaysContent &&
+        (layout.variant === "medium" &&
           !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
-      !props.hidden ? (
+      !props.hidden &&
+      !props.tabsInSidebarColumn &&
+      !hiddenWithSidebar ? (
         <View
           pointerEvents="box-none"
           style={{
             position: "absolute",
             left: 0,
             bottom: 0,
-            width: layout.listPaneWidth ?? width,
+            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
+            width:
+              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
+                ? Math.min(280, layout.listPaneWidth ?? width, width)
+                : (layout.listPaneWidth ?? width),
             height: 128,
           }}
         >
-          <WorkspaceSidebarTabs
-            compact={compactSidebarTabs}
-            reserveComposeSpace={compactSidebarTabs}
-            onNewTask={
-              compactSidebarTabs && !workspace.settingsOpen && selectedTab === "threads"
-                ? startNewTask
-                : undefined
-            }
-          />
+          <WorkspaceSidebarTabsFooter />
         </View>
       ) : null}
     </View>
+  );
+}
+
+/** The workspace tabs at the foot of the sidebar. */
+export function WorkspaceSidebarTabsFooter() {
+  const workspace = useWorkspaceTabs()!;
+  const { startNewTask } = useAdaptiveWorkspaceLayout();
+  const compact = useFloatingWorkspaceTabs();
+  return (
+    <WorkspaceSidebarTabs
+      compact={compact}
+      reserveComposeSpace={compact}
+      onNewTask={
+        compact && !workspace.settingsOpen && workspace.state.selectedTab === "threads"
+          ? startNewTask
+          : undefined
+      }
+    />
   );
 }

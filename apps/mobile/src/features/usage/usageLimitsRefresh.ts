@@ -9,7 +9,7 @@ import { serverEnvironment } from "../../state/server";
  * Whether the last finished limits refresh for an environment failed. Not kept
  * alive: the limits view mounts it, and leaving the view forgets old failures.
  */
-export const limitsRefreshFailedAtom = Atom.family((environmentId: EnvironmentId) =>
+const limitsRefreshFailedAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make(false).pipe(Atom.withLabel(`mobile:limits-refresh-failed:${environmentId}`)),
 );
 
