@@ -16,7 +16,6 @@ import {
   type ThreadSearchShell,
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   isListedThreadLineage,
   type ContextMenuItem,
@@ -183,29 +182,6 @@ export function resolveSidebarThreadSection(input: {
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
-}
-
-// Keep cached placement on the first connection attempt, matching mobile's threadRouteIsHydrating.
-export function isSidebarEnvironmentDisconnected(
-  phase: EnvironmentConnectionPhase,
-  shellIsLive: boolean,
-): boolean {
-  return phase !== "connecting" && (phase !== "connected" || !shellIsLive);
-}
-
-export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
-  thread: T,
-  input: {
-    readonly enabled: boolean;
-    readonly disconnectedEnvironmentIds: ReadonlySet<EnvironmentId>;
-    readonly isWorking: (thread: T) => boolean;
-  },
-): boolean {
-  return (
-    input.enabled &&
-    !input.disconnectedEnvironmentIds.has(thread.environmentId) &&
-    input.isWorking(thread)
-  );
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
@@ -841,6 +817,7 @@ export type SidebarThreadStatus =
   | "approval"
   | "input"
   | "request"
+  | "preparing"
   | "working"
   | "waiting"
   | "failed"
@@ -862,7 +839,9 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "working" || input.status === "waiting") return true;
+  if (input.status === "preparing" || input.status === "working" || input.status === "waiting") {
+    return true;
+  }
   if (input.status === "ready" || input.status === "approval") {
     return !input.isUnread && !input.isWoke;
   }
@@ -893,9 +872,12 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
   }
+  if (thread.runtime?.status === "preparing") {
+    return "preparing";
+  }
   if (
     thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
+    ["queued", "starting", "running", "waiting"].includes(thread.runtime.status)
   ) {
     return "working";
   }
@@ -930,7 +912,7 @@ export function resolveSidebarFolderDot(
     (thread) => resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
-  if (statuses.has("working")) return "working";
+  if (statuses.has("working") || statuses.has("preparing")) return "working";
   return null;
 }
 

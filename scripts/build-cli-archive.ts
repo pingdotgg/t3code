@@ -62,6 +62,15 @@ const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
 
+export class CliArchiveLinuxArm64PageError extends Schema.TaggedError<CliArchiveLinuxArm64PageError>()(
+  "CliArchiveLinuxArm64PageError",
+  { executablePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.executablePath} is not page-compatible with Linux arm64.`;
+  }
+}
+
 export class CliArchiveCommandFailedError extends Schema.TaggedError<CliArchiveCommandFailedError>()(
   "CliArchiveCommandFailedError",
   { command: Schema.String, exitCode: Schema.Int },
@@ -537,7 +546,10 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
   if (input.platform === "linux" && input.arch === "arm64") {
     const bytes = yield* fs.readFile(executablePath);
-    yield* Effect.try(() => assertLinuxArm64PageCompatibility(bytes));
+    yield* Effect.try({
+      try: () => assertLinuxArm64PageCompatibility(bytes),
+      catch: (cause) => new CliArchiveLinuxArm64PageError({ executablePath, cause }),
+    });
   }
   if (input.platform === "mac") {
     yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
