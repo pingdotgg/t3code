@@ -70,6 +70,7 @@ export function useComposerMenuItems({
   planModeUiEnabled,
   sideChatAvailable,
   sideChatDisabledReason,
+  freshSessionAvailable,
   compactSlashCommandAvailable,
   selectedProvider,
   selectedProviderSkills,
@@ -90,6 +91,7 @@ export function useComposerMenuItems({
   readonly planModeUiEnabled: boolean;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
+  readonly freshSessionAvailable: boolean;
   readonly compactSlashCommandAvailable: boolean;
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedProviderSkills: ServerProvider["skills"];
@@ -273,6 +275,17 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
+        ...(freshSessionAvailable
+          ? ([
+              {
+                id: "slash:clear",
+                type: "slash-command",
+                command: "clear",
+                label: "/clear",
+                description: "Start a fresh session; earlier messages stay visible",
+              },
+            ] as const)
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
@@ -301,8 +314,11 @@ export function useComposerMenuItems({
           skill.description ??
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
+      // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
-        (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
+        (item) =>
+          (item.command.name !== "compact" || compactSlashCommandAvailable) &&
+          (item.command.name !== "clear" || !freshSessionAvailable),
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],

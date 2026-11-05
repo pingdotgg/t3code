@@ -109,6 +109,8 @@ export function buildComposerSlashCommandItems(input: {
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
   readonly offersUsageLimits?: boolean;
+  /** T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live. */
+  readonly offersFreshSession?: boolean;
   readonly allowInteractionMode: boolean;
   readonly selectedProviderStatus: Pick<
     ServerProvider,
@@ -146,10 +148,20 @@ export function buildComposerSlashCommandItems(input: {
   );
 
   // Providers expand commands only at the start of a message. T3 commands
-  // change local state and do not have this restriction.
+  // change local state and do not have this restriction, except `/clear`.
   if (!input.atMessageStart) return items;
+  if (input.offersFreshSession && "clear".includes(query)) {
+    items.push({
+      id: "cmd:clear",
+      type: "slash-command",
+      command: "clear",
+      label: "/clear",
+      description: "Start a fresh session",
+    });
+  }
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
+    if (command.name === "clear" && input.offersFreshSession) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {
       continue;
@@ -277,6 +289,7 @@ export function useComposerCommandMenu({
   onUsageLimits,
   modelOptions,
   modelProviders,
+  onFreshSession,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -301,6 +314,8 @@ export function useComposerCommandMenu({
   /** Models an `@` mention can name in the prompt. */
   readonly modelOptions?: ReadonlyArray<ModelOption>;
   readonly modelProviders?: ReadonlyArray<ServerProvider>;
+  /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
+  readonly onFreshSession?: () => void;
 }) {
   const [localSelection, setLocalSelection] = useState(() => ({
     ownerKey,
@@ -404,6 +419,7 @@ export function useComposerCommandMenu({
         hasThread,
         hasCompactableConversation,
         offersUsageLimits,
+        offersFreshSession: onFreshSession !== undefined,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
         selectedProviderStatus: selectedProviderStatus
           ? {
@@ -642,6 +658,13 @@ export function useComposerCommandMenu({
       return;
     }
 
+    if (item.type === "slash-command" && item.command === "clear" && onFreshSession) {
+      const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+      setSelection({ start: cleared.cursor, end: cleared.cursor });
+      onChangeDraftMessage(cleared.text);
+      onFreshSession();
+      return;
+    }
     if (
       item.type === "provider-slash-command" &&
       item.command.name === USAGE_LIMITS_COMMAND.name &&
