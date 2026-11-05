@@ -3775,7 +3775,7 @@ export function ChatComposer(props: ChatComposerProps) {
                 {composerAttachmentFileList}
               </div>
 
-              <div className="composer-prompt-editor relative min-w-0 py-1.5 [grid-area:prompt]">
+              <div className="relative min-w-0 py-1.5 [grid-area:prompt]">
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
@@ -3843,7 +3843,7 @@ export function ChatComposer(props: ChatComposerProps) {
                         </span>
                       ) : undefined
                     }
-                    placeholderClassName="composer-prompt-placeholder truncate"
+                    placeholderClassName="truncate"
                     narrowPlaceholder={
                       !isComposerApprovalState &&
                       !activePendingProgress &&
