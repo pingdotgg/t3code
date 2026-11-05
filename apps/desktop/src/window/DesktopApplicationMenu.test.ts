@@ -29,7 +29,7 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
+const electronAppStub = {
   metadata: Effect.die("unexpected metadata read"),
   name: Effect.succeed("T3 Code"),
   systemLocale: Effect.succeed("en-US"),
@@ -50,7 +50,10 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   onBeforeQuitForUpdate: () => Effect.void,
   removeCommandLineSwitch: () => Effect.void,
   on: () => Effect.void,
-} satisfies ElectronApp.ElectronApp["Service"]);
+  bounceDock: Effect.void,
+} satisfies ElectronApp.ElectronApp["Service"];
+
+const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, electronAppStub);
 
 const electronDialogStub = {
   pickFolder: () => Effect.succeedNone,
@@ -169,8 +172,9 @@ describe("checkForUpdatesFromMenu", () => {
       downloadFinished,
       ["Update available"],
       "install-update",
+      1,
     ],
-    ["leaves a found update on Later", "available", 1, null, ["Update available"], null],
+    ["leaves a found update on Later", "available", 1, null, ["Update available"], null, 0],
     [
       "reports a download that fails",
       "available",
@@ -178,47 +182,66 @@ describe("checkForUpdatesFromMenu", () => {
       downloadFailed,
       ["Update available", "Could not download update"],
       null,
+      0,
     ],
-    ["says a download is under way", "downloading", 0, null, ["Update downloading"], null],
-    ["opens the update flow for a downloaded update", "downloaded", 0, null, [], "install-update"],
-  ] as const)("%s", ([_case, status, response, download, expectedDialogs, expectedAction]) =>
-    Effect.gen(function* () {
-      const dialogs: Array<string | undefined> = [];
-      let downloads = 0;
-      const selectedAction = yield* Deferred.make<string>();
+    ["says a download is under way", "downloading", 0, null, ["Update downloading"], null, 0],
+    [
+      "opens the update flow for a downloaded update",
+      "downloaded",
+      0,
+      null,
+      [],
+      "install-update",
+      0,
+    ],
+  ] as const)(
+    "%s",
+    ([_case, status, response, download, expectedDialogs, expectedAction, expectedBounces]) =>
+      Effect.gen(function* () {
+        const dialogs: Array<string | undefined> = [];
+        let downloads = 0;
+        let bounces = 0;
+        const selectedAction = yield* Deferred.make<string>();
 
-      yield* DesktopApplicationMenu.checkForUpdatesFromMenu.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.succeed(DesktopUpdates.DesktopUpdates, {
-              ...desktopUpdatesStub,
-              check: () => Effect.succeed({ checked: true, state: updateState(status) }),
-              download: Effect.suspend(() => {
-                downloads += 1;
-                return download === null
-                  ? Effect.die("unexpected download")
-                  : Effect.succeed(download);
+        yield* DesktopApplicationMenu.checkForUpdatesFromMenu.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(DesktopUpdates.DesktopUpdates, {
+                ...desktopUpdatesStub,
+                check: () => Effect.succeed({ checked: true, state: updateState(status) }),
+                download: Effect.suspend(() => {
+                  downloads += 1;
+                  return download === null
+                    ? Effect.die("unexpected download")
+                    : Effect.succeed(download);
+                }),
               }),
-            }),
-            Layer.succeed(ElectronDialog.ElectronDialog, {
-              ...electronDialogStub,
-              showMessageBox: (options) => {
-                dialogs.push(options.title);
-                return Effect.succeed({ response, checkboxChecked: false });
-              },
-            }),
-            layerDesktopWindow(selectedAction),
+              Layer.succeed(ElectronDialog.ElectronDialog, {
+                ...electronDialogStub,
+                showMessageBox: (options) => {
+                  dialogs.push(options.title);
+                  return Effect.succeed({ response, checkboxChecked: false });
+                },
+              }),
+              layerDesktopWindow(selectedAction),
+              Layer.succeed(ElectronApp.ElectronApp, {
+                ...electronAppStub,
+                bounceDock: Effect.sync(() => {
+                  bounces += 1;
+                }),
+              }),
+            ),
           ),
-        ),
-      );
+        );
 
-      assert.deepEqual(dialogs, [...expectedDialogs]);
-      assert.equal(downloads, download === null ? 0 : 1);
-      assert.equal(
-        (yield* Deferred.isDone(selectedAction)) ? yield* Deferred.await(selectedAction) : null,
-        expectedAction,
-      );
-    }),
+        assert.deepEqual(dialogs, [...expectedDialogs]);
+        assert.equal(bounces, expectedBounces);
+        assert.equal(downloads, download === null ? 0 : 1);
+        assert.equal(
+          (yield* Deferred.isDone(selectedAction)) ? yield* Deferred.await(selectedAction) : null,
+          expectedAction,
+        );
+      }),
   );
 });
 

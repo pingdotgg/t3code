@@ -8,6 +8,7 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 import type * as Electron from "electron";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -35,6 +36,7 @@ export class DesktopApplicationMenu extends Context.Service<
 
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdates.DesktopUpdates
+  | ElectronApp.ElectronApp
   | DesktopWindow.DesktopWindow
   | ElectronDialog.ElectronDialog;
 
@@ -78,6 +80,7 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const electronApp = yield* ElectronApp.ElectronApp;
   const result = yield* updates.check("menu");
   const updateState = result.state;
 
@@ -110,6 +113,7 @@ export const checkForUpdatesFromMenu = Effect.gen(function* () {
     const download = yield* updates.download;
     if (download.completed) {
       yield* desktopWindow.dispatchMenuAction("install-update", { reveal: false });
+      yield* electronApp.bounceDock;
       return;
     }
     yield* electronDialog.showMessageBox({
