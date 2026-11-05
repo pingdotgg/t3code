@@ -966,7 +966,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("sidebar-hide-lone-provider")}
-          description="Leave the provider logo off thread rows when only one provider is set up. Detailed and Slim always do."
+          description="Leave the provider logo off thread rows when only one provider is set up."
           resetAction={
             settings.sidebarHideLoneProvider !==
             DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider ? (

@@ -160,6 +160,10 @@
   }
 }
 
+@utility sidebar-row-mark-notch {
+  mask-image: radial-gradient(circle 6px at 17px 17px, transparent 95%, #000 100%);
+}
+
 @utility sidebar-row-detailed {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

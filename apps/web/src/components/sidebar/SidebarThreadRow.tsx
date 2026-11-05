@@ -182,6 +182,15 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+function hidesLoneProvider(
+  thread: SidebarThreadSummary,
+  providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>,
+  hideLone: boolean | undefined,
+): boolean {
+  const stack = resolveThreadProviderStack(thread);
+  return hideLone === true && stack.length === 1 && providerEntryByInstanceId.size < 2;
+}
+
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
@@ -191,7 +200,7 @@ function SidebarProviderStack(props: {
   const currentInstanceId = stack[stack.length - 1]!;
   const currentEntry = props.providerEntryByInstanceId.get(currentInstanceId) ?? null;
   if (currentEntry === null) return null;
-  if (props.hideLone && stack.length === 1 && props.providerEntryByInstanceId.size < 2) return null;
+  if (hidesLoneProvider(props.thread, props.providerEntryByInstanceId, props.hideLone)) return null;
   const showInstanceBadge = shouldShowInstanceBadge(
     currentEntry,
     props.providerEntryByInstanceId.values(),
@@ -1190,22 +1199,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
       >
         {remoteMachineIcon}
-        <SidebarProviderStack
-          thread={thread}
-          providerEntryByInstanceId={props.providerEntryByInstanceId}
-          hideLone={variantStyled || hideLoneProvider}
-        />
+        {variantStyled ? null : (
+          <SidebarProviderStack
+            thread={thread}
+            providerEntryByInstanceId={props.providerEntryByInstanceId}
+            hideLone={hideLoneProvider}
+          />
+        )}
       </span>
     </div>
   );
   const titleLineIcons = metaLineEmpty ? (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
       {remoteMachineIcon}
-      <SidebarProviderStack
-        thread={thread}
-        providerEntryByInstanceId={props.providerEntryByInstanceId}
-        hideLone={variantStyled || hideLoneProvider}
-      />
+      {variantStyled ? null : (
+        <SidebarProviderStack
+          thread={thread}
+          providerEntryByInstanceId={props.providerEntryByInstanceId}
+          hideLone={hideLoneProvider}
+        />
+      )}
     </span>
   ) : null;
 
@@ -1213,6 +1226,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     const detailed = variant === "folder-detailed";
     const multiline = variant === "folder-multiline" || detailed;
     const inFolder = variant !== "slim";
+    const providerStack = resolveThreadProviderStack(thread);
+    const rowProviderEntry = hidesLoneProvider(
+      thread,
+      props.providerEntryByInstanceId,
+      hideLoneProvider,
+    )
+      ? null
+      : (props.providerEntryByInstanceId.get(providerStack[providerStack.length - 1]!) ?? null);
     const variantRow =
       variant === "folder-detailed" || variant === "folder-slim"
         ? resolveVariantRow({
@@ -1249,6 +1270,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             answersOpen,
             onAnswersOpenChange: setAnswersOpen,
             onOpenThread: () => onThreadActivate(threadRef),
+            providerIcon: rowProviderEntry
+              ? (size) => (
+                  <ProviderInstanceIcon
+                    driverKind={rowProviderEntry.driverKind}
+                    displayName={rowProviderEntry.displayName}
+                    accentColor={rowProviderEntry.accentColor}
+                    acpRegistryAgentId={rowProviderEntry.acpRegistryAgentId}
+                    acpRegistryIconUrl={rowProviderEntry.acpRegistryIconUrl}
+                    size={size === "alone" ? "compact" : "default"}
+                    {...(size === "badge" ? { iconClassName: "size-2.5" } : {})}
+                  />
+                )
+              : null,
           })
         : null;
     return (

@@ -56,6 +56,7 @@ export function resolveVariantRow(input: {
   answersOpen: boolean;
   onAnswersOpenChange: (open: boolean) => void;
   onOpenThread: () => void;
+  providerIcon: ((size: "badge" | "alone") => ReactNode) | null;
 }) {
   const { style, thread, status, statusWord } = input;
   const working = status === "working" || status === "preparing";
@@ -131,15 +132,36 @@ export function resolveVariantRow(input: {
         {detailed && working ? (
           <span aria-hidden ref={observeVisibleAnimation} className="sidebar-row-sweep" />
         ) : null}
-        {mark !== null ? (
+        {mark !== null || input.providerIcon !== null ? (
           <span
             aria-hidden
             className={cn(
-              "absolute top-2.5 flex size-4 items-center justify-center",
+              "absolute top-2.5 size-4",
               input.nested ? "left-7" : "left-(--sidebar-row-content-inset)",
             )}
           >
-            {mark}
+            <span
+              className={cn(
+                "absolute inset-0 flex items-center justify-center",
+                // The notch shows the row's own surface as the badge's ring, in every state.
+                mark !== null &&
+                  !working &&
+                  input.providerIcon !== null &&
+                  "sidebar-row-mark-notch",
+              )}
+            >
+              {mark ?? (
+                <span className="flex text-secondary-label">{input.providerIcon?.("alone")}</span>
+              )}
+            </span>
+            {mark !== null && input.providerIcon !== null ? (
+              <span
+                data-row-provider-badge
+                className="absolute top-3 left-3 flex size-2.5 items-center justify-center text-sidebar-foreground"
+              >
+                {input.providerIcon("badge")}
+              </span>
+            ) : null}
           </span>
         ) : null}
       </>
