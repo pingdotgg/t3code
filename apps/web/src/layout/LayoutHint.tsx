@@ -170,7 +170,9 @@ export function LayoutStripHint() {
     let overviewOpenedOn: string | null = null;
     return useLayoutStore.subscribe((state, previous) => {
       if (state.overviewOpen) {
-        if (!previous.overviewOpen) overviewOpenedOn = previous.layout.focusedWorkspaceId;
+        if (previous.overviewOpen) return;
+        overviewOpenedOn = previous.layout.focusedWorkspaceId;
+        if (state.hint) state.clearHint(state.hint.id);
         return;
       }
       const left = previous.overviewOpen ? overviewOpenedOn : previous.layout.focusedWorkspaceId;
