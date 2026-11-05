@@ -276,7 +276,7 @@ import {
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
-import { waitForThreadShellReady } from "./threadForkNavigation";
+import { waitForThreadShell } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
@@ -382,16 +382,6 @@ export interface ThreadFeedProps {
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
 
-async function waitForThreadShell(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-): Promise<boolean> {
-  const atom = environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadId));
-  return waitForThreadShellReady({
-    read: () => appAtomRegistry.get(atom) !== null,
-  });
-}
-
 const USER_MESSAGE_COPY_MENU_ACTIONS = [
   { id: "copy-prompt-link", title: "Copy prompt link", image: "link" },
 ];
@@ -471,7 +461,9 @@ function AssistantForkButton(props: {
         })
           .then(async (result) => {
             if (result._tag !== "Success") return;
-            const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
+            const targetThreadReady = await waitForThreadShell(
+              scopeThreadRef(props.environmentId, targetThreadId),
+            );
             if (!targetThreadReady) {
               Dialog.alert(
                 "Fork created",
@@ -3744,6 +3736,15 @@ export const ThreadFeed = memo(function ThreadFeed({
         workspaceRoot={props.workspaceRoot}
       >
         <ThreadMediaVisibility>
+          {info.item.type === "message" &&
+          info.item.message.projectedItem?.item.type === "user_message" &&
+          info.item.message.projectedItem.item.freshContext ? (
+            <ThreadContextDivider
+              label="New session"
+              icon="arrow.clockwise"
+              iconColor={iconSubtleColor}
+            />
+          ) : null}
           {info.item.type === "message" &&
           !isCompactionCommandFeedEntry(info.item) &&
           info.item.message.projectedItem?.item.type === "user_message" &&
