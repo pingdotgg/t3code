@@ -336,7 +336,7 @@ function PlacementRow<Value extends string>({
             if (option) onChange(option.value);
           }}
         >
-          <SelectTrigger size="sm" aria-label={title}>
+          <SelectTrigger variant="well" size="compact" aria-label={title}>
             <SelectValue>
               {(current: Value) => {
                 const option = byValue.get(current);
