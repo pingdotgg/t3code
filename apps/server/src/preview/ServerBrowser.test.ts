@@ -2561,8 +2561,31 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       yield* open("agent-new");
       expect(yield* Queue.take(releases)).toBe(opened[8]);
       nativePopupOpeners.delete(opened[9]!);
-      shownDesktopTabs.add(opened[8]!);
+      for (const session of (yield* manager.list({ threadId: scope.thread.threadId })).sessions)
+        shownDesktopTabs.add(session.tabId);
       shownDesktopTabs.delete(opened[9]!);
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      desktopConnections[9]!.context.page.goto.mockImplementationOnce(async () => {
+        started.resolve();
+        await finish.promise;
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => finish.resolve()));
+      const running = yield* broker
+        .invoke({
+          scope: asSession("agent-1"),
+          tabId: PreviewTabId.make(opened[9]!),
+          operation: "navigate",
+          input: { url: "https://example.com/held" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).not.toContain(opened[9]);
+      finish.resolve();
+      yield* Fiber.join(running);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      now.mockReturnValue(62 * 60 * 1000);
       yield* open("agent-new");
       expect(yield* Queue.take(releases)).toBe(opened[9]);
     }),

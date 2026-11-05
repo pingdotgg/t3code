@@ -1470,6 +1470,7 @@ const make = Effect.gen(function* () {
     return [...tabs.values()].filter(
       (tab) =>
         tab.control.agentId !== null &&
+        !tab.agentOperating &&
         !isVisible(tab) &&
         tab.usedAt < cutoff &&
         !holdsNativePopup(tab),

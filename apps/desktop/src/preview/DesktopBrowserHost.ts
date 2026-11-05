@@ -494,7 +494,6 @@ export const make = Effect.gen(function* () {
       return;
     // Kept for the popup's lifetime; `webContents.debugger` throws once it is destroyed.
     const debuggee = webContents.debugger;
-    // DevTools, or another client, already holds its debugger.
     if (webContents.isDevToolsOpened() || debuggee.isAttached()) return;
     try {
       debuggee.attach("1.3");
