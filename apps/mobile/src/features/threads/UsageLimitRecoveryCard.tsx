@@ -3,6 +3,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import { useState } from "react";
 import { View } from "react-native";
@@ -71,9 +72,10 @@ export function UsageLimitRecoveryCard({
   return (
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
       <Text className="text-sm text-warning-foreground">
+        {providerFailureTitle(thread.runtime.lastErrorClass, thread.runtime.lastErrorCode)}.{" "}
         {resetAt
-          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
-          : "The provider did not report a reset time. Retry manually when your limit is available."}
+          ? `Resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+          : "No reset time reported; retry manually"}
       </Text>
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
