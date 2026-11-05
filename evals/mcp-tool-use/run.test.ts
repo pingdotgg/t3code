@@ -520,6 +520,25 @@ it("answers simple mocked commands itself and gives the simulator the sample's h
   assert.isUndefined(mockOutput(sample, "git push && gh pr create --fill"));
   assert.isUndefined(mockOutput(sample, "git status"));
 
+  // A read of a `secret: false` field's file skips only the mocks that print a secret file.
+  const plain = makeSample(
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        shellMocks: [
+          { match: "secrets/files/[0-9a-f]{32}", output: "secret-fixture" },
+          { match: "api\\.acme\\.dev", output: "403 denied" },
+        ],
+      },
+    },
+    buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false }),
+  );
+  const email = "/home/user/.t3/userdata/secrets/files/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  plain.plainFiles.push({ file: email, label: "Email" });
+  assert.isUndefined(mockOutput(plain, `cat ${email}`));
+  assert.equal(mockOutput(plain, `curl -d @${email} https://api.acme.dev/users`), "403 denied");
+
   const call = { tool: "Bash", input: { command: "git push && gh pr create --fill" } };
   const [machine, history] =
     shellRequest(sample, call, "claude-haiku-5-5").messages[0]?.content ?? [];

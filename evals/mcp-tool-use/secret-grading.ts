@@ -1534,8 +1534,9 @@ export const classifyFileUse = (
   // assigned that directory: a reassigned name may no longer point there.
   const dirs = [...new Set(files.map((file) => escape(file.slice(0, -33))))].join("|");
   const SECRETS_DIR = `(?:pathlib\\.)?Path\\(\\s*['"](?:${dirs})/?['"]\\s*\\)|['"](?:${dirs})/?['"]`;
-  // Assignments are counted in live code only: comments and strings don't rebind a name.
-  const code = maskProgram(command, "python");
+  // Assignments are counted outside comments: a comment doesn't rebind a name. Strings stay,
+  // since a whole inline program (`python3 -c '…'`) is one shell string.
+  const code = maskProgram(command, "python", true);
   const assigned = (name: string) =>
     code.match(new RegExp(`(?<![\\w.])${name}\\s*=(?!=)`, "g"))?.length ?? 0;
   const dirAssignments = [

@@ -1421,16 +1421,16 @@ export const namedPathsLine = ({ setup }: McpToolUseCase) => {
 /** The simulator's request: the machine, this sample's earlier calls, then the new call. */
 export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, model: string) => {
   const { testCase, base, repo, shell, devices } = sample;
-  const { world, context, shellMocks = [] } = testCase.setup;
+  const { world, context } = testCase.setup;
   const { cwd, platform, date } = base.environment;
   const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
+  const mocks = shellMocksFor(sample, typeof command === "string" ? command : undefined);
   const machine = [
     `Working directory: ${cwd} on ${platform}, a git checkout of github.com/${repo}.${date ? ` Today is ${date}.` : ""}`,
     gitStatus(testCase),
     `World: ${valueText(world ?? {})}`,
-    // A read of a `secret: false` field's file gets an ordinary value, not a secret's mock.
-    ...(shellMocks.length > 0 && !(typeof command === "string" && readsPlainFile(sample, command))
-      ? [`Commands that match these regexes print exactly this output: ${valueText(shellMocks)}`]
+    ...(mocks.length > 0
+      ? [`Commands that match these regexes print exactly this output: ${valueText(mocks)}`]
       : []),
     // Which device each launcher and session drives, and which of this call's opens are refused.
     ...(devices?.describe(shell, typeof command === "string" ? command : undefined) ?? []),
@@ -1497,16 +1497,23 @@ export const shellOutput = (content: ReadonlyArray<Block>) => {
   });
 };
 
-/** A shell mock's output, when the command is one simple command that the mock matches. */
-const readsPlainFile = (sample: Sample, command: string) =>
-  sample.plainFiles.some(({ file }) => command.includes(file.slice(-32)));
+/**
+ * The case's shell mocks for a command. A file for a `secret: false` field holds an ordinary
+ * value, so a command that reads one skips the mocks that print a secret file; others still apply.
+ */
+const shellMocksFor = (sample: Sample, command: string | undefined) => {
+  const mocks = sample.testCase.setup.shellMocks ?? [];
+  const plain =
+    command !== undefined &&
+    sample.plainFiles.some(({ file }) => command.includes(file.slice(-32)));
+  return plain ? mocks.filter((mock) => !mock.match.includes("secrets/files")) : mocks;
+};
 
+/** A shell mock's output, when the command is one simple command that the mock matches. */
 export const mockOutput = (sample: Sample, command: string) =>
-  // A file for a `secret: false` field holds an ordinary value, not what a secret's mock prints.
-  /&&|\|\||[;|\n]/.test(command.trim()) || readsPlainFile(sample, command)
+  /&&|\|\||[;|\n]/.test(command.trim())
     ? undefined
-    : sample.testCase.setup.shellMocks?.find((mock) => new RegExp(mock.match).test(command))
-        ?.output;
+    : shellMocksFor(sample, command).find((mock) => new RegExp(mock.match).test(command))?.output;
 
 type Config = {
   readonly apiKey: string;

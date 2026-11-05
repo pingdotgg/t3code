@@ -1051,6 +1051,16 @@ it.each<[string, Run["calls"], boolean]>([
   ],
   ["a path variable", [saved(), bash(`f=${F}; adb pair 192.168.1.42:37099 < "$f"`)], true],
   [
+    "a join inside a python3 -c program",
+    [
+      saved(),
+      bash(
+        `python3 -c 'import pathlib, subprocess; d = pathlib.Path("/home/user/.t3/userdata/secrets/files"); subprocess.run(["adb", "pair", "192.168.1.42:37099", (d / "${F.slice(-32)}").read_text()])'`,
+      ),
+    ],
+    true,
+  ],
+  [
     "a join on a name a comment seems to rebind",
     [
       saved(),
