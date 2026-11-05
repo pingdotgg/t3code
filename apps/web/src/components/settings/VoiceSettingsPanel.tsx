@@ -186,6 +186,7 @@ function ModelCard(props: ModelCardProps) {
         ) : null}
       </div>
       <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
+        {props.testControls}
         {downloading ? (
           <Button
             size="icon-sm"
@@ -211,7 +212,6 @@ function ModelCard(props: ModelCardProps) {
             Use model
           </Button>
         )}
-        {props.testControls}
         {model.state === "installed" ? (
           <Button
             size="icon-sm"
@@ -1004,6 +1004,9 @@ export function VoiceSettingsPanel() {
           description="System default follows the operating system when devices change. Test a ten-second recording and play it back here. Test audio stays on this device and is never transcribed."
           control={
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+              <SettingsSearchTarget {...searchableSetting("microphone-test")}>
+                <MicrophoneTest key={selectedMicrophone} microphoneId={selectedMicrophone} />
+              </SettingsSearchTarget>
               <div className="flex min-w-0 items-center gap-1.5">
                 <Select
                   value={selectedMicrophone ? `device:${selectedMicrophone}` : SYSTEM_DEFAULT}
@@ -1037,9 +1040,6 @@ export function VoiceSettingsPanel() {
                   <RefreshCwIcon className="size-3.5" />
                 </Button>
               </div>
-              <SettingsSearchTarget {...searchableSetting("microphone-test")}>
-                <MicrophoneTest key={selectedMicrophone} microphoneId={selectedMicrophone} />
-              </SettingsSearchTarget>
             </div>
           }
         />
