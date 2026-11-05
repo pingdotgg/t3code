@@ -55,7 +55,7 @@ vi.mock("../../components/ui/AppText", () => ({
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
-vi.mock("../workspace/useAndroidWorkspaceNavigation", () => ({
+vi.mock("../layout/workspace/useAndroidWorkspaceNavigation", () => ({
   useWorkspaceBackNavigation: () => () => undefined,
 }));
 vi.mock("./ThreadScreenHost", () => ({
