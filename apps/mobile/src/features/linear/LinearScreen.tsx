@@ -28,7 +28,6 @@ export function LinearScreen(
         search={props.search}
         actions={props.actions}
         menus={props.menus}
-        sidebar={false}
         onBack={() => navigation.goBack()}
       />
       <ScreenContent>{props.children}</ScreenContent>

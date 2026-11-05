@@ -204,7 +204,9 @@ describe("LinearService", () => {
 
       const stored = yield* settings.getSettings;
       assert.strictEqual(stored.linear.apiKey, KEY);
-      const client = ServerSettings.redactServerSettingsForClient(stored);
+      const client = ServerSettings.redactServerSettingsForClient(stored, {
+        secretReferences: true,
+      });
       assert.notInclude(JSON.stringify(client), KEY);
       assert.notInclude(yield* fs.readFileString(config.settingsPath), KEY);
 
