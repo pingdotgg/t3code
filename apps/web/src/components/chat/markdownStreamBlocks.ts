@@ -14,10 +14,13 @@ export function splitMarkdownBlocks(text: string): string[] | null {
   let blockStart = 0;
   let lineStart = 0;
   let fence: string | null = null;
+  let fenceIndent = 0;
   let afterBlankLine = false;
   for (const line of text.split("\n")) {
     const opener = FENCE_PATTERN.exec(line)?.[1];
     if (fence !== null) {
+      // A line left of an indented fence may end the list item holding it, which isn't tracked.
+      if (/\S/.test(line.slice(0, fenceIndent))) break;
       if (
         opener &&
         opener[0] === fence[0] &&
@@ -35,6 +38,7 @@ export function splitMarkdownBlocks(text: string): string[] | null {
       }
       afterBlankLine = false;
       fence = opener ?? null;
+      if (opener) fenceIndent = line.indexOf(opener);
     }
     lineStart += line.length + 1;
   }

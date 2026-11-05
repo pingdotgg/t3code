@@ -133,18 +133,24 @@ describe("provider compatibility", () => {
     }
   });
 
-  it("supports the managed Antigravity runtime in the bundled manifest", () => {
-    const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
-    const release = resolveAntigravityReleaseAsset("darwin", "arm64");
-    assert.strictEqual(
-      resolveProviderCompatibility(
-        policies,
-        ProviderDriverKind.make("antigravity"),
-        `agy_acp_server_${release?.version}`,
-      )?.status,
-      "supported",
-    );
-  });
+  it.each([
+    ["darwin", "arm64"],
+    ["win32", "x64"],
+  ] as const)(
+    "supports the managed Antigravity runtime for %s-%s in the bundled manifest",
+    (platform, arch) => {
+      const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
+      const release = resolveAntigravityReleaseAsset(platform, arch);
+      assert.strictEqual(
+        resolveProviderCompatibility(
+          policies,
+          ProviderDriverKind.make("antigravity"),
+          `agy_acp_server_${release?.version}`,
+        )?.status,
+        "supported",
+      );
+    },
+  );
 
   it("classifies boundaries and treats unlisted versions and release tags as unknown", () => {
     for (const [version, expected] of [
