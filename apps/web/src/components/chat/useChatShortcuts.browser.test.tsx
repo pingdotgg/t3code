@@ -243,18 +243,22 @@ function ScrollChat(props: {
 }
 
 it.each([
-  { embedded: false, key: "End" },
-  { embedded: true, key: "End" },
-  { embedded: false, key: "g" },
-  { embedded: true, key: "g" },
+  { embedded: false, key: "ctrl+end", keyboard: "{Control>}{End}{/Control}", defaults: true },
+  { embedded: true, key: "ctrl+end", keyboard: "{Control>}{End}{/Control}", defaults: true },
+  { embedded: false, key: "end", keyboard: "{End}", defaults: false },
+  { embedded: true, key: "end", keyboard: "{End}", defaults: false },
+  { embedded: false, key: "g", keyboard: "g", defaults: false },
+  { embedded: true, key: "g", keyboard: "g", defaults: false },
 ])(
   "routes $key in main/embedded chat ($embedded) and reads the current thread callback",
-  async ({ embedded, key }) => {
+  async ({ embedded, key, keyboard, defaults }) => {
     const calls: string[] = [];
     const composerKeys: string[] = [];
-    const keybindings = compileResolvedKeybindingsConfig([
-      { key, command: "chat.scrollToEnd", when: "messageAreaFocus || composerFocus" },
-    ]);
+    const keybindings = defaults
+      ? DEFAULT_RESOLVED_KEYBINDINGS
+      : compileResolvedKeybindingsConfig([
+          { key, command: "chat.scrollToEnd", when: "messageAreaFocus || composerFocus" },
+        ]);
     await using screen = await render(
       <ScrollChat
         embedded={embedded}
@@ -267,7 +271,7 @@ it.each([
       options,
     );
     screen.getByLabelText("Messages").element().focus();
-    await userEvent.keyboard(`{${key}}`);
+    await userEvent.keyboard(keyboard);
     await screen.rerender(
       <ScrollChat
         embedded={embedded}
@@ -279,7 +283,13 @@ it.each([
       />,
     );
     await userEvent.click(screen.getByLabelText("Chat input"));
-    await userEvent.keyboard(`{${key}}`);
+    if (defaults) {
+      await userEvent.type(screen.getByLabelText("Chat input"), "first line\nsecond line");
+      await userEvent.keyboard("{Control>}{Home}{/Control}{End}");
+      expect(calls).toEqual(["first"]);
+      expect((document.activeElement as HTMLTextAreaElement).selectionStart).toBe(10);
+    }
+    await userEvent.keyboard(keyboard);
     await userEvent.click(screen.getByRole("button", { name: "Message action" }));
     await userEvent.keyboard("{End}");
     await userEvent.click(screen.getByLabelText("Other editor"));
