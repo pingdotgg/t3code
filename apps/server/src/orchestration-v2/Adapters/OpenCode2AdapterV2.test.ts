@@ -1,4 +1,5 @@
 import * as NodeURL from "node:url";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -2715,48 +2716,67 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps thread-scoped T3 waits as dynamic tools through their lifecycle", () =>
-    Effect.gen(function* () {
-      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
-      const name = "t3-code-web_delegate_task";
-      const input = { task: "Review", mode: "wait" };
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.tool.input.started", { ...tool, name }),
-        event("session.tool.called", { ...tool, name, input, executed: true }),
-        event("session.tool.success", {
-          ...tool,
-          content: [{ type: "text", text: "Reviewed" }],
-          metadata: {},
-          executed: true,
-        }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]);
-      const events = yield* runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(turnInput(thread));
-      const items = (yield* Fiber.join(events)).flatMap((event) =>
-        event.type === "turn_item.updated" &&
-        event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
-          ? [event.turnItem]
-          : [],
-      );
-      assert.deepEqual(
-        items.map((item) => item.type),
-        ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
-      );
-      assert.deepEqual(
-        items.map((item) => item.status),
-        ["running", "running", "completed"],
-      );
-      const last = items.at(-1);
-      assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
-      assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
-    }).pipe(Effect.scoped),
+  it.effect.each(["delegate_task", "html_preview", "mcp__acme__edit_document"])(
+    "keeps MCP %s as a dynamic tool through its lifecycle",
+    (toolName) =>
+      Effect.gen(function* () {
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
+        const name = toolName.startsWith("mcp__") ? toolName : `t3-code-web_${toolName}`;
+        const input =
+          toolName !== "delegate_task"
+            ? { html: "<p>Preview</p>" }
+            : { task: "Review", mode: "wait" };
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.tool.input.started", { ...tool, name }),
+          event("session.tool.called", { ...tool, name, input, executed: true }),
+          event(
+            "session.tool.success",
+            {
+              ...tool,
+              content: [
+                { type: "text", text: "Reviewed" },
+                ...(toolName !== "delegate_task"
+                  ? [{ type: "file", uri: "data:image/png;base64,iVBORw0KGgo=", mime: "image/png" }]
+                  : []),
+              ],
+              metadata: {},
+              executed: true,
+            },
+            undefined,
+            2,
+          ),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const items = (yield* Fiber.join(events)).flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          items.map((item) => item.type),
+          ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
+        );
+        assert.deepEqual(
+          items.map((item) => item.status),
+          ["running", "running", "completed"],
+        );
+        const last = items.at(-1);
+        assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
+        assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
+        assert.deepEqual(
+          toolOutputImages(last?.type === "dynamic_tool" ? last.output : null),
+          toolName !== "delegate_task" ? [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] : [],
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("stores a shell command that exits non-zero as failed", () =>

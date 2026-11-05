@@ -112,6 +112,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly detach: (key: DesktopBrowserTabKey) => void;
     /** A guest opened a popup window; a tab the server drives for an agent shows it as a tab too. */
     readonly openedPopup: (opener: Electron.WebContents, popup: Electron.WebContents) => void;
+    readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
@@ -146,6 +147,9 @@ export const make = Effect.gen(function* () {
   const openedPopups = new Map<Electron.WebContents, Set<Electron.WebContents>>();
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
+  // Kept apart from attachment: the renderer can show a webview before its debugger attaches,
+  // and the server forgets `shown` on detach, for example while DevTools holds the debugger.
+  const shownTabs = new Map<string, boolean>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
   const isAttached = (target: AttachedTarget) =>
@@ -602,6 +606,19 @@ export const make = Effect.gen(function* () {
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
     emit({ type: "attached", ...key });
+    const shown = shownTabs.get(id);
+    if (shown !== undefined) emit({ type: "shown", ...key, shown });
+  };
+
+  const setShown = (key: DesktopBrowserTabKey, shown: boolean | undefined) => {
+    const id = keyOf(key);
+    if (shown === undefined) {
+      shownTabs.delete(id);
+      return;
+    }
+    if (shownTabs.get(id) === shown) return;
+    shownTabs.set(id, shown);
+    if (tabs.has(id)) emit({ type: "shown", ...key, shown });
   };
 
   const handleCommandLine = (line: string) =>
@@ -647,7 +664,14 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         dropRelay(tab);
-        return PubSub.publish(outbox, { type: "attached", ...tab.key });
+        const shown = shownTabs.get(keyOf(tab.key));
+        return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
+          Effect.andThen(
+            shown !== undefined
+              ? PubSub.publish(outbox, { type: "shown", ...tab.key, shown })
+              : Effect.void,
+          ),
+        );
       },
       { discard: true },
     );
@@ -668,6 +692,7 @@ export const make = Effect.gen(function* () {
     attach,
     detach,
     openedPopup,
+    setShown,
     placeDownload,
     humanStartedDownload,
   });

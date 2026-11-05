@@ -3,33 +3,20 @@ title: Postgres
 description: SQL.Postgres turns a connection string into an @effect/sql-pg client — tagged-template queries with typed errors, one pool per execution.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const deps = `@effect/sql-pg pg`;
+export const deps = `@alchemy.run/sql @effect/sql-pg`;
 
 `SQL.Postgres` provides tagged-template queries over a Postgres connection. Queries are Effects with typed `SqlError` failures, interruption, and tracing.
 
-Install the optional Postgres driver:
+Install `@alchemy.run/sql` and the Effect Postgres driver:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} />
 
 ## Connect
 
 ```typescript
-import * as SQL from "alchemy/SQL/Postgres";
+import * as SQL from "@alchemy.run/sql/Postgres";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 
@@ -115,7 +102,7 @@ The layer provides `SqlClient.SqlClient` and `@effect/sql-pg`'s `PgClient` from 
 
 ## Provider setup
 
-Choose a database and deployment guide in [SQL databases](/sql/databases); the client above only needs a connection URL. [Hyperdrive](/cloudflare/data/hyperdrive#use-effect-sql) and [Fly Managed Postgres](/fly/data/postgres) cover runtime-specific bindings.
+Choose a database and deployment guide in [SQL databases](/sql/databases); the client above only needs a connection URL. [Hyperdrive](/cloudflare/data/hyperdrive#bind-hyperdrive-to-your-worker) and [Fly Managed Postgres](/fly/data/postgres) cover runtime-specific bindings.
 
 ## Where next
 
