@@ -23,7 +23,7 @@ export function useEnvironmentHostSummary(environmentId: EnvironmentId | null) {
   const data = useHostResources(environmentId);
   const summary = data ? hostResourcesSummary(data) : "";
   if (!data || !summary) return null;
-  return { summary, warning: isHostDiskLow(data) || data.rebootRequired };
+  return { summary, warning: isHostDiskLow(data) || data.rebootRequired === true };
 }
 
 export function EnvironmentHostSummaryText({
