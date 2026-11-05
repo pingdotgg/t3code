@@ -5,6 +5,7 @@ import {
 import * as Predicate from "effect/Predicate";
 
 import {
+  ANIMATION_RENDER_TOOL_NAME,
   HTML_RENDER_TOOL_NAME,
   readHtmlRenderReference,
   type HtmlRenderReference,
@@ -186,7 +187,8 @@ export function htmlRenderFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
 }): HtmlRenderReference | undefined {
-  if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+  const tool = resolveT3McpToolId(item.toolName);
+  if (tool !== HTML_RENDER_TOOL_NAME && tool !== ANIMATION_RENDER_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.htmlRender;
 }
