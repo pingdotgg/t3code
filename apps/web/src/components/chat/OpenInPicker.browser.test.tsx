@@ -195,6 +195,16 @@ describe("remote editor links", () => {
     const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } };
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
+    using _timers = fakeTimers();
+    // The opened link announces through module-global live regions that outlive this render.
+    using _announcement = {
+      [Symbol.dispose]: () => {
+        vi.runAllTimers();
+        for (const region of document.querySelectorAll('body > [aria-live="polite"]')) {
+          region.textContent = "";
+        }
+      },
+    };
 
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
