@@ -12,6 +12,7 @@ function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
     errorCode: null,
     resetAt: resetAt.toISOString(),
     stoppedAt: stoppedAt.toISOString(),
+    settled: false,
     snoozedUntil: null,
     recovery: null,
     timestampFormat,
