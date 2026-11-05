@@ -1027,8 +1027,12 @@ const make = Effect.gen(function* () {
   const persistSettingsSecrets = (current: ServerSettings, next: ServerSettings) =>
     Effect.sync(() => {
       const previous = new Map<string, SettingsSecret>();
+      const inlineValues = new Map<string, string>();
       mapSettingsSecrets(current, (secret) => {
         previous.set(secret.secretName, secret);
+        if (secret.sensitive && !secret.redacted && secret.value.length > 0) {
+          inlineValues.set(secret.secretName, secret.value);
+        }
         return secret;
       });
       const changes: SecretChange[] = [];
@@ -1049,10 +1053,7 @@ const make = Effect.gen(function* () {
           return { value: secret.value, redacted: false };
         }
         if (secret.redacted) keptSecretNames.add(secret.secretName);
-        const old = previous.get(secret.secretName);
-        const inlineValue =
-          old?.sensitive && !old.redacted && old.value.length > 0 ? old.value : undefined;
-        const value = secret.redacted ? inlineValue : secret.value;
+        const value = secret.redacted ? inlineValues.get(secret.secretName) : secret.value;
         if (value === undefined) {
           nextSecretNames.add(secret.secretName);
           return { value: "", redacted: true };

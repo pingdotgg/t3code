@@ -1295,7 +1295,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       {
         label: "inline seed, redacted then empty sensitive",
         duplicate: { value: "", sensitive: true },
-        inline: true,
+        inline: '[{"name":"FOO","value":"stored-foo","sensitive":true}]',
+      },
+      {
+        label: "inline seed with an empty duplicate, redacted then empty sensitive",
+        duplicate: { value: "", sensitive: true },
+        inline:
+          '[{"name":"FOO","value":"stored-foo","sensitive":true},{"name":"FOO","value":"","sensitive":true}]',
       },
     ].map((testCase) => [testCase.label, testCase] as const),
   )(
@@ -1315,7 +1321,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           const fs = yield* FileSystem.FileSystem;
           yield* fs.writeFileString(
             config.settingsPath,
-            '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"FOO","value":"stored-foo","sensitive":true}],"config":{}}}}',
+            `{"providerInstances":{"codex_personal":{"driver":"codex","environment":${inline},"config":{}}}}`,
           );
           yield* service.getSettings;
         } else {
