@@ -78,7 +78,7 @@ export function ChatSyncSection() {
     .map((query) => (query._tag === "Success" ? statusText(query.value) : ""))
     .find((value) => value.length > 0);
   return (
-    <SettingsSection id="chat-sync" title="T3 Code" variant="plain">
+    <SettingsSection id="chat-sync" title="T3 Code">
       <SettingsRow
         {...searchableSetting("chat-sync")}
         serverScoped
