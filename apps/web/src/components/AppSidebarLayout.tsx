@@ -617,12 +617,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           }}
           className={cn(overviewStaged && "z-35")}
           data-overview-zoom={overviewStaged ? overviewPhase : undefined}
+          inert={overviewStaged && overviewShown}
           style={
             overviewStaged
               ? {
                   ...windowControlsInsetStyle,
                   ...overviewZoomTransition(),
-                  ...(overviewShown && { pointerEvents: "none" }),
                 }
               : windowControlsInsetStyle
           }
