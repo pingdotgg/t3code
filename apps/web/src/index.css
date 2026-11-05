@@ -5110,6 +5110,7 @@ body {
 }
 
 .composer-prompt-body[data-composer-multiline]:not([data-composer-overflow])
+  [data-composer-empty="false"]
   [data-testid="composer-editor"]::before {
   height: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
 }
