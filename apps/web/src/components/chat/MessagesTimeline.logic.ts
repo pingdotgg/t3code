@@ -1383,7 +1383,12 @@ function deriveTurnFolds(input: {
     const lastEntryEnd = timelineEntryEnd(lastEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
+        ? computeElapsedMs(
+            prompt?.attempt?.status === "superseded"
+              ? (group.startBoundary ?? input.latestRun.startedAt)
+              : input.latestRun.startedAt,
+            input.latestRun.completedAt,
+          )
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
@@ -2049,7 +2054,10 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     const supersededFold = supersededFoldsByAnchorEntryId.get(timelineEntry.id);
-    if (supersededFold) {
+    if (
+      supersededFold &&
+      !(input.isWorking && activeVisualResponseRunIds.has(supersededFold.runId))
+    ) {
       nextRows.push({
         kind: "attempt-fold",
         deferredWorkItemIds: supersededFold.deferredWorkItemIds,
@@ -2467,11 +2475,16 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
+  return groupTimelinePrompts(result).map((row, index) =>
+    timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
+      ? { ...row, continuesWorkLog: true }
+      : row,
+  );
+}
+
+function groupTimelinePrompts(result: ReadonlyArray<MessagesTimelineRow>): MessagesTimelineRow[] {
   return result.map((row, index) => {
     const next = result[index + 1];
-    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(next)) {
-      return { ...row, continuesWorkLog: true };
-    }
     if (!timelineRowIsUserPrompt(row)) return row;
     const promptRow = timelineRowIsUserPrompt(next) ? { ...row, continuesPromptStack: true } : row;
     if (!timelineRowIsOwnUserMessage(promptRow)) return promptRow;
@@ -2862,12 +2875,12 @@ export function applyWorkingWindow(
     answering: answer?.kind === "text" && answer.message.streaming,
     historyOpen: historyOpenKey === key,
   };
-  return [
+  return groupTimelinePrompts([
     ...rows.slice(0, workingIndex),
     ...before,
     { ...workingRow, window },
     ...after.map((row) => (row.continuesWorkLog ? { ...row, continuesWorkLog: false } : row)),
-  ];
+  ]);
 }
 
 /** `expanded` with every "Handled N updates" group that holds the run open. */
