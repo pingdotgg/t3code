@@ -96,9 +96,13 @@ describe("sidebar pointer lifecycle", () => {
       bubbles: true,
       cancelable: true,
     });
+    const reachedWindow = vi.fn();
+    window.addEventListener("keydown", reachedWindow);
     document.body.dispatchEvent(escape);
+    window.removeEventListener("keydown", reachedWindow);
 
     expect(escape.defaultPrevented).toBe(true);
+    expect(reachedWindow).not.toHaveBeenCalled();
     expect(drag.onCancel).toHaveBeenCalledOnce();
   });
 });

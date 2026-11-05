@@ -104,6 +104,7 @@ export class SidebarPointerSensor {
   private keydown = (event: KeyboardEvent) => {
     if (event.code !== "Escape") return;
     event.preventDefault();
+    event.stopPropagation();
     this.cancel();
   };
   private visibilityChange = () => {

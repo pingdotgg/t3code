@@ -741,14 +741,9 @@ function useKeybindingRowEditor({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape" && isRecording && commandRecordsEscape(row.command)) {
-      event.stopPropagation();
-      setDraft({ keyDraft: "escape", isRecording: false });
-      return;
-    }
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (event.key === "Escape" && !(isRecording && commandRecordsEscape(row.command))) {
       const field = event.currentTarget;
       flushSync(() => setDraft({ keyDraft: row.key, isRecording: false }));
       // The field may unmount for the pill; focus would otherwise drop to the page.
@@ -1079,14 +1074,9 @@ function useNewKeybindingDraft({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape" && isRecording && commandRecordsEscape(commandDraft)) {
-      event.stopPropagation();
-      setDraft({ keyDraft: "escape", isRecording: false });
-      return;
-    }
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (event.key === "Escape" && !(isRecording && commandRecordsEscape(commandDraft))) {
       setDraft({ keyDraft: "", isRecording: false });
       event.currentTarget.blur();
       return;

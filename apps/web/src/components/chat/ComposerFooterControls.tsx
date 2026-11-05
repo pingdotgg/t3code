@@ -265,6 +265,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   canSteer: boolean;
   alternateShortcutLabel: string | null;
   stopShortcutLabel: string | null;
+  isStopShortcutEvent: (event: KeyboardEvent) => boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -309,6 +310,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         canSteer={props.canSteer}
         alternateShortcutLabel={props.alternateShortcutLabel}
         stopShortcutLabel={props.stopShortcutLabel}
+        isStopShortcutEvent={props.isStopShortcutEvent}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}

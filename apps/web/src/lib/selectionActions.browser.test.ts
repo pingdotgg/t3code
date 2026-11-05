@@ -15,9 +15,13 @@ it.each([
   });
   using _actions = { [Symbol.dispose]: actions.dispose };
 
+  const reachedWindow = vi.fn();
+  window.addEventListener("keydown", reachedWindow);
   const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
   document.body.dispatchEvent(escape);
+  window.removeEventListener("keydown", reachedWindow);
 
   expect(escape.defaultPrevented).toBe(showing);
+  expect(reachedWindow).toHaveBeenCalledTimes(showing ? 0 : 1);
   expect(onDismiss).toHaveBeenCalledExactlyOnceWith("cancel");
 });

@@ -105,7 +105,10 @@ describe("Esc in a shortcut recorder", () => {
   });
 });
 
-it("records Esc for the stop command, and a second Esc cancels", async () => {
+it.each([
+  { pressed: "{Escape}", recorded: "esc" },
+  { pressed: "{Shift>}{Escape}{/Shift}", recorded: "shift+esc" },
+])("records $recorded for the stop command, and a second Esc cancels", async (shortcut) => {
   await using screen = await render(
     <RegistryProvider>
       <KeybindingsSettingsPanel />
@@ -118,8 +121,8 @@ it("records Esc for the stop command, and a second Esc cancels", async () => {
   await field.click();
   await expect.element(field).toHaveAttribute("placeholder", "Press shortcut");
 
-  await userEvent.keyboard("{Escape}");
-  await expect.element(field).toHaveValue("escape");
+  await userEvent.keyboard(shortcut.pressed);
+  await expect.element(field).toHaveValue(shortcut.recorded);
 
   await userEvent.keyboard("{Escape}");
   await expect.element(field).toHaveValue("");

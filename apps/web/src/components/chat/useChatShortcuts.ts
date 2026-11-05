@@ -116,7 +116,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       input.closeThreadFind();
       return;
     }
-    // ProseMirror prevents every Escape, so the composer's own claims also stop propagation.
+    // ProseMirror prevents every Escape, so a claim made while the composer has focus must
+    // also stop propagation, as the composer's own claims do.
     if (!input.enabled || (event.defaultPrevented && !context.composerFocus)) return;
     // Bindings can omit a when clause, and these surfaces keep Escape for themselves.
     if (

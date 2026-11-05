@@ -17,15 +17,21 @@ function CitedTimeline() {
 }
 
 const pressEscape = () => {
+  let reachedWindow = false;
+  const onWindowKeyDown = () => {
+    reachedWindow = true;
+  };
+  window.addEventListener("keydown", onWindowKeyDown);
   const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
   document.body.dispatchEvent(event);
-  return event.defaultPrevented;
+  window.removeEventListener("keydown", onWindowKeyDown);
+  return { claimed: event.defaultPrevented, reachedWindow };
 };
 
 it("claims only the Escape that dismisses a live citation", async () => {
   // router: false because the hook only listens on the document.
   await using _screen = await render(<CitedTimeline />, { router: false });
 
-  expect(pressEscape()).toBe(true);
-  expect(pressEscape()).toBe(false);
+  expect(pressEscape()).toEqual({ claimed: true, reachedWindow: false });
+  expect(pressEscape()).toEqual({ claimed: false, reachedWindow: true });
 });

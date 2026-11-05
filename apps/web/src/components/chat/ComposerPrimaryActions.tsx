@@ -35,6 +35,7 @@ interface ComposerPrimaryActionsProps {
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
   stopShortcutLabel?: string | null;
+  isStopShortcutEvent?: (event: KeyboardEvent) => boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -90,6 +91,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canSteer = true,
   alternateShortcutLabel = null,
   stopShortcutLabel = null,
+  isStopShortcutEvent,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -130,8 +132,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <Tooltip
       key="interrupt"
       onOpenChange={(_open, eventDetails) => {
-        // Bound to Escape, this tooltip advertises the key and must not swallow it.
-        if (stopShortcutLabel !== "Esc" || eventDetails.reason !== "escape-key") return;
+        // The stop shortcut must reach the chat instead of only closing this tooltip.
+        if (eventDetails.reason !== "escape-key" || !isStopShortcutEvent?.(eventDetails.event))
+          return;
         eventDetails.cancel();
         eventDetails.allowPropagation();
       }}
