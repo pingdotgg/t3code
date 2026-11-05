@@ -108,7 +108,8 @@ const layerDesktopSshEnvironment = Layer.unwrap(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const env = yield* HostProcess.Environment;
     return DesktopSshEnvironment.layer({
-      resolveCliRunner: Effect.succeed(
+      // Per connect: the login shell's environment is installed after this layer is built.
+      resolveCliRunner: Effect.sync(() =>
         DesktopSshEnvironment.resolveDesktopSshCliRunner(environment, env),
       ),
     });
