@@ -235,6 +235,19 @@ const clampDefaultRuntimeModes = (
   };
 };
 
+/** Every path a policy can manage, with its built-in default: objects expand, the rest are leaves. */
+export function listManageableSettings() {
+  const builtIn = encodeSettings(DEFAULT_SERVER_SETTINGS);
+  const leaves = (path: string, value: unknown): ReadonlyArray<readonly [string, unknown]> =>
+    isRecord(value) && Object.keys(value).length > 0
+      ? Object.entries(value).flatMap(([key, child]) => leaves(`${path}.${key}`, child))
+      : [[path, value]];
+  return Object.keys(ServerSettings.fields)
+    .filter((key) => !UNMANAGEABLE_KEYS.has(key) && !DERIVED_FROM.has(key))
+    .flatMap((key) => leaves(key, getPath(builtIn, [key])))
+    .toSorted(([left], [right]) => left.localeCompare(right));
+}
+
 /** Build the overlay for a policy's settings, or describe the first entry this build cannot apply. */
 export function makeManagedSettings(
   settings: Readonly<Record<string, ManagedPolicySetting>>,
