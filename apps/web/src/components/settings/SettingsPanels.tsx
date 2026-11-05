@@ -12,6 +12,7 @@ import {
   managedUpdatesMessage,
   ProviderDriverKind,
   type ProviderInstanceId,
+  resolveModelCatalogUpdatesEnabled,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
@@ -537,6 +538,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
+    ...(settings.enableModelCatalogUpdates !== DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates
+      ? ["Download new models"]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
@@ -660,6 +664,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      enableModelCatalogUpdates: DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -1924,7 +1929,14 @@ export function ThreadsSettingsPanel() {
 export function MaintenanceSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const { scope, environment, connectedEnvironments, targets } = useSettingsScope();
+  // Compared by effective value: an unset switch follows Provider update checks.
+  const modelCatalogUpdates = targets.map((candidate) =>
+    resolveModelCatalogUpdatesEnabled(candidate.settings),
+  );
+  const mixedModelCatalogUpdates = modelCatalogUpdates.some(
+    (enabled) => enabled !== modelCatalogUpdates[0],
+  );
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
@@ -1936,7 +1948,7 @@ export function MaintenanceSettingsPanel() {
           serverScoped
           settingKeys={["enableProviderUpdateChecks"]}
           {...searchableSetting("provider-update-checks")}
-          description="Check installed provider CLIs for newer available versions and fetch model catalog updates. When off, new models may not appear."
+          description="Check installed provider CLIs for newer available versions."
           resetAction={
             settings.enableProviderUpdateChecks !==
             DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
@@ -1961,6 +1973,38 @@ export function MaintenanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          serverScoped
+          settingKeys={["enableModelCatalogUpdates"]}
+          mixed={mixedModelCatalogUpdates}
+          {...searchableSetting("download-new-models")}
+          description="Download the latest T3 Code model catalog so new models appear between releases. Follows Provider update checks until you change it."
+          resetAction={
+            targets.some((candidate) => candidate.settings.enableModelCatalogUpdates !== null) ? (
+              <SettingResetButton
+                label="download new models"
+                onClick={() =>
+                  updateSettings({
+                    enableModelCatalogUpdates: DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              mixed={mixedModelCatalogUpdates}
+              checked={
+                mixedModelCatalogUpdates ? false : resolveModelCatalogUpdatesEnabled(settings)
+              }
+              onCheckedChange={(checked) =>
+                updateSettings({ enableModelCatalogUpdates: Boolean(checked) })
+              }
+              aria-label="Download new models"
+            />
+          }
+        />
+
         <SettingsRow
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped

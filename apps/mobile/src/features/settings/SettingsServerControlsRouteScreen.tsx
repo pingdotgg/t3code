@@ -12,6 +12,7 @@ import {
   type WorktreeSubmodules,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
+  resolveModelCatalogUpdatesEnabled,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { View } from "react-native";
@@ -265,6 +266,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     });
   };
   const disabled = !canWriteSettings || pendingWrites > 0 || !hasConnectedSelection;
+  const catalogUpdates = displayTargets.map((target) =>
+    resolveModelCatalogUpdatesEnabled(target.settings),
+  );
+  const modelCatalogUpdates = catalogUpdates.every((value) => value === catalogUpdates[0])
+    ? (catalogUpdates[0] ?? null)
+    : null;
+  // The switch only writes true or false, so following provider updates again needs its own action.
+  const modelCatalogUpdatesOverridden = displayTargets.some(
+    (target) => target.settings.enableModelCatalogUpdates !== null,
+  );
   const managed = (...keys: string[]) => managedSettingReason(targets, ...keys);
   // A locked row keeps its explanation and says who manages it.
   const managedSubtitle = (key: string, subtitle: string) => {
@@ -541,12 +552,38 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         "enableProviderUpdateChecks",
                         projectSelected
                           ? "Environment-wide setting. Select All projects to change it."
-                          : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
+                          : "Check installed provider CLIs for newer versions.",
                       )}
                       value={uniform("enableProviderUpdateChecks")}
                       disabled={disabledFor("enableProviderUpdateChecks")}
                       onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
                     />
+                    <View className="border-t border-border-subtle">
+                      <SettingsSwitchRow
+                        icon="sparkles"
+                        label="Download new models"
+                        subtitle={
+                          projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : modelCatalogUpdatesOverridden
+                              ? "Download the latest model catalog so new models appear between releases."
+                              : "Download the latest model catalog so new models appear between releases. Follows Check provider updates until you change it."
+                        }
+                        value={modelCatalogUpdates}
+                        disabled={disabledFor("enableModelCatalogUpdates")}
+                        onValueChange={(value) => write({ enableModelCatalogUpdates: value })}
+                      />
+                    </View>
+                    {modelCatalogUpdatesOverridden && !projectSelected ? (
+                      <View className="border-t border-border-subtle">
+                        <SettingsRow
+                          icon="arrow.uturn.backward"
+                          label="Follow Check provider updates"
+                          disabled={disabledFor("enableModelCatalogUpdates")}
+                          onPress={() => write({ enableModelCatalogUpdates: null })}
+                        />
+                      </View>
+                    ) : null}
                     <View className="border-t border-border-subtle">
                       <SettingsSwitchRow
                         icon="arrow.uturn.forward"
