@@ -6,6 +6,7 @@ import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   CheckpointId,
   NodeId,
@@ -809,6 +810,30 @@ describe("OpenCodeAdapterV2", () => {
             properties: {
               sessionID: nativeSessionId,
               part: {
+                id: "part-exit",
+                sessionID: nativeSessionId,
+                messageID: "late-assistant",
+                type: "tool",
+                callID: "call-exit",
+                tool: "bash",
+                state: {
+                  status: "completed",
+                  input: { command: "vp test" },
+                  output: "1 failed\n",
+                  title: "Run tests",
+                  metadata: { output: "1 failed\n", exit: 1, truncated: false },
+                  time: { start: 4, end: 5 },
+                },
+              },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
                 id: "part-read",
                 sessionID: nativeSessionId,
                 messageID: "late-assistant",
@@ -877,14 +902,21 @@ describe("OpenCodeAdapterV2", () => {
         const commands = items.filter((item) => item.type === "command_execution");
         assert.deepEqual(
           commands.map((item) => item.status),
-          ["pending", "running", "completed", "failed"],
+          ["pending", "running", "completed", "failed", "failed"],
         );
         assert.deepEqual(
           commands.map((item) => item.input),
-          ["pwd", "pwd", "pwd", "pwd"],
+          ["pwd", "pwd", "pwd", "pwd", "vp test"],
         );
         assert.equal(commands[2]?.output, "/repo\n");
         assert.equal(commands[3]?.output, "Command failed");
+        assert.equal(commands[4]?.exitCode, 1);
+        assert.equal(
+          events
+            .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
+            .findLast((node) => node.id === commands[4]?.nodeId)?.status,
+          "failed",
+        );
         assert.isTrue(
           events.some(
             (event) =>
@@ -1242,6 +1274,13 @@ describe("OpenCodeAdapterV2", () => {
                   title: "Edit remote document",
                   metadata: {},
                   output,
+                  attachments: [
+                    {
+                      type: "file",
+                      mime: "image/png",
+                      url: "data:image/png;base64,iVBORw0KGgo=",
+                    },
+                  ],
                   error: "failed",
                   time: { start: 1, end: 2 },
                 },
@@ -1334,7 +1373,9 @@ describe("OpenCodeAdapterV2", () => {
         });
         assert.deepEqual(item.input, { document: "remote-doc" });
       }
-      assert.equal(items[1]?.output, output);
+      assert.deepEqual(toolOutputImages(items[1]?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
       assert.equal(items[3]?.toolName, "ambiguous_server_edit_document");
       assert.isUndefined(items[3]?.toolSource);
       assert.equal(statusReads, 1);
@@ -1363,7 +1404,7 @@ describe("OpenCodeAdapterV2", () => {
             return { stream: nativeEvents.stream };
           },
         },
-        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        command: { list: async () => ({ data: [{ name: "git/review" }] }) },
         session: {
           create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
           command: async (input: {
@@ -1382,9 +1423,9 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
       });
-      const start = yield* harness.startTurn("/review staged changes").pipe(Effect.forkScoped);
+      const start = yield* harness.startTurn("/git/review staged changes").pipe(Effect.forkScoped);
       const call = yield* Queue.take(calls);
-      assert.equal(call.command, "review");
+      assert.equal(call.command, "git/review");
       assert.equal(call.arguments, "staged changes");
       assert.equal(call.model, "anthropic/claude-sonnet");
       yield* Effect.promise(() =>
@@ -2507,7 +2548,14 @@ describe("OpenCodeAdapterV2", () => {
         method: "session.prompt",
         payload: { prompt: secret, nested: { token: secret } },
       });
+      yield* logProtocolEvent({
+        direction: "incoming",
+        messageKind: "notification",
+        method: "message.part.delta",
+        payload: { type: "message.part.delta", properties: { delta: secret } },
+      });
 
+      assert.lengthOf(records, 1);
       const serialized = encodeUnknownJson(records);
       assert.notInclude(serialized, secret);
       assert.include(serialized, '"protocol":"opencode-sdk.sse"');
