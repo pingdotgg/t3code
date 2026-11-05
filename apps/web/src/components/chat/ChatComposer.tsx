@@ -3447,6 +3447,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
+                    vimModeEnabled={settings.vimModeEnabled}
                     literalText={isLiteralPendingAnswer}
                     isPathQueryActive={isPathQueryActiveStable}
                     value={activePendingProgress ? activePendingProgress.customAnswer : prompt}

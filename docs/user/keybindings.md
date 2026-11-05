@@ -51,6 +51,57 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Vim mode
+
+Turn on **Settings → Chat → Vim mode** to use vim keys in the web and desktop apps. It covers
+the composer and every multi-line text box, and it adds keys for moving around the app.
+
+### Editing text
+
+Text boxes start in insert mode, so typing works as usual. Press Escape or `Ctrl+[` for normal
+mode. If a menu is open, the first Escape closes it.
+
+Motions, operators, text objects, visual mode, `.`, registers, marks, macros, `/` search, and
+`:s` work as they do in vim. `:` commands that act on files, such as `:w`, do not apply.
+
+- Enter still sends from normal mode, and app shortcuts keep working. Tab, Shift+Tab, Page Up,
+  and Page Down keep their usual behavior.
+- A text box returns to insert mode after you send or when focus leaves it, so your next
+  keystrokes are text.
+- `j` and `k` move by line break, so a wrapped paragraph counts as one line. In the composer,
+  use `gj` and `gk` to move by visual line. Other text boxes move by line break for both, and
+  they do not highlight search matches.
+- Yanks are shared between text boxes but stay in the app. Use the `"+` register, as in `"+y`,
+  for the system clipboard. Browsers only allow this on HTTPS or localhost.
+- Off macOS, `Ctrl` keys stay with the app and browser, except `Ctrl+R`, `Ctrl+D`, and `Ctrl+U`.
+- Block visual mode is not supported. Single-line fields such as search boxes keep their usual
+  keys, and the terminal is unchanged.
+
+### Moving around the app
+
+These keys work when focus is outside a text box. Typing elsewhere no longer jumps to the
+composer; press `i` to go there.
+
+| Keys     | Action                                                          |
+| -------- | --------------------------------------------------------------- |
+| `j` `k`  | Scroll the current pane, or move through a focused list or menu |
+| `h` `l`  | Move left and right in a focused list                           |
+| `d` `u`  | Scroll half a page                                              |
+| `gg` `G` | Go to the top or bottom                                         |
+| `J` `K`  | Next or previous thread                                         |
+| `H` `L`  | Previous or next workspace area                                 |
+| `i`      | Focus the composer                                              |
+| `:`      | Command palette                                                 |
+| `/`      | Find in the thread                                              |
+| `gb`     | Toggle the sidebar                                              |
+| `gd`     | Toggle the diff panel                                           |
+| `gf`     | File picker                                                     |
+| `gn`     | New thread                                                      |
+| `gr`     | Toggle the right panel                                          |
+| `gt`     | Toggle the terminal                                             |
+
+Keys that run a command use your shortcut for it, so a command with no shortcut does nothing.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`

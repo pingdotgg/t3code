@@ -364,6 +364,7 @@ patchedDependencies:
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
   '@react-navigation/native-stack@7.21.0': 990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42
+  '@replit/codemirror-vim-core@0.1.0': 828a41c8b29aa0dcadfbd14f824a1d5559b0b77ebe5a28144c9b43ed99158a1b
   alchemy@2.0.0-beta.85: 07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd
   app-builder-lib@26.16.1: 0fbe9ae51783f5768ebe197d12d1fdb7d477a08c92e5db2f6356bcce62613c53
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
@@ -1070,6 +1071,9 @@ importers:
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
+      '@replit/codemirror-vim-core':
+        specifier: 0.1.0
+        version: 0.1.0(patch_hash=828a41c8b29aa0dcadfbd14f824a1d5559b0b77ebe5a28144c9b43ed99158a1b)
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -6143,6 +6147,9 @@ packages:
     engines: {node: '>= 20.0.0'}
     peerDependencies:
       '@redis/client': ^6.2.1
+
+  '@replit/codemirror-vim-core@0.1.0':
+    resolution: {integrity: sha512-1i6EBKpcNfDKvTmTh6N6g9lL6udD5t+uFNh4JCqozRnVlvUGOps7h/QzS2ne4zcvPUjvApKpmcP7Grc3fNbZiQ==}
 
   '@rolldown/binding-android-arm-eabi@1.2.13':
     resolution: {integrity: sha512-Vu/NICrgdRvUOeaJZIyB2FP63s6fO/4ud5l8dXmxDx9yDyn+mN0y+gsvsVviSli+T361Aqo0h46EuMoobrwawA==}
@@ -15711,6 +15718,8 @@ snapshots:
   '@redis/time-series@6.2.1(@redis/client@6.2.1)':
     dependencies:
       '@redis/client': 6.2.1
+
+  '@replit/codemirror-vim-core@0.1.0(patch_hash=828a41c8b29aa0dcadfbd14f824a1d5559b0b77ebe5a28144c9b43ed99158a1b)': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.13':
     optional: true

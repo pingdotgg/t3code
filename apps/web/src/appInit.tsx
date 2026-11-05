@@ -52,6 +52,7 @@ import { primaryServerConfigAtom } from "./state/server";
 import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { startWorkspaceFocus } from "./lib/workspaceFocus";
+import { startVimMode } from "./vim-mode";
 import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
@@ -209,6 +210,7 @@ export function startAppServices(): AppRouter {
   });
   startMainAppLocationTracking(router);
   startWorkspaceFocus(router);
+  startVimMode();
   startBackgroundThreadAnnouncements(appAtomRegistry, router);
   startThreadVisitedMigration(appAtomRegistry);
   startSshPasswordPromptQueue();

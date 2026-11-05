@@ -259,6 +259,7 @@ patchedDependencies:
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
+  "@replit/codemirror-vim-core@0.1.0": patches/@replit__codemirror-vim-core@0.1.0.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

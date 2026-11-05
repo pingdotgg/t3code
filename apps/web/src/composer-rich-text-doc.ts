@@ -1210,7 +1210,7 @@ const LIST_NODE_NAMES = new Set(["taskList", "bulletList", "orderedList"]);
 const LIST_ITEM_NODE_NAMES = new Set(["taskItem", "listItem"]);
 
 // Tiptap leaves indent and marker attributes unchanged when moving items; rebuilding would undo the move.
-function alignListItemWithSiblings(tr: Transaction, itemType: string): void {
+export function alignListItemWithSiblings(tr: Transaction, itemType: string): void {
   const $pos = tr.selection.$from;
   if ($pos.depth < 3 || $pos.node(-1).type.name !== itemType) return;
   const item = $pos.node(-1);
