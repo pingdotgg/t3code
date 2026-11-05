@@ -2,11 +2,12 @@ import { EnvironmentId, ThreadId, type DiscoveredLocalServer } from "@t3tools/co
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
+const state = vi.hoisted(() => ({ servers: 10 }));
 vi.mock(import("../../portDiscoveryState"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadDiscoveredPorts: () =>
     Array.from(
-      { length: 10 },
+      { length: state.servers },
       (_, index) =>
         ({
           pid: index,
@@ -28,7 +29,12 @@ const panel = (threadId: string) => (
   />
 );
 
+function setup(servers: number) {
+  state.servers = servers;
+}
+
 it("pages servers four at a time, collapses back, and resets on thread switch", async () => {
+  setup(10);
   await using screen = await render(panel("a"));
   const count = (selector: string) => screen.container.querySelectorAll(selector).length;
   const expectRows = (rows: number) => vi.waitFor(() => expect(count("li")).toBe(rows));
@@ -48,4 +54,19 @@ it("pages servers four at a time, collapses back, and resets on thread switch", 
   await expectRows(4);
   await screen.rerender(panel("a"));
   await expectRows(4);
+});
+
+it("shows the card only while a server runs", async () => {
+  setup(0);
+  await using screen = await render(panel("a"));
+  const card = () => screen.container.querySelector('section[aria-label="Servers"]');
+  expect(card()).toBeNull();
+
+  state.servers = 1;
+  await screen.rerender(panel("a"));
+  expect(card()).not.toBeNull();
+
+  state.servers = 0;
+  await screen.rerender(panel("a"));
+  expect(card()).toBeNull();
 });
