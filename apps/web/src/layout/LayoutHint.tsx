@@ -107,6 +107,7 @@ function liftAboveComposer(hint: HTMLDivElement | null) {
  */
 function useHintPlacement() {
   const focusedTabId = useLayoutStore((state) => selectFocusedTab(state.layout)?.id ?? null);
+  const focusedWorkspaceId = useLayoutStore((state) => state.layout.focusedWorkspaceId);
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const [placement, setPlacement] = useState<{ pane: HTMLElement | null; bottom: number | null }>({
     pane: null,
@@ -118,7 +119,9 @@ function useHintPlacement() {
       ? anchor?.parentElement?.querySelector<HTMLElement>(
           `[data-layout-tab-id="${CSS.escape(focusedTabId)}"][data-layout-pane-id]`,
         )
-      : null;
+      : anchor?.parentElement?.querySelector<HTMLElement>(
+          `[data-layout-empty-workspace="${CSS.escape(focusedWorkspaceId)}"]`,
+        );
     const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
     const place = () => {
       const lift =
@@ -135,7 +138,7 @@ function useHintPlacement() {
     place();
     if (!pane) return;
     return observeResize([pane, ...(composer ? [composer] : [])], place);
-  }, [anchor, focusedTabId]);
+  }, [anchor, focusedTabId, focusedWorkspaceId]);
   return {
     anchorRef: setAnchor,
     pane: placement.pane,
