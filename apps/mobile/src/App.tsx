@@ -83,8 +83,8 @@ import {
   launchWorkspaceURL,
   recordWorkspaceSelections,
   settingsLinkPage,
-} from "./features/workspace/workspace-selection-store";
-import { workspaceDetailLinkAction } from "./features/workspace/workspace-detail-selection";
+} from "./features/layout/workspace/workspace-selection-store";
+import { workspaceDetailLinkAction } from "./features/layout/workspace/workspace-detail-selection";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 import {
   attachRootNavigation,

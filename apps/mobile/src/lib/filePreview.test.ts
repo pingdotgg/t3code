@@ -261,7 +261,10 @@ vi.mock("../native/NativeScrollViewMarker", () => ({
 vi.mock("../native/NativeWorkspaceColumns", () => ({
   useNativeWorkspaceColumnsSupported: () => false,
 }));
-vi.mock("../native/native-layout-metrics", () => ({ useDeviceType: () => "phone" }));
+vi.mock("../native/native-layout-metrics", () => ({
+  useDeviceType: () => "phone",
+  useNativeColumnLayoutMetrics: () => null,
+}));
 vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));
