@@ -54,6 +54,27 @@ export function sanitizePrTitle(raw: string): string {
   return "Update project changes";
 }
 
+export function splitsSurrogatePair(text: string, index: number): boolean {
+  if (index < 1 || index >= text.length) return false;
+  const before = text.charCodeAt(index - 1);
+  const after = text.charCodeAt(index);
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+}
+
+/** Trims to whole graphemes without splitting a grapheme or exceeding the UTF-16 limit. */
+export function truncateGraphemes(text: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
+  if (text.length <= maxChars) return text;
+  let kept = "";
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+    text,
+  )) {
+    if (kept.length + segment.length > maxChars) break;
+    kept += segment;
+  }
+  return kept;
+}
+
 const MAX_THREAD_TITLE_CHARS = 120;
 
 export function sanitizeThreadTitle(raw: string): string {
@@ -96,14 +117,7 @@ export function sanitizeSideChatText(raw: string | null, maxChars: number): stri
   if (text.length <= maxChars) {
     return text;
   }
-  let kept = "";
-  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
-    text,
-  )) {
-    if (kept.length + segment.length > maxChars - 1) break;
-    kept += segment;
-  }
-  return `${kept}…`;
+  return `${truncateGraphemes(text, maxChars - 1)}…`;
 }
 
 function cliLabel(cliName: string): string {
