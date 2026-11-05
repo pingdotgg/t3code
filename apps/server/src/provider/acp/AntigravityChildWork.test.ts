@@ -48,7 +48,7 @@ const read = (
   });
 
 it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
-  it.effect("follows an auto-approved call id through its planner step to the record", () =>
+  it.effect("follows an auto-approved call id to the record that ran it", () =>
     Effect.gen(function* () {
       const { profile } = yield* makeProfile({ steps: autoApproved });
       const [child, ...rest] = yield* read(profile, `${ROOT}:1`);
@@ -123,6 +123,34 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(first.map((child) => child.role)).toEqual([LAUNCH.role]);
       const second = yield* read(profile, `${ROOT}:9`);
       expect(second.map((child) => child.role)).toEqual([tester.role]);
+    }),
+  );
+
+  it.effect("follows a launch id past many earlier launches", () =>
+    Effect.gen(function* () {
+      const launches = Array.from({ length: 201 }, (_, index) => ({
+        role: `Reader ${index + 1}`,
+        prompt: LAUNCH.prompt,
+      }));
+      const { profile } = yield* makeProfile({
+        steps: (logUri) => [
+          [0, 14, new Uint8Array()],
+          ...launches.flatMap((launch, index) => [
+            [1 + index * 2, 15, plannerStep([`call-${index}`])] as const,
+            [
+              2 + index * 2,
+              127,
+              invokeStep({
+                callId: `call-${index}`,
+                launches: [launch],
+                children: [{ id: CHILD, logUri }],
+              }),
+            ] as const,
+          ]),
+        ],
+      });
+      const children = yield* read(profile, `${ROOT}:201`);
+      expect(children.map((child) => child.role)).toEqual(["Reader 201"]);
     }),
   );
 
@@ -256,14 +284,14 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const launch = describeAntigravitySubagentLaunches([LAUNCH]);
       const opaque = "35bea692fa95447fbdae6333fec5515f";
       expect(yield* read(profile, opaque, launch)).toHaveLength(1);
-      // An earlier auto-approved batch stored no launch text, but its planner step claims the record.
+      // An earlier auto-approved batch stored no launch text, but its call id claims the record.
       const auto = {
         nativeTaskId: `${ROOT}:1`,
         title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
         prompt: "",
       };
       expect(yield* read(profile, opaque, launch, [auto])).toEqual([]);
-      // A sibling that cannot be ruled out refuses the match: its planner step is unreadable,
+      // A sibling that cannot be ruled out refuses the match: its call id resolves to no record,
       // or it is a permission batch whose launch text is missing or cut.
       for (const sibling of [
         { ...auto, nativeTaskId: `${ROOT}:99` },

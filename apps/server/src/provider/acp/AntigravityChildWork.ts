@@ -189,7 +189,6 @@ function invokeIdxAtStepIndex(
   const found = new Map<number, number>();
   const last = Math.max(...stepIndexes);
   let skipped = 0;
-  let invokes = 0;
   let planners = 0;
   let plannerBytes = 0;
   for (const row of database
@@ -205,7 +204,6 @@ function invokeIdxAtStepIndex(
     )) {
     const idx = Number(row.idx);
     if (row.step_type === INVOKE_SUBAGENT_STEP_TYPE) {
-      if (++invokes > MAX_INVOKE_ROWS) return undefined;
       const stepIndex = idx - skipped;
       if (stepIndexes.has(stepIndex)) found.set(stepIndex, idx);
       if (stepIndex >= last) break;
