@@ -5682,7 +5682,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
       message: "Transport unavailable; this is not subscription_sharing_usage_limit_exceeded.",
       notification: false,
-      expectedClass: "provider_error",
+      expectedClass: "transport_error",
+    },
+    {
+      name: "terminal-disconnection",
+      code: "responseStreamDisconnected",
+      notification: false,
+      terminalMessage: "Connection lost.",
+      terminalErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      expectedClass: "transport_error",
     },
     {
       name: "sharing-code-mention-retry",
@@ -5733,6 +5741,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           terminalMessage: "Connection lost.",
           terminalErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
           completionErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
+          expectedClass: "transport_error",
+        },
+        {
+          name: "generic-blank-details",
+          status: null,
+          details: " ",
+          terminalMessage: "Provider stopped this request.",
           expectedClass: "transport_error",
         },
         {

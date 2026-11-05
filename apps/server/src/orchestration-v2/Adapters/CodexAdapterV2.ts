@@ -4790,7 +4790,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(previous?.context === undefined ? {} : { context: previous.context }),
               nativeMessage: payload.error.message,
               nativeCode: code,
-              nativeDetails: payload.error.additionalDetails || payload.error.message,
+              nativeDetails: additionalDetails
+                ? (payload.error.additionalDetails ?? additionalDetails)
+                : payload.error.message,
               ...(payload.error.codexErrorInfo === undefined
                 ? {}
                 : { errorInfo: payload.error.codexErrorInfo }),
@@ -5853,8 +5855,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // Retry exhaustion without a status cannot replace the notification's evidence.
               const completionHasClass =
                 failureCode != null &&
-                (failureCode !== "responseTooManyFailedAttempts" ||
-                  codexExhaustionHttpStatus(input.failureErrorInfo) !== null);
+                !codexTerminalErrorNeedsEvidence(input.failureErrorInfo, failureCode);
               let failure =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
@@ -5882,10 +5883,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     notification.errorInfo,
                     notification.nativeCode,
                   )) &&
-                retry !== undefined &&
-                input.failureMessage !== undefined &&
-                input.failureMessage === retry.nativeDetails &&
-                codexTerminalFailureClass(retry.errorInfo, retry.nativeCode) === "transport_error"
+                ((retry !== undefined &&
+                  input.failureMessage !== undefined &&
+                  input.failureMessage === retry.nativeDetails &&
+                  codexTerminalFailureClass(retry.errorInfo, retry.nativeCode) ===
+                    "transport_error") ||
+                  (notification?.failure.class === "transport_error" &&
+                    input.failureMessage === notification.nativeMessage))
               ) {
                 failure = { ...failure, class: "transport_error" };
               }
