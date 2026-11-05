@@ -752,6 +752,69 @@ describe("environment shell synchronization", () => {
     }),
   );
 
+  it.effect("resubscribes after a defect ends the shell subscription", () =>
+    Effect.gen(function* () {
+      const defect = new Error("shell item could not be applied");
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      let subscriptions = 0;
+      const client = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () => {
+          subscriptions += 1;
+          return subscriptions === 1 ? Stream.die(defect) : Stream.fromQueue(events);
+        },
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.none()),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
+        load: () => Effect.succeed(Option.some(LIVE_SHELL_SNAPSHOT)),
+      });
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+      );
+
+      const failed = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((state) => Option.isSome(state.error)),
+        Stream.runHead,
+      );
+      expect(Option.isSome(failed)).toBe(true);
+      yield* TestClock.adjust("1 minute");
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 5 },
+      } as OrchestrationV2ShellStreamItem);
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (state) => Option.isSome(state.snapshot) && state.snapshot.value.snapshotSequence === 5,
+        ),
+        Stream.runHead,
+      );
+      expect(subscriptions).toBe(2);
+    }),
+  );
+
   it.effect("applies authoritative lower-sequence HTTP resets over client-ahead cache", () =>
     Effect.gen(function* () {
       const cachedSnapshot: OrchestrationV2ShellSnapshot = {

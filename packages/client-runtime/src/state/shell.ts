@@ -9,11 +9,13 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -81,6 +83,11 @@ function withoutDeferredPullRequests(value: DeferredShellSnapshot): Orchestratio
 }
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
+const SHELL_RESUBSCRIBE_SCHEDULE = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
 
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
@@ -454,7 +461,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray((items) => applyItems(items))),
+    ).pipe(
+      Stream.runForEachArray((items) => applyItems(items)),
+      // A defect ends the only subscription feeding the thread list, which
+      // would otherwise stay on screen, frozen, until the app restarts.
+      Effect.tapCause((cause) =>
+        Cause.hasInterruptsOnly(cause) ? Effect.void : setStreamError(Cause.squash(cause)),
+      ),
+      Effect.sandbox,
+      Effect.retry({
+        schedule: SHELL_RESUBSCRIBE_SCHEDULE,
+        while: (cause) => !Cause.hasInterruptsOnly(cause),
+      }),
+    ),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
