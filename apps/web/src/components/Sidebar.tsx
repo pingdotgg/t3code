@@ -1360,8 +1360,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
-              { id: "new-thread", label: "New thread" },
-              { id: "copy-path", label: "Copy path" },
+              { id: "new-thread", label: "New thread", icon: "square-pen" },
+              { id: "copy-path", label: "Copy path", icon: "copy" },
               ...(canPinProject(group)
                 ? [
                     group.pinned
