@@ -1538,6 +1538,13 @@ describe("orchestration v2 provider switching", () => {
             );
             yield* worker.drain();
           });
+          const screenshot: ChatAttachment = {
+            type: "image",
+            id: "full-native-screenshot",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 100,
+          };
           const send = Effect.fn("send")(function* (ordinal: number, text: string) {
             // Notification turns stay out of turn-start history, so recovery must resend them.
             const notify = scenario === "a notification" && ordinal === 3;
@@ -1547,7 +1554,7 @@ describe("orchestration v2 provider switching", () => {
               threadId,
               messageId: MessageId.make(`full-native:${ordinal}`),
               text,
-              attachments: [],
+              attachments: ordinal === 3 ? [screenshot] : [],
               modelSelection: CODEX_MODEL_SELECTION,
               ...(notify
                 ? {
@@ -1715,6 +1722,7 @@ describe("orchestration v2 provider switching", () => {
             turns.map((turn) => turn.text.slice(0, 9)),
             ["Original ", "/compact", "Continue "],
           );
+          assert.deepEqual(turns.at(-1)!.attachments, [screenshot]);
           // Compaction made room, so nothing was replaced. When it could not, the
           // continuation replaces the session instead of compacting again.
           assert.equal(
@@ -1743,6 +1751,119 @@ describe("orchestration v2 provider switching", () => {
                 },
               },
               layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.live("owes no compaction recovery for a run that ended before the server started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = "full-native-session-restart";
+        const cwd = yield* checkpointWorkspace(name);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns: yield* Ref.make<ReadonlyArray<CapturedTurn>>([]),
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("full-native-restart:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Full native session",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("full-native-restart:send"),
+            threadId,
+            messageId: MessageId.make("full-native-restart:send"),
+            text: "Request",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          const now = yield* DateTime.now;
+          // The run found its session full and ended before this server started, whose handler
+          // therefore never saw it end.
+          const endedAt = DateTime.subtract(now, { minutes: 1 });
+          yield* (yield* EventSink.EventSinkV2).write({
+            commandId: CommandId.make("command:runtime-reconcile:full-native-restart"),
+            events: [
+              {
+                id: EventId.make("full-native-restart:error"),
+                type: "turn-item.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: endedAt,
+                payload: {
+                  id: TurnItemId.make("full-native-restart:error"),
+                  threadId,
+                  runId: run.id,
+                  nodeId: run.rootNodeId!,
+                  providerThreadId: run.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 99,
+                  status: "failed",
+                  title: "Conversation compaction needed",
+                  startedAt: endedAt,
+                  completedAt: endedAt,
+                  updatedAt: endedAt,
+                  type: "error",
+                  failure: makeProviderFailure({
+                    code: CONTEXT_COMPACTION_REQUIRED_CODE,
+                    class: "provider_error",
+                    message: "Needs compaction",
+                  }),
+                },
+              },
+              {
+                id: EventId.make("full-native-restart:failed"),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: endedAt,
+                payload: { ...run, status: "failed", startedAt: endedAt, completedAt: endedAt },
+              },
+            ],
+          });
+          const failed = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          assert.equal(failed.status, "failed");
+          assert.isFalse(yield* orchestrator.compactionRecoveryPending(failed));
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+              { runEffectWorker: false },
             ),
           ),
         );

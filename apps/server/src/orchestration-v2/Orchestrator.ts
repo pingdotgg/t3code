@@ -2387,7 +2387,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (failed)
       return latestRootProviderFailure(run, projection.turnItems)?.code ===
         CONTEXT_COMPACTION_REQUIRED_CODE
-        ? ({ text: IDLE_COMPACTION_TEXT, idleCompaction: "onReturn" } as const)
+        ? ({ text: IDLE_COMPACTION_TEXT, attachments: [], idleCompaction: "onReturn" } as const)
         : undefined;
     const source = projection.runs.find(
       (candidate) => candidate.id === run.compactionRecoveryOfRunId,
@@ -2400,11 +2400,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )
       return undefined;
     const sourceMessage = messages.find((message) => message.id === source?.userMessageId);
+    // History replay carries only text, so the continuation resends the request's attachments.
+    const attachments = sourceMessage?.attachments ?? [];
     // Notification turns stay out of turn-start history, so the provider would never see this one.
     return sourceMessage === undefined ||
       (sourceMessage.notification === undefined && sourceMessage.delegatedCompletion === undefined)
-      ? { text: "Continue where you left off." }
-      : { text: `Continue where you left off.\n\n${sourceMessage.text}` };
+      ? { text: "Continue where you left off.", attachments }
+      : { text: `Continue where you left off.\n\n${sourceMessage.text}`, attachments };
   });
 
   // A full native session is compacted in place, then continued. Both steps jump the queue (and
@@ -2424,7 +2426,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandId: CommandId.make(`server:${messageId}`),
       messageId,
       threadId,
-      attachments: [],
       ...step,
       createdBy: "agent",
       creationSource: "server",
@@ -13912,6 +13913,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
   );
 
+  // Only this handler dispatches compaction recovery, so a run that ended before it started has
+  // no step coming.
+  const handlesRunsEndedSince = yield* DateTime.now;
   // Projections already contain historical terminals; replaying them delays startup queue promotion with database size.
   const terminalEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
   // Filter run updates before buffering so blocked queue promotion does not retain unrelated tool bodies.
@@ -14133,6 +14137,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
     compactionRecoveryPending: Effect.fn("OrchestratorV2.compactionRecoveryPending")(
       function (run) {
+        if (run.completedAt === null || DateTime.isLessThan(run.completedAt, handlesRunsEndedSince))
+          return Effect.succeed(false);
         return compactionRecoveryStep(run.threadId, run).pipe(
           Effect.map((step) => step !== undefined),
           Effect.orElseSucceed(() => false),
