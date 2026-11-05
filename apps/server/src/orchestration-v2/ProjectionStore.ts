@@ -1071,6 +1071,7 @@ const encodeTimelineSources = Schema.encodeEffect(
     Schema.Array(Schema.Struct({ threadId: Schema.String, id: Schema.String })),
   ),
 );
+const LIMIT_EVIDENCE_MAX_RUNS = 200;
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 // Empty filters still scan SQLite rows; short-circuit them, including turnItemTypes: [].
@@ -6066,6 +6067,99 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    // A window reads only the newest rows, so an older usage-limited run and the notification
+    // starts of the wakes after it can be missing. Clients need them (usageLimitBlockedRun)
+    // to resume it. They join runs and turnItems, never visibleTurnItems.
+    const withLimitEvidence = Effect.fn("ProjectionStore.withLimitEvidence")(function* (
+      threadId: ThreadId,
+      projection: OrchestrationV2ThreadProjection,
+    ) {
+      const rows = yield* sql<{ readonly kind: string; readonly id: string }>`
+        WITH blocked AS (
+          SELECT r.run_id, r.ordinal, item.turn_item_id AS error_id
+          FROM orchestration_v2_projection_threads t
+          ${latestFailureJoins}
+          INNER JOIN orchestration_v2_projection_runs r ON r.run_id = (
+            SELECT latest.run_id FROM orchestration_v2_projection_runs latest
+            WHERE latest.thread_id = t.thread_id
+              AND latest.status <> 'queued'
+              AND NOT (
+                latest.status = 'cancelled'
+                AND json_extract(latest.payload_json, '$.startedAt') IS NULL
+              )
+              AND NOT ${isLimitedWake("latest")}
+            ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC,
+              latest.ordinal DESC, latest.run_id DESC
+            LIMIT 1
+          ) AND r.status = 'failed'
+          INNER JOIN orchestration_v2_projection_turn_items item ON item.turn_item_id = (
+            SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
+            WHERE error.thread_id = t.thread_id AND error.run_id = r.run_id
+              AND error.type = 'error' AND error.status = 'failed'
+              AND error.node_id IS json_extract(r.payload_json, '$.rootNodeId')
+            ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
+            LIMIT 1
+          )
+          WHERE t.thread_id = ${threadId}
+            AND EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_turn_items limited
+              WHERE limited.thread_id = t.thread_id
+                AND limited.type = 'error' AND limited.status = 'failed'
+                AND json_extract(limited.payload_json, '$.failure.class') = 'usage_limit'
+            )
+            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+        ), later AS (
+          -- Runs omitted here are not loaded at all, which leaves the result unchanged.
+          SELECT run.run_id, run.payload_json
+          FROM orchestration_v2_projection_runs run, blocked
+          WHERE run.thread_id = ${threadId} AND run.ordinal > blocked.ordinal
+          ORDER BY run.ordinal DESC
+          LIMIT ${LIMIT_EVIDENCE_MAX_RUNS}
+        )
+        SELECT 'run' AS kind, run_id AS id FROM blocked
+        UNION ALL SELECT 'item', error_id FROM blocked
+        UNION ALL SELECT 'run', run_id FROM later
+        UNION ALL
+        SELECT 'item', start.turn_item_id
+        FROM later
+        CROSS JOIN orchestration_v2_projection_turn_items start ON start.turn_item_id = (
+          SELECT first_input.turn_item_id FROM orchestration_v2_projection_turn_items first_input
+          WHERE first_input.run_id = later.run_id
+            AND first_input.node_id IS json_extract(later.payload_json, '$.rootNodeId')
+            AND first_input.type IN ('user_message', 'notification')
+          ORDER BY first_input.ordinal
+          LIMIT 1
+        )
+        WHERE start.type = 'notification'
+      `;
+      const loadedRunIds = new Set<string>(projection.runs.map((run) => run.id));
+      const loadedItemIds = new Set<string>(projection.turnItems.map((item) => item.id));
+      const runIds = rows.flatMap((row) =>
+        row.kind === "run" && !loadedRunIds.has(row.id) ? [row.id] : [],
+      );
+      const itemIds = rows.flatMap((row) =>
+        row.kind === "item" && !loadedItemIds.has(row.id) ? [row.id] : [],
+      );
+      if (runIds.length === 0 && itemIds.length === 0) return projection;
+      const runRows = yield* sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${threadId}
+          AND run_id IN (SELECT value FROM json_each(${encodeIdList(runIds)}))
+      `;
+      const itemRows = yield* sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId}
+          AND turn_item_id IN (SELECT value FROM json_each(${encodeIdList(itemIds)}))
+      `;
+      const runs = yield* decodeRows(decodeRunPayload, threadId)(runRows);
+      const turnItems = yield* decodeRows(decodeTurnItemPayload, threadId)(itemRows);
+      return {
+        ...projection,
+        runs: [...projection.runs, ...runs].toSorted((left, right) => left.ordinal - right.ordinal),
+        turnItems: [...projection.turnItems, ...turnItems],
+      };
+    });
+
     const getThreadSnapshotWindow: ProjectionStoreV2Shape["getThreadSnapshotWindow"] = (
       threadId,
       options,
@@ -6107,7 +6201,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
               snapshotSequence: rows[0]?.snapshot_sequence ?? 0,
-              projection,
+              projection: yield* withLimitEvidence(threadId, projection),
             };
           }),
         )
