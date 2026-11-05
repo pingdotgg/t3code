@@ -5,7 +5,23 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import { SidebarDraftBlock } from "./SidebarDraftBlock";
+import { SidebarDraftBlock, useSidebarDrafts } from "./SidebarDraftBlock";
+
+function DraftBlock(props: { routeDraftId: string | null }) {
+  const { draftIds, routeDraftComposer } = useSidebarDrafts(null, props.routeDraftId);
+  return (
+    <SidebarDraftBlock
+      draftIds={draftIds}
+      routeDraftComposer={routeDraftComposer}
+      jumpLabels={null}
+      projectByKey={new Map()}
+      projectDisplayNameByKey={new Map()}
+      routeDraftId={props.routeDraftId}
+      onNavigateToDraft={vi.fn()}
+      onDraftContextMenu={vi.fn()}
+    />
+  );
+}
 
 it("keeps draft previews current through edits, promotion and removal", async () => {
   const initial = useComposerDraftStore.getState();
@@ -25,14 +41,7 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await using screen = await render(
     <Profiler id="draft-block" onRender={onRender}>
       <ul>
-        <SidebarDraftBlock
-          projectByKey={new Map()}
-          projectDisplayNameByKey={new Map()}
-          scopedProjectKeys={null}
-          routeDraftId={null}
-          onNavigateToDraft={vi.fn()}
-          onDraftContextMenu={vi.fn()}
-        />
+        <DraftBlock routeDraftId={null} />
       </ul>
     </Profiler>,
   );
@@ -64,5 +73,29 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   });
   await expect.element(row).toHaveAccessibleName("Next draft preview, Unsent draft");
   await act(() => initial.clearDraftThread(nextDraftId));
+  await expect.element(row).not.toBeInTheDocument();
+
+  // The open draft keeps the row it had on arrival, so numbered jumps stay put.
+  const routeDraftId = DraftId.make("route-draft-preview");
+  await act(() => {
+    initial.setProjectDraftThreadId(projectRef, routeDraftId, { threadId: ThreadId.make("route") });
+    initial.setPrompt(routeDraftId, "Route draft preview");
+  });
+  await screen.rerender(
+    <Profiler id="draft-block" onRender={onRender}>
+      <ul>
+        <DraftBlock routeDraftId={routeDraftId} />
+      </ul>
+    </Profiler>,
+  );
+  await act(() => initial.setPrompt(routeDraftId, ""));
+  await expect.element(row).toHaveAccessibleName("Route draft preview, Unsent draft");
+  await screen.rerender(
+    <Profiler id="draft-block" onRender={onRender}>
+      <ul>
+        <DraftBlock routeDraftId={null} />
+      </ul>
+    </Profiler>,
+  );
   await expect.element(row).not.toBeInTheDocument();
 });
