@@ -1195,6 +1195,45 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("gives a concurrent same-name download its own name until the first finishes", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const willDownload = fakeWindow.sessionListeners.get("will-download");
+        const savePaths: string[] = [];
+        const finishers: Array<(event: unknown, state: string) => void> = [];
+        const download = () =>
+          willDownload?.(
+            { preventDefault: vi.fn() },
+            {
+              getFilename: () => "clip.mp4",
+              setSavePath: (path: string) => void savePaths.push(path),
+              once: (_event: string, listener: (event: unknown, state: string) => void) =>
+                void finishers.push(listener),
+            },
+            fakeWindow.window.webContents,
+          );
+        download();
+        download();
+        finishers[0]?.({}, "cancelled");
+        download();
+
+        assert.deepEqual(savePaths, [
+          "/Users/alice/Downloads/clip.mp4",
+          "/Users/alice/Downloads/clip (1).mp4",
+          "/Users/alice/Downloads/clip.mp4",
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect(
     "retries opening the real main on activate when a failed post-readiness open left only the splash",
     () =>

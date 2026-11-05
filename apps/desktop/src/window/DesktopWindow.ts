@@ -9,6 +9,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- will-download needs its save path synchronously.
+import * as NodeFS from "node:fs";
 
 import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
@@ -330,6 +332,41 @@ export const make = Effect.gen(function* () {
   );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
+  const downloadSessions = new WeakSet<Electron.Session>();
+  const reservedDownloadPaths = new Set<string>();
+  // Electron needs the save path before will-download returns, so the name is picked synchronously.
+  const reserveDownloadPath = (fileName: string) => {
+    const { path } = environment;
+    const directory = Electron.app.getPath("downloads");
+    const extension = path.extname(fileName);
+    const stem = path.basename(fileName, extension) || "download";
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const target = path.join(
+        directory,
+        attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
+      );
+      if (reservedDownloadPaths.has(target) || NodeFS.existsSync(target)) continue;
+      reservedDownloadPaths.add(target);
+      return target;
+    }
+    // @effect-diagnostics-next-line cryptoRandomUUID:off -- Must stay synchronous, as above.
+    const target = path.join(directory, `${stem} (${crypto.randomUUID()})${extension}`);
+    reservedDownloadPaths.add(target);
+    return target;
+  };
+  const saveDownloadsToDownloadsFolder = (session: Electron.Session) => {
+    if (downloadSessions.has(session)) return;
+    downloadSessions.add(session);
+    session.on("will-download", (_event, item) => {
+      const savePath = reserveDownloadPath(item.getFilename());
+      item.setSavePath(savePath);
+      item.once("done", (_doneEvent, state) => {
+        reservedDownloadPaths.delete(savePath);
+        if (state === "completed") Electron.shell.showItemInFolder(savePath);
+      });
+    });
+  };
+
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
     if (Option.isSome(splash) && !splash.value.isDestroyed()) {
@@ -522,6 +559,7 @@ export const make = Effect.gen(function* () {
       yield* electronWindow.destroyAll;
       return Option.none();
     }
+    saveDownloadsToDownloadsFolder(window.webContents.session);
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
