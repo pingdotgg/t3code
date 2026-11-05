@@ -2624,7 +2624,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
               VALUES (
                 ${event.payload.id},
-                ${event.payload.threadId},
+                ${event.threadId},
                 ${event.payload.runId},
                 ${event.payload.messageId},
                 ${event.payload.kind},
@@ -2632,9 +2632,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${yield* encodePayloadTimestamp(event.payload.updatedAt)},
                 ${payloadJson}
               )
-              ON CONFLICT(artifact_id)
+              ON CONFLICT(thread_id, artifact_id)
               DO UPDATE SET
-                thread_id = excluded.thread_id,
                 run_id = excluded.run_id,
                 message_id = excluded.message_id,
                 kind = excluded.kind,
