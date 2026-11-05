@@ -2768,7 +2768,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads files pages small enough that GitHub still sends every patch", () =>
+  it.effect("reads files pages small enough that GitHub keeps their patches", () =>
     Effect.gen(function* () {
       // Larger pages make GitHub drop some patches and report those files as 0/0.
       mockedExecute.mockImplementation((call) => {
