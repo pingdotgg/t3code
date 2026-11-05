@@ -1111,9 +1111,11 @@ function EditableKeybindingSettingsRow(
 function useNewKeybindingDraft({
   allRows,
   onSave,
+  onCancel,
 }: {
   allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
+  onCancel: () => void;
 }) {
   const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
@@ -1147,8 +1149,7 @@ function useNewKeybindingDraft({
     if (event.key === "Escape") {
       // An unhandled Escape closes the settings page.
       event.stopPropagation();
-      setDraft({ keyDraft: "", isRecording: false });
-      event.currentTarget.blur();
+      onCancel();
       return;
     }
     const next = keybindingFromKeyboardEvent(event.nativeEvent, navigator.platform, {
@@ -1291,7 +1292,7 @@ function NewKeybindingCancelIcon({
 /** Add-binding form shaped like the table rows below it. */
 function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
-  const draft = useNewKeybindingDraft({ allRows, onSave });
+  const draft = useNewKeybindingDraft({ allRows, onSave, onCancel });
 
   return (
     <div
@@ -1302,6 +1303,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       onKeyDown={(event) => {
         if (event.key !== "Escape" || event.defaultPrevented || isSaving) return;
         event.preventDefault();
+        event.stopPropagation();
         onCancel();
       }}
     >
@@ -1315,8 +1317,8 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       <span role="cell" className="min-w-0">
         <NewKeybindingKeyInput draft={draft} />
       </span>
-      <div role="presentation" className={KEYBINDING_TABLE_TAIL}>
-        <span role="cell" className="-ml-1.5 flex min-w-0 flex-1 items-center">
+      <div role="presentation" className={cn(KEYBINDING_TABLE_TAIL, "flex-wrap")}>
+        <span role="cell" className="-ml-1.5 flex min-w-20 flex-1 items-center">
           <NewKeybindingWhen draft={draft} variables={variables} />
         </span>
         <span role="cell" className="flex shrink-0 items-center gap-1">

@@ -76,8 +76,8 @@ describe("Esc in a shortcut recorder", () => {
         await activate(newField, "focus");
       },
       expectReset: async () => {
-        await expect.element(newField).toHaveValue("");
-        await expect.element(newField).toHaveAttribute("placeholder", "Unassigned");
+        await expect.element(newField).not.toBeInTheDocument();
+        await expect.element(page.getByRole("button", { name: "Add keybinding" })).toHaveFocus();
       },
     },
   ])("leaves the $name field without closing Settings", async ({ field, open, expectReset }) => {
@@ -134,4 +134,25 @@ it("re-enables Save when a When editor closes on an expression it could not pars
 
   await expect.element(expression).toHaveValue("terminalFocus");
   await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
+it("cancels a new binding from its Command picker before closing Settings", async () => {
+  const onOpenChange = vi.fn();
+  await using _screen = await render(
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogPopup>
+        <DialogTitle>Settings</DialogTitle>
+        <KeybindingsSettingsPanel />
+      </DialogPopup>
+    </Dialog>,
+  );
+  await activate(page.getByRole("button", { name: "Add keybinding" }), "click");
+  await expect.element(newField).toBeVisible();
+  newField.element().closest('[role="row"]')!.querySelector<HTMLButtonElement>("button")!.focus();
+  await userEvent.keyboard("{Escape}");
+  expect(onOpenChange).not.toHaveBeenCalled();
+  await expect.element(newField).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Add keybinding" })).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
 });
