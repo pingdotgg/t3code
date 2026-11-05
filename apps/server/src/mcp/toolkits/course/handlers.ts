@@ -1,5 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as CourseService from "../../../course/CourseService.ts";
@@ -42,13 +43,28 @@ const handlers = {
           .add({ lessonThreadId: thread.threadId, title: input.title, units: input.units })
           .pipe(Effect.mapError(fail));
       }
+      const config = yield* ServerConfig.ServerConfig;
+      const path = yield* Path.Path;
+      // Only PDFs the learner attached: an agent in approval mode must not read host files through this tool.
+      if (!/^https?:/i.test(input.source)) {
+        const real = yield* (yield* FileSystem.FileSystem)
+          .realPath(input.source)
+          .pipe(Effect.orElseSucceed(() => ""));
+        const attachments = yield* (yield* FileSystem.FileSystem)
+          .realPath(config.attachmentsDir)
+          .pipe(Effect.orElseSucceed(() => config.attachmentsDir));
+        if (!real.startsWith(attachments + path.sep))
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "A PDF must be attached to this chat; ask the learner to drop it in.",
+          });
+      }
       const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings.pipe(
         Effect.mapError(fail),
       );
-      const config = yield* ServerConfig.ServerConfig;
       const ingested = yield* ingestCourse(input.source, {
         ytDlp: settings.courseYtDlp,
-        workDir: (yield* Path.Path).join(config.stateDir, "courses", ".tmp"),
+        workDir: path.join(config.stateDir, "courses", ".tmp"),
       }).pipe(Effect.mapError(fail));
       return yield* service
         .add({ lessonThreadId: thread.threadId, ingested })

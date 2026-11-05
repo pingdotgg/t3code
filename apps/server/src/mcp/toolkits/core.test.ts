@@ -1218,6 +1218,10 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
       },
     ]);
     expect((yield* service.get({ id: course.id })).prepThreadIds).toEqual([prepThreadId]);
+    // course_add reads only PDFs attached to the chat, never other host files.
+    const outside = yield* callAs("course_add", { source: "/etc/passwd.pdf" });
+    expect(outside.isError).toBe(true);
+    expect(JSON.stringify(outside.content)).toContain("must be attached");
   }).pipe(
     Effect.provide(
       McpHttpServer.toolkitRegistration(CourseToolkit, CourseHandlers.layer).pipe(

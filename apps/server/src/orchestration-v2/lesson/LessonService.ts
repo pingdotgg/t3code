@@ -40,7 +40,11 @@ export function buildLessonOpening(
           .split("\n")
           .map((line) => `> ${line}`)
           .join("\n")}\n`;
-  return `I'd like a lesson on: ${lesson.topic}\nHow deep: ${label} (${explanation})\nWhy: ${why}${goal}\n${source}\nStart by checking what I already know about this, then teach at that depth and keep examples tied to why I'm learning it.`;
+  // A pasted course link (APP-43) makes the lesson follow that course.
+  const ask = /^https?:\/\/\S+$/.test(lesson.topic.trim())
+    ? "I'd like to follow this course"
+    : "I'd like a lesson on";
+  return `${ask}: ${lesson.topic}\nHow deep: ${label} (${explanation})\nWhy: ${why}${goal}\n${source}\nStart by checking what I already know about this, then teach at that depth and keep examples tied to why I'm learning it.`;
 }
 
 export class LessonService extends Context.Service<

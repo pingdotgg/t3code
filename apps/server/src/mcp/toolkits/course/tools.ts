@@ -31,7 +31,12 @@ const CourseAddTool = Tool.make("course_add", {
     ProcessRunner.ProcessRunner,
     Path.Path,
   ],
-}).annotate(Tool.Title, "Add course");
+})
+  .annotate(Tool.Title, "Add course")
+  // Downloads from OCW/YouTube and reads an attached PDF.
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true);
 const CourseReadTool = Tool.make("course_read", {
   description:
     "Read the linked course outline or one unit's plan, quiz, and a small transcript window.",
