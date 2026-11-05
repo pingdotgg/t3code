@@ -36,6 +36,8 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
 import type { Thread } from "../types";
+import { derivePhase } from "../session-logic";
+import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
   getAntigravitySendBlockReason,
@@ -48,6 +50,7 @@ import {
   timelineHasEphemeralPreviewUrls,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
+  deriveTimelineWorking,
   deriveComposerSendState,
   deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
@@ -225,6 +228,23 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(acknowledged);
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      latestRun: queuedRun,
+      isWorking: deriveTimelineWorking({
+        phase: derivePhase({ ...readySession, status }),
+        isSendBusy: !acknowledged,
+        isCompacting: false,
+        runlessWorkStartedAt: null,
+      }),
+      activeTurnStartedAt: queuedRun.requestedAt,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.filter((row) => row.kind === "working")).toMatchObject([
+      { id: "working-indicator-row" },
+    ]);
   });
 
   it("waits for the matching running turn before acknowledging", () => {
