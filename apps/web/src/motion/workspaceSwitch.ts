@@ -245,10 +245,9 @@ function directionOf(previous: LayoutState, next: LayoutState, fromId: string, t
 }
 
 function vacatedBy(previous: LayoutState, next: LayoutState, id: string): boolean {
-  return (
-    indexIn(next, id) < 0 &&
-    previous.workspaces.some((workspace) => workspace.id === id && workspace.columns.length > 0)
-  );
+  const columns = (layout: LayoutState) =>
+    layout.workspaces.find((workspace) => workspace.id === id)?.columns.length ?? 0;
+  return columns(previous) > 0 && columns(next) === 0;
 }
 
 /** Focus moved to another workspace by anything but a swipe: spring there. */
