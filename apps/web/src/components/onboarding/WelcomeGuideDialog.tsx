@@ -98,7 +98,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
         <WizardHeader
           title="Welcome guide"
           identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Learn">
+            <div className="flex items-baseline gap-1.5" role="img" aria-label="OminaX">
               <T3LearnWordmark className="h-4 w-auto shrink-0" aria-hidden />
               <span className="text-2xl font-medium tracking-tight text-muted-foreground">
                 Learn
@@ -173,7 +173,7 @@ function guideSteps(askShortcut: string | null, mapShortcut: string | null) {
     {
       label: "Welcome",
       illustration: <LessonMock />,
-      title: "Welcome to T3 Learn",
+      title: "Welcome to OminaX",
       body: "Every chat is a lesson. When a reply uses something you don't know yet, you can dig into it on the side while the lesson stays on track.",
     },
     {

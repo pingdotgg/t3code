@@ -1023,7 +1023,7 @@ describe("describeUpdateErrorCause", () => {
 });
 
 describe("DesktopUpdates under a managed policy", () => {
-  const message = "Example Corp manages T3 Learn updates.";
+  const message = "Example Corp manages OminaX updates.";
   const managed = (
     policy: Partial<DesktopUpdatePolicy.UpdatePolicy>,
   ): DesktopUpdatePolicy.UpdatePolicy => ({

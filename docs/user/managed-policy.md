@@ -280,7 +280,7 @@ starts the binary you set.
   `latest-linux.yml`, `latest-linux-arm64.yml`, and their `nightly` versions if you allow nightly)
   and the desktop installers they list go at the URL's root. The release's `t3-*` archives and
   `SHA256SUMS` go under `v<version>/`. A `t3` run through `npx` comes from npm, so pin it with your
-  package tooling. T3 Learn ignores `feedUrl` and always updates from its own release.
+  package tooling. OminaX ignores `feedUrl` and always updates from its own release.
 - `allowNightly: false`: the nightly channel is unavailable.
 
 ## What a policy does not cover

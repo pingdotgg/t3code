@@ -40,7 +40,7 @@ export function CliCommandSettingsRow() {
   const description = state.shadowedBy
     ? `Another t3-learn at ${state.shadowedBy} runs first in a new terminal. Remove it to use this one.`
     : !installed
-      ? "Run T3 Learn's CLI as `t3-learn` from any terminal."
+      ? "Run OminaX's CLI as `t3-learn` from any terminal."
       : state.onPath
         ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
         : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`t3-learn\`.`;

@@ -292,7 +292,7 @@ back the standard rows.
 
 ## Side chats
 
-T3 Learn's side chats let you ask about a highlighted part of a lesson.
+OminaX's side chats let you ask about a highlighted part of a lesson.
 See the [side chat guide](side-chats.md) to get started.
 
 ## Snooze until later

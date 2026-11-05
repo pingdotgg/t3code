@@ -1,6 +1,6 @@
 # Product usage data
 
-T3 Learn sends no product usage events and no relay connection traces by default. To send product
+OminaX sends no product usage events and no relay connection traces by default. To send product
 usage events, set `T3CODE_TELEMETRY_ENABLED=true` in the server's environment. The rest of this page
 describes what they contain.
 

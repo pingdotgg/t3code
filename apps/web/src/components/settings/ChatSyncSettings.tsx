@@ -20,7 +20,7 @@ const chatSyncPermissionsAtom = environmentAtomList(
 
 function statusText(status: ChatSyncStatus): string {
   if (status.state === "running") {
-    return `Syncing… takes a few minutes; T3 Learn reconnects for a few seconds near the end.${status.message ? ` ${status.message}` : ""}`;
+    return `Syncing… takes a few minutes; OminaX reconnects for a few seconds near the end.${status.message ? ` ${status.message}` : ""}`;
   }
   if (status.state === "succeeded") {
     if (status.addedChats !== null) {

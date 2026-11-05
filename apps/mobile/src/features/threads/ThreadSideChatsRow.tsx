@@ -22,7 +22,7 @@ export function ThreadSideChatsRow(props: {
         tintColorClassName="accent-foreground-muted"
       />
       <Text className="text-xs text-foreground-muted">Side chats</Text>
-      <Text className="text-xs text-foreground-muted">not supported in T3 Learn mobile yet</Text>
+      <Text className="text-xs text-foreground-muted">not supported in OminaX mobile yet</Text>
     </View>
   );
 }

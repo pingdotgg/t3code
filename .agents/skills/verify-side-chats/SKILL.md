@@ -24,7 +24,7 @@ Read-only checks to run before the first drive and after anything surprising:
 - `systemctl --user is-active t3learn-qa-dev.service` prints `active`.
 - `ss -H -ltnp | grep -E ':(<serverPort>|<webPort>) '` shows both ports. `readlink /proc/<pid>/cwd` for each pid is inside the QA checkout.
 - `git -C /home/quokka/.t3/projects/t3-sidechat-qa rev-parse HEAD` is the sha under test, and `git status --short` is empty.
-- In the Browser panel the page title is `T3 Learn (Dev)` and the sidebar lists threads. A pairing page means you need a new token.
+- In the Browser panel the page title is `OminaX (Dev)` and the sidebar lists threads. A pairing page means you need a new token.
 
 ## Drive
 

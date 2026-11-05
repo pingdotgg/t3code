@@ -33,7 +33,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     platform: "linux",
     isPackaged: true,
     isDevelopment: false,
-    displayName: "T3 Learn (Alpha)",
+    displayName: "OminaX (Alpha)",
     linuxDesktopEntryName: "io.github.aabdel0181.T3Learn.desktop",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     desktopLauncherPath: Option.none(),
@@ -227,7 +227,7 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.include(
         recorded.files[0]?.content,
         DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-          displayName: "T3 Learn (Alpha)",
+          displayName: "OminaX (Alpha)",
           execTarget: process.execPath,
           scheme: "t3learn",
           iconPath: "/home/alice/.local/share/icons/io.github.aabdel0181.T3Learn.desktop.png",
@@ -254,7 +254,7 @@ describe("DesktopLinuxUrlHandler", () => {
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-          displayName: "T3 Learn (Alpha)",
+          displayName: "OminaX (Alpha)",
           execTarget: "/home/alice/Applications/T3-Learn.AppImage",
           scheme: "t3learn",
           iconPath: "/home/alice/.local/share/icons/io.github.aabdel0181.T3Learn.desktop.png",
@@ -283,7 +283,7 @@ describe("DesktopLinuxUrlHandler", () => {
       yield* runRegister(recorded, {
         iconSource: "/tmp/.mount_T3/resources/icon.png",
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-          displayName: "T3 Learn (Alpha)",
+          displayName: "OminaX (Alpha)",
           execTarget: "/home/alice/Applications/T3-Learn.AppImage",
           scheme: "t3learn",
           iconPath,

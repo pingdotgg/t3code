@@ -1,10 +1,10 @@
-> **T3 Learn:** This guide describes upstream T3 Code. For T3 Learn, use the fork installers and releases in the [T3 Learn README](../../README.md); update the Linux launcher with `t3-learn update --yes` (or set `T3CODE_HOME=~/.t3-learn` when using the plain CLI).
+> **OminaX:** This guide describes upstream T3 Code. For OminaX, use the fork installers and releases in the [OminaX README](../../README.md); update the Linux launcher with `t3-learn update --yes` (or set `T3CODE_HOME=~/.t3-learn` when using the plain CLI).
 
 # Updating T3 Code
 
-On desktop, T3 Learn prompts when a new version is available and offers to update now or later.
+On desktop, OminaX prompts when a new version is available and offers to update now or later.
 Turn on **Settings → About → Update automatically** to download updates in the background and
-install them when T3 Learn starts.
+install them when OminaX starts.
 
 The app you use and the server running your agents can be on different machines.
 When a server is behind your web or desktop app, the update button at the bottom

@@ -1,7 +1,7 @@
 # Appearance and themes
 
 On web and desktop, open **Settings → Appearance** to choose a theme and follow the system
-appearance or stay in light or dark mode. T3 Learn uses its own theme until you pick another one.
+appearance or stay in light or dark mode. OminaX uses its own theme until you pick another one.
 To use different themes for light and dark mode, select the corresponding preview within each
 theme. Appearance preferences are saved separately on each device or browser.
 

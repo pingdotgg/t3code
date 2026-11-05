@@ -40,7 +40,7 @@ interface ElectronAppCalls {
 const layerElectronApp = (calls: ElectronAppCalls) =>
   Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
-    name: Effect.succeed("T3 Learn"),
+    name: Effect.succeed("OminaX"),
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
@@ -217,9 +217,9 @@ describe("DesktopAppIdentity", () => {
 
         const runtimeName = calls.setName[0];
         assert.isDefined(runtimeName);
-        assert.equal(runtimeName, `T3 Learn ${stage}`);
+        assert.equal(runtimeName, `OminaX ${stage}`);
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `T3 Learn (${stage})`);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `OminaX (${stage})`);
       }),
       { calls, environment },
     );

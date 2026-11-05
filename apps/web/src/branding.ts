@@ -1,5 +1,5 @@
 import type { DesktopAppBranding } from "@t3tools/contracts";
-import { T3_LEARN_REPOSITORY } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_PRODUCT_NAME, T3_LEARN_REPOSITORY } from "@t3tools/shared/t3LearnIdentity";
 
 import { formatAppDisplayName } from "./branding.logic";
 
@@ -18,7 +18,7 @@ export const HOSTED_APP_CHANNEL =
   hostedAppChannel === "latest" || hostedAppChannel === "nightly" ? hostedAppChannel : null;
 export const HOSTED_APP_CHANNEL_LABEL =
   HOSTED_APP_CHANNEL === "nightly" ? "Nightly" : HOSTED_APP_CHANNEL === "latest" ? "Latest" : null;
-export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "T3 Learn";
+export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? T3_LEARN_PRODUCT_NAME;
 export const APP_STAGE_LABEL =
   injectedDesktopAppBranding?.stageLabel ??
   HOSTED_APP_CHANNEL_LABEL ??
