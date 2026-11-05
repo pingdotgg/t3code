@@ -357,12 +357,25 @@ jobs:
           name: release-notes
 
       # The generic update feed carries no release body, so the desktop update
-      # prompt reads the "What's new" part from each manifest.
+      # prompt reads "What's new" from each manifest: this release plus the last
+      # 5 promoted ones (older bodies lack the section), newest first, so a
+      # skipped release's notes still show. JSON is valid YAML.
       - name: Add release notes to updater manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
+          notes="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" |
+            jq -c --arg v "$VERSION" --rawfile body release-notes.md '
+              def whats_new: split("<details>")[0] | sub("\\s+$"; "");
+              [{version: $v, note: ($body | whats_new)}] +
+              ([.[] | select((.draft or .prerelease or .tag_name == "v" + $v) | not)
+                    | select(.body // "" | startswith("### What'"'"'s new"))
+                    | {version: (.tag_name | ltrimstr("v")), note: (.body | whats_new)}][:5])')"
+          echo "$notes" | jq .
           for manifest in release-assets/latest*.yml; do
-            { echo "releaseNotes: |"; sed '/^<details>/,$d; s/^/  /; s/^ *$//' release-notes.md; } >> "$manifest"
+            echo "releaseNotes: $notes" >> "$manifest"
           done
 
       - name: Publish pre-release
