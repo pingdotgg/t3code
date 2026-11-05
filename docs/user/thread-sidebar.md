@@ -8,7 +8,8 @@ need a separate branch and working directory.
 On web and desktop, **New thread** opens the project picker when you have multiple
 projects in the default or project-grouped sidebar. The legacy sidebar always
 starts in the current project. **Shift-click** to start in
-the current project, or use a project's own new-thread action. A new thread carries
+the current project, or use a project's own new-thread action. To always start in
+the current project, turn on **Settings → General → New threads use the current project**. A new thread carries
 your model and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
