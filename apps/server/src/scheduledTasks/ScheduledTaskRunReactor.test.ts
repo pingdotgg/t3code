@@ -314,8 +314,13 @@ it.effect("records a run that failed before markCompleted committed", () =>
         state.turnItems.push(providerFailure(run, PROVIDER_ERROR));
       };
 
-      yield* fire(state);
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.runNow({ id: taskId });
 
+      assert.deepEqual(
+        { status: task.lastRunStatus, error: task.lastRunError },
+        { status: "failed", error: PROVIDER_ERROR },
+      );
       assert.deepEqual(yield* taskRow, { status: "failed", error: PROVIDER_ERROR });
     }),
   ),

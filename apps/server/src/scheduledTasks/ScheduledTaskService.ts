@@ -919,7 +919,7 @@ export const layer = Layer.effect(
           messageIds: [messageId],
         });
         const runId = messages.find((message) => message.id === messageId)?.runId ?? null;
-        if (runId === null) return;
+        if (runId === null) return null;
         const { runs, turnItems } = yield* threadManagement.getThreadRecords(
           threadId,
           ["runs", "turnItems"],
@@ -931,13 +931,18 @@ export const layer = Layer.effect(
         );
         const run = runs.find((candidate) => candidate.id === runId);
         if (run === undefined || run.userMessageId !== messageId || run.status === "cancelled") {
-          return;
+          return null;
         }
         const error = scheduledRunFailureReason(run, turnItems);
         if (error !== null) yield* recordRunOutcome({ taskId, messageId, error });
+        return error;
       },
       // Dispatch is already recorded; a failed read here must not reach releaseStuckRun.
-      Effect.ignoreCause({ log: true }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not record a finished schedule task run.", cause).pipe(
+          Effect.as(null),
+        ),
+      ),
     );
 
     // The run already started the thread, so a failed write only costs the binding.
@@ -1194,11 +1199,19 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
-        if (written && threadId !== null) {
-          yield* recordFinishedDispatch(active.id, threadId, messageId);
-        }
+        const finishedError =
+          written && threadId !== null
+            ? yield* recordFinishedDispatch(active.id, threadId, messageId)
+            : null;
         // The stored row can belong to a replacement, so report this dispatch separately.
-        return { task: recorded, threadId, dispatchFailed: !runSucceeded };
+        return {
+          task:
+            finishedError === null
+              ? recorded
+              : { ...recorded, lastRunStatus: "failed" as const, lastRunError: finishedError },
+          threadId,
+          dispatchFailed: !runSucceeded,
+        };
       }).pipe(
         Effect.onError((cause) =>
           releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),
