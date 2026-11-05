@@ -725,8 +725,8 @@ export function LayoutSurfaceHost({
     if (!scroller || !element) return;
     if (stacked) {
       for (const row of stackRows) rememberWorkspaceCamera(row.id, row.camera);
+      if (!wasStacked.current) scroller.scrollLeft = 0;
       wasStacked.current = true;
-      scroller.scrollLeft = 0;
       applyWorkspaceStackTransform();
       return;
     }
