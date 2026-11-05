@@ -79,6 +79,8 @@ import {
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
 
+const isXAiPromptFailureText = Schema.is(XAiPromptFailureText);
+
 export const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_DRIVER_KIND = GROK_PROVIDER;
 export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_KIND);
@@ -306,10 +308,9 @@ export function makeGrokAcpAdapterFlavor(
         cause,
         ...(isAcpRequestError(cause)
           ? {
-              message:
-                cause.cause instanceof XAiPromptFailureText
-                  ? cause.cause.message
-                  : cause.errorMessage,
+              message: isXAiPromptFailureText(cause.cause)
+                ? cause.cause.message
+                : cause.errorMessage,
               code: String(cause.code),
               class: cause.code === xAiRateLimitedErrorCode ? "usage_limit" : "provider_error",
             }
