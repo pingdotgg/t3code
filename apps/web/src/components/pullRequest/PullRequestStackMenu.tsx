@@ -239,9 +239,10 @@ export function PullRequestStackMenu({
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="inline-flex">
+              <span className={display === "merge-button" ? "flex w-full" : "inline-flex"}>
                 <Button
                   variant="default"
+                  className={display === "merge-button" ? "flex-1" : undefined}
                   size={display === "merge-button" ? "sm" : "xs"}
                   disabled={mergeDisabled && !stale}
                   aria-disabled={mergeDisabled || undefined}
