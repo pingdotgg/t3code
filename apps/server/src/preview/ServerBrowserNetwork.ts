@@ -190,10 +190,10 @@ export class NetworkLog {
     if (input.requestId !== undefined) {
       const entry = this.entries.find((candidate) => candidate.id === input.requestId);
       if (!entry) {
-        throw new ServerBrowserOperationError(
-          "PreviewAutomationExecutionError",
-          `Request ${input.requestId} is no longer in this tab's log, which keeps the newest ${DIAGNOSTIC_BUFFER_LIMIT}. List the requests again.`,
-        );
+        throw new ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: `Request ${input.requestId} is no longer in this tab's log, which keeps the newest ${DIAGNOSTIC_BUFFER_LIMIT}. List the requests again.`,
+        });
       }
       return { tabId: PreviewTabId.make(tabId), matched: 1, requests: [await this.detail(entry)] };
     }
