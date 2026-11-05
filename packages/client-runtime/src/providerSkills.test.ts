@@ -124,6 +124,13 @@ describe("filterProviderSystemSkills", () => {
       ),
     ).toEqual([personal, project, unscoped]);
   });
+
+  it("keeps a same-name skill that a hidden system skill would shadow in the slash menu", () => {
+    const shadowed = { ...personal, name: builtIn.name };
+    expect(
+      getProviderSkillsForSlashMenu(filterProviderSystemSkills([builtIn, shadowed], false), true),
+    ).toEqual([shadowed]);
+  });
 });
 
 describe("workspace provider snapshots", () => {
