@@ -4737,6 +4737,111 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  describe("T3 MCP tool approval", () => {
+    const openMcpTurn = Effect.fn("openMcpTurn")(function* (
+      runtimeMode: "approval-required" | "auto-accept-edits",
+    ) {
+      const harness = yield* makeWakeHarness;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-claude-wake"),
+        threadId: harness.threadId,
+        providerSessionId: "mcp-session-claude-wake",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-claude-token",
+        browserToolsAvailable: true,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode,
+        interactionMode: "default",
+        cwd: "/workspace",
+      });
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-t3-mcp"),
+        text: "List my projects.",
+        attachments: [],
+        runtimePolicy,
+      });
+      yield* harness.runtime.startTurn({
+        ...input,
+        appThread: { ...input.appThread, runtimeMode },
+      });
+      const openedOptions = harness.getOpenedOptions();
+      assert.isDefined(openedOptions?.mcpServers?.["t3-code"]);
+      return { ...harness, openedOptions: openedOptions! };
+    });
+
+    // A bare allowedTools entry shadows canUseTool, and the SDK warns on every session start.
+    it.effect.each(["approval-required", "auto-accept-edits"] as const)(
+      "does not pre-approve T3 MCP tools as bare allowedTools in %s",
+      (runtimeMode) =>
+        Effect.gen(function* () {
+          const turn = yield* openMcpTurn(runtimeMode);
+          assert.deepEqual(
+            (turn.openedOptions.allowedTools ?? []).filter(
+              (tool) => tool.startsWith("mcp__t3-code__") && !tool.includes("("),
+            ),
+            [],
+            `${turn.openedOptions.permissionMode} consults canUseTool, so bare T3 MCP allowedTools shadow it`,
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+
+    it.effect.each(["approval-required", "auto-accept-edits"] as const)(
+      "approves T3 MCP tools in canUseTool without asking in %s",
+      (runtimeMode) =>
+        Effect.gen(function* () {
+          const turn = yield* openMcpTurn(runtimeMode);
+          const decision = yield* Effect.promise(() =>
+            turn.openedOptions.canUseTool!(
+              "mcp__t3-code__t3_project_list",
+              {},
+              {
+                signal: new AbortController().signal,
+                toolUseID: "tool-t3-project-list",
+                requestId: "request-t3-project-list",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const first = yield* Effect.raceFirst(
+            Queue.take(turn.runtimeRequestReceipts).pipe(
+              Effect.map((event) => ({ type: "request", event }) as const),
+            ),
+            Fiber.join(decision).pipe(
+              Effect.map((result) => ({ type: "decision", result }) as const),
+            ),
+          );
+          assert.equal(first.type, "decision", "a T3 MCP tool call raised an approval request");
+          if (first.type !== "decision") return;
+          assert.equal(first.result?.behavior, "allow");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+  });
+
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",
     () =>
