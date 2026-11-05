@@ -2,12 +2,10 @@ import { CheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import { CheckboxMark } from "./ui/checkbox";
 
 /**
- * A project row's icon slot. With `selection`, a checked row marks its icon with a small check, and
- * a checkbox takes the icon's place on the highlighted row. Touch has no hover, so it always shows
- * the checkbox.
+ * A project row's icon slot. With `selection`, the icon toggles the project: a checked one wears a
+ * small check, and an unchecked one shows an empty ring there on the highlighted row (always on touch).
  */
 export function ProjectRowLeading(props: {
   readonly icon: ReactNode;
@@ -19,41 +17,37 @@ export function ProjectRowLeading(props: {
     | undefined;
 }) {
   const { selection } = props;
+  if (!selection) return <span className="flex shrink-0">{props.icon}</span>;
   return (
-    <span className="grid shrink-0">
-      <span
-        className={cn(
-          "relative col-start-1 row-start-1 flex",
-          selection && "pointer-coarse:invisible pointer-fine:in-data-highlighted:invisible",
-        )}
-      >
+    <button
+      type="button"
+      tabIndex={-1}
+      aria-hidden="true"
+      className="group/toggle -m-1 flex shrink-0 cursor-pointer p-1"
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        selection.onToggle();
+      }}
+    >
+      <span className="relative flex">
         {props.icon}
-        {selection?.checked ? (
-          <span className="pointer-events-none absolute -bottom-1 -left-1 grid size-3 place-items-center rounded-full bg-primary ring-2 ring-popover">
-            <CheckIcon className="size-2 text-primary-foreground" strokeWidth={4} aria-hidden />
-          </span>
-        ) : null}
-      </span>
-      {selection ? (
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-hidden="true"
+        <span
           className={cn(
-            "invisible col-start-1 row-start-1 flex cursor-pointer items-center justify-center pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
+            "pointer-events-none absolute -right-1 -bottom-1 grid size-3 place-items-center rounded-full",
+            selection.checked
+              ? "bg-primary group-hover/toggle:brightness-125"
+              : "invisible border border-foreground/50 bg-popover group-hover/toggle:border-primary group-hover/toggle:bg-primary/40 pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
           )}
-          onPointerDown={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            selection.onToggle();
-          }}
         >
-          <CheckboxMark checked={selection.checked} />
-        </button>
-      ) : null}
-    </span>
+          {selection.checked ? (
+            <CheckIcon className="size-2 text-primary-foreground" strokeWidth={4} aria-hidden />
+          ) : null}
+        </span>
+      </span>
+    </button>
   );
 }
 
