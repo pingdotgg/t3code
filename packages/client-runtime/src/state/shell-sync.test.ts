@@ -56,7 +56,10 @@ const LIVE_SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({ shellResumeCompletionMarker: true } as never),
+    initialConfig: Effect.succeed({
+      shellResumeCompletionMarker: true,
+      environment: { serverVersion: "1.0.0" },
+    } as never),
     subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
@@ -831,6 +834,7 @@ describe("environment shell synchronization", () => {
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           shellOlderSettled: true,
+          environment: { serverVersion: "1.0.0", databaseMigration: 70 },
         } as never),
       };
       const activeSession = yield* SubscriptionRef.make(Option.some(familySession));
@@ -917,6 +921,22 @@ describe("environment shell synchronization", () => {
         omitOlderSettled: true,
       });
       expect(yield* Ref.get(loadOptions)).toHaveLength(1);
+
+      // A migrated server may have rewritten rows without events, so it reloads.
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some({
+          ...familySession,
+          initialConfig: familySession.initialConfig.pipe(
+            Effect.map((config) => ({
+              ...config,
+              environment: { ...config.environment, databaseMigration: 71 },
+            })),
+          ),
+        }),
+      );
+      yield* Queue.take(subscribeInputs);
+      expect(yield* Ref.get(loadOptions)).toHaveLength(2);
     }),
   );
 
@@ -1091,7 +1111,10 @@ describe("environment shell synchronization", () => {
         activeSession,
         Option.some({
           ...session(client),
-          initialConfig: Effect.succeed({ shellThreadFamilies: true } as never),
+          initialConfig: Effect.succeed({
+            shellThreadFamilies: true,
+            environment: { serverVersion: "1.0.0" },
+          } as never),
         }),
       );
       yield* SubscriptionRef.changes(shellState).pipe(

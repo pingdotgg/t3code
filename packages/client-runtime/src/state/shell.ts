@@ -105,8 +105,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     status: shellStatusForSnapshot(cachedSnapshot),
   });
   const awaitingCompletion = yield* Ref.make(false);
-  // The omission options of the subscription whose snapshot the in-memory
-  // shell last came from; null while it holds only cached data.
+  // The omissions and server build of the subscription whose snapshot the
+  // in-memory shell last came from; null while it holds only cached data.
   const authoritativeOmission = yield* Ref.make<string | null>(null);
   const activeSubscriptionOmission = yield* Ref.make<string | null>(null);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
@@ -378,24 +378,39 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        const { omitIdleSubagents, omitOlderSettled } = yield* session.initialConfig.pipe(
-          Effect.map((config) => ({
-            omitIdleSubagents: config.shellThreadFamilies === true,
-            omitOlderSettled:
-              config.shellOlderSettled === true && config.shellThreadFamilies === true,
-          })),
-          Effect.orElseSucceed(() => ({ omitIdleSubagents: false, omitOlderSettled: false })),
-        );
-        const omissionKey = `${omitIdleSubagents}:${omitOlderSettled}`;
+        const { omitIdleSubagents, omitOlderSettled, omissionKey } =
+          yield* session.initialConfig.pipe(
+            Effect.map((config) => {
+              const omitIdleSubagents = config.shellThreadFamilies === true;
+              const omitOlderSettled = config.shellOlderSettled === true && omitIdleSubagents;
+              // Migrations rewrite projections without events, so an upgraded server reloads.
+              const { serverVersion, databaseMigration } = config.environment;
+              return {
+                omitIdleSubagents,
+                omitOlderSettled,
+                omissionKey: JSON.stringify([
+                  omitIdleSubagents,
+                  omitOlderSettled,
+                  serverVersion,
+                  databaseMigration ?? null,
+                ]),
+              };
+            }),
+            Effect.orElseSucceed(() => ({
+              omitIdleSubagents: false,
+              omitOlderSettled: false,
+              omissionKey: null,
+            })),
+          );
         yield* Ref.set(activeSubscriptionOmission, omissionKey);
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
-        // A shell that came from a server snapshot resumes from its in-memory
-        // cursor, on this session or a new one. Cached data, or a snapshot taken
-        // with other omissions, reloads the authoritative HTTP snapshot so a
-        // valid cursor cannot preserve incomplete data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(authoritativeOmission)) === omissionKey;
+        // A shell from a server snapshot resumes from its cursor, on this session or a
+        // new one. Cached data, other omissions, or another server build reload the
+        // authoritative HTTP snapshot so a valid cursor cannot preserve stale data.
+        const hasAuthoritativeSnapshot =
+          omissionKey !== null && (yield* Ref.get(authoritativeOmission)) === omissionKey;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
         if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {

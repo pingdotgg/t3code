@@ -799,8 +799,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           { discard: true },
         ),
       );
-      const probeStartedAt = yield* Clock.monotonicTimeNanos;
-      let deadline = probeStartedAt + Duration.toNanosUnsafe(probeTimeout);
+      let longResumeStartedAt = yield* Clock.monotonicTimeNanos;
+      let deadline = longResumeStartedAt + Duration.toNanosUnsafe(probeTimeout);
       for (;;) {
         const remaining = deadline - (yield* Clock.monotonicTimeNanos);
         const probeEvent = yield* Effect.raceAllFirst([
@@ -824,7 +824,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           // A frame shows the socket still works, so its probe gets the usual resume time.
           if (longResume) {
             const aliveDeadline =
-              probeStartedAt + Duration.toNanosUnsafe(QUICK_CONNECTION_PROBE_TIMEOUT);
+              longResumeStartedAt + Duration.toNanosUnsafe(QUICK_CONNECTION_PROBE_TIMEOUT);
             if (aliveDeadline > deadline) deadline = aliveDeadline;
           }
           if (recheck) yield* startSilentSocketCheck;
@@ -861,8 +861,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }
         const signalTimeout = probeTimeoutFor(probeEvent.signal, routeKind);
         if (signalTimeout !== undefined) {
+          if (isLongResume(probeEvent.signal) && !longResume) {
+            longResume = true;
+            longResumeStartedAt = yield* Clock.monotonicTimeNanos;
+          }
           yield* armSilentSocketCheck(probeEvent.signal);
-          longResume ||= isLongResume(probeEvent.signal);
           const signalDeadline =
             (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);
           if (signalDeadline < deadline) deadline = signalDeadline;

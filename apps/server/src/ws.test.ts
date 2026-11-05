@@ -1026,7 +1026,14 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       checkedAt: "2026-10-25T00:00:00.000Z",
       models: [],
       slashCommands: [{ name: "machine-command", description: "A machine command" }],
-      skills: [{ name: "machine-skill", path: "/skills/machine-skill", enabled: true }],
+      skills: [
+        {
+          name: "machine-skill",
+          description: "Machine skill",
+          path: "/skills/machine-skill",
+          enabled: true,
+        },
+      ],
       workspaceSnapshots: [
         snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
         snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
@@ -1133,7 +1140,9 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
     // The cwd snapshot the client fetches carries the catalog, so only command names are sent.
     assert.deepEqual(snapshot.config.providers[0]?.slashCommands, [{ name: "machine-command" }]);
-    assert.deepEqual(snapshot.config.providers[0]?.skills, []);
+    assert.deepEqual(snapshot.config.providers[0]?.skills, [
+      { name: "machine-skill", path: "/skills/machine-skill", enabled: true },
+    ]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
     // A rescan that only touches a snapshot sends nothing; the next real change does.

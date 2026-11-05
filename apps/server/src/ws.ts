@@ -446,10 +446,9 @@ function workspaceSnapshotOrCatalog(
   ];
 }
 
-// Clients with on-demand catalogs read commands and skills from the cwd snapshot they fetch, so
-// a provider that scans a cwd sends command names only: any command the machine catalog gains
-// or loses still changes the config, which makes the client refetch, while the descriptions,
-// inputs, and skills that make up the bulk stay out.
+// On-demand catalog clients read full entries from the cwd snapshot they fetch. Names still
+// change the config when the machine catalog does, so the client refetches, and skill names
+// keep skill links working where no snapshot is fetched.
 function withoutWorkspaceSnapshots(
   providers: ReadonlyArray<ServerProvider>,
   catalogsPerCwd: ReadonlySet<string> = new Set(),
@@ -459,7 +458,9 @@ function withoutWorkspaceSnapshots(
       ? {
           ...provider,
           slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
-          skills: [],
+          skills: provider.skills.map(
+            ({ description: _d, shortDescription: _s, displayName: _n, ...skill }) => skill,
+          ),
         }
       : provider,
   );
@@ -3286,7 +3287,7 @@ export const layerWsRpc = (
                       ),
                     )
                   : Effect.succeed(new Set<string>());
-              // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
+              // Buffer changes through discovery and the initial snapshot's send.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
               const remoteTargets = yield* Effect.forkScoped(remoteOpenTargets.resolveTargets(), {
