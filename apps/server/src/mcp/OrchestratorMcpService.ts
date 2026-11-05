@@ -68,6 +68,7 @@ import {
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { threadMatchesPullRequestListFilters } from "@t3tools/shared/threadPullRequests";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -2955,7 +2956,7 @@ const make = Effect.gen(function* () {
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
-          includeSubagents: input.includeSubagents !== false,
+          includeSubagents: input.includeSubagents === true,
         })
         .pipe(
           Effect.mapError((error) =>
@@ -2969,6 +2970,10 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
+      const pullRequestStates =
+        input.pullRequestStates === undefined || input.pullRequestStates.length === 0
+          ? undefined
+          : input.pullRequestStates;
       const filtered = projectThreads
         .filter(
           (thread) => statuses === null || statuses.has(thread.activityRunStatus ?? thread.status),
@@ -2983,6 +2988,13 @@ const make = Effect.gen(function* () {
         .filter(
           (thread) =>
             titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
+        )
+        .filter((thread) =>
+          threadMatchesPullRequestListFilters(thread.pullRequests, {
+            hasPullRequest: input.hasPullRequest,
+            pullRequestStates,
+            pullRequest: input.pullRequest,
+          }),
         );
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
