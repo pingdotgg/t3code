@@ -52,9 +52,11 @@ it.each([
   },
   {
     name: "code heading counts",
-    messages: [lessonMessage("a1", "assistant", "## U2: copy a schematic")],
+    messages: [
+      lessonMessage("a1", "assistant", "## U2: copy a schematic\n### S1T: design a board"),
+    ],
     anchor: { messageId: MessageId.make("message:a1"), start: 100 },
-    expected: "U2: copy a schematic",
+    expected: "S1T: design a board",
   },
   {
     name: "other headings do not count",
@@ -62,7 +64,7 @@ it.each([
       lessonMessage(
         "a1",
         "assistant",
-        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1",
+        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1\n**L3: bold is not a heading**",
       ),
     ],
     anchor: { messageId: MessageId.make("message:a1"), start: 200 },

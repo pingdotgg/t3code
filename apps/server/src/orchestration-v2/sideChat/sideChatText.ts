@@ -31,7 +31,7 @@ export function deriveSideChatLabel(excerpt: string): string {
 }
 
 const LESSON_SECTION_HEADING = /^#{1,3}\s+Lesson\s+\d+\b/i;
-const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[a-z]?:/;
+const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[A-Za-z]?:/;
 
 /** Returns the last lesson section heading at a highlighted assistant message. */
 export function lessonSectionAt(
