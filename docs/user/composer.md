@@ -198,7 +198,7 @@ and edit before sending.
 
 By default, audio stays on the phone. Local transcription needs a supported iPhone
 with iOS 26 or later, or Android 12 or later with compatible Google speech services.
-To use a paired environment instead, open **Settings → Microphone → Transcribe on**,
+To use a paired environment instead, open **Settings → Voice → Transcribe on**,
 choose the environment, and confirm. Finished recordings go only to that environment,
 even when a draft belongs to another one. This also works on phones without local
 speech recognition. If the chosen environment disconnects, dictation stops; it never
@@ -213,7 +213,7 @@ preserves your existing draft. Navigating to another screen keeps dictation acti
 use the floating controls to finish or cancel. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
-Choose a preferred order in **Settings → Microphone**. Voice input requests the first
+Choose a preferred order in **Settings → Voice**. Voice input requests the first
 connected microphone in the list. The list mixes kinds (built-in, other wired, other
 Bluetooth, and CarPlay on iOS) with wired and Bluetooth devices you have dictated
 with, listed by name. Drag to rank them together:

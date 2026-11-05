@@ -29,8 +29,8 @@ const SETTINGS_SEARCH_TERMS = {
   ],
   SettingsNavigation: ["tabs", "tab order", "reorder", "hide tabs"],
   SettingsKeyboard: ["return key", "send message", "new line", "hardware keyboard"],
-  SettingsMicrophone: [
-    "voice",
+  SettingsVoice: [
+    "microphone",
     "dictation",
     "transcription",
     "on-device",
