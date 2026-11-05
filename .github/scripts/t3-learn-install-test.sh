@@ -31,6 +31,21 @@ screenshot() {
 }
 
 # Waits for the desktop app's server under a T3 home and prints its version.
+# What you know, courses and the clip cache must survive updates and uninstalls like the database.
+learning="$HOME/.t3-learn/userdata"
+plant_learning() {
+  mkdir -p "$learning/courses/install-test/units" "$learning/visuals/install-test" "$artifacts/kept"
+  printf '%s\n' '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' >"$learning/knowledge.json"
+  printf '%s\n' '{"title":"install test"}' >"$learning/courses/install-test/course.json"
+  printf '%s\n' 'kept across updates' >"$learning/courses/install-test/units/01.txt"
+  printf '%s\n' '{"concept":"install-test"}' >"$learning/visuals/install-test/meta.json"
+  cp -R "$learning/knowledge.json" "$learning/courses" "$learning/visuals" "$artifacts/kept/"
+}
+check_learning() {
+  for item in knowledge.json courses visuals; do
+    diff -r "$artifacts/kept/$item" "$learning/$item" >/dev/null || fail "$1 changed or removed $item"
+  done
+}
 wait_for_server() {
   local home="$1" expected="${2:-}" state="$1/userdata/server-runtime.json" origin="" reported=""
   for _ in $(seq 1 180); do
@@ -91,9 +106,7 @@ if [ "$scenario" = fresh ]; then
       env T3LEARN_VERSION="$previous" T3LEARN_FORMAT="$format" sh 2>&1 | tee "$artifacts/install-previous.log"
     previous_running="$(wait_for_server "$HOME/.t3-learn" "$previous")"
     log "The previous release, $previous_running, is running"
-    knowledge="$HOME/.t3-learn/userdata/knowledge.json"
-    printf '%s\n' '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' >"$knowledge"
-    cp "$knowledge" "$artifacts/knowledge.json"
+    plant_learning
     # The deb upgrade leaves the old app running, and the new one would lose the single-instance lock to it.
     if [ "$os" = Linux ]; then
       pkill -u "$(id -u)" -x t3learn || true
@@ -131,7 +144,7 @@ if [ "$os" = Darwin ] && [ "$scenario" = fresh ] && [ -n "$previous" ] && [ "$pr
   ls -d "/Applications/.t3-learn-update."* 2>/dev/null && fail "the update left its staging folder"
   codesign --verify --deep "$app" || fail "the updated app's signature does not verify"
   screenshot after-update
-  cmp -s "$knowledge" "$artifacts/knowledge.json" || fail "the update changed or removed knowledge.json"
+  check_learning "the update"
 fi
 
 log "Installing OminaX $version"
@@ -142,12 +155,7 @@ learn_version="$(wait_for_server "$HOME/.t3-learn" "$version")"
 log "OminaX $learn_version is running"
 sleep 5
 screenshot t3-learn
-# What you know (knowledge.json) must survive updates and uninstalls like the database.
-knowledge="$HOME/.t3-learn/userdata/knowledge.json"
-if [ ! -f "$artifacts/knowledge.json" ]; then
-  printf '%s\n' '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' >"$knowledge"
-  cp "$knowledge" "$artifacts/knowledge.json"
-fi
+[ -d "$artifacts/kept" ] || plant_learning
 
 if [ "$os" = Darwin ]; then
   app="/Applications/OminaX.app"
@@ -190,7 +198,7 @@ else
   ! installed t3learn || fail "the t3learn package is still installed"
 fi
 [ -d "$HOME/.t3-learn/userdata" ] || fail "uninstall removed OminaX's data"
-cmp -s "$knowledge" "$artifacts/knowledge.json" || fail "uninstall changed or removed knowledge.json"
+check_learning "uninstall"
 if [ "$scenario" = next-to-t3-code ]; then
   [ "$(wait_for_server "$HOME/.t3" "$t3code_version")" = "$t3code_version" ] || fail "T3 Code stopped after uninstalling OminaX"
 fi
