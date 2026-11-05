@@ -38,7 +38,11 @@ const providerThreadId = ProviderThreadId.make("provider-thread");
 const modelSelection = { instanceId, model: "claude-opus-5-5" };
 
 function records(
-  usage: { readonly usedTokens?: number; readonly cacheExpiresInMs?: number } = {},
+  usage: {
+    readonly usedTokens?: number;
+    readonly maxTokens?: number;
+    readonly cacheExpiresInMs?: number;
+  } = {},
 ): { -readonly [Key in keyof IdleCompactionRecords]: IdleCompactionRecords[Key] } {
   const messageId = MessageId.make("message-1");
   const nodeId = NodeId.make("root-node");
@@ -134,6 +138,7 @@ function records(
         completedAt: at(),
         tokenUsage: {
           usedTokens: usage.usedTokens ?? 250_000,
+          ...(usage.maxTokens === undefined ? {} : { maxTokens: usage.maxTokens }),
           ...(usage.cacheExpiresInMs === undefined
             ? {}
             : { promptCacheExpiresAt: DateTime.formatIso(at(usage.cacheExpiresInMs)) }),
@@ -189,6 +194,14 @@ describe("idleCompactionWindow", () => {
       lineage: { ...sideChat.thread.lineage, relationshipToParent: "fork", sideChat: true },
     };
     expect(idleCompactionWindow(sideChat, NOW_MS)).toBeNull();
+  });
+
+  it("compacts a thread at 160K of a 200K window, which Claude never lets reach 200K", () => {
+    const window = idleCompactionWindow(
+      records({ usedTokens: 160_000, maxTokens: 200_000, cacheExpiresInMs: 60 * MINUTE_MS }),
+      NOW_MS,
+    );
+    expect(window?.runId).toBe(runId);
   });
 });
 
