@@ -195,12 +195,28 @@ it.live("registers loopback and https clients and never redirects for an unverif
         "https://bot.example/callback#",
         "http://localhost/callback#",
         "javascript:alert(1)",
-        `https://bot.example/${"漢".repeat(200)}`,
       ]) {
         const response = yield* register(handler, refused);
         expect(response.status).toBe(400);
         expect(yield* json<unknown>(response)).toMatchObject({ error: "invalid_redirect_uri" });
       }
+      // JSON escaping can inflate the signed client_id past what an authorize URL can carry.
+      const oversized = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            redirect_uris: Array.from(
+              { length: 10 },
+              (_, index) => `https://bot.example/${index}/${'"'.repeat(480)}`,
+            ),
+          }),
+        }),
+      );
+      expect(oversized.status).toBe(400);
+      expect((yield* register(handler, `https://bot.example/${"漢".repeat(200)}`)).status).toBe(
+        201,
+      );
 
       const registered = yield* register(handler);
       expect(registered.status).toBe(201);
