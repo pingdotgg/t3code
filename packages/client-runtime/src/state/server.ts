@@ -1199,6 +1199,19 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduler: configScheduler,
     concurrency: configConcurrency,
   });
+  const chatSyncStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:chat-sync-status",
+    tag: WS_METHODS.serverGetChatSyncStatus,
+    refreshIntervalMs: 3_000,
+    isFinal: (value) => value.state !== "running",
+  });
+  const startChatSync = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:start-chat-sync",
+    tag: WS_METHODS.serverStartChatSync,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    onSuccess: ({ environmentId }, registry) =>
+      Effect.sync(() => registry.refresh(chatSyncStatus({ environmentId, input: {} }))),
+  });
 
   return {
     configValueAtom,
@@ -1207,6 +1220,8 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    startChatSync,
+    chatSyncStatus,
     prepareTriage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:prepare-triage",
       tag: WS_METHODS.serverPrepareTriage,

@@ -71,6 +71,7 @@ export interface SettingsSearchItem {
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
   readonly requiresSideChats?: boolean;
+  readonly requiresChatSync?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -83,6 +84,7 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly hasSideChats?: boolean;
+  readonly hasChatSync?: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
 }
@@ -259,6 +261,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "disk storage delete old browser artifacts screenshots captures rotated logs cleanup retention",
     ],
+  },
+  {
+    id: "chat-sync",
+    title: "Sync from T3 Code",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["copy chats sync T3 Learn"],
+    environmentOnly: true,
+    requiresChatSync: true,
   },
   {
     id: "project-defaults",
@@ -1301,6 +1312,7 @@ export function getSettingsSearchTargetScope(targetId: string) {
         scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
         ...(item.requiresSideChats ? { requiresSideChats: true } : {}),
+        ...(item.requiresChatSync ? { requiresChatSync: true } : {}),
       }
     : null;
 }
@@ -1381,6 +1393,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.requiresSideChats || availability.hasSideChats) &&
+      (!item.requiresChatSync || availability.hasChatSync === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
   );

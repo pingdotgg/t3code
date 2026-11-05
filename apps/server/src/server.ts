@@ -3,6 +3,7 @@ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay
 import * as Random from "effect/Random";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as ChatSync from "./chatSync.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
@@ -520,7 +521,10 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
+const layerServerEnvironment = ServerEnvironment.layer.pipe(
+  Layer.provideMerge(ChatSync.layer),
+  Layer.provide(ServerSecretStore.layer),
+);
 
 const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerPersistence),
@@ -623,6 +627,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
+  ChatSync.layer,
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,

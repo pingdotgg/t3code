@@ -354,6 +354,8 @@ import {
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
   StorageCleanupReport,
+  ChatSyncStatus,
+  ChatSyncError,
   DatabaseStorageStatus,
   ServerSettings,
   ServerSettingsError,
@@ -507,6 +509,8 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
+  serverStartChatSync: "server.startChatSync",
+  serverGetChatSyncStatus: "server.getChatSyncStatus",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   peerLinksList: "peerLinks.list",
   peerLinksLink: "peerLinks.link",
@@ -788,6 +792,16 @@ const WsServerGetStorageCleanupReportRpc = Rpc.make(WS_METHODS.serverGetStorageC
   success: Schema.NullOr(StorageCleanupReport),
   stream: true,
   error: EnvironmentAuthorizationError,
+});
+const WsServerStartChatSyncRpc = Rpc.make(WS_METHODS.serverStartChatSync, {
+  payload: Schema.Struct({}),
+  success: ChatSyncStatus,
+  error: Schema.Union([ChatSyncError, EnvironmentAuthorizationError]),
+});
+const WsServerGetChatSyncStatusRpc = Rpc.make(WS_METHODS.serverGetChatSyncStatus, {
+  payload: Schema.Struct({}),
+  success: ChatSyncStatus,
+  error: Schema.Union([ChatSyncError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStorage, {
@@ -2015,6 +2029,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
+  WsServerStartChatSyncRpc,
+  WsServerGetChatSyncStatusRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,
