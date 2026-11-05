@@ -275,6 +275,10 @@ starts the binary you set.
 ACP Registry agents. Users can still remove what T3 Code installed. Providers you install yourself,
 for example through your device management tool, run as usual.
 
+T3 Code no longer offers install or update actions, but it does not block commands someone runs in
+a terminal. [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt) needs Codex to be on
+the machine already.
+
 ACP Registry agents T3 Code already installed stay at their version, because T3 Code stops refreshing
 the registry list. Codex installed through
 [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt) gets no more updates, so it stops

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   codexNeedsInstall,
+  codexSetupRefused,
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
@@ -130,5 +131,22 @@ describe("codexNeedsInstall", () => {
     { installed: true, updateAvailable: true, canInstall: false, expected: false },
   ])("is $expected for $installed, $updateAvailable, $canInstall", ({ expected, ...input }) => {
     expect(codexNeedsInstall(input)).toBe(expected);
+  });
+});
+
+describe("codexSetupRefused", () => {
+  it.each([
+    { installedVersion: null, canInstall: false, refused: true },
+    { installedVersion: null, canInstall: true, refused: false },
+    { installedVersion: "1.0.0", canInstall: false, refused: false },
+  ])("is $refused for $installedVersion, canInstall $canInstall", (input) => {
+    expect(codexSetupRefused({ installedVersion: input.installedVersion }, input.canInstall)).toBe(
+      input.refused,
+    );
+  });
+
+  it("waits for the install state and provider before refusing", () => {
+    expect(codexSetupRefused(null, false)).toBe(false);
+    expect(codexSetupRefused({ installedVersion: null }, undefined)).toBe(false);
   });
 });
