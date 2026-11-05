@@ -184,7 +184,7 @@ export function DevicePanel(props: {
             hostId: host.id,
             label: host.label,
             detail,
-            incomplete: (status?.incompletePlatforms?.length ?? 0) > 0,
+            incompletePlatforms: status?.incompletePlatforms ?? [],
           },
         ]
       : [];
@@ -225,7 +225,8 @@ export function DevicePanel(props: {
                 key={`${environmentId}\u0000${diagnostic.hostId}`}
                 label={diagnostic.label}
                 detail={diagnostic.detail}
-                incomplete={diagnostic.incomplete}
+                incompletePlatforms={diagnostic.incompletePlatforms}
+                onRetry={() => list({ environmentId, input: {} })}
               />
             ))}
           </div>
@@ -408,44 +409,67 @@ function DeviceNotice(props: { readonly onDismiss: () => void; readonly children
 function DeviceDiscoveryWarning(props: {
   readonly label: string;
   readonly detail: string;
-  readonly incomplete: boolean;
+  readonly incompletePlatforms: readonly DevicePlatform[];
+  readonly onRetry: () => Promise<unknown>;
 }) {
   const [open, setOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [dismissedDetail, setDismissedDetail] = useState<string | null>(null);
   if (dismissedDetail === props.detail) return null;
+  const platforms = props.incompletePlatforms.map((platform) =>
+    platform === "ios" ? "iOS" : "Android",
+  );
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
         role="status"
-        className="flex items-center gap-2 border-b px-3 py-1 text-xs text-muted-foreground"
+        className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-3 py-1 text-xs text-muted-foreground"
       >
-        <CircleAlert className="size-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">
-          {props.incomplete
-            ? `Some devices on ${props.label} could not be listed.`
-            : `Device discovery reported a warning on ${props.label}.`}
+        <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
+          <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
+          <span className="min-w-0">
+            {platforms.length > 0
+              ? `${platforms.join(" and ")} ${platforms.length > 1 ? "lists" : "list"} on ${props.label} may be incomplete.`
+              : `Device discovery on ${props.label} reported a warning.`}
+          </span>
         </span>
-        <CollapsibleTrigger
-          aria-label={`Details for ${props.label}`}
-          render={<Button size="micro" variant="ghost" />}
-        >
-          Details
-        </CollapsibleTrigger>
-        <Button
-          size="icon-micro"
-          variant="ghost"
-          aria-label={`Dismiss device warning for ${props.label}`}
-          onClick={() => {
-            setOpen(false);
-            setDismissedDetail(props.detail);
-          }}
-        >
-          <X />
-        </Button>
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
+          {platforms.length > 0 ? (
+            <Button
+              size="micro"
+              variant="ghost"
+              disabled={retrying}
+              aria-label={`Retry device discovery on ${props.label}`}
+              onClick={() => {
+                setRetrying(true);
+                void props.onRetry().finally(() => setRetrying(false));
+              }}
+            >
+              {retrying ? "Retrying…" : "Retry"}
+            </Button>
+          ) : null}
+          <CollapsibleTrigger
+            aria-label={`Details for ${props.label}`}
+            render={<Button size="micro" variant="ghost" />}
+          >
+            Details
+          </CollapsibleTrigger>
+          <Button
+            size="icon-micro"
+            variant="ghost"
+            aria-label={`Dismiss device warning for ${props.label}`}
+            onClick={() => {
+              setOpen(false);
+              setDismissedDetail(props.detail);
+            }}
+          >
+            <X />
+          </Button>
+        </span>
       </div>
       <CollapsiblePanel>
         <div
-          className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words border-b bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
+          className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words border-b bg-warning-surface px-3 py-2 font-mono text-xs text-warning-foreground"
           tabIndex={0}
         >
           {props.detail}

@@ -221,7 +221,7 @@ describe("DevicePanel discovery warning", () => {
       ...deviceState,
       hostStatuses: { local: { status: "ready", detail, incompletePlatforms: ["ios"] } },
     });
-    const warning = "Some devices on This Mac could not be listed.";
+    const warning = "iOS list on This Mac may be incomplete.";
     currentState = withCause("first cause");
     await using screen = await render(devicePanel(threadA), { container });
 
