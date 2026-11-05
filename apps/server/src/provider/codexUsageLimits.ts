@@ -186,6 +186,60 @@ export function mergeCodexRateLimits(
   };
 }
 
+/**
+ * A read is the whole snapshot as of its request, so fields it omits are gone. Fields a
+ * notification changed while it was pending are newer and stay.
+ */
+export function reconcileCodexRateLimitsRead(
+  sent: CodexRateLimitSnapshot | undefined,
+  current: CodexRateLimitSnapshot | undefined,
+  read: CodexRateLimitSnapshot,
+): CodexRateLimitSnapshot | undefined {
+  if (read.limitId && read.limitId !== "codex") return current;
+  if (!current || current === sent) return read;
+  const { limitId, planType, rateLimitReachedType, primary, secondary, individualLimit } = current;
+  return mergeCodexRateLimits(read, {
+    ...(limitId !== sent?.limitId && limitId !== undefined ? { limitId } : {}),
+    ...(planType !== sent?.planType && planType !== undefined ? { planType } : {}),
+    ...(rateLimitReachedType !== sent?.rateLimitReachedType && rateLimitReachedType !== undefined
+      ? { rateLimitReachedType }
+      : {}),
+    ...(primary !== sent?.primary && primary !== undefined
+      ? { primary: laterReport(primary, read.primary, usedPercent) }
+      : {}),
+    ...(secondary !== sent?.secondary && secondary !== undefined
+      ? { secondary: laterReport(secondary, read.secondary, usedPercent) }
+      : {}),
+    ...(individualLimit !== sent?.individualLimit && individualLimit !== undefined
+      ? {
+          individualLimit: laterReport(
+            individualLimit,
+            read.individualLimit,
+            (limit) => 100 - limit.remainingPercent,
+          ),
+        }
+      : {}),
+  });
+}
+
+const usedPercent = (window: CodexRateLimitWindow) => window.usedPercent;
+
+// Usage only grows within a window, so a lower report of the same reset is a late tick from a
+// concurrent stream.
+function laterReport<Report extends { readonly resetsAt?: number | null }>(
+  notified: Report | null,
+  read: Report | null | undefined,
+  used: (report: Report) => number,
+): Report | null {
+  return notified &&
+    read &&
+    notified.resetsAt != null &&
+    notified.resetsAt === read.resetsAt &&
+    used(read) > used(notified)
+    ? read
+    : notified;
+}
+
 /** All exhausted windows must reset before a continuation can run. */
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
