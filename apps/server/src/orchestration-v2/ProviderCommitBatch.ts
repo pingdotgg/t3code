@@ -1,4 +1,5 @@
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,7 @@ const isSnapshot = (event: Event) =>
 export class CommitBatchError extends Schema.TaggedError<CommitBatchError>()("CommitBatchError", {
   cause: Schema.Defect(),
 }) {}
+export const isCommitBatchError = Schema.is(CommitBatchError);
 
 interface Job {
   readonly owner: { active: boolean };
@@ -41,7 +43,10 @@ interface Job {
   readonly snapshot: boolean;
   readonly bytes: number;
   readonly execute: Effect.Effect<void, CommitBatchError>;
-  readonly settle: (exit: Exit.Exit<void, CommitBatchError>) => Effect.Effect<void>;
+  readonly settle: (
+    exit: Exit.Exit<void, CommitBatchError>,
+    committed: boolean,
+  ) => Effect.Effect<void>;
   readonly cancel: Effect.Effect<void>;
 }
 interface Batch {
@@ -103,6 +108,9 @@ const CurrentWorker = Context.Reference<number | undefined>(
 export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   commit: (work: Effect.Effect<void, CommitBatchError>) => Effect.Effect<void, CommitBatchError>,
   window: number,
+  isolate: (
+    work: Effect.Effect<void, CommitBatchError>,
+  ) => Effect.Effect<void, CommitBatchError> = (work) => work,
 ) {
   const queue = yield* Queue.bounded<Job>(MAX_EVENTS);
   const pending = new Set<Job>();
@@ -119,7 +127,8 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
     bytes: number,
   ) {
     const caller = yield* Effect.context<R>();
-    const reply = yield* Deferred.make<A, CommitBatchError>();
+    const reply = yield* Deferred.make<A, E | CommitBatchError>();
+    let ownFailure: Cause.Cause<E> | undefined;
     let result: A;
     const job: Job = {
       owner: token,
@@ -127,6 +136,11 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
       snapshot,
       bytes,
       execute: effect.pipe(
+        Effect.tapCause((cause) =>
+          Effect.sync(() => {
+            ownFailure = cause;
+          }),
+        ),
         Effect.mapError((cause) => new CommitBatchError({ cause })),
         Effect.provideContext(caller),
         Effect.tap((value) =>
@@ -136,11 +150,17 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
         ),
         Effect.asVoid,
       ),
-      settle: Effect.fnUntraced(function* (exit: Exit.Exit<void, CommitBatchError>) {
+      settle: Effect.fnUntraced(function* (
+        exit: Exit.Exit<void, CommitBatchError>,
+        committed: boolean,
+      ) {
         pending.delete(job);
         if (Exit.isFailure(exit)) {
           token.active = false;
-          yield* Deferred.failCause(reply, exit.cause);
+          yield* Deferred.failCause(
+            reply,
+            committed && ownFailure !== undefined ? ownFailure : exit.cause,
+          );
         } else yield* Deferred.succeed(reply, result);
       }),
       cancel: Effect.gen(function* () {
@@ -176,12 +196,19 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
               "orchestration_v2.batch_wait_ms":
                 (yield* Clock.currentTimeMillis) - Math.min(...jobs.map((job) => job.queuedAt)),
             });
+            const outcomes = new Map<Job, Exit.Exit<void, CommitBatchError>>();
             const work = Effect.forEach(
               jobs,
-              (job) => (job.owner.active ? job.execute : job.cancel),
-              {
-                discard: true,
-              },
+              (job) =>
+                Effect.gen(function* () {
+                  if (!job.owner.active) return yield* job.cancel;
+                  const outcome = yield* (job.bytes > 0 ? isolate(job.execute) : job.execute).pipe(
+                    Effect.exit,
+                  );
+                  outcomes.set(job, outcome);
+                  if (Exit.isFailure(outcome)) job.owner.active = false;
+                }),
+              { discard: true },
             );
             const exit = yield* restore(
               (batch.reason === "control" && jobs.length === 1 && !jobs[0]!.snapshot
@@ -189,7 +216,11 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
                 : commit(work)
               ).pipe(Effect.provideService(CurrentWorker, yield* Effect.fiberId)),
             ).pipe(Effect.exit);
-            for (const job of jobs) yield* job.settle(exit);
+            for (const job of jobs)
+              yield* job.settle(
+                Exit.isSuccess(exit) ? (outcomes.get(job) ?? Exit.void) : exit,
+                Exit.isSuccess(exit),
+              );
           }),
         ).pipe(Effect.withSpan("orchestrationV2.ProviderCommitBatch.flush")),
       ),
@@ -203,7 +234,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
     return yield* enqueue(Effect.exit(effect), token, false, 0).pipe(
       Effect.flatten,
       Effect.orDie,
-      Effect.flatMap((exit) => exit),
+      Effect.flatten,
       Effect.ensuring(
         Effect.sync(() => {
           token.active = false;
@@ -248,7 +279,9 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
               : event === undefined
                 ? Effect.succeed(true)
                 : process(event).pipe(Effect.as(false));
-          const reply = yield* enqueue(work, token, snapshot, bytes);
+          const reply = snapshot
+            ? yield* enqueue(work, token, true, bytes)
+            : (yield* enqueue(Effect.void, token, false, 0)).pipe(Effect.andThen(work));
           if (!snapshot) resume = Deferred.await(processed);
           return { reply, processed, check: !snapshot };
         }),

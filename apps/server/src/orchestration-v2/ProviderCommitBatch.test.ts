@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { MessageId, ProviderDriverKind, ProviderTurnId, ThreadId } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -252,32 +253,86 @@ it.effect("does not hold the shared worker while one consumer checks background 
   }).pipe(Effect.scoped),
 );
 
-it.effect(
-  "fails every participant of a failed transaction and continues serving unrelated runs",
-  () =>
+it.effect.each(["job", "commit"] as const)(
+  "isolates a %s failure at its transaction boundary",
+  (mode) =>
     Effect.gen(function* () {
-      const coordinator = yield* ProviderCommitBatch.make((work) => work, 10);
+      const coordinator = yield* ProviderCommitBatch.make(
+        (work) =>
+          mode === "commit"
+            ? work.pipe(
+                Effect.andThen(
+                  Effect.fail(new ProviderCommitBatch.CommitBatchError({ cause: "COMMIT failed" })),
+                ),
+              )
+            : work,
+        10,
+      );
       const inputs = yield* Effect.forEach([0, 1], () =>
         Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>(),
       );
-      const failures = yield* Effect.forEach(inputs, (input, index) =>
+      const consumers = yield* Effect.forEach(inputs, (input, index) =>
         coordinator
           .consume(
             Stream.fromQueue(input),
-            () => (index === 1 ? Effect.fail("disk full") : Effect.void),
-            Effect.succeed(false),
+            () => (mode === "job" && index === 1 ? Effect.fail("invalid update") : Effect.void),
+            Effect.succeed(true),
           )
           .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true })),
       );
       for (const input of inputs) yield* Queue.offer(input, event(0));
       yield* TestClock.adjust(0);
       yield* coordinator.barrier(Effect.void);
-      for (const failed of failures) assert.isTrue(Exit.isFailure(yield* Fiber.join(failed)));
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(consumers[1]!)));
+      if (mode === "commit") assert.isTrue(Exit.isFailure(yield* Fiber.join(consumers[0]!)));
+      else {
+        assert.isUndefined(consumers[0]!.pollUnsafe());
+        yield* Queue.offer(inputs[0]!, control);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(consumers[0]!)));
+      }
       assert.equal(yield* coordinator.barrier(Effect.succeed("recovered")), "recovered");
       assert.deepEqual(
         yield* coordinator.barrier(Effect.fail("original error")).pipe(Effect.exit),
         Exit.fail("original error"),
       );
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "allows a command holding the thread lock to commit while a provider control waits for it",
+  () =>
+    Effect.gen(function* () {
+      const coordinator = yield* ProviderCommitBatch.make((work) => work, 10);
+      const locks = yield* KeyedLock.make<ThreadId>();
+      const threadId = ThreadId.make("locked-thread");
+      const held = yield* Deferred.make<void>();
+      const waiting = yield* Deferred.make<void>();
+      const committed = yield* Deferred.make<void>();
+      const command = yield* locks
+        .withLock(
+          threadId,
+          Deferred.succeed(held, undefined).pipe(
+            Effect.andThen(Deferred.await(waiting)),
+            Effect.andThen(coordinator.barrier(Deferred.succeed(committed, undefined))),
+          ),
+        )
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.await(held);
+      const consumer = yield* coordinator
+        .consume(
+          Stream.make(control),
+          () =>
+            Deferred.succeed(waiting, undefined).pipe(
+              Effect.andThen(locks.withLock(threadId, Effect.void)),
+            ),
+          Effect.succeed(true),
+        )
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.await(waiting);
+      yield* TestClock.adjust(0);
+      assert.isTrue(yield* Deferred.isDone(committed));
+      yield* Fiber.join(command);
+      yield* Fiber.join(consumer);
     }).pipe(Effect.scoped),
 );
 

@@ -84,7 +84,11 @@ export interface EventSinkV2Shape {
     process: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void, E2, R2>,
     after: Effect.Effect<boolean, E2, R2>,
     canBatch: Effect.Effect<boolean, never, R2>,
-  ) => Effect.Effect<void, EventSinkV2Error, R | R2>;
+  ) => Effect.Effect<
+    void,
+    E | E2 | ProviderCommitBatch.CommitBatchError | Schema.SchemaError,
+    R | R2
+  >;
 
   /** Normalize and persist an ordered group against one transaction; publish after its commit. */
   readonly withProviderBatch: <A, E, R>(
@@ -941,8 +945,10 @@ const layerBase: Layer.Layer<
             !started && SqlError.isSqlError(cause) && cause.reason._tag === "LockTimeoutError",
           times: 2,
         }),
-        Effect.mapError(
-          (cause) => new EventSinkWriteError({ eventCount: batch.eventCount, cause }),
+        Effect.mapError((cause) =>
+          SqlError.isSqlError(cause)
+            ? new EventSinkWriteError({ eventCount: batch.eventCount, cause })
+            : cause,
         ),
       );
       yield* Effect.annotateCurrentSpan({
@@ -958,13 +964,33 @@ const layerBase: Layer.Layer<
           Effect.mapError((cause) => new ProviderCommitBatch.CommitBatchError({ cause })),
         ),
       yield* ProviderCommitBatch.windowMs,
+      // Each snapshot owns a savepoint and its deferred publications within the shared commit.
+      Effect.fnUntraced(function* (
+        work: Effect.Effect<void, ProviderCommitBatch.CommitBatchError>,
+      ) {
+        const batch = yield* CurrentProviderBatch;
+        const publicationCount = batch?.publish.length ?? 0;
+        const eventCount = batch?.eventCount ?? 0;
+        return yield* sql.withTransaction(work).pipe(
+          Effect.onError(() =>
+            Effect.sync(() => {
+              if (batch !== undefined) {
+                batch.publish.length = publicationCount;
+                batch.eventCount = eventCount;
+              }
+            }),
+          ),
+          Effect.mapError((cause) =>
+            ProviderCommitBatch.isCommitBatchError(cause)
+              ? cause
+              : new ProviderCommitBatch.CommitBatchError({ cause }),
+          ),
+        );
+      }),
     );
 
     return EventSinkV2.of({
-      consumeProviderEvents: (source, process, after, canBatch) =>
-        coordinator
-          .consume(source, process, after, canBatch)
-          .pipe(Effect.mapError((cause) => new EventSinkWriteError({ eventCount: 0, cause }))),
+      consumeProviderEvents: coordinator.consume,
       withProviderBatch,
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(

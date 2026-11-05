@@ -31,6 +31,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Queue from "effect/Queue";
 import * as Arr from "effect/Array";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -360,6 +361,11 @@ it.effect(
         },
       });
       const highWater = yield* sink.latestSequence();
+      const callerError = { _tag: "CallerError" } as const;
+      assert.strictEqual(
+        yield* sink.withProviderBatch(Effect.fail(callerError)).pipe(Effect.flip),
+        callerError,
+      );
       const failed = yield* sink
         .withProviderBatch(
           Effect.gen(function* () {
@@ -413,9 +419,11 @@ it.effect(
     }).pipe(Effect.provide(Layer.fresh(layerTest)), Effect.scoped),
 );
 
-it.effect.each([false, true])(
-  "shares the writer across independent consumers with rollback=%s",
-  (rollback) => {
+it.effect.each(["none", "duplicate", "after-write"] as const)(
+  "shares the writer across independent consumers with failure=%s",
+  (failure) => {
+    const rollback = failure !== "none";
+    const jobError = { _tag: "InvalidUpdate" } as const;
     const writes: number[] = [];
     const tracer = Tracer.make({
       span(options) {
@@ -443,6 +451,12 @@ it.effect.each([false, true])(
         ),
       });
       const highWater = yield* sink.latestSequence();
+      const store = yield* EventStore.EventStoreV2;
+      const publications = yield* Queue.unbounded<EventId>();
+      yield* sink.stream({ afterSequence: highWater }).pipe(
+        Stream.runForEach((stored) => Queue.offer(publications, stored.event.id)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
       const pulled = yield* Deferred.make<void>();
       let arrivals = 0;
       const inputs = yield* Effect.forEach(threads, () =>
@@ -463,7 +477,9 @@ it.effect.each([false, true])(
                       events: [
                         {
                           id: EventId.make(
-                            rollback ? "duplicate-shared-event" : `shared-event:${index}`,
+                            failure === "duplicate" && index === 9
+                              ? "shared-event:0"
+                              : `shared-event:${index}`,
                           ),
                           threadId: raw.message.threadId,
                           occurredAt: now,
@@ -472,7 +488,13 @@ it.effect.each([false, true])(
                         },
                       ],
                     })
-                    .pipe(Effect.asVoid)
+                    .pipe(
+                      Effect.andThen(
+                        failure === "after-write" && index === 9
+                          ? Effect.fail(jobError)
+                          : Effect.void,
+                      ),
+                    )
                 : Effect.void,
             Effect.succeed(false),
             Effect.succeed(true),
@@ -503,17 +525,24 @@ it.effect.each([false, true])(
       yield* TestClock.adjust(0);
       yield* sink.write({ events: [] });
       if (rollback) {
-        for (const consumer of consumers)
-          assert.isTrue(Exit.isFailure(yield* Fiber.join(consumer)));
-        assert.equal(yield* sink.latestSequence(), highWater);
-      } else {
-        assert.deepEqual(writes, [10]);
-        assert.equal(yield* sink.latestSequence(), highWater + 10);
+        const exit = yield* Fiber.join(consumers[9]!);
+        assert.isTrue(Exit.isFailure(exit));
+        if (failure === "after-write" && Exit.isFailure(exit))
+          assert.strictEqual(Cause.squash(exit.cause), jobError);
       }
-      for (const thread of threads) {
+      yield* TestClock.adjust(0);
+      assert.deepEqual(
+        yield* Queue.takeAll(publications),
+        (yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect)).map(
+          (stored) => stored.event.id,
+        ),
+      );
+      assert.deepEqual(writes, [rollback ? 9 : 10]);
+      assert.equal(yield* sink.latestSequence(), highWater + (rollback ? 9 : 10));
+      for (let index = 0; index < threads.length; index++) {
         assert.lengthOf(
-          (yield* projections.getThreadRecords(thread.id, ["messages"])).messages,
-          rollback ? 0 : 1,
+          (yield* projections.getThreadRecords(threads[index]!.id, ["messages"])).messages,
+          rollback && index === 9 ? 0 : 1,
         );
       }
     }).pipe(

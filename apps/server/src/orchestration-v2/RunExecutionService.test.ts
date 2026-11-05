@@ -62,7 +62,6 @@ const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>
         Stream.mapEffect((event) => process(event).pipe(Effect.andThen(after))),
         Stream.takeUntil(Boolean),
         Stream.runDrain,
-        Effect.mapError((cause) => new EventSink.EventSinkWriteError({ eventCount: 0, cause })),
       ),
     ...implementation,
   });
