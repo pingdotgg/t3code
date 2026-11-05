@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
@@ -113,6 +114,7 @@ export class CheckpointRepositoryUnavailableError extends Schema.TaggedError<Che
       "branch-in-use",
       "submodule-changes",
       "submodule-commit-missing",
+      "submodule-untracked-files",
     ]),
     submodulePath: Schema.optional(Schema.String),
   },
@@ -134,6 +136,8 @@ export class CheckpointRepositoryUnavailableError extends Schema.TaggedError<Che
         return `The submodule ${this.submodulePath ?? ""} in ${at} has uncommitted changes. Commit or move them first.`;
       case "submodule-commit-missing":
         return `The submodule ${this.submodulePath ?? ""} in ${at} no longer has the commit this turn used.`;
+      case "submodule-untracked-files":
+        return `The submodule ${this.submodulePath ?? ""} in ${at} has untracked or ignored files that the commit this turn used would replace. Move them first.`;
     }
   }
 }
@@ -599,7 +603,12 @@ export const layer: Layer.Layer<
       realPathOr(target).pipe(
         Effect.map((resolved) => (isWindows ? resolved.toLowerCase() : resolved)),
       );
-    const probe = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
+    const probe = (
+      cwd: string,
+      operation: string,
+      args: ReadonlyArray<string>,
+      maxOutputBytes = 256 * 1024,
+    ) =>
       git
         .execute({
           operation: `CheckpointService.${operation}`,
@@ -607,7 +616,7 @@ export const layer: Layer.Layer<
           args,
           allowNonZeroExit: true,
           timeoutMs: 30_000,
-          maxOutputBytes: 256 * 1024,
+          maxOutputBytes,
         })
         .pipe(
           Effect.map((result) => ({ ok: result.exitCode === 0, stdout: result.stdout })),
@@ -1314,7 +1323,38 @@ export const layer: Layer.Layer<
         "-e",
         `${change.commit}^{commit}`,
       ]);
-      return present.ok ? null : ("submodule-commit-missing" as const);
+      if (!present.ok) return "submodule-commit-missing" as const;
+      // Checkout would replace an ignored file at a path the commit adds, or
+      // refuse an untracked one after other files were restored, so both refuse here.
+      const changed = yield* probe(
+        change.dir,
+        "submoduleAddedFiles",
+        ["diff-tree", "-r", "-z", "--name-status", "--diff-filter=AD", "HEAD", change.commit],
+        CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+      );
+      if (!changed.ok) return "submodule-changes" as const;
+      const fields = changed.stdout.split("\0");
+      const removed = new Set<string>();
+      const added: Array<string> = [];
+      for (let index = 0; index + 1 < fields.length; index += 2) {
+        if (fields[index] === "D") removed.add(fields[index + 1]!);
+        else added.push(fields[index + 1]!);
+      }
+      for (const file of added) {
+        const segments = file.split("/");
+        for (let depth = 1; depth <= segments.length; depth += 1) {
+          const relative = segments.slice(0, depth).join("/");
+          const found = yield* fileSystem
+            .lstat(path.join(change.dir, relative))
+            .pipe(Effect.orElseSucceed(() => null));
+          if (found === null) break;
+          // A file HEAD tracks where the commit has a folder is Git's to replace.
+          if (depth === segments.length || (found.type !== "Directory" && !removed.has(relative))) {
+            return "submodule-untracked-files" as const;
+          }
+        }
+      }
+      return null;
     });
 
     // The restored tree records each submodule's commit; its checkout has to
@@ -1329,6 +1369,7 @@ export const layer: Layer.Layer<
         yield* run(change.dir, "alignSubmodule", [
           "checkout",
           "--quiet",
+          "--no-overwrite-ignore",
           "--detach",
           change.commit,
         ]);

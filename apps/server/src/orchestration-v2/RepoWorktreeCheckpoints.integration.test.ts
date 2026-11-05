@@ -786,6 +786,8 @@ describe("repository worktree checkpoints", () => {
               })).repoWorktree.worktreePath;
               yield* configureIdentity(framework);
               yield* configureIdentity(parent);
+              yield* write(path.join(framework, "local.env"), "tracked in turn 1\n");
+              yield* git(framework, ["add", "local.env"]);
               firstPin = yield* commitFramework("framework one\n");
             }),
           );
@@ -794,11 +796,36 @@ describe("repository worktree checkpoints", () => {
             agent,
             threadId,
             Effect.gen(function* () {
+              yield* git(framework, ["rm", "--quiet", "local.env"]);
+              yield* write(path.join(framework, ".gitignore"), "local.env\n");
+              yield* git(framework, ["add", ".gitignore"]);
               secondPin = yield* commitFramework("framework two\n");
             }),
           );
           const embedded = path.join(parent, "framework");
           assert.equal(yield* git(embedded, ["rev-parse", "HEAD"]), secondPin);
+
+          // Turn 1's commit tracks the file this ignored one sits at, so nothing moves.
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const localFile = path.join(embedded, "local.env");
+          yield* write(localFile, "my settings\n");
+          yield* rollback(threadId, 1);
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            yield* TestClock.adjust(Duration.seconds(31));
+            yield* worker.drain();
+          }
+          const refused = yield* projectionOf(threadId);
+          assert.include(
+            refused.thread.rollbackFailure?.message ?? "",
+            "The submodule framework in server at",
+          );
+          assert.include(refused.thread.rollbackFailure?.message ?? "", "untracked or ignored");
+          assert.equal(refused.runs.find((run) => run.ordinal === 2)?.status, "completed");
+          assert.equal(yield* agent.rollbacks.pipe(Ref.get), 0);
+          assert.equal(yield* read(localFile), "my settings\n");
+          assert.equal(yield* git(embedded, ["rev-parse", "HEAD"]), secondPin);
+          assert.equal(yield* read(path.join(framework, "README.md")), "framework two\n");
+          yield* (yield* FileSystem.FileSystem).remove(localFile);
 
           yield* rollback(threadId, 1);
           assert.equal(yield* read(path.join(framework, "README.md")), "framework one\n");
