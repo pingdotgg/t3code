@@ -290,11 +290,20 @@ export const make = Effect.gen(function* () {
     const configHome = Option.getOrElse(config.xdgConfigHome, () =>
       environment.path.join(home, ".config"),
     );
+    const key = `x-scheme-handler/${scheme}`;
+    // Desktop-specific lists take precedence over mimeapps.list in the mime-apps spec.
+    for (const desktop of (env.XDG_CURRENT_DESKTOP ?? "").split(":").filter(Boolean)) {
+      const specific = yield* fileSystem
+        .readFileString(environment.path.join(configHome, `${desktop.toLowerCase()}-mimeapps.list`))
+        .pipe(Effect.orElseSucceed(() => ""));
+      const handlers = desktopEntryList(specific, "Default Applications", key);
+      if (handlers.length > 0) return handlers[0] === environment.linuxDesktopEntryName;
+    }
     const defaults = yield* fileSystem.readFileString(
       environment.path.join(configHome, "mimeapps.list"),
     );
     return (
-      desktopEntryList(defaults, "Default Applications", `x-scheme-handler/${scheme}`)[0] ===
+      desktopEntryList(defaults, "Default Applications", key)[0] ===
       environment.linuxDesktopEntryName
     );
   }).pipe(Effect.orElseSucceed(() => false));

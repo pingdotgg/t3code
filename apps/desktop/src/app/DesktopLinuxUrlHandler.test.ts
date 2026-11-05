@@ -321,6 +321,18 @@ describe("DesktopLinuxUrlHandler", () => {
         commands.length = 0;
         yield* launch;
         assert.deepEqual(commands, ["xdg-mime"]);
+        const gnomeDefaults = path.join(root, "gnome-mimeapps.list");
+        yield* fs.writeFileString(
+          gnomeDefaults,
+          "[Default Applications]\nx-scheme-handler/t3code=other.desktop\n",
+        );
+        commands.length = 0;
+        yield* register.pipe(
+          Effect.provide(DesktopConfig.layerTest({ XDG_CONFIG_HOME: root })),
+          Effect.provideService(HostProcess.Environment, { XDG_CURRENT_DESKTOP: "ubuntu:GNOME" }),
+        );
+        assert.deepEqual(commands, ["xdg-mime"]);
+        yield* fs.remove(gnomeDefaults);
         for (const desktop of ["KDE", "LXQt"]) {
           commands.length = 0;
           yield* register.pipe(
