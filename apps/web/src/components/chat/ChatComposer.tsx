@@ -1293,7 +1293,7 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const addComposerFilesToDraft = (files: ComposerFileAttachment[]) =>
     addComposerDraftFiles(attachmentDraftTarget, files, {
-      appendReference: false,
+      appendReference: questionAttachmentTarget === null,
     });
 
   const removeComposerImageFromDraft = (imageId: string) => {
@@ -1629,7 +1629,6 @@ export function ChatComposer(props: ChatComposerProps) {
       return;
     }
     onTypingGuardDraftChange();
-    const previousReferencedContextIds = new Set(collectInlineContextIds(promptRef.current));
     promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     if (promptHistoryPositionRef.current?.position.recalled !== nextPrompt) {
@@ -1719,7 +1718,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
     const attachmentChanges = reconcileAttachmentContextReferences({
       referencedContextIds: referenced,
-      previousReferencedContextIds,
       files: composerFiles,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
@@ -2623,6 +2621,7 @@ export function ChatComposer(props: ChatComposerProps) {
       pendingUserInputs,
       supportsQuestionAttachments,
       isLiteralPendingAnswer,
+      projectSelectionRequired,
       questionAttachmentTarget,
       attachmentTargetKey,
       fileStagingLimit,
