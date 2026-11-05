@@ -3605,8 +3605,7 @@ export default function ChatView(props: ChatViewProps) {
               )}
             </div>
 
-            {/* Input bar — docked at the bottom on the pane's surface, which hides the
-                timeline's end inset under it; an empty draft centers its headline above it. */}
+            {/* Input bar — docked at the bottom; an empty draft centers its headline above it. */}
             <div
               {...composerArea}
               ref={(overlay: HTMLDivElement | null) => {
@@ -3618,7 +3617,7 @@ export default function ChatView(props: ChatViewProps) {
               className={
                 isDraftHeroState
                   ? "pointer-events-none absolute inset-0 z-20 flex flex-col justify-end pt-1.5 [container:draft-hero/size] sm:pt-2"
-                  : "absolute inset-x-0 bottom-0 z-20 bg-background pt-1.5 sm:pt-2"
+                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
               {isDraftHeroState ? (
