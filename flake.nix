@@ -33,7 +33,23 @@
         profile = "export T3CODE_DISABLE_AUTO_UPDATE=true";
         nativeBuildInputs = [ pkgs.makeWrapper ];
         extraInstallCommands = ''
-          wrapProgram $out/bin/${pname} --set APPIMAGE $out/bin/${pname}
+          mount=$out/libexec/t3code/mount
+          mkdir -p $mount
+          ln -s ${contents}/resources $mount/resources
+          ln -s $out/bin/${pname} $mount/${pname}
+          cat > $out/libexec/t3code/appimage <<EOF
+          #!${pkgs.runtimeShell}
+          echo $mount
+          exec ${pkgs.coreutils}/bin/sleep infinity
+          EOF
+          chmod +x $out/libexec/t3code/appimage
+          wrapProgram $out/bin/${pname} \
+            --set APPIMAGE $out/libexec/t3code/appimage \
+            --set T3CODE_DESKTOP_LAUNCHER_PATH $out/bin/${pname}
+          makeWrapper $out/bin/${pname} $out/bin/t3 \
+            --set ELECTRON_RUN_AS_NODE 1 \
+            --set T3CODE_CLI_PATH $out/bin/t3 \
+            --add-flags ${contents}/resources/app.asar/apps/server/dist/bin.mjs
           install -Dm644 ${desktopItem}/share/applications/${pname}.desktop \
             $out/share/applications/${pname}.desktop
           for icon in ${contents}/usr/share/icons/hicolor/*/apps/t3code.png; do

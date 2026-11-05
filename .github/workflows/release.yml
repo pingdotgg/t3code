@@ -1322,7 +1322,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
     needs: [preflight, release]
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - id: app_token
         name: Mint release app token
@@ -1373,14 +1373,35 @@ jobs:
         if: steps.update_versions.outputs.changed == 'true'
         run: vp install --lockfile-only --ignore-scripts
 
-      - name: Update Nix release pin
+      - name: Install Nix
         if: needs.preflight.outputs.is_prerelease == 'false'
+        continue-on-error: true
+        uses: cachix/install-nix-action@v31
+
+      - id: nix_pin
+        name: Update and verify Nix release pin
+        if: needs.preflight.outputs.is_prerelease == 'false'
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/nix-release.json"
           node .github/scripts/update-nix-release.cjs "$RUNNER_TEMP/nix-release.json"
+          flake_dir="$RUNNER_TEMP/nix-flake"
+          mkdir -p "$flake_dir/packaging/nix"
+          cp flake.nix flake.lock "$flake_dir/"
+          cp packaging/nix/release.json "$flake_dir/packaging/nix/"
+          package="$(nix build "path:$flake_dir#t3code" --no-link --print-out-paths)"
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          "$package/bin/t3" --version | grep -Fx "t3 $RELEASE_TAG"
+
+      - name: Keep previous Nix release pin
+        if: steps.nix_pin.outcome == 'failure'
+        run: |
+          git checkout -- packaging/nix/release.json
+          echo "::warning title=Nix release pin not updated::The Nix package stays on its previous version. See the 'Update and verify Nix release pin' step."
 
       - name: Commit and push release metadata
         shell: bash

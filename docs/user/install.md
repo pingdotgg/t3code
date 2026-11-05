@@ -122,11 +122,10 @@ to your system flake and pass `specialArgs = { inherit inputs; };` to
 }
 ```
 
-The package tracks stable releases. From the system flake directory, run
-`nix flake update t3code`, then `sudo nixos-rebuild switch --flake .#<hostname>`
-to upgrade. The lock file keeps the installed version pinned until you update
-it. The app's automatic updater is disabled for this package; use Nix to
-upgrade it.
+From the system flake directory, run `nix flake update t3code`, then
+`sudo nixos-rebuild switch --flake .#<hostname>` to upgrade. The lock file keeps
+the installed version pinned until you update it. The app's automatic updater is
+disabled for this package; use Nix to upgrade it.
 
 ### The `t3` command
 
