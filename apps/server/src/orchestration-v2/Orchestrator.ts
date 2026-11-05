@@ -13735,20 +13735,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "queued-run.start" ||
           command.type === "queue.resume")
       ) {
+        // Starting one queued run or resuming the queue releases every queued run.
+        const releasesQueue = command.type !== "queued-run.edit";
         const records = yield* projectionStore
           .getThreadRecords(
             threadId,
             ["runs", "messages"],
-            command.type === "queue.resume"
+            releasesQueue
               ? { runStatuses: ["queued"], messageRoles: ["user"] }
               : { runIds: [command.runId], messageIds: [] },
           )
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-        // Resuming releases every queued run, not only the next one.
-        const runs =
-          command.type === "queue.resume"
-            ? queuedRunsInDeliveryOrder(records)
-            : records.runs.filter((candidate) => candidate.id === command.runId);
+        const runs = releasesQueue
+          ? queuedRunsInDeliveryOrder(records)
+          : records.runs.filter((candidate) => candidate.id === command.runId);
         for (const run of runs) {
           // Edit and start refuse automatic deliveries, the only runs that follow the current modes.
           const followsCurrent = followsCurrentConversation(

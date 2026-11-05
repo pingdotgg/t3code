@@ -248,6 +248,50 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
     }),
   );
 
+  it.effect("refuses to start a queued message while another queued one is above the limit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:limit-queue-start-other");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch(sendMessage(threadId, "queue-start-other-running"));
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "queue-start-other-within"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("raise-queue-start-other"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "queue-start-other-above"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower-queue-start-other"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
+      const within = runs.find(
+        (run) => run.userMessageId === MessageId.make("message:queue-start-other-within"),
+      );
+      assert.isDefined(within);
+      const refused = yield* orchestrator
+        .dispatch({
+          type: "queued-run.start",
+          commandId: CommandId.make("start-queue-other"),
+          threadId,
+          runId: within.id,
+        })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+      assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
+    }),
+  );
+
   it.effect("queues an automatic send behind a run above the limit", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
