@@ -1033,6 +1033,7 @@ const make = Effect.gen(function* () {
       });
       const changes: SecretChange[] = [];
       const nextSecretNames = new Set<string>();
+      const keptSecretNames = new Set<string>();
       const settings = mapSettingsSecrets(withEchoedSecretReferences(current, next), (secret) => {
         const metadata = {
           secretName: secret.secretName,
@@ -1053,6 +1054,7 @@ const make = Effect.gen(function* () {
         const value = secret.redacted ? inlineValue : secret.value;
         if (value === undefined) {
           nextSecretNames.add(secret.secretName);
+          keptSecretNames.add(secret.secretName);
           return { value: "", redacted: true };
         }
         if (value.length === 0) {
@@ -1078,7 +1080,13 @@ const make = Effect.gen(function* () {
             : {}),
         });
       }
-      return { settings, changes };
+      return {
+        settings,
+        // A redacted row still claims its stored secret, so a duplicate row must not remove it.
+        changes: changes.filter(
+          (change) => change.kind === "write" || !keptSecretNames.has(change.secretName),
+        ),
+      };
     });
 
   const rollbackSettingsSecretWrites = (
