@@ -98,7 +98,7 @@ describe("customModelEditor.logic", () => {
     ).toMatchObject({ currentValue: "high" });
   });
 
-  it("drops prompt-injected choices when copying a built-in's descriptors", () => {
+  it("preserves prompt-injected choices when copying and reopening descriptors", () => {
     const [copied] = descriptorsFromCapabilities(
       {
         optionDescriptors: [
@@ -116,7 +116,12 @@ describe("customModelEditor.logic", () => {
       },
       ProviderDriverKind.make("claudeAgent"),
     );
-    expect(copied!.choices.map((choice) => choice.id)).toEqual(["high"]);
+    expect(copied!.choices.map((choice) => choice.id)).toEqual(["high", "ultrathink"]);
+    const saved = definitionFromDraft(draft({ descriptors: [copied!] }));
+    expect(saved.capabilities?.optionDescriptors?.[0]).toMatchObject({
+      promptInjectedValues: ["ultrathink"],
+    });
+    expect(definitionFromDraft(draftFromDefinition(saved))).toEqual(saved);
   });
 
   it.each([true, false, undefined])(
@@ -219,6 +224,64 @@ describe("customModelEditor.logic", () => {
       ).toBeNull();
     },
   );
+
+  it.each(["high-custom", "ultracode"])(
+    "does not carry prompt injection to a renamed choice %s",
+    (id) => {
+      const definition = {
+        slug: "custom",
+        name: "Custom",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select" as const,
+              options: [
+                { id: "high", label: "High", isDefault: true },
+                { id: "ultrathink", label: "Ultrathink" },
+              ],
+              promptInjectedValues: ["ultrathink"],
+            },
+          ],
+        },
+      };
+      const reopened = draftFromDefinition(definition);
+      const saved = definitionFromDraft({
+        ...reopened,
+        descriptors: reopened.descriptors.map((d) => ({
+          ...d,
+          choices: d.choices.map((c) => (c.id === "ultrathink" ? { ...c, id } : c)),
+        })),
+      });
+      expect(saved.capabilities?.optionDescriptors?.[0]).not.toHaveProperty("promptInjectedValues");
+      expect(definitionFromDraft(draftFromDefinition(saved))).toEqual(saved);
+    },
+  );
+
+  it("offers Claude orchestration as explicitly configured effort choices", () => {
+    const preset = DESCRIPTOR_PRESETS_BY_KIND[ProviderDriverKind.make("claudeAgent")]!.find(
+      (x) => x.id === "effort",
+    )!;
+    const saved = definitionFromDraft(
+      draft({
+        slug: "qwen3.8-27b-int4",
+        name: "Qwen3.8-27B-AWQ-INT4",
+        descriptors: [descriptorFromPreset(preset)],
+      }),
+    );
+    expect(saved.slug).toBe("qwen3.8-27b-int4");
+    expect(saved.name).toBe("Qwen3.8-27B-AWQ-INT4");
+    expect(saved.capabilities?.optionDescriptors?.[0]).toMatchObject({
+      currentValue: "high",
+      promptInjectedValues: ["ultrathink"],
+      options: expect.arrayContaining([
+        { id: "ultracode", label: "Ultracode" },
+        { id: "ultrathink", label: "Ultrathink" },
+      ]),
+    });
+    expect(definitionFromDraft(draftFromDefinition(saved))).toEqual(saved);
+  });
 
   it("collapses a blank name and no options back to a bare definition", () => {
     expect(definitionFromDraft(draft({ name: "  " }))).toEqual({

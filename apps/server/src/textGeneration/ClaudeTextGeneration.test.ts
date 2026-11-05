@@ -12,6 +12,8 @@ import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import {
+  SYNTHETIC_CLAUDE_CUSTOM_MODEL,
+  SYNTHETIC_CLAUDE_CUSTOM_PROMPT_DEFAULT,
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
   SYNTHETIC_CLAUDE_MODEL_CATALOG,
@@ -292,6 +294,66 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           });
 
           expect(generated.subject).toBe("Add important change");
+        }),
+    ),
+  );
+
+  it.effect.each([
+    { effort: "ultracode", native: "xhigh", enabled: true, prefix: undefined },
+    { effort: "high", native: "high", enabled: false, prefix: undefined },
+    { effort: "ultrathink", native: "high", enabled: false, prefix: "Ultrathink:\n" },
+  ])("maps custom $effort for the auxiliary Claude CLI", ({ effort, native, enabled, prefix }) =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Custom options", body: "" } }),
+        claudeConfig: { customModels: [SYNTHETIC_CLAUDE_CUSTOM_MODEL] },
+        argsMustContain: `--model ${SYNTHETIC_CLAUDE_CUSTOM_MODEL.slug} --effort ${native} --settings {"disableAllHooks":true,"ultracode":${enabled}}`,
+        argsMustNotContain: `--effort ${effort === "high" ? "ultracode" : effort}`,
+        ...(prefix ? { stdinMustContain: prefix } : {}),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "custom",
+            commitSummary: "Custom options",
+            diffSummary: "1 file changed",
+            diffPatch: "",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_CUSTOM_MODEL.slug,
+              [{ id: "effort", value: effort }],
+            ),
+          });
+          expect(result.title).toBe("Custom options");
+        }),
+    ),
+  );
+
+  it.effect("honors a custom prompt default in auxiliary generation without selected options", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Custom default", body: "" } }),
+        claudeConfig: { customModels: [SYNTHETIC_CLAUDE_CUSTOM_PROMPT_DEFAULT] },
+        argsMustNotContain: "--effort",
+        stdinMustContain: "Ultrathink:\n",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "custom",
+            commitSummary: "Custom default",
+            diffSummary: "1 file changed",
+            diffPatch: "",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_CUSTOM_MODEL.slug,
+            ),
+          });
+          expect(result.title).toBe("Custom default");
         }),
     ),
   );

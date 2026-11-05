@@ -56,7 +56,12 @@ describe("Pierre file icons", () => {
 
   it("normalizes common markdown fence language aliases", () => {
     assert.equal(syntheticFileNameForLanguageId("typescript"), "file.ts");
+    assert.equal(syntheticFileNameForLanguageId("dockerfile"), "Dockerfile");
     assert.equal(syntheticFileNameForLanguageId("shellscript"), "file.sh");
     assert.equal(syntheticFileNameForLanguageId("python"), "file.py");
+  });
+
+  it("gives a dockerfile fence the Docker icon", () => {
+    assert.isTrue(hasSpecificPierreIconForFileName(syntheticFileNameForLanguageId("dockerfile")));
   });
 });

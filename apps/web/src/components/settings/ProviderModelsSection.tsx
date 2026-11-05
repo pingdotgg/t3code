@@ -252,6 +252,7 @@ export function ProviderModelsSection({
     scrollToSlugRef.current = normalized;
     setFilter("");
     onChange([...customModels, { slug: normalized, name: normalized, capabilities: null }]);
+    setEditingSlug(normalized);
     setInput("");
     setError(null);
     setIsAdding(false);
@@ -388,7 +389,7 @@ export function ProviderModelsSection({
             <TooltipTrigger
               render={
                 <Button
-                  size="icon-micro"
+                  size="xs"
                   variant="ghost-muted"
                   aria-label={t("settings.providers.editModelSlug", { model: model.slug })}
                   onClick={() =>
@@ -398,6 +399,7 @@ export function ProviderModelsSection({
               }
             >
               <PencilIcon className="size-3" />
+              {t("settings.providers.modelOptions")}
             </TooltipTrigger>
             <TooltipPopup side="top">{t("settings.providers.editModel")}</TooltipPopup>
           </Tooltip>

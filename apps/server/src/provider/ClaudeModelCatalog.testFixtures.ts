@@ -81,3 +81,41 @@ export const SYNTHETIC_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
     },
   ],
 };
+
+/** An opaque third-party ID, with options explicitly declared by its owner. */
+export const SYNTHETIC_CLAUDE_CUSTOM_MODEL = {
+  slug: "third-party-synthetic",
+  name: "Third-party Synthetic",
+  capabilities: {
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select" as const,
+        options: [
+          { id: "high", label: "High", isDefault: true },
+          { id: "xhigh", label: "Extra High" },
+          { id: "ultracode", label: "Ultracode" },
+          { id: "ultrathink", label: "Ultrathink" },
+        ],
+        // Deliberately omit promptInjectedValues to cover older authored settings.
+      },
+    ],
+  },
+};
+
+export const SYNTHETIC_CLAUDE_CUSTOM_PROMPT_DEFAULT = {
+  ...SYNTHETIC_CLAUDE_CUSTOM_MODEL,
+  capabilities: {
+    optionDescriptors: SYNTHETIC_CLAUDE_CUSTOM_MODEL.capabilities.optionDescriptors.map(
+      (descriptor) => ({
+        ...descriptor,
+        currentValue: "ultrathink",
+        options: descriptor.options.map((option) => ({
+          ...option,
+          isDefault: option.id === "ultrathink",
+        })),
+      }),
+    ),
+  },
+};

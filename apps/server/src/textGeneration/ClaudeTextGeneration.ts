@@ -34,6 +34,7 @@ import {
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
 import {
+  applyClaudePromptEffortPrefix,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
@@ -45,6 +46,7 @@ import {
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
+  resolveClaudeCatalogPromptEffort,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
 } from "../provider/ClaudeModelCatalog.ts";
@@ -166,6 +168,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       resolvedModelSelection.model,
     );
     const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
+    const ultracodeSupported = descriptors.some(
+      (descriptor) =>
+        descriptor.id === "effort" &&
+        descriptor.type === "select" &&
+        descriptor.options.some((option) => option.id === "ultracode"),
+    );
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     const thinking =
@@ -176,7 +184,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
-      ...(ultracode ? { ultracode: true } : {}),
+      ...(ultracodeSupported ? { ultracode } : {}),
     };
     const settingsJson = yield* encodeJsonForOperation(
       operation,
@@ -224,7 +232,18 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
-          stream: Stream.encodeText(Stream.make(prompt)),
+          stream: Stream.encodeText(
+            Stream.make(
+              applyClaudePromptEffortPrefix(
+                prompt,
+                resolveClaudeCatalogPromptEffort(
+                  catalog,
+                  resolvedModelSelection.model,
+                  rawEffortSelection,
+                ),
+              ),
+            ),
+          ),
         },
       });
 

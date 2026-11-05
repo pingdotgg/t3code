@@ -200,6 +200,13 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   line-height: 1 !important;
 }
 
+/* Pierre clips file names with overflow: hidden for its start ellipsis. A 1em line box cuts off
+   descenders. Only the clipped names get room: 16px plus the header's 12px of padding stays
+   inside its 32px min-height, which diffHeaderHeight assumes. */
+[data-diffs-header] :is([data-title], [data-prev-name]) {
+  line-height: 16px !important;
+}
+
 [data-diffs-header] [data-metadata] {
   align-items: center !important;
   line-height: 1 !important;
@@ -222,18 +229,12 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
 [data-title] {
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    text-decoration-color 120ms ease;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 2px;
+  transition: color 120ms ease;
   font-family: var(--font-sans) !important;
 }
 
 [data-title]:hover {
   color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
-  text-decoration-color: currentColor;
 }
 
 /* Expanding a file mounts its body all at once; easing it in matches the 200ms the app's
@@ -260,16 +261,16 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 `;
 
 export type StyledDiffCodeViewOptions<LAnnotation> = Omit<
-  NonNullable<CodeViewProps<LAnnotation>["options"]>,
+  NonNullable<CodeViewProps<LAnnotation, undefined>["options"]>,
   "unsafeCSS" | "itemMetrics" | "layout"
 >;
 
 type StyledDiffCodeViewProps<LAnnotation> = (
-  | Omit<ControlledCodeViewProps<LAnnotation>, "options">
-  | Omit<UncontrolledCodeViewProps<LAnnotation>, "options">
+  | Omit<ControlledCodeViewProps<LAnnotation, undefined>, "options">
+  | Omit<UncontrolledCodeViewProps<LAnnotation, undefined>, "options">
 ) & {
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>;
-  readonly viewerRef?: Ref<CodeViewHandle<LAnnotation>>;
+  readonly viewerRef?: Ref<CodeViewHandle<LAnnotation, undefined>>;
   /**
    * Appended to the shared stylesheet inside the viewer's shadow root, for a surface that has
    * to restyle chrome the viewer owns — such as replacing its per-file line counts.

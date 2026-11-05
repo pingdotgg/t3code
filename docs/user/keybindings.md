@@ -143,3 +143,21 @@ keyboard repeat; if repeat is disabled, use two presses or the application menu.
 Change **Settings → General → Confirmations → Quit shortcut** to **Direct** for a
 single press or **Double press** for two presses only. Choosing **Quit** from the
 application menu always quits immediately.
+
+## Find in diffs and settings
+
+Focus a Diff or pull request code view, then press `mod+f` to search its loaded
+changes. Enter moves to the next match, Shift+Enter moves back, and Escape closes
+search. Matches in folded files unfold the file when selected. Case, whole-word,
+and regular-expression filters are available. Unloaded file contents are outside
+the search until they have been fetched.
+
+In Settings, `mod+f` focuses the settings search. Dialogs and shortcut recorders
+keep their keyboard focus.
+
+## Reorder panel tabs
+
+Drag a right-panel tab by its title to reorder it. On touch screens, hold the title
+briefly before dragging. With the title focused, press Space, use the arrow keys,
+and press Space to finish or Escape to cancel. Reordering keeps the active panel
+and does not change which thread owns the tabs.

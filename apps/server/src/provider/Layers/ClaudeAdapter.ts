@@ -64,7 +64,6 @@ import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
-  resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
@@ -103,6 +102,7 @@ import {
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
+  resolveClaudeCatalogPromptEffort,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
 } from "../ClaudeModelCatalog.ts";
@@ -1565,9 +1565,7 @@ function buildPromptText(
       : null;
   const claudeModel =
     input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
-  const caps = getClaudeCatalogModelCapabilities(catalog, claudeModel);
-
-  const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
+  const promptEffort = resolveClaudeCatalogPromptEffort(catalog, claudeModel, rawEffort);
   return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
 }
 
@@ -4868,6 +4866,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         thinkingDisplay: typeof thinkingDisplayArg === "string" ? thinkingDisplayArg : undefined,
       });
       const ultracode = isClaudeCatalogUltracodeEffort(effort);
+      const ultracodeSupported = descriptors.some(
+        (descriptor) =>
+          descriptor.id === "effort" &&
+          descriptor.type === "select" &&
+          descriptor.options.some((option) => option.id === "ultracode"),
+      );
       const effectiveEffort = getEffectiveClaudeAgentEffort(
         modelCatalog,
         effort,
@@ -4890,7 +4894,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
         ...(fastMode ? { fastMode: true } : {}),
-        ...(ultracode ? { ultracode: true } : {}),
+        ...(ultracodeSupported ? { ultracode } : {}),
         ...(claudeSettings.autoCompactWindow
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
           : {}),
@@ -5252,17 +5256,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
-      boundInstanceId,
-      modelCatalog,
-      skillNames: new Set(
-        skills
-          .filter((skill) => skill.enabled && skill.userInvocable !== false)
-          .map((skill) => skill.name),
-      ),
-    });
+    const message = yield* buildUserMessageEffect(
+      { ...input, modelSelection: modelSelection ?? context.startInput.modelSelection },
+      {
+        fileSystem,
+        attachmentsDir: serverConfig.attachmentsDir,
+        boundInstanceId,
+        modelCatalog,
+        skillNames: new Set(
+          skills
+            .filter((skill) => skill.enabled && skill.userInvocable !== false)
+            .map((skill) => skill.name),
+        ),
+      },
+    );
 
     if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);
     yield* updateResumeCursor(context);

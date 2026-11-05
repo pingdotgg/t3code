@@ -11,6 +11,7 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   readCustomModelEntries,
+  resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 
@@ -77,7 +78,8 @@ export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MO
  * are preserved), and custom entries that declare their own capabilities are
  * appended so the adapter resolves effort / fast mode / thinking against the
  * user's descriptors instead of the empty default. Custom entries carry no
- * runtime profile, so option values pass through to Claude Code verbatim.
+ * model-specific runtime profile. Native effort values pass through; reserved
+ * Claude Code modes retain their transport semantics without changing the slug.
  */
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
@@ -108,9 +110,23 @@ export function scopeClaudeModelCatalog(
         slug: entry.slug,
         name: entry.name,
         isCustom: true,
-        capabilities: entry.capabilities,
+        capabilities: {
+          ...entry.capabilities,
+          optionDescriptors: entry.capabilities.optionDescriptors?.map((descriptor) =>
+            descriptor.id === "effort" &&
+            descriptor.type === "select" &&
+            descriptor.options.some((option) => option.id === "ultrathink")
+              ? {
+                  ...descriptor,
+                  promptInjectedValues: [
+                    ...new Set([...(descriptor.promptInjectedValues ?? []), "ultrathink"]),
+                  ],
+                }
+              : descriptor,
+          ),
+        },
       },
-      runtime: {},
+      runtime: { effortMap: { ultracode: "xhigh", ultrathink: null } },
       compatibility: {},
     });
   }
@@ -198,6 +214,18 @@ export function resolveClaudeCatalogEffort(
   const descriptor = descriptors.find((candidate) => candidate.id === "effort");
   const value = getProviderOptionCurrentValue(descriptor);
   return typeof value === "string" ? value : undefined;
+}
+
+/** Prompt-only defaults apply even when a caller omits explicit turn options. */
+export function resolveClaudeCatalogPromptEffort(
+  catalog: ClaudeModelCatalog,
+  model: string | null | undefined,
+  raw: string | null | undefined,
+): string | null {
+  const caps = getClaudeCatalogModelCapabilities(catalog, model);
+  const descriptor = getProviderOptionDescriptors({ caps }).find((entry) => entry.id === "effort");
+  const value = raw?.trim() || getProviderOptionCurrentValue(descriptor);
+  return resolvePromptInjectedEffort(caps, typeof value === "string" ? value : undefined);
 }
 
 export function normalizeClaudeCatalogEffort(

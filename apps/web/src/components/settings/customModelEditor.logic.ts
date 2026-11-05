@@ -13,6 +13,7 @@ export interface EditorChoice {
   readonly id: string;
   readonly label: string;
   readonly isDefault: boolean;
+  readonly promptInjectedValue?: string | undefined;
   readonly description?: string;
 }
 
@@ -37,7 +38,12 @@ export interface DescriptorPreset {
   readonly id: string;
   readonly label: string;
   readonly type: "select" | "boolean";
-  readonly choices?: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>;
+  readonly choices?: ReadonlyArray<{
+    id: string;
+    label: string;
+    isDefault?: boolean;
+    promptInjected?: boolean;
+  }>;
 }
 
 const EFFORT_CHOICES = [
@@ -78,6 +84,8 @@ export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
         { id: "high", label: "High", isDefault: true },
         { id: "xhigh", label: "Extra High" },
         { id: "max", label: "Max" },
+        { id: "ultracode", label: "Ultracode" },
+        { id: "ultrathink", label: "Ultrathink", promptInjected: true },
       ],
     },
     { id: "fastMode", label: "Fast Mode", type: "boolean" },
@@ -138,8 +146,15 @@ export function choiceFromPreset(choice: {
   id: string;
   label: string;
   isDefault?: boolean;
+  promptInjected?: boolean;
 }): EditorChoice {
-  return { key: newEditorKey(), id: choice.id, label: choice.label, isDefault: !!choice.isDefault };
+  return {
+    key: newEditorKey(),
+    id: choice.id,
+    label: choice.label,
+    isDefault: !!choice.isDefault,
+    ...(choice.promptInjected ? { promptInjectedValue: choice.id } : {}),
+  };
 }
 
 export function descriptorFromPreset(preset: DescriptorPreset): EditorDescriptor {
@@ -160,19 +175,12 @@ export function emptyEditorChoice(): EditorChoice {
   return { key: newEditorKey(), id: "", label: "", isDefault: false };
 }
 
-/**
- * Prompt-injected choices (Claude's `ultrathink`) are delivered as prompt text
- * by built-in runtime profiles a custom entry does not have, so they are
- * dropped rather than stored as a plain option value.
- */
+/** Preserve prompt-only choices across copying and editing. */
 function descriptorToEditor(descriptor: ProviderOptionDescriptor): EditorDescriptor {
   const promptInjected = new Set(
     descriptor.type === "select" ? (descriptor.promptInjectedValues ?? []) : [],
   );
-  const choices =
-    descriptor.type === "select"
-      ? descriptor.options.filter((option) => !promptInjected.has(option.id))
-      : [];
+  const choices = descriptor.type === "select" ? descriptor.options : [];
   const defaultChoice =
     choices.find((option) => option.id === descriptor.currentValue) ??
     choices.find((option) => option.isDefault);
@@ -191,6 +199,7 @@ function descriptorToEditor(descriptor: ProviderOptionDescriptor): EditorDescrip
       label: option.label,
       ...(option.description !== undefined ? { description: option.description } : {}),
       isDefault: option === defaultChoice,
+      ...(promptInjected.has(option.id) ? { promptInjectedValue: option.id } : {}),
     })),
   };
 }
@@ -266,12 +275,16 @@ export function definitionFromDraft(draft: CustomModelDraft): CustomModelDefinit
       ...(choice.isDefault ? { isDefault: true } : {}),
     }));
     const currentValue = options.find((option) => option.isDefault)?.id;
+    const promptInjectedValues = descriptor.choices
+      .filter((choice) => choice.promptInjectedValue === choice.id.trim())
+      .map((choice) => choice.id.trim());
     return {
       id,
       label,
       type: "select",
       ...(descriptor.description !== undefined ? { description: descriptor.description } : {}),
       options,
+      ...(promptInjectedValues.length ? { promptInjectedValues } : {}),
       ...(currentValue ? { currentValue } : {}),
     };
   });

@@ -2,6 +2,8 @@ import { i18n } from "@t3tools/shared/i18n";
 import {
   createVividThemeColors,
   getThemeModes,
+  isReservedThemeId,
+  themeIdFromName,
   parseThemeFile,
   themeColorToHex,
   THEME_FILE_VERSION,
@@ -324,9 +326,12 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
 
   // Reuse the theme-file parser so ids, names, and color values go through the
   // same validation as a hand-written file.
+  const name = resolveName(value);
+  const generatedId = themeIdFromName(name);
   return parseThemeFile({
     version: THEME_FILE_VERSION,
-    name: resolveName(value),
+    ...(isReservedThemeId(generatedId) ? { id: `${generatedId}-vscode` } : {}),
+    name,
     appearance,
     colors: { ...derived, ...overrides },
   });
@@ -357,7 +362,7 @@ export function pairVsCodeThemes(
     // Only single-appearance themes with an appearance word in the name can
     // pair; anything else is already what the user asked for.
     const key = stripAppearance(theme.label);
-    if (getThemeModes(theme).length !== 1 || key === theme.label || key.length === 0) {
+    if (getThemeModes(theme).length !== 1 || key === theme.label || !/[a-z0-9]/i.test(key)) {
       passthrough.push({ theme, order });
       return;
     }

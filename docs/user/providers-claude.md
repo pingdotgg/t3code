@@ -41,6 +41,27 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
 
+## Custom model options
+
+In **Settings → Providers → Models**, add the endpoint's exact model ID, then use
+**Options** to declare the controls it supports. Adding a model opens this editor;
+you can save a display name, add the Reasoning preset, or copy a built-in model's
+options and remove unsupported choices. A model without declared capabilities
+keeps its existing behavior and has no effort controls. Model IDs remain unchanged.
+
+For Claude Code, **Ultracode** uses native `xhigh` effort plus the session's
+`ultracode` setting. This requires compatible Claude Code workflows and model
+capabilities. Selecting a regular effort again clears the session setting.
+**Ultrathink** adds an `Ultrathink:` prompt prefix and uses the regular default
+effort when one is configured; it is never sent as a native effort value. A
+prompt-only default also applies when a caller omits turn options. Slash commands
+remain intact. Editing a choice's value removes its previous prompt-only meaning.
+
+T3 sends only the configured options. Claude Code may still filter effort for an
+unknown model ID, and an API proxy may drop or transform it. Verify the receiving
+endpoint before treating a UI choice as control of the model's sampling settings.
+T3 does not enable global capability overrides or rename third-party model IDs.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

@@ -631,6 +631,20 @@ export default function DiffPanel({
     [collapseScopeKey, defaultCollapsedDiffFileKeys],
   );
 
+  const unfoldDiffFile = useCallback(
+    (fileKey: string) => {
+      setCollapsedDiffFiles((current) => {
+        const keys =
+          current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys;
+        if (!keys.has(fileKey)) return current;
+        const next = new Set(keys);
+        next.delete(fileKey);
+        return { scopeKey: collapseScopeKey, fileKeys: next };
+      });
+    },
+    [collapseScopeKey, defaultCollapsedDiffFileKeys],
+  );
+
   const toggleDiffFileCollapse = useCallback(() => {
     setCodeViewRevision((current) => current + 1);
     setCollapsedDiffFiles((current) => {
@@ -1105,6 +1119,7 @@ export default function DiffPanel({
                   }}
                 >
                   <AnnotatableCodeView
+                    onRevealSearchMatch={unfoldDiffFile}
                     key={collapseScopeKey ?? reviewSectionId}
                     viewerRef={setCodeView}
                     codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}

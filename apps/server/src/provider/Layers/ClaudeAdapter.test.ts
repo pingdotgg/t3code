@@ -41,6 +41,8 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
+  SYNTHETIC_CLAUDE_CUSTOM_MODEL,
+  SYNTHETIC_CLAUDE_CUSTOM_PROMPT_DEFAULT,
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
   SYNTHETIC_CLAUDE_MODEL_CATALOG,
@@ -907,6 +909,113 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect("applies and clears custom ultracode settings across fresh resumed sessions", () => {
+    const harness = makeHarness({
+      claudeConfig: { customModels: [SYNTHETIC_CLAUDE_CUSTOM_MODEL] },
+      getSessionMessages: async () => [],
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      let resumed = false;
+      for (const effort of ["high", "ultracode", "high"]) {
+        yield* adapter.startSession({
+          ...(resumed ? { resumeCursor: { resume: CLAUDE_ORIGINAL_SESSION_ID } } : {}),
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CUSTOM_MODEL.slug,
+            [{ id: "effort", value: effort }],
+          ),
+        });
+        const options = harness.getLastCreateQueryInput()!.options;
+        assert.equal(options.model, SYNTHETIC_CLAUDE_CUSTOM_MODEL.slug);
+        assert.equal(options.effort, effort === "ultracode" ? "xhigh" : "high");
+        assert.deepInclude(options.settings, { ultracode: effort === "ultracode" });
+        if (resumed) assert.equal(options.resume, CLAUDE_ORIGINAL_SESSION_ID);
+        resumed = true;
+        yield* adapter.stopSession(THREAD_ID);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("injects custom ultrathink even when old settings omit the prompt-only marker", () => {
+    const harness = makeHarness({
+      claudeConfig: { customModels: [SYNTHETIC_CLAUDE_CUSTOM_MODEL] },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const modelSelection = createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        SYNTHETIC_CLAUDE_CUSTOM_MODEL.slug,
+        [{ id: "effort", value: "ultrathink" }],
+      );
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        modelSelection,
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "Investigate the edge cases",
+        attachments: [],
+        modelSelection,
+      });
+      const input = harness.getLastCreateQueryInput();
+      assert.equal(input?.options.effort, "high");
+      assert.deepInclude(input?.options.settings, { ultracode: false });
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(input)),
+        "Ultrathink:\nInvestigate the edge cases",
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect.each([true, false])(
+    "honors a custom prompt-only default when send selection is present: %s",
+    (withSelection) => {
+      const harness = makeHarness({
+        claudeConfig: { customModels: [SYNTHETIC_CLAUDE_CUSTOM_PROMPT_DEFAULT] },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const modelSelection = createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CUSTOM_MODEL.slug,
+        );
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          modelSelection,
+        });
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "Check defaults",
+          attachments: [],
+          ...(withSelection ? { modelSelection } : {}),
+        });
+        const input = harness.getLastCreateQueryInput();
+        assert.notEqual(input?.options.effort, "ultrathink");
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(input)),
+          "Ultrathink:\nCheck defaults",
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("keeps compact commands intact when ultrathink is selected", () => {
     const harness = makeHarness();

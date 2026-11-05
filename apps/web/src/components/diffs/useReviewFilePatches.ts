@@ -8,6 +8,11 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
+const filePathCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
 export function useReviewFilePatches({
   environmentId,
   cwd,
@@ -43,10 +48,7 @@ export function useReviewFilePatches({
     [requested, scope],
   );
   const files = useMemo(
-    () =>
-      source?.files?.toSorted((a, b) =>
-        a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: "base" }),
-      ) ?? [],
+    () => source?.files?.toSorted((a, b) => filePathCollator.compare(a.path, b.path)) ?? [],
     [source?.files],
   );
   const queries = useMemo(
@@ -185,10 +187,7 @@ export function useReviewFilePatches({
             };
           })
         : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
-            resolveFileDiffPath(a).localeCompare(resolveFileDiffPath(b), undefined, {
-              numeric: true,
-              sensitivity: "base",
-            }),
+            filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
           ),
     [source, files, patches, scope, preview],
   );

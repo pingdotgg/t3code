@@ -12,6 +12,17 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Rich text editing
+
+With rich text enabled, the web and desktop composer renders Markdown headings,
+quotes, lists, horizontal rules, and fenced code blocks while you edit. Choose a
+code block's language from its header. Drafts are sent as Markdown, so switching
+rich text off keeps the same content.
+
+Use `Shift+Enter` to insert a newline when Enter is configured to send. Inside a
+code block, Tab indents and Shift+Tab outdents. Undo separates typing, deletion,
+and paste operations into useful steps.
+
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most

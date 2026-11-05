@@ -639,6 +639,9 @@ export const zhCNMessages: Partial<Record<MessageKey, string>> = {
   "settings.providers.composerOptions": "输入框中显示的选项",
   "settings.providers.copyBuiltInOptions": "复制内置模型的选项",
   "settings.providers.copyFrom": "复制自…",
+  "settings.providers.claudeCustomOptionsHelp":
+    "只配置接入端已确认支持的能力。Ultracode 请求 xhigh effort 和 Claude Code workflow 编排，需要 Claude Code 启用 workflows 且模型支持 xhigh。Ultrathink 添加提示词前缀，并保留普通默认 effort。代理仍可能过滤 effort，需另行验证模型是否收到。",
+  "settings.providers.modelOptions": "选项",
   "settings.providers.noCustomOptions": "没有自定义选项。输入框使用提供商的默认选项。",
   "settings.providers.customOption": "自定义选项",
   "settings.providers.prefer": "优先",
@@ -5950,4 +5953,14 @@ export const zhCNMessages: Partial<Record<MessageKey, string>> = {
   "settings.codexSetup.viewUsageInChatgptWithYourConnectedAccount":
     "使用已连接的账号在 ChatGPT 中查看用量。",
   "settings.codexSetup.chatgptSharedUsage": "ChatGPT 共享用量",
+  "composer.code.plainText": "纯文本",
+  "composer.code.language": "代码语言：{language}",
+  "composer.code.searchLanguages": "搜索语言",
+  "composer.code.noLanguages": "没有匹配的语言。",
+
+  "panel.drag.instructions": "按空格开始排序，使用左右方向键移动，再按空格完成，或按 Esc 取消。",
+  "panel.drag.started": "正在移动标签。",
+  "panel.drag.position": "标签位置：{position}。",
+  "panel.drag.finished": "标签顺序已保存。",
+  "panel.drag.cancelled": "已取消移动标签。",
 };

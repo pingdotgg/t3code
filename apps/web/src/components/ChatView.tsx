@@ -10344,6 +10344,10 @@ export default function ChatView(props: ChatViewProps) {
           }}
           onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
+          onMoveSurface={(surfaceId, toIndex) => {
+            if (routeThreadRef)
+              useRightPanelStore.getState().moveSurface(routeThreadRef, surfaceId, toIndex);
+          }}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
           onAddBrowser={() => createBrowserSurface()}

@@ -656,6 +656,9 @@ export const enMessages = {
   "settings.providers.composerOptions": "Options shown in the composer",
   "settings.providers.copyBuiltInOptions": "Copy options from a built-in model",
   "settings.providers.copyFrom": "Copy from…",
+  "settings.providers.claudeCustomOptionsHelp":
+    "Declare only capabilities your endpoint supports. Ultracode requests xhigh effort and Claude Code workflow orchestration; workflows and an xhigh-capable model must be enabled in Claude Code. Ultrathink prefixes the prompt and keeps the regular default effort. A proxy may still filter effort before it reaches the model.",
+  "settings.providers.modelOptions": "Options",
   "settings.providers.noCustomOptions":
     "No custom options. The composer uses the provider's default options.",
   "settings.providers.customOption": "Custom option",
@@ -6264,6 +6267,17 @@ export const enMessages = {
   "settings.codexSetup.viewUsageInChatgptWithYourConnectedAccount":
     "View usage in ChatGPT with your connected account.",
   "settings.codexSetup.chatgptSharedUsage": "ChatGPT shared usage",
+  "composer.code.plainText": "Plain text",
+  "composer.code.language": "Code language: {language}",
+  "composer.code.searchLanguages": "Search languages",
+  "composer.code.noLanguages": "No matching languages.",
+
+  "panel.drag.instructions":
+    "To reorder this tab, press Space, use the left and right arrow keys, then press Space to finish or Escape to cancel.",
+  "panel.drag.started": "Moving tab.",
+  "panel.drag.position": "Tab position {position}.",
+  "panel.drag.finished": "Tab order saved.",
+  "panel.drag.cancelled": "Tab move cancelled.",
 } as const;
 
 export type MessageKey = keyof typeof enMessages;

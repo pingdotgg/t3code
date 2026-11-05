@@ -3340,6 +3340,47 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("resumes an opaque Claude custom model across high, ultracode, and high", async () => {
+    const model = "third-party-synthetic";
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const harness = await createHarness({ threadModelSelection: { instanceId, model } });
+    const originalSend = harness.sendTurn.getMockImplementation()!;
+    let index = 0;
+    for (const effort of ["high", "ultracode", "high"]) {
+      const sent = await Effect.runPromise(Deferred.make<void>());
+      harness.sendTurn.mockImplementation((input) =>
+        originalSend(input).pipe(Effect.tap(() => Deferred.succeed(sent, undefined))),
+      );
+      const modelSelection = createModelSelection(instanceId, model, [
+        { id: "effort", value: effort },
+      ]);
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`custom-effort-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`custom-effort-message-${index}`),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+          modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await Effect.runPromise(Deferred.await(sent));
+      expect(harness.startSession.mock.calls).toHaveLength(index + 1);
+      expect(harness.startSession.mock.calls[index]?.[1]).toMatchObject({
+        modelSelection,
+        ...(index > 0 ? { resumeCursor: { opaque: "resume-1" } } : {}),
+      });
+      index++;
+    }
+  });
+
   it("restarts the provider session when runtime mode is updated on the thread", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
