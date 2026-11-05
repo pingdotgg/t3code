@@ -1529,11 +1529,15 @@ export const classifyFileUse = (
       for (const name of saved[i]!) vars.add(name);
     });
   };
+  // A program that names the secrets directory and joins a quoted id to it, as in
+  // `(Path('…/secrets/files') / 'id').read_text()`, names that file.
+  const joinsDir = ids.length > 0 && /\/\.t3\/userdata\/secrets\/files\b/.test(command);
   const fileRef = () =>
     [
       ...files.map(escape),
       ...[...fileVars].map((v) => `\\$\\{?${v}\\b\\}?`),
       ...[...dirVars].map((v) => `\\$\\{?${v}\\b\\}?/(?:${ids})\\b`),
+      ...(joinsDir ? [`['"](?:${ids})['"]`] : []),
     ].join("|") || "(?!)";
   const read = () => `(?:cat\\s+|<\\s*)["']?(?:${fileRef()})["']?`;
   const usesSecretVar = (text: string) =>

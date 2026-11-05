@@ -1048,6 +1048,16 @@ it.each<[string, Run["calls"], boolean]>([
     true,
   ],
   ["a path variable", [saved(), bash(`f=${F}; adb pair 192.168.1.42:37099 < "$f"`)], true],
+  [
+    "a Python join of the secrets directory and the file's id",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\nd = pathlib.Path('/home/user/.t3/userdata/secrets/files')\ncode = (d / '${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    true,
+  ],
   // Smoke: Sonnet named the directory and read $S/<id>.
   [
     "a directory variable",
