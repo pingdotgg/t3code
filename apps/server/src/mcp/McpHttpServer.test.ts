@@ -170,8 +170,10 @@ it.effect.each([
     input: {},
     open: true,
     rejected: true,
-    message:
-      "Device screenshot failed: The device hub could not complete the request. Call device_list to check the device state, and device_open if it needs to be reopened.",
+    // The hub and the bound CLI capture independently, so the advice must name the CLI fallback.
+    message: expect.stringMatching(
+      /^Device screenshot failed: The device hub could not complete the request\. Call device_list to check the device state, and device_open if it needs to be reopened\.(?=.*agent-device)(?=.*\bscreenshot\b)/s,
+    ),
   },
 ])(
   "preserves actionable screenshot failure text: $message",
