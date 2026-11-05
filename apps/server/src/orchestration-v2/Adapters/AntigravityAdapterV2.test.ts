@@ -1095,8 +1095,9 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
               Effect.sync(() => {
                 sessionUpdate = handler;
               }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
-            prompt: () =>
+            prompt: (_request, options) =>
               Effect.gen(function* () {
+                if (options?.dispatched) yield* Deferred.succeed(options.dispatched, undefined);
                 const prompt = yield* Deferred.make<
                   EffectAcpSchema.PromptResponse,
                   EffectAcpErrors.AcpError
@@ -1180,6 +1181,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
 
     return {
       session,
+      events,
       prompts,
       promptHeld,
       finalizeScheduled,
@@ -1198,6 +1200,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
     Effect.gen(function* () {
       const {
         session,
+        events,
         prompts,
         promptHeld,
         finalizeScheduled,
@@ -1258,6 +1261,10 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
         ),
       );
       assert.isTrue(held, "the running command holds the turn past end_turn");
+      // The silent-prompt watchdog must not retire a turn its running command holds.
+      yield* TestClock.adjust("16 minutes");
+      seen.push(...(yield* Queue.clear(events)));
+      assert.isFalse(seen.some((event) => event.type === "turn.terminal"));
 
       // Antigravity reports the command's end after the prompt returned, without its kind.
       yield* send({ sessionUpdate: "tool_call_update", toolCallId: "build", status: "completed" });
