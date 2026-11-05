@@ -6,10 +6,15 @@ const PAGE_SIZE = 50;
 export const LIST_ISSUE_CAP = 250;
 
 // Sub-issue counts only need state types; lists keep this small to stay under query complexity limits.
-// Relations add two nested connections of 10. At 50 issues per page that is roughly +3,500 points on
-// top of ~2,500 for the rest, so a page stays near 6,000 of Linear's 10,000-point budget.
+// `related` and `duplicate` edges share the relation connections with `blocks`, so a small page hides
+// blockers on related-heavy issues (a real issue had 12 inbound edges, 5 of them blockers). Linear
+// scores a 50-issue page with both connections at 50 at ~390 of its 10,000 points.
+const RELATION_PAGE = 50;
+// `customView.issues` scores far higher: 50 issues cost 4,736 with 10 relations, 8,436 with 20, and
+// 25 is rejected as too complex. Saved views stay at 10, so a related-heavy row there can miss a blocker.
+const VIEW_RELATION_PAGE = 10;
 const RELATED_ISSUE = "id identifier title state { type name color }";
-const ISSUE_FIELDS = `
+const issueFields = (relationPage: number) => `
   id identifier title url priority priorityLabel branchName updatedAt
   state { id name type color }
   assignee { id name avatarUrl }
@@ -21,9 +26,10 @@ const ISSUE_FIELDS = `
   parent { id identifier }
   children(first: 25) { nodes { id state { type } } }
   attachments(first: 10) { nodes { id title url sourceType metadata } }
-  relations(first: 10) { nodes { type relatedIssue { ${RELATED_ISSUE} } } }
-  inverseRelations(first: 10) { nodes { type issue { ${RELATED_ISSUE} } } }
+  relations(first: ${relationPage}) { nodes { type relatedIssue { ${RELATED_ISSUE} } } }
+  inverseRelations(first: ${relationPage}) { nodes { type issue { ${RELATED_ISSUE} } } }
 `;
+const ISSUE_FIELDS = issueFields(RELATION_PAGE);
 
 const PAGE_INFO = "pageInfo { hasNextPage endCursor }";
 
@@ -97,7 +103,7 @@ export const ISSUES_QUERY = `query Issues($filter: IssueFilter, $after: String) 
 
 export const VIEW_ISSUES_QUERY = `query ViewIssues($viewId: String!, $after: String) {
   customView(id: $viewId) {
-    issues(first: ${PAGE_SIZE}, after: $after) { nodes { ${ISSUE_FIELDS} } ${PAGE_INFO} }
+    issues(first: ${PAGE_SIZE}, after: $after) { nodes { ${issueFields(VIEW_RELATION_PAGE)} } ${PAGE_INFO} }
   }
 }`;
 

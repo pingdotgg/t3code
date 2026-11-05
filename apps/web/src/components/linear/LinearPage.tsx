@@ -1,7 +1,7 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { LinearConnectionStatus } from "@t3tools/contracts";
 import { ArrowLeftIcon, PlusIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { isElectron } from "~/env";
 import { isEditableFocused } from "~/lib/editableFocus";
@@ -459,6 +459,9 @@ function ListPlaceholder({ error, onRetry }: { error: string | null; onRetry: ()
 }
 
 export function LinearPage() {
+  // A per-mount focus key stops the palette's area focus from reviving the last-focused filter
+  // from an earlier visit and scrolling the restored list back up to it.
+  const focusKey = useId();
   const search = useSearch({ from: "/_chat/linear" });
   const navigate = useNavigate();
   const status = useLinearStatus();
@@ -474,6 +477,7 @@ export function LinearPage() {
   return (
     <SidebarInset
       {...workspaceAreaProps("linear", 2, "Linear")}
+      data-workspace-focus-key={focusKey}
       className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
     >
       {connection?.state === "connected" ? (
