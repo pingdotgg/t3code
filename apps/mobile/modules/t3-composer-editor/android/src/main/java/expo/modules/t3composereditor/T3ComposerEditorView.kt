@@ -128,7 +128,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
               tokens.firstOrNull {
                 (it.type == "context" || it.type == "mention" || it.type == "skill") &&
                   offset >= it.start &&
-                  offset < it.end
+                  (offset < it.end || (offset == it.end && chipContainsX(it, event.x)))
               }
                 ?: return false
             if (token.end <= editor.length() &&
@@ -443,6 +443,21 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     onComposerContentSizeChange(
       mapOf("width" to contentWidth / density, "height" to contentHeight / density),
     )
+  }
+
+  // A chip is one replacement span, so a tap on its right half reports the offset at its end.
+  private fun chipContainsX(token: ComposerToken, viewX: Float): Boolean {
+    val layout = editor.layout ?: return false
+    val x = viewX - editor.totalPaddingLeft + editor.scrollX
+    val line = layout.getLineForOffset(token.start)
+    val left = layout.getPrimaryHorizontal(token.start)
+    val right =
+      if (layout.getLineForOffset(token.end) == line) {
+        layout.getPrimaryHorizontal(token.end)
+      } else {
+        layout.getLineRight(line)
+      }
+    return x >= minOf(left, right) && x <= maxOf(left, right)
   }
 
   private fun applyTokenSpans() {
