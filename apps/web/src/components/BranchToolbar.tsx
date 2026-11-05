@@ -33,6 +33,7 @@ import {
   ADD_TO_MACHINE_LABEL_CLASS,
   type EnvMode,
   type EnvironmentOption,
+  readContextStripCompaction,
   resolveContextStripCompaction,
   type ContextStripCompaction,
   resolveCurrentWorkspaceLabel,
@@ -80,9 +81,10 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
+import { contextStripGroupWidth } from "./contextStripMeasurement";
 import {
   resolveRestingComposerControlsMinimumWidth,
-  resolveRestingComposerControlsNaturalWidth,
+  resolveRestingComposerControlsNarrowestWidth,
 } from "./composerFooterLayout";
 import { NoProjectChip } from "./chat/NoProjectChip";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -435,7 +437,7 @@ const MachineMenu = memo(function MachineMenu({
           render={
             <span
               className={cn(
-                "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent ps-2 pe-1.75 text-meta text-dim-foreground sm:h-6",
+                "inline-flex h-7 max-w-[48%] shrink-0 items-center justify-start gap-1.5 rounded-md border border-transparent ps-2 pe-1.75 text-meta text-dim-foreground sm:h-6",
                 environmentUnavailable && "text-warning-foreground",
               )}
               aria-label={`Run on: ${environmentLabel}`}
@@ -466,7 +468,7 @@ const MachineMenu = memo(function MachineMenu({
             <MenuTrigger
               render={<ComposerControl size="xs" />}
               className={cn(
-                "min-w-0 max-w-full",
+                "max-w-full shrink-0",
                 environmentUnavailable && "text-warning-foreground",
               )}
               aria-label={`Run on: ${environmentLabel}`}
@@ -971,9 +973,11 @@ const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
 const RESTING_CONTROLS_SELECTOR = '[data-chat-composer-resting-controls="true"]';
 
-function readStripCompaction(strip: HTMLElement): ContextStripCompaction {
-  const value = strip.dataset.compact;
-  return value === "labels" || value === "branch" ? value : "none";
+function flexGap(element: HTMLElement | null): number {
+  while (element && getComputedStyle(element).display === "contents") {
+    element = element.parentElement;
+  }
+  return element ? Number.parseFloat(getComputedStyle(element).columnGap) || 0 : 0;
 }
 
 /** A hidden or squeezed label's scrollWidth loses its tail, causing label/icon flapping. */
@@ -1044,7 +1048,7 @@ function useStripCompaction(): readonly [
       // Hidden tabs retain stage layout but must keep their last label mode.
       if (!current.checkVisibility()) return;
       // The committed attribute, not render state, so a stale closure cannot misread it.
-      const compact = readStripCompaction(current);
+      const compact = readContextStripCompaction(current.dataset.compact);
       const stripWidth = current.clientWidth;
       if (stripWidth === 0) return;
       const stripStyle = getComputedStyle(current);
@@ -1052,26 +1056,9 @@ function useStripCompaction(): readonly [
         stripWidth -
         (Number.parseFloat(stripStyle.paddingInlineStart) || 0) -
         (Number.parseFloat(stripStyle.paddingInlineEnd) || 0);
-      const contentWidth = (parent: Element): number => {
-        const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
-        let width = 0;
-        let counted = 0;
-        for (const child of parent.children) {
-          if (!(child instanceof HTMLElement)) continue;
-          if (child.offsetWidth === 0) continue;
-          const style = getComputedStyle(child);
-          const position = style.position;
-          if (position === "absolute" || position === "fixed") continue;
-          width +=
-            child.offsetWidth +
-            (Number.parseFloat(style.marginInlineStart) || 0) +
-            (Number.parseFloat(style.marginInlineEnd) || 0);
-          counted += 1;
-        }
-        return width + gap * Math.max(0, counted - 1);
-      };
       const stripGap = Number.parseFloat(stripStyle.columnGap) || 0;
       let needed = 0;
+      let labelsNeeded = 0;
       let groups = 0;
       for (const child of current.children) {
         if (!(child instanceof HTMLElement)) continue;
@@ -1079,27 +1066,40 @@ function useStripCompaction(): readonly [
         const controlsMeasurement = controls ? measureRestingComposerControls(controls) : null;
         if (controlsMeasurement) {
           child.style.minWidth = `${resolveRestingComposerControlsMinimumWidth(controlsMeasurement)}px`;
+          groups += 1;
+          needed += resolveRestingComposerControlsNarrowestWidth(controlsMeasurement, "none");
+          labelsNeeded += resolveRestingComposerControlsNarrowestWidth(
+            controlsMeasurement,
+            "labels",
+          );
+          continue;
         }
-        const width = controlsMeasurement
-          ? resolveRestingComposerControlsNaturalWidth(controlsMeasurement)
-          : contentWidth(child);
+        const width = contextStripGroupWidth(child);
         if (width <= 1) continue;
         groups += 1;
         needed += width;
+        labelsNeeded += width;
       }
       needed += stripGap * Math.max(0, groups - 1);
+      labelsNeeded += stripGap * Math.max(0, groups - 1);
       const range = document.createRange();
-      let labelsSavedWidth = 0;
       for (const label of current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_LABEL_SELECTOR)) {
         const textWidth = labelTextWidth(label, range);
-        needed += Math.max(0, textWidth - label.getBoundingClientRect().width);
-        if (label.dataset.composerLabel === "hide") labelsSavedWidth += textWidth;
+        const renderedWidth =
+          label.getBoundingClientRect().width +
+          (Number.parseFloat(getComputedStyle(label).marginInlineStart) || 0);
+        const missingWidth = Math.max(0, textWidth - renderedWidth);
+        needed += missingWidth;
+        labelsNeeded +=
+          label.dataset.composerLabel === "hide"
+            ? -renderedWidth - flexGap(label.parentElement)
+            : missingWidth;
       }
       const nextCompaction = resolveContextStripCompaction({
         current: compact,
         neededWidth: needed,
+        labelsNeededWidth: labelsNeeded,
         availableWidth: available,
-        labelsSavedWidth,
       });
       const firstMeasure = !measured;
       measured = true;
