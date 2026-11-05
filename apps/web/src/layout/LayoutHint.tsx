@@ -285,8 +285,9 @@ function WorkspaceHintPill({
       aria-live="polite"
       data-layout-hint={hint.kind}
       className={cn(
-        "pointer-events-none absolute bottom-27 left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
+        "pointer-events-none absolute left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
         small ? "h-7.5" : "h-8.5 gap-2.5",
+        workspace?.columns.length === 0 ? "bottom-12" : "bottom-27",
         leaving && "opacity-0",
       )}
     >
