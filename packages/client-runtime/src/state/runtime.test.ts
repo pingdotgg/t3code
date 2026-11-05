@@ -1039,10 +1039,12 @@ describe("environment query lifecycle", () => {
             },
           } as unknown as RpcSession.RpcSession,
         });
-        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+        const shellState = Atom.make<Pick<EnvironmentShellState, "generation" | "removedAt">>({
+          generation: 1,
           removedAt: new Map(),
         }).pipe(Atom.keepAlive);
         const removed = (entries: ReadonlyArray<readonly [string, number]>) => ({
+          generation: 1,
           removedAt: new Map(entries.map(([id, sequence]) => [ThreadId.make(id), sequence])),
         });
         // Thread titles never use the HTTP client.
@@ -1093,7 +1095,8 @@ describe("environment query lifecycle", () => {
             },
           } as unknown as RpcSession.RpcSession,
         });
-        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+        const shellState = Atom.make<Pick<EnvironmentShellState, "generation" | "removedAt">>({
+          generation: 1,
           removedAt: new Map(),
         }).pipe(Atom.keepAlive);
         // The archived snapshot never uses the HTTP client.
@@ -1106,9 +1109,16 @@ describe("environment query lifecycle", () => {
         const registry = yield* mountEnvironmentQuery(atom);
         expect(yield* readEnvironmentQuery(registry, atom)).toBe(1);
 
-        // An agent or another client archives a thread, which this client sees as a removal.
-        registry.set(shellState, { removedAt: new Map([[ThreadId.make("archived"), 4]]) });
+        // After a reconnect, an archive made while offline is only missing from the new snapshot.
+        registry.set(shellState, { generation: 2, removedAt: new Map() });
         expect(yield* readEnvironmentQuery(registry, atom)).toBe(2);
+
+        // An agent or another client archives a thread, which this client sees as a removal.
+        registry.set(shellState, {
+          generation: 2,
+          removedAt: new Map([[ThreadId.make("archived"), 4]]),
+        });
+        expect(yield* readEnvironmentQuery(registry, atom)).toBe(3);
       }),
     ),
   );
