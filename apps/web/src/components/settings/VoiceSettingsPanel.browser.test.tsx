@@ -1,10 +1,17 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, type EnvironmentSpeechModel } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type EnvironmentSpeechModel,
+  type EnvironmentSpeechStatus,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
-import { useVoiceTranscriptionDestination } from "../../speech/useEnvironmentSpeechInput";
+import {
+  useEnvironmentSpeechInput,
+  useVoiceTranscriptionDestination,
+} from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
 import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
@@ -12,6 +19,111 @@ import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+
+it("preserves the model test transcript when its model is filtered out", async () => {
+  const target = new PrimaryConnectionTarget({
+    environmentId: EnvironmentId.make("voice-filter"),
+    label: "Test environment",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
+  const model: EnvironmentSpeechModel = {
+    id: "tiny",
+    name: "Tiny",
+    description: "",
+    size: 100,
+    languages: ["en"],
+    accuracy: 1,
+    speed: 1,
+    recommended: false,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: false,
+    active: true,
+    state: "installed",
+  };
+  const status = {
+    supported: true,
+    state: "ready",
+    modelId: model.id,
+    model: model.name,
+    size: model.size,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    acceleration: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  } satisfies EnvironmentSpeechStatus;
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/models")
+      return Promise.resolve(Response.json({ models: [model] }));
+    return fetch(input, init);
+  });
+  const transcript = "Keep this transcript.";
+  await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
+    () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
+    async () => {
+      await vi.mocked(useEnvironmentSpeechInput).withImplementation(
+        (input) => ({
+          available: true,
+          status,
+          transcriptionEnvironmentId: target.environmentId,
+          transcriptionEnvironmentLabel: target.label,
+          setup: {
+            open: false,
+            step: 0,
+            model: null,
+            downloading: false,
+            error: null,
+            setOpen: () => {},
+            download: async () => {},
+            cancelDownload: async () => {},
+            startRecording: async () => {},
+          },
+          state: { phase: "idle", error: null, errorAction: null },
+          preview: null,
+          level: 0,
+          preparing: false,
+          blocksSubmission: false,
+          freezesEditor: false,
+          start: async () => {
+            input.commitDraft(transcript, { start: transcript.length, end: transcript.length });
+          },
+          submitAfterDictation: () => {},
+          stop: async () => {},
+          cancel: () => {},
+          skipPostProcessing: () => {},
+        }),
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const testModel = screen.getByRole("button", { name: "Test model", exact: true });
+          await expect.element(testModel).toBeVisible();
+          await userEvent.click(testModel);
+          const result = screen.getByRole("status", { name: "Test transcript" });
+          await expect.element(result).toHaveTextContent(transcript);
+
+          const search = screen.getByRole("textbox", { name: "Search transcription models" });
+          await userEvent.fill(search, "no matching model");
+          await expect.element(screen.getByText("No matching models.")).toBeVisible();
+          await userEvent.clear(search);
+          await vi.waitFor(() =>
+            expect(
+              screen.container.querySelector('[aria-label="Test transcript"]')?.textContent,
+            ).toBe(transcript),
+          );
+        },
+      );
+    },
+  );
+});
 
 it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {
   const target = new PrimaryConnectionTarget({
