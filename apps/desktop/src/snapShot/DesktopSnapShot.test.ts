@@ -982,8 +982,9 @@ it.effect.each(["succeeds", "fails"] as const)(
   },
 );
 
-it.effect("a policy without SnapShots keeps capture off whatever the user saved", () =>
-  Effect.scoped(
+it.effect("a policy without SnapShots keeps capture off whatever the user saved", () => {
+  const removed: Array<string> = [];
+  return Effect.scoped(
     Effect.gen(function* () {
       activeWindowMock.mockReset().mockResolvedValue({
         platform: "macos",
@@ -1008,6 +1009,7 @@ it.effect("a policy without SnapShots keeps capture off whatever the user saved"
         "Example Corp's policy does not allow SnapShots.",
       );
       assert.deepEqual(yield* service.listPending, []);
+      assert.deepEqual(removed, []);
     }),
   ).pipe(
     Effect.provide(
@@ -1016,6 +1018,10 @@ it.effect("a policy without SnapShots keeps capture off whatever the user saved"
         {
           makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test"),
           readDirectory: () => Effect.succeed(["capture.json"]),
+          remove: (path) =>
+            Effect.sync(() => {
+              removed.push(path);
+            }),
           readFileString: () =>
             Effect.succeed(
               JSON.stringify({
@@ -1037,8 +1043,8 @@ it.effect("a policy without SnapShots keeps capture off whatever the user saved"
         { schemaVersion: 1, organization: "Example Corp", limits: { snapShot: false } },
       ),
     ),
-  ),
-);
+  );
+});
 
 it.effect("matches Windows accessibility windows on a scaled display", () => {
   const png = Buffer.from([1, 2, 3]);
