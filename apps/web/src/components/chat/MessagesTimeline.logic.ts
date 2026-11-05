@@ -1001,6 +1001,17 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
   return null;
 }
 
+function runlessTurnFoldRunId(promptEntryId: string): RunId {
+  return RunId.make(`runless:${promptEntryId}`);
+}
+
+export function liveRunlessTurnFoldRunId(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): RunId | null {
+  const prompt = timelineEntries.findLast(timelineEntryStartsResponse);
+  return prompt && responseBoundaryRunId(prompt) === null ? runlessTurnFoldRunId(prompt.id) : null;
+}
+
 // Group promptless restarts under the initiating prompt until settled.
 function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
   return timelineEntries.findLastIndex(timelineEntryStartsResponse);
@@ -1216,7 +1227,7 @@ function deriveTurnFolds(input: {
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
         : null;
       const boundaryRunId = responseBoundaryRunId(entry);
-      runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
+      runlessKey = boundaryRunId == null ? runlessTurnFoldRunId(entry.id) : null;
       responseKey = boundaryRunId ?? runlessKey;
       continue;
     }
