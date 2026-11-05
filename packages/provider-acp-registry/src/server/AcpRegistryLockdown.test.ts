@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AcpRegistryPrepareInput } from "@t3tools/contracts";
@@ -40,7 +41,7 @@ const CatalogLayer = AcpRegistrySupport.layerFromHost.pipe(
     ),
   ),
   Layer.provide(NoEgressLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const expectRegistryUnavailable = <A>(
@@ -51,11 +52,8 @@ const expectRegistryUnavailable = <A>(
     assert.strictEqual(error.reason, "registry_unavailable");
   });
 
-// [fork:lockdown] Tripwire: the ACP Registry downloads and runs agents a third
-// party names at fetch time (invariant 2). The live catalog must refuse every
-// registry operation without a request or a spawn, while an operator-installed
-// local command still resolves. An upstream merge that rewires the live layer
-// to the unrestricted catalog fails here.
+// [fork:lockdown] Tripwire, invariant 2: the live catalog refuses every registry operation
+// without a request or a spawn, while an operator-installed local command still resolves.
 it.layer(CatalogLayer)("ACP Registry lockdown", (it) => {
   it.effect("refuses registry operations without touching the network", () =>
     Effect.gen(function* () {

@@ -1,5 +1,7 @@
 import { doctorCommand } from "./cli/doctor.ts";
+import { policyCommand } from "./cli/policy.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,7 +32,7 @@ import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -96,6 +98,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       themeCommand,
       traceCommand,
       doctorCommand,
+      policyCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

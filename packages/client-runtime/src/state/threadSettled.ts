@@ -96,14 +96,14 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   );
 }
 
-// V2 runtime.updatedAt includes metadata writes; prefer the failed run's completion.
+// V2 runtime.updatedAt includes metadata writes, not just failures.
 // Legacy sessions only expose the runtime timestamp.
 function failureEdgeAt(shell: ThreadSnoozeShell): string | null | undefined {
   const runtime = shell.runtime ?? shell.session ?? null;
   if (runtime?.status !== "error" && runtime?.status !== "failed") return undefined;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-  if (latestRun?.status === "failed" && latestRun.completedAt != null) {
-    return latestRun.completedAt;
+  if (latestRun?.status === "failed") {
+    return latestRun.completedAt ?? null;
   }
   return runtime.updatedAt ?? null;
 }
@@ -125,7 +125,7 @@ export function canSnooze(
   options: { readonly now: string },
 ): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
-  // The server rejects snoozing even for nonblocking questions.
+  // The server rejects snoozing for any pending request.
   if (shell.source?.pendingRuntimeRequest != null) return false;
   if (shell.pendingSubagentRequest != null) return false;
   // A waiting guest message would wake it at once.

@@ -177,15 +177,19 @@ function sameColor(left: GhosttyColor, right: GhosttyColor): boolean {
 }
 
 /** Bounds String.fromCodePoint arguments for cells with enormous combining-mark sequences. */
-export function ghosttyCellText(codepointView: DataView, graphemeLength: number): string {
-  if (graphemeLength === 1) return String.fromCodePoint(codepointView.getUint32(0, true));
+export function ghosttyCellText(
+  codepointView: DataView,
+  graphemeLength: number,
+  byteOffset = 0,
+): string {
+  if (graphemeLength === 1) return String.fromCodePoint(codepointView.getUint32(byteOffset, true));
   const CHUNK_SIZE = 4_096;
   let text = "";
   for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
     const count = Math.min(CHUNK_SIZE, graphemeLength - start);
     const codes = new Array<number>(count);
     for (let index = 0; index < count; index += 1) {
-      codes[index] = codepointView.getUint32((start + index) * 4, true);
+      codes[index] = codepointView.getUint32(byteOffset + (start + index) * 4, true);
     }
     text += String.fromCodePoint(...codes);
   }
@@ -853,12 +857,12 @@ export class GhosttyTerminalCore {
         if (rowDirty) {
           this.rows[rowIndex] = this.readRow(iterator, cols, foreground, background);
           dirtyRows.add(rowIndex);
-          this.runtime.bytes(this.scratch, 1)[0] = 0;
+          this.runtime.memoryBytes()[this.scratch] = 0;
           this.runtime.call("ghostty_render_state_row_set", iterator, 0, this.scratch);
         }
         rowIndex += 1;
       }
-      this.runtime.view(this.scratch, 4).setUint32(0, 0, true);
+      this.runtime.memoryDataView().setUint32(this.scratch, 0, true);
       this.runtime.call("ghostty_render_state_set", this.renderState, 0, this.scratch);
     }
 
@@ -1009,19 +1013,19 @@ export class GhosttyTerminalCore {
       "ghostty_render_state_row_get(raw)",
       this.runtime.call("ghostty_render_state_row_get", iterator, ROW_DATA.raw, this.scratch),
     );
-    const rawRow = this.runtime.view(this.scratch, 8).getBigUint64(0, true);
-    this.runtime.bytes(this.scratch + 8, 1)[0] = 0;
+    const rawRow = this.runtime.memoryDataView().getBigUint64(this.scratch, true);
+    this.runtime.memoryBytes()[this.scratch + 8] = 0;
     this.assertSuccess(
       "ghostty_row_get(wrap continuation)",
       this.runtime.call("ghostty_row_get", rawRow, 2, this.scratch + 8),
     );
-    const isWrapContinuation = this.runtime.bytes(this.scratch + 8, 1)[0] !== 0;
-    this.runtime.bytes(this.scratch + 8, 1)[0] = 0;
+    const isWrapContinuation = this.runtime.memoryBytes()[this.scratch + 8] !== 0;
+    this.runtime.memoryBytes()[this.scratch + 8] = 0;
     this.assertSuccess(
       "ghostty_row_get(wrap)",
       this.runtime.call("ghostty_row_get", rawRow, 1, this.scratch + 8),
     );
-    const wrapsToNext = this.runtime.bytes(this.scratch + 8, 1)[0] !== 0;
+    const wrapsToNext = this.runtime.memoryBytes()[this.scratch + 8] !== 0;
 
     this.assertSuccess(
       "ghostty_render_state_row_get(cells)",
@@ -1034,15 +1038,13 @@ export class GhosttyTerminalCore {
     );
     const cellsIterator = this.runtime.readPointer(this.rowCellsSlot);
     const { size: styleSize, fields: styleFields } = this.runtime.layout("GhosttyStyle");
+    const cellsNext = this.runtime.fn("ghostty_render_state_row_cells_next");
+    const cellsGetMulti = this.runtime.fn("ghostty_render_state_row_cells_get_multi");
     const cells: GhosttyCell[] = [];
-    while (
-      cells.length < cols &&
-      this.runtime.call("ghostty_render_state_row_cells_next", cellsIterator) !== 0
-    ) {
-      this.runtime.bytes(this.style, styleSize).fill(0);
+    while (cells.length < cols && cellsNext(cellsIterator) !== 0) {
+      this.runtime.memoryBytes().fill(0, this.style, this.style + styleSize);
       this.runtime.setField(this.style, "GhosttyStyle", "size", styleSize);
-      const result = this.runtime.call(
-        "ghostty_render_state_row_cells_get_multi",
+      const result = cellsGetMulti(
         cellsIterator,
         5,
         this.cellQuery + CELL_QUERY.keys,
@@ -1081,8 +1083,7 @@ export class GhosttyTerminalCore {
           ) === GHOSTTY_SUCCESS
         ) {
           // Byte allocations need not be 4-byte aligned; use DataView instead of Uint32Array.
-          const codepointView = this.runtime.view(this.graphemes, bufferSize);
-          text = ghosttyCellText(codepointView, graphemeLength);
+          text = ghosttyCellText(this.runtime.memoryDataView(), graphemeLength, this.graphemes);
         }
       }
       let wide = 0;
@@ -1097,13 +1098,13 @@ export class GhosttyTerminalCore {
             this.scratch,
           ),
         );
-        const rawCell = this.runtime.view(this.scratch, 8).getBigUint64(0, true);
-        this.runtime.view(this.scratch + 8, 4).setUint32(0, 0, true);
+        const rawCell = this.runtime.memoryDataView().getBigUint64(this.scratch, true);
+        this.runtime.memoryDataView().setUint32(this.scratch + 8, 0, true);
         this.assertSuccess(
           "ghostty_cell_get(wide)",
           this.runtime.call("ghostty_cell_get", rawCell, RAW_CELL_DATA.wide, this.scratch + 8),
         );
-        wide = this.runtime.view(this.scratch + 8, 4).getUint32(0, true);
+        wide = this.runtime.memoryDataView().getUint32(this.scratch + 8, true);
       }
       // Read the style after allocation and ABI calls, which can grow WASM memory.
       const styleView = this.runtime.memoryDataView();
@@ -1228,34 +1229,34 @@ export class GhosttyTerminalCore {
   }
 
   private getU16(data: number): number {
-    this.runtime.bytes(this.scratch, 2).fill(0);
+    this.runtime.memoryDataView().setUint16(this.scratch, 0, true);
     this.assertSuccess(
       "ghostty_render_state_get",
       this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch),
     );
-    return this.runtime.view(this.scratch, 2).getUint16(0, true);
+    return this.runtime.memoryDataView().getUint16(this.scratch, true);
   }
 
   private getU32(data: number): number {
-    this.runtime.bytes(this.scratch, 4).fill(0);
+    this.runtime.memoryDataView().setUint32(this.scratch, 0, true);
     this.assertSuccess(
       "ghostty_render_state_get",
       this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch),
     );
-    return this.runtime.view(this.scratch, 4).getUint32(0, true);
+    return this.runtime.memoryDataView().getUint32(this.scratch, true);
   }
 
   private getBool(data: number): boolean {
-    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    this.runtime.memoryBytes()[this.scratch] = 0;
     this.assertSuccess(
       "ghostty_render_state_get",
       this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch),
     );
-    return this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    return this.runtime.memoryBytes()[this.scratch] !== 0;
   }
 
   private getColor(data: number, fallback: GhosttyColor): GhosttyColor {
-    this.runtime.bytes(this.scratch, 3).fill(0);
+    this.runtime.memoryBytes().fill(0, this.scratch, this.scratch + 3);
     const result = this.runtime.call(
       "ghostty_render_state_get",
       this.renderState,
@@ -1266,15 +1267,15 @@ export class GhosttyTerminalCore {
   }
 
   private getRowBool(iterator: number, data: number): boolean {
-    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    this.runtime.memoryBytes()[this.scratch] = 0;
     return (
       this.runtime.call("ghostty_render_state_row_get", iterator, data, this.scratch) ===
-        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
+        GHOSTTY_SUCCESS && this.runtime.memoryBytes()[this.scratch] !== 0
     );
   }
 
   private getCellColor(iterator: number, data: number, fallback: GhosttyColor): GhosttyColor {
-    this.runtime.bytes(this.scratch, 3).fill(0);
+    this.runtime.memoryBytes().fill(0, this.scratch, this.scratch + 3);
     const result = this.runtime.call(
       "ghostty_render_state_row_cells_get",
       iterator,
