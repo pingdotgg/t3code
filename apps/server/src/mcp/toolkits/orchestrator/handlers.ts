@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as ProviderUsage from "../../../usage/ProviderUsage.ts";
 import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -17,6 +18,12 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.capabilities(scope, input);
+    }),
+  ),
+  provider_usage: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      const usage = yield* ProviderUsage.ProviderUsage;
+      return yield* usage.read;
     }),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
