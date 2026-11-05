@@ -115,7 +115,11 @@ it.effect(
           ),
         ),
       );
+      const first = yield* registry.get(personalId);
+      assert.strictEqual(yield* registry.get(personalId), first);
+      related[0] = { ...related[0]! };
       const adapter = yield* registry.get(personalId);
+      assert.notStrictEqual(adapter, first);
       const error = yield* adapter
         .openSession({
           threadId: ThreadId.make("new-thread"),
