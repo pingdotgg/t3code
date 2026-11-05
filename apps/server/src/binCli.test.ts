@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -9,7 +10,7 @@ import * as NetService from "@t3tools/shared/Net";
 
 import { makeCli } from "./binCli.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
 
 const helpOutput = (cloudEnabled: boolean) =>
   Effect.gen(function* () {
@@ -20,11 +21,8 @@ const helpOutput = (cloudEnabled: boolean) =>
     );
   }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer)));
 
-// [fork:lockdown] Tripwire: `t3 triage` seeds a coding agent to mine the state
-// database, provider event log, and terminal logs for evidence and file it in a
-// public upstream issue. `t3 update` downloads a pingdotgg/t3code release
-// archive from GitHub and runs it (invariant 2). This fork registers neither;
-// an upstream merge that restores either registration fails here.
+// [fork:lockdown] Tripwire: `t3 triage` files local state as a public upstream issue (invariant 4)
+// and `t3 update` downloads and runs a release archive (invariant 2). Neither is registered.
 it.effect("does not register the upstream triage or self-download update commands", () =>
   Effect.gen(function* () {
     for (const cloudEnabled of [true, false]) {

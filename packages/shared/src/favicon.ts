@@ -70,11 +70,9 @@ export function toolActivityFaviconUrl(
 }
 
 /**
- * [fork:lockdown] Upstream resolves link and tab favicons through Google's
- * favicon service, which sends Google every public hostname that appears in a
- * chat link or browser tab. Agents write those links from the code they read,
- * and a heuristic filter for internal names cannot tell which public names are
- * confidential, so this fork shows no favicon instead. Tripwire: favicon.test.ts.
+ * [fork:lockdown] Google's favicon service would learn every public hostname in a chat link or
+ * browser tab, and agents write those links from the code they read. No favicon instead.
+ * Tripwire: favicon.test.ts.
  */
 export function faviconUrlForOrigin(_rawUrl: string | null | undefined, _size = 32): null {
   return null;

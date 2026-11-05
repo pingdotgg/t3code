@@ -139,6 +139,7 @@ it.effect("keeps a daemon record its missing agent CLI cannot stop", () =>
 it.effect("refuses to npm-install device tools on a remote host", () =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
+    const environment = yield* HostProcess.Environment;
     yield* Effect.promise(async () => {
       const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
       try {
@@ -154,7 +155,7 @@ it.effect("refuses to npm-install device tools on a remote host", () =>
         const file = NodePath.join(home, "start.cjs");
         await NodeFSP.writeFile(file, remoteDeviceScript("one", "start"));
         const failure = await exec(process.execPath, [file], {
-          env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+          env: { ...environment, HOME: home, PATH: `${bin}:${environment.PATH}` },
         }).then(
           () => null,
           (error: { stderr?: string }) => error,

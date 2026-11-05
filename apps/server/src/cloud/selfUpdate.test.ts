@@ -1,10 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -13,6 +16,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
@@ -23,6 +27,8 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly preflightDuration?: Duration.Input;
+  readonly preflightStarted?: Deferred.Deferred<void>;
   readonly beforeDownload?: Effect.Effect<void>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   /**
@@ -32,6 +38,7 @@ interface HarnessOptions {
    */
   readonly seedRuntime?: boolean;
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
+  readonly policy?: ManagedPolicyDocument;
 }
 
 // Upstream stages the runtime from a release archive. [fork:lockdown] These
@@ -39,9 +46,10 @@ interface HarnessOptions {
 // if a download path is ever restored; the fork's tests assert neither runs.
 
 const archiveBytes = new TextEncoder().encode("not really a tarball");
-const releaseHttpClient = (order: string[], beforeDownload?: Effect.Effect<void>) =>
+const releaseHttpClient = (order: string[], urls: string[], beforeDownload?: Effect.Effect<void>) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
+      urls.push(request.url);
       if (request.url.endsWith("/SHA256SUMS")) {
         const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", archiveBytes));
         const hex = Array.from(new Uint8Array(digest), (byte) =>
@@ -71,6 +79,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     yield* fs.writeFileString(runtime.sentinelPath, "1.1.0\n");
   }
   const order: string[] = [];
+  const urls: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
@@ -89,6 +98,21 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
             stdoutInvalidUtf8: false,
             stderrInvalidUtf8: false,
           };
+        }
+        if (options.preflightStarted) yield* Deferred.succeed(options.preflightStarted, undefined);
+        if (options.preflightDuration !== undefined) {
+          // Like the real runner, fail once the caller's timeout elapses.
+          const timeout = Duration.fromInputUnsafe(input.timeout ?? "60 seconds");
+          const finished = yield* Effect.sleep(options.preflightDuration).pipe(
+            Effect.timeoutOption(timeout),
+          );
+          if (finished._tag === "None") {
+            return yield* new ProcessRunner.ProcessTimeoutError({
+              command: input.command,
+              argumentCount: input.args.length,
+              timeoutMs: Duration.toMillis(timeout),
+            });
+          }
         }
         order.push("preflight");
         const result =
@@ -135,12 +159,20 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         run: () => Effect.die("unexpected desktop app update run"),
       },
     ),
-    Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, options.beforeDownload)),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      releaseHttpClient(order, urls, options.beforeDownload),
+    ),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
-    Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
+    Effect.provide(
+      Layer.merge(
+        ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
+        ManagedPolicy.layerTest(options.policy),
+      ),
+    ),
   );
-  return { selfUpdate, order };
+  return { selfUpdate, order, urls };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -156,6 +188,61 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses every update when the managed policy turns updates off", () =>
+    Effect.gen(function* () {
+      const policy: ManagedPolicyDocument = {
+        schemaVersion: 1,
+        organization: "Example Corp",
+        limits: { updates: { mode: "off" } },
+      };
+      const service = yield* makeHarness({ policy });
+      const desktop = yield* makeHarness({
+        mode: "desktop",
+        policy,
+        desktopAppUpdate: {
+          available: true,
+          run: () => Effect.die("unexpected desktop app update run"),
+          commit: () => Effect.never,
+        },
+      });
+      for (const harness of [service, desktop]) {
+        expect(
+          (yield* harness.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+        ).toBe("Example Corp manages T3 Code updates.");
+      }
+      expect([...service.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("lets a user start an update, but only to stable without nightly", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order, urls } = yield* makeHarness({
+        policy: {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: {
+            updates: {
+              mode: "auto",
+              allowNightly: false,
+              feedUrl: "https://updates.example.com/t3code/",
+            },
+          },
+        },
+      });
+      expect(
+        (yield* selfUpdate.update({ targetVersion: "1.2.0-nightly.20261028.1" }).pipe(Effect.flip))
+          .reason,
+      ).toBe("Example Corp manages T3 Code updates. Only stable releases can be installed.");
+      expect(order).toEqual([]);
+      // [fork:lockdown] Only the provisioned 1.1.0 runs, and the mirror is never asked.
+      expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
+        "Could not prepare t3@1.2.0.",
+      );
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
+      expect(urls).toEqual([]);
     }),
   );
 
@@ -200,6 +287,27 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
       yield* Deferred.succeed(accepted, "launcher-id");
       expect((yield* Fiber.join(first)).updateId).toBe("launcher-id");
+    }),
+  );
+
+  // regression: #28198 a slow staged preflight on a loaded host no longer fails the update
+  it.effect("waits for a staged preflight that takes a minute on a loaded host", () =>
+    Effect.gen(function* () {
+      const preflightStarted = yield* Deferred.make<void>();
+      const { selfUpdate, order } = yield* makeHarness({
+        preflightDuration: "60 seconds",
+        preflightStarted,
+      });
+      const update = yield* Effect.forkChild(selfUpdate.update({ targetVersion: "1.1.0" }), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(preflightStarted);
+      yield* TestClock.adjust("60 seconds");
+      const exit = yield* Fiber.await(update);
+      expect(exit._tag === "Failure" ? String(exit.cause) : "launcher handoff").toBe(
+        "launcher handoff",
+      );
+      expect(order).toEqual(["preflight", "accept"]);
     }),
   );
 
