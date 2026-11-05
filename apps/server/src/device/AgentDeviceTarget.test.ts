@@ -117,10 +117,11 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           (result) => JSON.parse(result.stdout),
         );
       const bound = path.dirname(command);
+      const owned = target.slice(4);
       expect(yield* Effect.promise(() => launch(bound, ["snapshot", "-i"]))).toEqual([
         "snapshot",
         "-i",
-        ...target,
+        ...owned,
       ]);
       // A flag the agent passes itself wins over the bound one.
       expect(yield* Effect.promise(() => launch(bound, ["open", "--session", "mine"]))).toEqual([
@@ -137,10 +138,6 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       expect(yield* Effect.promise(() => launch(bound, ["snapshot", "--session=mine"]))).toEqual([
         "snapshot",
         "--session=mine",
-        "--platform",
-        "ios",
-        "--udid",
-        "UDID-1",
         "--config",
         "/h.json",
       ]);
@@ -149,7 +146,7 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
         expect(yield* Effect.promise(() => launch(bound, ["fill", "@e5", "--", ...text]))).toEqual([
           "fill",
           "@e5",
-          ...target,
+          ...owned,
           "--",
           ...text,
         ]);
@@ -207,6 +204,35 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           path.join(path.dirname(command), "agent-device-launcher.mjs"),
           ...args,
         ]).then((result) => JSON.parse(result.stdout));
+      const owned = ["--config", "/h.json", "--session", "t3-a"];
+      const selected = ["--platform", "ios", "--udid", "UDID-1", ...owned];
+      // With a selector, agent-device runs a session's command on that device when it holds no
+      // such session, so a session whose open hit another's claim could drive the claimed device.
+      const unselected: ReadonlyArray<[ReadonlyArray<string>, ReadonlyArray<string>]> = [
+        [
+          ["press", "10", "20"],
+          ["press", "10", "20"],
+        ],
+        [
+          ["swipe", "0", "0", "0", "500", "--serial", "emulator-5554"],
+          ["swipe", "0", "0", "0", "500"],
+        ],
+        [
+          ["--platform=android", "close", "com.example"],
+          ["close", "com.example"],
+        ],
+        [
+          ["batch", "--steps-file", "/s.json", "--device", "Pixel", "--target", "mobile"],
+          ["batch", "--steps-file", "/s.json"],
+        ],
+      ];
+      for (const [args, passed] of unselected) {
+        expect(yield* Effect.promise(() => launch(args))).toEqual([...passed, ...owned]);
+      }
+      // Commands that choose a device take its selectors; those that mutate it check its claim.
+      for (const args of [["open", "com.example"], ["Relaunch"], ["apps"], ["install", "a.app"]]) {
+        expect(yield* Effect.promise(() => launch(args))).toEqual([...args, ...selected]);
+      }
       // agent-device 0.21.31 rejects these flags with "unknown option" or "not supported for command".
       const cdp = ["cdp", "target", "list", "--url", "http://127.0.0.1:8081"];
       expect(yield* Effect.promise(() => launch(cdp))).toEqual(cdp);
