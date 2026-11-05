@@ -1046,6 +1046,7 @@ function useNewKeybindingDraft({
 }) {
   const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
   const [hasAutomaticWhen, setHasAutomaticWhen] = useState(false);
+  const [hasEditedWhen, setHasEditedWhen] = useState(false);
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
     keyDraft: "",
     whenDraft: undefined,
@@ -1093,7 +1094,7 @@ function useNewKeybindingDraft({
     setCommandDraft: (command: KeybindingCommand) => {
       setCommandDraft(command);
       const needsTerminalGuard = command === "thread.archive" || command === "thread.delete";
-      if (needsTerminalGuard && !whenDraft) {
+      if (needsTerminalGuard && !whenDraft && !hasEditedWhen) {
         setDraft({
           whenDraft: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
         });
@@ -1113,6 +1114,7 @@ function useNewKeybindingDraft({
     setDraft,
     setWhenDraft: (whenDraft: KeybindingWhenNode | undefined) => {
       setHasAutomaticWhen(false);
+      setHasEditedWhen(true);
       setDraft({ whenDraft });
     },
     save,
