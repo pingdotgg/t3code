@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -131,4 +132,58 @@ it.each([
 
   expect(composerKeys).toEqual(composer);
   expect(received).toEqual(launcher);
+});
+
+const ctrlShift = (key: string, command: KeybindingCommand) => ({
+  command,
+  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey: true, altKey: false, modKey: false },
+});
+const sideChatKeybindings: ResolvedKeybindingsConfig = [
+  ctrlShift("m", "modelPicker.toggle"),
+  ctrlShift("x", "thread.stop"),
+];
+
+// A side chat in the main chat's panel: no window listeners, only its composer's own chords.
+function SideChat(props: { toggles: string[]; stops: string[] }) {
+  const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
+  useChatShortcuts({
+    enabled: false,
+    embedded: true,
+    composerElement,
+    keybindings: sideChatKeybindings,
+    scriptKeybindings: [],
+    getShortcutContext: () => shortcutContext,
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        toggleModelPicker: () => props.toggles.push("model"),
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { "thread.stop": () => void props.stops.push("stop") },
+    fallback: () => undefined,
+  });
+  return (
+    <>
+      <div ref={setComposerElement}>
+        <textarea aria-label="Side chat composer" />
+      </div>
+      <textarea aria-label="Main composer" />
+    </>
+  );
+}
+
+it("runs a side chat's composer chords only from its composer, and never thread commands", async () => {
+  const toggles: string[] = [];
+  const stops: string[] = [];
+  await using screen = await render(<SideChat toggles={toggles} stops={stops} />, options);
+
+  await userEvent.click(screen.getByLabelText("Side chat composer"));
+  await userEvent.keyboard("{Control>}{Shift>}MX{/Shift}{/Control}");
+  await userEvent.click(screen.getByLabelText("Main composer"));
+  await userEvent.keyboard("{Control>}{Shift>}M{/Shift}{/Control}");
+
+  expect(toggles).toEqual(["model"]);
+  expect(stops).toEqual([]);
 });
