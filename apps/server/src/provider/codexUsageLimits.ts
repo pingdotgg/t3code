@@ -198,17 +198,19 @@ export function reconcileCodexRateLimitsRead(
   if (read.limitId && read.limitId !== "codex") return current;
   if (!current || current === sent) return read;
   const { limitId, planType, rateLimitReachedType, primary, secondary, individualLimit } = current;
+  const notifiedPlan = planType !== sent?.planType && planType !== undefined;
+  const readPlan = !notifiedPlan || planType === read.planType;
   return mergeCodexRateLimits(read, {
     ...(limitId !== sent?.limitId && limitId !== undefined ? { limitId } : {}),
-    ...(planType !== sent?.planType && planType !== undefined ? { planType } : {}),
+    ...(notifiedPlan ? { planType } : {}),
     ...(rateLimitReachedType !== sent?.rateLimitReachedType && rateLimitReachedType !== undefined
       ? { rateLimitReachedType }
       : {}),
     ...(!sameWindow(primary, sent?.primary) && primary !== undefined
-      ? { primary: laterReport(primary, read.primary, usedPercent) }
+      ? { primary: laterWindow(primary, read.primary, sent?.primary, readPlan) }
       : {}),
     ...(!sameWindow(secondary, sent?.secondary) && secondary !== undefined
-      ? { secondary: laterReport(secondary, read.secondary, usedPercent) }
+      ? { secondary: laterWindow(secondary, read.secondary, sent?.secondary, readPlan) }
       : {}),
     ...(!sameIndividualLimit(individualLimit, sent?.individualLimit) &&
     individualLimit !== undefined
@@ -254,7 +256,26 @@ function sameIndividualLimit(
   );
 }
 
-const usedPercent = (window: CodexRateLimitWindow) => window.usedPercent;
+// Codex omits resets it does not know. A reset the request never had is not one the
+// notification cleared, so the read fills it while the window and plan match and usage has not
+// rolled over.
+function laterWindow(
+  notified: CodexRateLimitWindow | null,
+  read: CodexRateLimitSnapshot["primary"],
+  sent: CodexRateLimitSnapshot["primary"],
+  readPlan: boolean,
+): CodexRateLimitWindow | null {
+  return readPlan &&
+    notified &&
+    read &&
+    notified.resetsAt == null &&
+    read.resetsAt != null &&
+    sent?.resetsAt == null &&
+    (notified.windowDurationMins ?? null) === (read.windowDurationMins ?? null) &&
+    notified.usedPercent >= read.usedPercent
+    ? { ...notified, resetsAt: read.resetsAt }
+    : laterReport(notified, read, (window) => window.usedPercent);
+}
 
 // Usage only grows within a window, so a lower report of the same reset is a late tick from a
 // concurrent stream.

@@ -5604,6 +5604,96 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         },
         read: { secondary: { usedPercent: 100, resetsAt: 2000100000 } },
         resetAt: "2033-05-19T07:20:00.000Z",
+        windows: [
+          {
+            id: "secondary",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 100,
+            windowDurationMins: 10_080,
+            resetsAt: "2033-05-19T07:20:00.000Z",
+          },
+        ],
+      },
+    },
+    {
+      name: "unknown-reset-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: {},
+        during: { primary: { usedPercent: 100 } },
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: "2033-05-19T07:20:00.000Z",
+      },
+    },
+    {
+      name: "first-unknown-reset-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        during: { secondary: { usedPercent: 100 } },
+        read: { secondary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: "2033-05-19T07:20:00.000Z",
+      },
+    },
+    {
+      name: "cleared-reset-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: { primary: { usedPercent: 99, resetsAt: 2000100000 } },
+        during: { primary: { usedPercent: 100 } },
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: null,
+      },
+    },
+    {
+      name: "resized-window-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: {},
+        during: { primary: { usedPercent: 100, windowDurationMins: 10_080 } },
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000, windowDurationMins: 300 } },
+        resetAt: null,
+      },
+    },
+    {
+      name: "plan-change-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: { planType: "plus" },
+        during: { planType: "free", primary: { usedPercent: 100 } },
+        read: { planType: "plus", primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: null,
+      },
+    },
+    {
+      name: "rolled-window-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: {},
+        during: { primary: { usedPercent: 5 } },
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: null,
+        windows: [
+          {
+            id: "primary",
+            kind: "session",
+            label: "Session",
+            usedPercent: 5,
+            windowDurationMins: 300,
+          },
+        ],
       },
     },
     {
@@ -5852,7 +5942,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 ]
               : []),
-            ...("race" in scenario ? [codexRateLimits(scenario.race.before)] : []),
+            ...("race" in scenario && "before" in scenario.race
+              ? [codexRateLimits(scenario.race.before)]
+              : []),
             ...(scenario.name === "deferred-reset" ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -6096,18 +6188,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(usageCallbackDied, scenario.name === "reset-read-callback-defect");
         if (scenario.name === "late-reset") assert.isNull(terminal.failure.resetAt);
         if ("race" in scenario) assert.equal(terminal.failure.resetAt, scenario.race.resetAt);
-        if (scenario.name === "complete-read")
+        if ("race" in scenario && "windows" in scenario.race)
           assert.deepInclude(usageUpdates.at(-1), {
-            windows: [
-              {
-                id: "secondary",
-                kind: "weekly",
-                label: "Weekly",
-                usedPercent: 100,
-                windowDurationMins: 10_080,
-                resetsAt: resetAt,
-              },
-            ],
+            windows: scenario.race.windows,
             replaceWindows: true,
           });
         if (scenario.name === "matching-details")
