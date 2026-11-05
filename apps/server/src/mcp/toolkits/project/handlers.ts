@@ -150,8 +150,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             });
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         }
+        // An omitted startFromOrigin follows the new-worktree setting, as the composer and
+        // t3_worktree_handoff do. Otherwise a stale local branch silently becomes the base.
+        const strategy =
+          input.workspaceStrategy?.type === "worktree" &&
+          input.workspaceStrategy.startFromOrigin === undefined
+            ? {
+                ...input.workspaceStrategy,
+                startFromOrigin: resolveProjectSettings(
+                  yield* ServerSettings.ServerSettingsService.pipe(
+                    Effect.flatMap((settings) => settings.getSettings),
+                    Effect.mapError(unavailable),
+                  ),
+                  projectId,
+                  yield* readProject,
+                ).settings.newWorktreesStartFromOrigin,
+              }
+            : input.workspaceStrategy;
         // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
-        const strategy = input.workspaceStrategy;
         if (!replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
             Effect.flatMap((launches) =>
@@ -231,7 +247,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
-          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          workspaceStrategy: strategy ?? { type: "root" },
           ...(input.message === undefined && attachments.length === 0
             ? {}
             : {
