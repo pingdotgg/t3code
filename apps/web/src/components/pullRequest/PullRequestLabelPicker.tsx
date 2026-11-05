@@ -65,7 +65,7 @@ export function PullRequestLabelPicker({
       if (result._tag !== "Failure") continue;
       toastManager.add({
         type: "error",
-        title: `Could not ${applied ? "add" : "remove"} ${names.join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
+        title: `Could not ${applied ? "add" : "remove"} ${names.slice(start).join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused it. Check that you have triage access on this repository.",

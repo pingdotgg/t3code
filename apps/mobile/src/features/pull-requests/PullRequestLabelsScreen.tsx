@@ -71,7 +71,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
       if (!AsyncResult.isFailure(response)) continue;
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        `Couldn't ${applied ? "add" : "remove"} ${names.join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
+        `Couldn't ${applied ? "add" : "remove"} ${names.slice(start).join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
         cause instanceof Error ? cause.message : "The provider refused the change. Try again.",
       );
       return false;
