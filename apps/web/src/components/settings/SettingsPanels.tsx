@@ -224,7 +224,7 @@ export function AboutVersionSection() {
 
     if (action === "install") {
       if (isUpdateActionPending || updateRun !== null) return;
-      if (everything.hasUpdates) {
+      if (everything.hasUpdates || everything.rows.some((row) => row.skipped !== null)) {
         setIsConfirmingEverything(true);
         return;
       }

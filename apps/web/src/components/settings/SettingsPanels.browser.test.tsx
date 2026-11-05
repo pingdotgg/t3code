@@ -8,6 +8,7 @@ import { AboutVersionSection } from "./SettingsPanels";
 
 const mocks = vi.hoisted(() => ({
   status: "downloaded" as DesktopUpdateState["status"],
+  skipReason: null as string | null,
   confirm: null as unknown as (message: string) => Promise<boolean>,
 }));
 vi.mock("../../state/desktopUpdate", async (importOriginal) => ({
@@ -38,7 +39,7 @@ vi.mock("../../localApi", async (importOriginal) => ({
 vi.mock("../sidebar/useUpdateEverything", () => ({
   isHostedByThisApp: () => false,
   useUpdateEverything: () => ({
-    hasUpdates: true,
+    hasUpdates: mocks.skipReason === null,
     summary: "Update this app and 1 server",
     version: "0.1.7",
     providerCount: 0,
@@ -47,8 +48,8 @@ vi.mock("../sidebar/useUpdateEverything", () => ({
       {
         environmentId: EnvironmentId.make("service"),
         label: "Background service",
-        app: "server",
-        skipped: null,
+        app: mocks.skipReason === null ? "server" : null,
+        skipped: mocks.skipReason,
         providers: [],
       },
     ],
@@ -58,29 +59,43 @@ vi.mock("../sidebar/useUpdateEverything", () => ({
 }));
 vi.mock("./CliCommandSettingsRow", () => ({ CliCommandSettingsRow: () => null }));
 
-function setup() {
+function setup(skipReason: string | null) {
   mocks.status = "downloaded";
-  const confirm = vi.fn(async () => true);
+  mocks.skipReason = skipReason;
+  const confirm = vi.fn(async () => false);
   mocks.confirm = confirm;
   return { confirm };
 }
 
-it("reviews the paired service with the app before About installs an update", async () => {
-  const { confirm } = setup();
-  using _bridge = stubGlobal("desktopBridge", { installUpdate: vi.fn() });
-  await using screen = await render(<AboutVersionSection />);
+it.each([null, "no permission"])(
+  "reviews the paired service before installing (skip: %s)",
+  async (skipReason) => {
+    const { confirm } = setup(skipReason);
+    const installUpdate = vi.fn();
+    using _bridge = stubGlobal("desktopBridge", { installUpdate });
+    await using screen = await render(<AboutVersionSection />);
 
-  await screen.getByRole("button", { name: "Install" }).click();
+    await screen.getByRole("button", { name: "Install" }).click();
 
-  await expect.element(page.getByText("Update 2 machines?")).toBeVisible();
-  await expect.element(page.getByText("Background service")).toBeVisible();
-  expect(confirm).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByText(skipReason === null ? "Update 2 machines?" : "Update 1 machine?"))
+      .toBeVisible();
+    if (skipReason !== null) {
+      await page.getByRole("button", { name: "1 skipped" }).click();
+      await expect.element(page.getByText(skipReason, { exact: true })).toBeVisible();
+    }
+    await expect.element(page.getByText("Background service")).toBeVisible();
+    expect(confirm).not.toHaveBeenCalled();
 
-  mocks.status = "checking";
-  await screen.rerender(<AboutVersionSection />);
-  await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeDisabled();
+    mocks.status = "checking";
+    await screen.rerender(<AboutVersionSection />);
+    await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeDisabled();
 
-  mocks.status = "downloaded";
-  await screen.rerender(<AboutVersionSection />);
-  await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeEnabled();
-});
+    mocks.status = "downloaded";
+    await screen.rerender(<AboutVersionSection />);
+    await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+    expect(installUpdate).not.toHaveBeenCalled();
+  },
+);
