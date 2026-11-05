@@ -265,11 +265,11 @@ function YourLayoutHeader({
       </div>
       {/* Ghost buttons hang by their 8px inline inset so the last label ends on the card edge. */}
       <div className="-me-2 flex shrink-0 items-center gap-1">
-        <Button size="xs" variant="ghost-muted" disabled={!canUndo} onClick={onUndo}>
+        <Button size="standard" variant="ghost-muted" disabled={!canUndo} onClick={onUndo}>
           <Undo2Icon aria-hidden />
           Undo
         </Button>
-        <Button size="xs" variant="ghost-muted" disabled={!canReset} onClick={onReset}>
+        <Button size="standard" variant="ghost-muted" disabled={!canReset} onClick={onReset}>
           <RotateCcwIcon aria-hidden />
           Reset
         </Button>
