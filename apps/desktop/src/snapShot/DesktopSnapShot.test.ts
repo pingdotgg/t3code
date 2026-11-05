@@ -794,6 +794,10 @@ it.effect.each(["darwin", "win32"] as const)(
           flashWindows.flatMap((window) => window.shownOnFullScreen),
           flashWindows.map(() => platform === "darwin"),
         );
+        assert.deepEqual(
+          flashWindows.map((window) => window.options.type),
+          flashWindows.map(() => (platform === "darwin" ? "panel" : undefined)),
+        );
 
         for (let repeat = 0; repeat < 20; repeat++) {
           yield* TestClock.adjust("200 millis");
@@ -844,6 +848,7 @@ it.effect.each([
           [joinsFullScreenSpace],
           "flash overlay can join the captured app's full-screen Space when shown",
         );
+        assert.equal(flashWindows[0]!.options.type, joinsFullScreenSpace ? "panel" : undefined);
       }),
     ).pipe(Effect.provide(fixture.layer), Effect.ensuring(Effect.sync(fixture.reset)));
   },
