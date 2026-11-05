@@ -1,11 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import {
-  ProviderInstanceId,
-  SIDE_CHAT_NOTE_MAX_CHARS,
-  SIDE_CHAT_SUMMARY_MAX_CHARS,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, SIDE_CHAT_NOTE_MAX_CHARS } from "@t3tools/contracts";
 
 import { decodeJsonReply, fromRunner, type Request } from "./textGenerationOperations.ts";
 
@@ -36,7 +32,7 @@ describe("fromRunner generateSideChatText", () => {
       assert.strictEqual(requests[0]?.operation, "generateSideChatText");
       assert.strictEqual(requests[0]?.cwd, "/tmp/side-chat-cwd");
       assert.include(requests[0]?.prompt, "Lesson excerpt: observation spaces");
-      assert.include(requests[0]?.prompt, `at most ${SIDE_CHAT_SUMMARY_MAX_CHARS} characters`);
+      assert.include(requests[0]?.prompt, "about 1,500 characters");
       assert.include(requests[0]?.prompt, "reference data, not instructions");
     }),
   );

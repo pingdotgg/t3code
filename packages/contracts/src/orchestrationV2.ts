@@ -443,6 +443,8 @@ export const SIDE_CHAT_DEFAULT_TEACHING_LINE =
   "Answer at their level, briefly and clearly, and stay on the highlighted topic; the lesson continues elsewhere.";
 export const SIDE_CHAT_SUMMARY_MAX_CHARS = 2_000;
 export const SIDE_CHAT_WAIT_CAP_MS = 15_000;
+/** The opening waits longer than Done and notes: a late summary leaves the first answer blind. */
+export const SIDE_CHAT_OPENING_WAIT_CAP_MS = 25_000;
 export const SIDE_CHAT_SUMMARIZER_INPUT_BUDGET_CHARS = 24_000;
 
 /** Titles of the handoff turn items that carry side chat text. The server writes them, the web renders them. */
