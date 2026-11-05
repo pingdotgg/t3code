@@ -23,7 +23,7 @@ export function ComposerContextLabel({
           ? "flex-1 overflow-x-clip overflow-y-visible text-left"
           : compactable
             ? "max-w-[240px] transition-[margin-inline-start] duration-180 ease-drawer group-data-[compact]/composer-context:-ms-1.5 group-data-[compact]/composer-context:max-w-0 motion-reduce:transition-none"
-            : "max-w-[240px] group-data-[compact=branch]/composer-context:max-w-24",
+            : "group-data-[compact=branch]/composer-context:max-w-24",
       )}
     >
       <span
