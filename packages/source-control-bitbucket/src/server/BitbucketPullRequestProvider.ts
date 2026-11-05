@@ -61,7 +61,10 @@ export function bitbucketViewerPermissions(input: {
 export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
 ): PullRequestProviderFailure {
-  if (error._tag === "BitbucketResponseError" && error.status === 401) {
+  if (
+    (error._tag === "BitbucketResponseError" && error.status === 401) ||
+    error._tag === "SettingsSecretUnresolvedError"
+  ) {
     return { reason: "unauthenticated" };
   }
   if (error._tag === "SourceControlRateLimitPausedError") {
@@ -135,7 +138,7 @@ export const make = Effect.gen(function* () {
         provider: SourceControlProviderKind.make("bitbucket"),
         operation,
         ...bitbucketProviderFailure(error),
-        detail: error.detail,
+        detail: error._tag === "SettingsSecretUnresolvedError" ? error.message : error.detail,
         cause: error,
       });
 
