@@ -58,6 +58,10 @@ interface AdaptiveWorkspaceContextValue {
    * (the unfolded Duo). The native split switches between them as a rotation starts.
    */
   readonly sidebarByOrientation: { readonly landscape: boolean; readonly portrait: boolean } | null;
+  /** Android split: the composer's keyboard slides the sidebar, from focus until it lets go. */
+  readonly keyboardHoldsSidebar?: boolean;
+  /** Android split: the width a workspace page (Usage) opens at; null without columns. */
+  readonly workspacePageWidth?: number | null;
   /** The thread composer reports its focus so the layout can make room for typing. */
   readonly setComposerEditing: (editing: boolean) => void;
 }
