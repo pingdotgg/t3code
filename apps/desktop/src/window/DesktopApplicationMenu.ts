@@ -65,7 +65,6 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
-// The sidebar owns installing: it confirms first, because restarting interrupts running tasks.
 const INSTALL_FROM_SIDEBAR = "Install it from the update button at the bottom of the sidebar.";
 
 function describeUpdate(
