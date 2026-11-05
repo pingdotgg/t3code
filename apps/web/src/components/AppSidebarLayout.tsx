@@ -353,9 +353,13 @@ function SidebarControl() {
     context: { usagePageOpen },
   });
   const onStageBackdrop = isSidebarVisible && stageBackdropVariant !== null;
+  const overviewOpen = useLayoutStore((state) => state.overviewOpen);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles the sidebar on its shortcut
   useEffect(() => {
+    const toggleOutsideOverview = () => {
+      if (!useLayoutStore.getState().overviewOpen) toggleSidebar();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (
@@ -387,12 +391,12 @@ function SidebarControl() {
 
       event.preventDefault();
       event.stopPropagation();
-      toggleSidebar();
+      toggleOutsideOverview();
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "sidebar.toggle") toggleSidebar();
+      if (action === "sidebar.toggle") toggleOutsideOverview();
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
@@ -426,6 +430,7 @@ function SidebarControl() {
               className={cn(
                 "pointer-events-auto",
                 isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                overviewOpen && "invisible",
               )}
               aria-label="Toggle main sidebar"
             />
