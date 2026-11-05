@@ -217,7 +217,9 @@ describe("evaluatePullRequestWatch", () => {
 
     const done = detail({ checks: [sonar, check("unit", "success"), check("e2e", "success")] });
     const final = evaluatePullRequestWatch(waiting.next, done, noRemarks);
-    assert.deepEqual(final.changes, [{ kind: "checks-finished", failing: [sonar] }]);
+    assert.deepEqual(final.changes, [
+      { kind: "checks-finished", failing: [sonar], required: false },
+    ]);
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
 
     // An owed check stays owed while it runs, even when the failed one turns required.
@@ -242,7 +244,7 @@ describe("evaluatePullRequestWatch", () => {
     });
     assert.deepEqual(evaluatePullRequestWatch(waiting.next, finishedWithBot, noRemarks).changes, [
       { kind: "checks-failed", failed: [bot] },
-      { kind: "checks-finished", failing: [sonar, bot] },
+      { kind: "checks-finished", failing: [sonar, bot], required: false },
     ]);
 
     // A later failure is its own wake and leaves nothing more owed.
@@ -264,7 +266,7 @@ describe("evaluatePullRequestWatch", () => {
     const settled = detail({ checks: [sonar, check("unit", "failure"), check("e2e", "success")] });
     const last = evaluatePullRequestWatch(second.next, settled, noRemarks);
     assert.deepEqual(last.changes, [
-      { kind: "checks-finished", failing: [sonar, check("unit", "failure")] },
+      { kind: "checks-finished", failing: [sonar, check("unit", "failure")], required: false },
     ]);
   });
 
@@ -295,7 +297,7 @@ describe("evaluatePullRequestWatch", () => {
     });
     const final = evaluatePullRequestWatch(first.next, done, noRemarks);
     assert.deepEqual(final.changes, [
-      { kind: "checks-finished", failing: [required("lint", "failure")] },
+      { kind: "checks-finished", failing: [required("lint", "failure")], required: true },
     ]);
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
     const message = pullRequestWatchMessage({
@@ -309,7 +311,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.equal(message.notification.summary, "#7: checks finished");
     assert.include(
       message.text,
-      "- The checks still running when one failed have finished on aaaaaaa. Still failing:\n  - lint https://ci.example/lint",
+      "- The required checks still running when one failed have finished on aaaaaaa. Still failing:\n  - lint https://ci.example/lint",
     );
 
     // A new advisory failure keeps what was owed rather than owing a required check started since.

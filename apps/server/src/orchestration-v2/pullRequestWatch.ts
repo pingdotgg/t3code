@@ -17,7 +17,11 @@ const SNIPPET_LENGTH = 200;
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
-  | { readonly kind: "checks-finished"; readonly failing: ReadonlyArray<PullRequestCheck> }
+  | {
+      readonly kind: "checks-finished";
+      readonly failing: ReadonlyArray<PullRequestCheck>;
+      readonly required: boolean;
+    }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" };
@@ -100,7 +104,11 @@ export function evaluatePullRequestWatch(
         : stillOwed;
       const owedFailed = newlyFailed.some((check) => owedBefore.includes(check.name));
       if (!owedFailed && owedBefore.length > 0 && owedChecks.length === 0) {
-        changes.push({ kind: "checks-finished", failing: gate.filter(isFailedCheck) });
+        changes.push({
+          kind: "checks-finished",
+          failing: gate.filter(isFailedCheck),
+          required: owedBefore.every((name) => required.some((check) => check.name === name)),
+        });
       }
     }
     passed = passedNow;
@@ -223,7 +231,7 @@ function changeLines(
       ];
     case "checks-finished":
       return [
-        `- The checks still running when one failed have finished${context.commit}. Still failing:`,
+        `- The ${change.required ? "required " : ""}checks still running when one failed have finished${context.commit}. Still failing:`,
         ...listed(
           change.failing,
           (check) => `  - ${check.name}${check.url ? ` ${check.url}` : ""}`,
