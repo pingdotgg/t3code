@@ -59,6 +59,7 @@ export function ComposerControlsBar(props: {
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   restingHiddenBlockCount: number;
   iconOnlyBlockCount: number;
+  traitsIconOnly: boolean;
   pickerIconOnly: boolean;
   showProviderUnavailable: boolean;
   providerSetupInstanceId: ProviderInstanceId | undefined;
@@ -102,6 +103,7 @@ export function ComposerControlsBar(props: {
     handleRuntimeModeChange,
     restingHiddenBlockCount: measuredHiddenBlockCount,
     iconOnlyBlockCount,
+    traitsIconOnly,
     pickerIconOnly,
     showProviderUnavailable,
     providerSetupInstanceId,
@@ -209,8 +211,8 @@ export function ComposerControlsBar(props: {
         // Icon-only: the 16px icon box already pads its 11px glyph, so 6px matches the other chips' ink inset.
         "@max-[620px]/composer-surface:min-w-0 @max-[620px]/composer-surface:px-1.5 @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:pointer-events-none @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:invisible @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:absolute @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-max @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:max-w-none",
         pickerIconOnly
-          ? "min-w-0 shrink-0 px-1.5 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
-          : "min-w-13 shrink",
+          ? "min-w-0 shrink-0 @min-[620px]/composer-surface:[&>span:has(>[data-chat-provider-model-picker-label])]:-mx-0.5 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
+          : "shrink-0",
       )}
       effortColumn={
         hasComposerModelOptions(traitsInput) ? (
@@ -249,11 +251,11 @@ export function ComposerControlsBar(props: {
       {traitsInput ? (
         <div
           data-resting-fixed-control
-          data-composer-block-icon-only={pickerIconOnly ? "true" : "false"}
+          data-composer-block-icon-only={traitsIconOnly ? "true" : "false"}
           className={cn(
             "flex shrink-0 items-center",
             "@max-[620px]/composer-surface:[&_[data-composer-control-label]]:pointer-events-none @max-[620px]/composer-surface:[&_[data-composer-control-label]]:invisible @max-[620px]/composer-surface:[&_[data-composer-control-label]]:absolute @max-[620px]/composer-surface:[&_[data-composer-control-label]]:w-max @max-[620px]/composer-surface:[&_[data-composer-control-label]]:max-w-none",
-            pickerIconOnly &&
+            traitsIconOnly &&
               "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none",
           )}
         >
