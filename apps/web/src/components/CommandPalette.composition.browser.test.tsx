@@ -144,4 +144,6 @@ it("keeps the caret in place when an edit briefly makes the folder path not a pa
   await expect.element(input()).toHaveValue("workspace/project");
   await userEvent.keyboard("/");
   await expect.element(input()).toHaveValue("/workspace/project");
+  await userEvent.keyboard("w");
+  await expect.element(input()).toHaveValue("/wworkspace/project");
 });
