@@ -2,16 +2,142 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
 import type { SpeechStreamText } from "@t3tools/contracts";
+import { createSpeechAudio } from "./audio.ts";
 
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
 const entry = `
+const createSpeechAudio = ${createSpeechAudio.toString()};
+let speech;
 let model;
+let vadModel;
+let vad;
 let session;
 let stream;
+let audio;
+let options;
+let nativeStreaming;
+let useVad;
+let scored;
+let revision;
+let texts;
+let heardAudio;
+const warnVad = () => console.warn("Silero silence filtering unavailable; preserving raw recording and using bounded ASR chunks.");
+const resetAsr = () => {
+  if (stream) stream.reset();
+  if (session) session.dispose();
+  stream = session = undefined;
+};
+const newAudio = (filterSilence) => createSpeechAudio({
+  frameSamples: 512, filterSilence, nativeStreaming: model.capabilities.supportsStreaming,
+  longForm: model.supports("long_form"), maxAudioMs: model.capabilities.maxAudioMs,
+});
+const openAsr = async () => {
+  if (nativeStreaming) {
+    session = model.createSession();
+    stream = await session.stream(options);
+  }
+};
+const begin = async (message, live) => {
+  resetAsr();
+  options = message.options;
+  nativeStreaming = live && model.capabilities.supportsStreaming;
+  texts = [];
+  scored = revision = 0;
+  heardAudio = false;
+  useVad = Boolean(message.vadPath) && (message.filterSilence ||
+    (!model.capabilities.supportsStreaming && !model.supports("long_form")));
+  if (useVad) {
+    try {
+      if (!vadModel) {
+        vadModel = await speech.TranscribeModel.load(message.vadPath, { backend: "cpu" });
+        if (vadModel.vadInfo.sampleRate !== 16000 || vadModel.vadInfo.frameSamples !== 512)
+          throw new Error("Unsupported Silero model frames.");
+        vad = vadModel.createVadSession({ nThreads: 1 });
+      }
+      await vad.streamReset();
+    } catch {
+      vad?.dispose();
+      vadModel?.dispose();
+      vad = vadModel = undefined;
+      useVad = false;
+      warnVad();
+    }
+  }
+  audio = newAudio(useVad && message.filterSilence);
+  await openAsr();
+};
+const transcribe = async (pcm) => {
+  try {
+    const result = await model.transcribe(pcm, options);
+    texts.push(result.text);
+  } catch (error) {
+    if ((error?.constructor?.name !== "OutputTruncated" &&
+         error?.constructor?.name !== "InputTooLong") || pcm.length <= 4000) throw error;
+    const middle = Math.floor(pcm.length / 2);
+    await transcribe(pcm.subarray(0, middle));
+    await transcribe(pcm.subarray(middle));
+  }
+};
+const decode = async (final) => {
+  let preview = null;
+  for (const pcm of audio.take(final)) {
+    if (!pcm.length) continue;
+    heardAudio = true;
+    if (nativeStreaming) {
+      const update = await stream.feed(pcm);
+      if (update.committedChanged || update.tentativeChanged) {
+        const text = stream.text;
+        preview = { committed: text.committed, tentative: text.tentative };
+      }
+    } else {
+      await transcribe(pcm);
+      preview = { committed: texts.join(" ").trim(), tentative: "" };
+    }
+  }
+  return preview;
+};
+const feed = async (pcm, final = false) => {
+  if (pcm) audio.append(pcm);
+  try {
+    if (useVad) {
+      if (pcm) {
+        const result = await vad.streamFeed(pcm);
+        audio.score(result.firstFrame, result.probs);
+        if (result.firstFrame + result.probs.length !== Math.floor(audio.samples() / 512))
+          throw new Error("Incomplete Silero frames.");
+      }
+      if (final) {
+        const result = await vad.streamFlush();
+        audio.score(result.firstFrame, result.probs);
+        if (result.firstFrame + result.probs.length !== Math.ceil(audio.samples() / 512))
+          throw new Error("Incomplete Silero tail.");
+      }
+    } else {
+      const count = final ? Math.ceil(audio.samples() / 512) : Math.floor(audio.samples() / 512);
+      audio.score(scored, new Array(count - scored).fill(1));
+      scored = count;
+    }
+  } catch {
+    // Replay on optional VAD failure, including audio it had withheld; ASR errors stay separate.
+    const raw = audio.audio();
+    useVad = false;
+    warnVad();
+    resetAsr();
+    texts = [];
+    heardAudio = false;
+    audio = newAudio(false);
+    audio.append(raw);
+    scored = final ? Math.ceil(raw.length / 512) : Math.floor(raw.length / 512);
+    audio.score(0, new Array(scored).fill(1));
+    await openAsr();
+  }
+  return await decode(final);
+};
 process.on("message", async (message) => {
   try {
     if (message.kind === "load") {
-      const { TranscribeModel, getAvailableBackends } = await loadSpeechModule(message.moduleUrl);
+      speech = await loadSpeechModule(message.moduleUrl);
+      const { TranscribeModel, getAvailableBackends } = speech;
       const device = message.acceleration.startsWith("gpu:")
         ? getAvailableBackends().find((item) =>
             (item.deviceType === "gpu" || item.deviceType === "igpu") &&
@@ -19,80 +145,40 @@ process.on("message", async (message) => {
         : undefined;
       if (message.acceleration.startsWith("gpu:") && !device)
         throw new Error("The selected speech GPU is unavailable.");
-      model = await TranscribeModel.load(message.path, device
-        ? { device }
-        : { backend: message.acceleration });
+      model = await TranscribeModel.load(message.path, device ? { device } : { backend: message.acceleration });
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming,
+        supportsLongForm: model.supports("long_form"),
         supportsTranslation: model.capabilities.supportsTranslate,
         supportsVocabulary: model.supports("vocabulary") });
     } else if (message.kind === "begin") {
-      session = model.createSession();
-      stream = await session.stream({ timestamps: "none", language: message.language,
-        vocabulary: message.vocabulary });
+      await begin(message, true);
       process.send({ type: "t3-speech-reply", ok: true });
     } else if (message.kind === "feed") {
-      const update = await stream.feed(message.pcm);
-      const text = update.committedChanged || update.tentativeChanged ? stream.text : null;
-      process.send({ type: "t3-speech-reply", ok: true, revision: update.revision,
-        preview: text ? { committed: text.committed, tentative: text.tentative } : null });
+      const preview = await feed(message.pcm);
+      process.send({ type: "t3-speech-reply", ok: true, revision: ++revision, preview });
     } else if (message.kind === "finish") {
-      await stream.finalize();
-      const text = stream.text.full;
-      stream.reset();
-      session.dispose();
-      stream = session = undefined;
+      await feed(undefined, true);
+      if (nativeStreaming && heardAudio) await stream.finalize();
+      const text = nativeStreaming ? (heardAudio ? stream.text.full : "") : texts.join(" ").trim();
+      resetAsr();
+      audio = undefined;
       process.send({ type: "t3-speech-reply", ok: true, text });
     } else if (message.kind === "reset") {
-      stream.reset();
-      session.dispose();
-      stream = session = undefined;
+      resetAsr();
+      if (vad) await vad.streamReset();
+      audio = undefined;
       process.send({ type: "t3-speech-reply", ok: true });
     } else if (message.kind === "transcribe") {
-      // Leave unbounded models alone. Use headroom for output-bound models:
-      // maxAudioMs is an estimate, so dense speech may still need smaller pieces.
-      const limit = model.capabilities.maxAudioMs;
-      const chunkSamples = limit > 0 ? Math.max(4000, Math.floor(limit * 16 / 2)) : message.pcm.length;
-      const texts = [];
-      const transcribe = async (pcm) => {
-        try {
-          const result = await model.transcribe(pcm, message.options);
-          texts.push(result.text);
-        } catch (error) {
-          if ((error?.constructor?.name !== "OutputTruncated" &&
-               error?.constructor?.name !== "InputTooLong") || pcm.length <= 4000) throw error;
-          const middle = Math.floor(pcm.length / 2);
-          await transcribe(pcm.subarray(0, middle));
-          await transcribe(pcm.subarray(middle));
-        }
-      };
-      let offset = 0;
-      while (offset < message.pcm.length) {
-        let end = Math.min(offset + chunkSamples, message.pcm.length);
-        if (end < message.pcm.length) {
-          // Prefer the quietest 20 ms frame in the final quarter of the window.
-          let quietest = Infinity;
-          const windowEnd = end;
-          for (let start = offset + Math.floor(chunkSamples * 0.75); start + 320 <= windowEnd; start += 320) {
-            let energy = 0;
-            for (let i = start; i < start + 320; i++) energy += message.pcm[i] ** 2;
-            if (energy < quietest) {
-              quietest = energy;
-              end = start + 160;
-            }
-          }
-        }
-        await transcribe(message.pcm.subarray(offset, end));
-        offset = end;
-      }
-      process.send({ type: "t3-speech-reply", ok: true, text: texts.join(" ").trim() });
+      await begin(message, false);
+      await feed(message.pcm, true);
+      const text = texts.join(" ").trim();
+      audio = undefined;
+      process.send({ type: "t3-speech-reply", ok: true, text });
     }
   } catch (error) {
-    process.send({
-      type: "t3-speech-reply",
-      ok: false,
-      error: error instanceof Error ? error.stack ?? error.message : String(error),
-    });
+    process.send({ type: "t3-speech-reply", ok: false,
+      error: error instanceof Error ? error.stack ?? error.message : String(error) });
   }
 });
 process.on("disconnect", () => process.exit(0));
@@ -104,6 +190,7 @@ type Reply = {
   readonly text?: string;
   readonly error?: string;
   readonly supportsStreaming?: boolean;
+  readonly supportsLongForm?: boolean;
   readonly supportsTranslation?: boolean;
   readonly supportsVocabulary?: boolean;
   readonly backend?: string;
@@ -305,10 +392,11 @@ async function loadNativeSpeechModelOnce(
   return {
     backend: loaded.backend ?? "unknown",
     supportsStreaming: loaded.supportsStreaming === true,
+    supportsLongForm: loaded.supportsLongForm === true,
     supportsTranslation: loaded.supportsTranslation === true,
     supportsVocabulary: loaded.supportsVocabulary === true,
-    begin: async (language?: string, vocabulary?: readonly string[]) => {
-      await send({ kind: "begin", language, vocabulary });
+    begin: async (options: NativeSpeechOptions, filterSilence: boolean, vadPath?: string) => {
+      await send({ kind: "begin", options, filterSilence, vadPath });
     },
     feed: async (pcm: Float32Array) => {
       const reply = await send({ kind: "feed", pcm });
@@ -343,18 +431,22 @@ async function loadNativeSpeechModelOnce(
     },
     transcribe: async (
       pcm: Float32Array,
-      options: {
-        readonly timestamps: "none";
-        readonly task?: "translate";
-        readonly targetLanguage?: "en";
-        readonly language?: string;
-        readonly vocabulary?: readonly string[];
-      },
+      options: NativeSpeechOptions,
+      filterSilence: boolean,
+      vadPath?: string,
     ) => {
-      const result = await send({ kind: "transcribe", pcm, options });
+      const result = await send({ kind: "transcribe", pcm, options, filterSilence, vadPath });
       if (typeof result.text !== "string") throw new Error("Invalid speech process response.");
       return { text: result.text };
     },
     dispose,
   };
 }
+
+type NativeSpeechOptions = {
+  readonly timestamps: "none";
+  readonly task?: "translate";
+  readonly targetLanguage?: "en";
+  readonly language?: string;
+  readonly vocabulary?: readonly string[];
+};

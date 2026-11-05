@@ -13,7 +13,6 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
-import { getSpeechModel, type SpeechModel } from "./model.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
 const bytes = Uint8Array.from({ length: 64 }, (_, index) => (index * 7) % 256);
@@ -21,8 +20,9 @@ const SPLIT = 20;
 
 const harness = Effect.gen(function* () {
   const digest = yield* Digest.Digest;
-  const model: SpeechModel = {
-    ...getSpeechModel("handy-computer/whisper-tiny-gguf")!,
+  const model = {
+    id: "fixture/speech-model",
+    revision: "a".repeat(40),
     filename: "model.gguf",
     size: bytes.length,
     sha256: Hex.encode(yield* digest.digest(Digest.sha256, bytes).pipe(Effect.orDie)),
@@ -121,10 +121,8 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
       undefined,
       `bytes=${SPLIT}-`,
     ]);
-    expect(h.requests.map((request) => request.url)).toEqual([
-      "https://huggingface.co/handy-computer/whisper-tiny-gguf/resolve/6687f30c99641ee265df421e582354adbc8848fc/model.gguf",
-      "https://huggingface.co/handy-computer/whisper-tiny-gguf/resolve/6687f30c99641ee265df421e582354adbc8848fc/model.gguf",
-    ]);
+    const pinnedUrl = `https://huggingface.co/${h.model.id}/resolve/${h.model.revision}/${h.model.filename}`;
+    expect(h.requests.map((request) => request.url)).toEqual([pinnedUrl, pinnedUrl]);
     expect(progress.at(0)).toBe(0);
     expect(progress.at(-1)).toBe(bytes.length);
     expect([...(yield* h.fs.readFile(installed))]).toEqual([...bytes]);
@@ -134,6 +132,9 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
     ]);
     expect(yield* h.store.isReady(h.model)).toBe(true);
     expect(yield* h.store.installedPath(h.model)).toBe(installed);
+    const requestsBeforeReuse = h.requests.length;
+    expect(yield* h.store.download(h.model)).toBe(installed);
+    expect(h.requests).toHaveLength(requestsBeforeReuse);
   }).pipe(Effect.provide(dependencies)),
 );
 
