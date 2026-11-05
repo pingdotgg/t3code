@@ -59,6 +59,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
         };
       }
       contexts.push(context);
+      contextCreated?.resolve(context);
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
@@ -321,6 +322,7 @@ const contexts: ReturnType<typeof makeContext>[] = [];
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let contextCreated: PromiseWithResolvers<ReturnType<typeof makeContext>> | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -482,6 +484,7 @@ beforeEach(() => {
   encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  contextCreated = null;
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
@@ -758,6 +761,108 @@ it.effect("an agent's desktop tab's popup windows become its tabs, drawn by the 
         input: {},
       });
       expect(afterFailure.tabs?.map((tab) => tab.tabId)).not.toContain(failedLateTab.tabId);
+
+      // A dialog holding a popup's setup holds neither a client's close nor other tabs' events.
+      const answered = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => answered.resolve()));
+      const holdSetUp = (url: string, holds: (method: string, input: unknown) => boolean) => {
+        const popup = makeContext(undefined, url);
+        const held = Promise.withResolvers<void>();
+        const reloaded = Promise.withResolvers<void>();
+        const newHeldSession = popup.newCDPSession;
+        popup.newCDPSession = async (target) => {
+          const session = await newHeldSession(target);
+          const send = session.send.getMockImplementation()!;
+          session.send.mockImplementation(async (method, input) => {
+            if (holds(method, input)) {
+              held.resolve();
+              await answered.promise;
+            }
+            if (method === "Page.reload") reloaded.resolve();
+            return send(method, input);
+          });
+          return session;
+        };
+        openerPage.emit("popup", popup.page);
+        const dialog = popup.page.openDialog();
+        dialog.accept.mockImplementation(async () => answered.resolve());
+        return { popup, dialog, held: held.promise, reloaded: reloaded.promise };
+      };
+      const heldProbe = holdSetUp(
+        "https://example.com/held-probe",
+        (method, input) =>
+          method === "Runtime.evaluate" &&
+          (input as { expression?: string }).expression === "navigator.pdfViewerEnabled",
+      );
+      const heldProbeTab = yield* nextOpened;
+      const heldEnable = holdSetUp(
+        "https://example.com/held-enable",
+        (method) => method === "Page.enable",
+      );
+      const heldEnableTab = yield* nextOpened;
+      yield* Effect.promise(() => Promise.all([heldProbe.held, heldEnable.held]));
+      const threadId = scope.thread.threadId;
+      for (const { tabId } of [heldProbeTab, heldEnableTab]) {
+        yield* manager.resize({
+          threadId,
+          tabId,
+          viewport: { _tag: "freeform", width: 900, height: 700 },
+        });
+        yield* manager.adjust({ threadId, tabId, colorScheme: "dark" });
+        yield* manager.adjust({ threadId, tabId, clear: "cache" });
+        yield* manager.adjust({ threadId, tabId, hardReload: true });
+      }
+      const closing = [heldProbe.popup.page, later.page].map(
+        (page) => new Promise<void>((resolve) => page.once("close", () => resolve())),
+      );
+      yield* manager.close({ threadId, tabId: heldProbeTab.tabId });
+      yield* manager.close({ threadId, tabId: laterTab.tabId });
+      yield* Effect.promise(() => Promise.all(closing));
+      const whileHeld = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: opener.tabId!,
+        operation: "status",
+        input: {},
+      });
+      const listed = whileHeld.tabs?.map((tab) => tab.tabId);
+      expect(listed).toContain(heldEnableTab.tabId);
+      expect(listed).not.toContain(heldProbeTab.tabId);
+      expect(listed).not.toContain(laterTab.tabId);
+      expect(heldProbe.dialog.accept).not.toHaveBeenCalled();
+      expect(heldProbe.dialog.dismiss).not.toHaveBeenCalled();
+
+      // Its setup refuses the closed tab once the dialog lets it finish.
+      const refused = Promise.withResolvers<void>();
+      const realClose = manager.close;
+      const closes = vi.spyOn(manager, "close").mockImplementation((input) => {
+        if (input.tabId === heldProbeTab.tabId) refused.resolve();
+        return realClose(input);
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => closes.mockRestore()));
+      yield* broker.invoke({
+        scope,
+        tabId: heldEnableTab.tabId,
+        operation: "dialog",
+        input: { accept: true },
+      });
+      yield* Effect.promise(() => refused.promise);
+      const afterSetUp = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: opener.tabId!,
+        operation: "status",
+        input: {},
+      });
+      expect(afterSetUp.tabs?.map((tab) => tab.tabId)).not.toContain(heldProbeTab.tabId);
+      // The open popup's settings, queued behind its setup, apply in the order they were made.
+      yield* Effect.promise(() => heldEnable.reloaded);
+      const sent = heldEnable.popup.sessions[0]!.send.mock;
+      const order = (method: string) =>
+        sent.invocationCallOrder[sent.calls.findIndex(([name]) => name === method)]!;
+      expect(heldEnable.popup.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
+      expect(heldEnable.popup.page.emulateMedia.mock.invocationCallOrder[0]).toBeLessThan(
+        order("Network.clearBrowserCache"),
+      );
+      expect(order("Network.clearBrowserCache")).toBeLessThan(order("Page.reload"));
 
       // A person's desktop tab keeps its popup windows to itself.
       desktopRendersNext = true;
@@ -2592,6 +2697,30 @@ it.live("failed session and browser launches release capacity, as does closing a
         input: {},
       });
       expect(status.tabs).toHaveLength(8);
+
+      // A person's tab closed while its browser launches is never listed or left open.
+      const launch = (contextGate = Promise.withResolvers<void>());
+      const created = (contextCreated = Promise.withResolvers<ReturnType<typeof makeContext>>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => launch.resolve()));
+      const closedEarly = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+      });
+      yield* manager.close({ threadId: scope.thread.threadId, tabId: closedEarly.tabId });
+      launch.resolve();
+      const { page } = yield* Effect.promise(() => created.promise);
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve) =>
+            page.isClosed() ? resolve() : page.once("close", () => resolve()),
+          ),
+      );
+      const afterClose = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(afterClose.tabs?.map((tab) => tab.tabId)).not.toContain(closedEarly.tabId);
     }),
   ).pipe(Effect.provide(layer)),
 );

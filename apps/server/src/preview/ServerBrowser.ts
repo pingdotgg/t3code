@@ -2397,43 +2397,66 @@ const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
+  // A dialog can hold a tab's setup for as long as a person leaves it open, so each tab's
+  // events wait only for that tab's earlier ones, and closing waits for none.
+  const tabEvents = new Map<string, Promise<void>>();
+  const afterTabEvents = (key: string, work: () => Promise<unknown>) => {
+    const next = (tabEvents.get(key) ?? Promise.resolve()).then(work).then(constVoid, constVoid);
+    tabEvents.set(key, next);
+    void next.then(() => {
+      if (tabEvents.get(key) === next) tabEvents.delete(key);
+    });
+  };
+
   const mirrorManagerEvent = (event: PreviewEvent) =>
-    Effect.promise(async () => {
-      if (event.type === "opened" && event.snapshot.runtime === "server") {
-        const key = tabKey(event.snapshot.threadId, event.snapshot.tabId);
-        if (event.snapshot.automationOwner === undefined || pendingTabs.has(key) || tabs.has(key))
-          await ensureTab(event.snapshot).catch(constVoid);
+    Effect.sync(() => {
+      const key = tabKey(event.threadId, event.tabId);
+      if (event.type === "opened") {
+        if (event.snapshot.runtime !== "server") return;
+        if (event.snapshot.automationOwner === undefined || pendingTabs.has(key) || tabs.has(key)) {
+          // Started now, so a later close finds it pending and it never registers.
+          const opening = ensureTab(event.snapshot);
+          afterTabEvents(key, () => opening);
+        }
         return;
       }
-      const key = tabKey(event.threadId, event.tabId);
-      const tab = tabs.get(key);
-      if (event.type === "closed" && !tab && pendingTabs.has(key)) closedPendingTabs.add(key);
-      if (!tab) return;
       if (event.type === "closed") {
+        const tab = tabs.get(key);
+        if (!tab) {
+          if (pendingTabs.has(key)) closedPendingTabs.add(key);
+          return;
+        }
         closedSessions.add(key);
         dropTab(tab, false);
         closedSessions.delete(key);
         return;
       }
-      if (event.type === "resized") {
-        await tab.control
-          .system(async () => {
-            if (
-              !viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)
-            ) {
-              await applySetting(tab, event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT);
-            }
-            await applyRendering(tab, event.snapshot);
-            const request = event.request;
-            if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
-            if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
-            if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
-          })
-          .catch((cause: unknown) =>
-            runFork(Effect.logWarning("server preview could not apply a tab setting", { cause })),
-          );
-      }
+      if (event.type === "resized") afterTabEvents(key, () => applyTabSetting(key, event));
     });
+
+  const applyTabSetting = async (
+    key: string,
+    event: Extract<PreviewEvent, { readonly type: "resized" }>,
+  ) => {
+    const tab = tabs.get(key);
+    if (!tab) return;
+    await tab.control
+      .system(async () => {
+        if (!viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)) {
+          await applySetting(tab, event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT);
+        }
+        await applyRendering(tab, event.snapshot);
+        const request = event.request;
+        if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
+        if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
+        if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
+      })
+      .catch((cause: unknown) => {
+        // Closing the tab ends the setting with it.
+        if (!tab.closing)
+          runFork(Effect.logWarning("server preview could not apply a tab setting", { cause }));
+      });
+  };
 
   const releaseViewerInput = async (viewer: ViewerState, session: CDPSession) => {
     for (const { key, code } of viewer.pressedKeys.values()) {
