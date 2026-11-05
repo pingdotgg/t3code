@@ -420,7 +420,7 @@ function SnoozeMenuButton(props: {
             }}
           >
             {preset.label}
-            <MenuShortcut>{preset.whenLabel}</MenuShortcut>
+            {preset.whenLabel ? <MenuShortcut>{preset.whenLabel}</MenuShortcut> : null}
           </MenuItem>
         ))}
         {presets.length > 0 ? <MenuSeparator /> : null}
