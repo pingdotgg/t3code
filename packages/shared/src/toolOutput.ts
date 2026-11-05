@@ -11,7 +11,12 @@ import {
   type HtmlRenderReference,
 } from "./htmlRender.ts";
 import { QUIZ_CARD_TOOL_NAME, readQuizCard, type QuizCard } from "./quizCard.ts";
-import { MCP_APP_OUTPUT_KEY, readMcpAppReference, type McpAppReference } from "./mcpApp.ts";
+import {
+  claudeMcpToolName,
+  MCP_APP_OUTPUT_KEY,
+  readMcpAppReference,
+  type McpAppReference,
+} from "./mcpApp.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
@@ -227,7 +232,11 @@ export function mcpAppFromToolItem(item: {
   readonly output?: unknown;
 }): McpAppReference | undefined {
   const app = compactDynamicToolOutput(item.output)?.[MCP_APP_OUTPUT_KEY];
-  return app !== undefined && item.toolName === `${app.server}.${app.tool}` ? app : undefined;
+  return app !== undefined &&
+    (item.toolName === `${app.server}.${app.tool}` ||
+      item.toolName === claudeMcpToolName(app.server, app.tool))
+    ? app
+    : undefined;
 }
 
 /** Some providers report completion even when command output describes a failure. */
