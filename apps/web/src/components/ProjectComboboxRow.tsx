@@ -57,7 +57,7 @@ export function ProjectRowActions(props: {
   readonly pin?: ReactNode;
 }) {
   return (
-    <span className="ml-auto flex shrink-0 items-center pointer-coarse:gap-5">
+    <span className="ml-auto flex shrink-0 items-center pointer-coarse:gap-1">
       {props.settings ? (
         <span className="flex pointer-fine:invisible pointer-fine:in-data-highlighted:visible">
           {props.settings}
