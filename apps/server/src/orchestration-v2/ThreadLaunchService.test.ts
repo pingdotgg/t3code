@@ -2463,11 +2463,11 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const check = (branch: string) =>
+      const check = (branch: string, baseRef = "main") =>
         launches
           .checkWorktreeBase({
             projectId,
-            workspaceStrategy: { type: "worktree", baseRef: "main", branch },
+            workspaceStrategy: { type: "worktree", baseRef, branch },
           })
           .pipe(
             Effect.match({
@@ -2489,16 +2489,17 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
       assert.deepEqual(
         yield* Effect.forEach(
           ["feature/idle", "feature/taken", "main", "feature/fresh", temporaryBranch],
-          check,
+          (branch) => check(branch),
         ),
         [
           refused("feature/idle"),
           refused("feature/taken"),
           refused("main"),
           { branch: "feature/fresh", outcome: "accepted" },
-          { branch: temporaryBranch, outcome: "accepted" },
+          refused(temporaryBranch),
         ],
       );
+      assert.deepEqual(yield* check("feature/taken", ":/initial"), refused("feature/taken"));
     }).pipe(Effect.provide(harness.layer));
   }).pipe(
     Effect.provide(

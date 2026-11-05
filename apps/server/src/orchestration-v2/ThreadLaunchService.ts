@@ -277,12 +277,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const strategy = input.workspaceStrategy;
     if (strategy.type !== "worktree") return;
-    const { baseRef } = strategy;
-    // Temporary names are flattened on collision; explicit names are never renamed.
-    const branch =
-      strategy.branch !== undefined && !isTemporaryWorktreeBranch(strategy.branch)
-        ? strategy.branch
-        : undefined;
+    const { baseRef, branch } = strategy;
     // `:/text` is a commit search, which cannot be asked for a commit type.
     const checkBase = !baseRef.startsWith(":");
     if (!checkBase && branch === undefined) return;
