@@ -18,6 +18,7 @@ import {
   ThreadId,
   RunId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -192,7 +193,7 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search active threads by title, branch, PR, project, then message text. Skips subagent threads. `projectId`: one project, else yours, else all outside a thread. Not exhaustive.",
+    "Search active threads by title, branch, PR, project, then message text. Skips subagents. Linked-PR hits use `source:'pull_request'`. For a specific PR or open-PR triage, prefer `t3_thread_list`. `projectId`: yours, else all. Not exhaustive.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...OrchestrationSearchThreadsInput.fields,
@@ -205,7 +206,14 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
         projectId: OrchestrationThreadSearchMatch.fields.projectId,
         title: Schema.String,
         link: Schema.optional(Schema.String),
-        source: Schema.Literals(["title", "user", "assistant"]),
+        source: Schema.Literals(["title", "pull_request", "user", "assistant"]),
+        pullRequest: Schema.optional(
+          Schema.Struct({
+            number: PositiveInt,
+            repository: Schema.String,
+            url: Schema.String,
+          }),
+        ),
         snippet: Schema.optional(OrchestrationThreadSearchMatch.fields.snippet),
         messageCreatedAt: Schema.optional(OrchestrationThreadSearchMatch.fields.messageCreatedAt),
       }),

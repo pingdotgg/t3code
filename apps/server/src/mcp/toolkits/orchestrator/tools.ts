@@ -224,7 +224,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
-    "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
+    "List threads newest first. Filter with `pullRequestStates` (open-PR triage: ['open']), `pullRequest` (specific number/url), `hasPullRequest`, status, settled/snoozed, or title. Prefer over search for structured questions. Subagents off by default. Page with `cursor`.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,

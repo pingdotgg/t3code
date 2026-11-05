@@ -32,7 +32,11 @@ import {
   scoreThreadSearch,
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
-import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
+import {
+  isPullRequestIdentityQuery,
+  matchThreadSearchPullRequest,
+  threadSearchPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
@@ -266,7 +270,12 @@ export interface ThreadSearchHit {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly title: string;
-  readonly source: "title" | OrchestrationThreadSearchSource;
+  readonly source: "title" | "pull_request" | OrchestrationThreadSearchSource;
+  readonly pullRequest?: {
+    readonly number: number;
+    readonly repository: string;
+    readonly url: string;
+  };
   readonly snippet?: string;
   readonly messageCreatedAt?: string | null;
 }
@@ -572,12 +581,30 @@ export const make = Effect.gen(function* () {
       }),
     )
       .slice(0, limit)
-      .map(({ item }) => ({
-        threadId: item.thread.id,
-        projectId: item.thread.projectId,
-        title: item.thread.title,
-        source: "title",
-      }));
+      .map(({ item }) => {
+        const pullRequest = matchThreadSearchPullRequest(
+          normalizedQuery,
+          threadSearchPullRequests(item.thread),
+        );
+        return pullRequest
+          ? {
+              threadId: item.thread.id,
+              projectId: item.thread.projectId,
+              title: item.thread.title,
+              source: "pull_request" as const,
+              pullRequest,
+            }
+          : {
+              threadId: item.thread.id,
+              projectId: item.thread.projectId,
+              title: item.thread.title,
+              source: "title" as const,
+            };
+      });
+    // PR number/URL lookups should not surface mention-only message hits.
+    if (isPullRequestIdentityQuery(normalizedQuery)) {
+      return { matches: titleHits };
+    }
     const shown = new Set(titleHits.map((hit) => hit.threadId));
     const { matches } = yield* searchMessages({
       query: input.query,

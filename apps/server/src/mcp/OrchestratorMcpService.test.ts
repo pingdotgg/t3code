@@ -3584,6 +3584,117 @@ describe("OrchestratorMcpService thread list", () => {
   );
 });
 
+describe("OrchestratorMcpService.listThreads pull request filters", () => {
+  const client: McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment:thread-list-pr"),
+    requestNamespace: "client:thread-list-pr",
+    thread: undefined,
+    client: { sessionId: "thread-list-pr", label: "Claude Code", access: "full-access" },
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+  const linkedAt = "2026-01-01T00:00:00.000Z";
+  const snapshot = (state: "open" | "closed" | "merged") => ({
+    state,
+    title: "Change",
+    headBranch: "feature",
+    baseBranch: "main",
+    isDraft: false,
+    updatedAt: linkedAt,
+    syncedAt: linkedAt,
+  });
+  const link = (
+    number: number,
+    state: "open" | "closed" | "merged" | null,
+    repository = "acme/app",
+  ) => ({
+    host: "github.com",
+    repository,
+    number,
+    url: `https://github.com/${repository}/pull/${number}`,
+    source: "created" as const,
+    linkedAt,
+    snapshot: state === null ? null : snapshot(state),
+    stack: null,
+  });
+  const shell = (
+    id: string,
+    pullRequests: ReturnType<typeof link>[] = [],
+  ): ReturnType<typeof liveThreadShell> => ({
+    ...liveThreadShell(ThreadId.make(id)),
+    status: "completed",
+    pullRequests,
+  });
+  const shells = [
+    shell("thread:open", [link(10, "open")]),
+    shell("thread:merged", [link(11, "merged")]),
+    shell("thread:unsynced", [link(12, null)]),
+    shell("thread:none"),
+    shell("thread:other-repo", [link(10, "open", "other/app")]),
+  ];
+  const service = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listProjectThreads: () => Effect.succeed(shells),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      ),
+    ),
+  );
+
+  it.effect("filters by open state, presence, and exact PR identity", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const open = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:mcp-test"),
+        pullRequestStates: ["open"],
+      });
+      assert.deepStrictEqual(
+        open.threads.map((thread) => thread.threadId),
+        ["thread:open", "thread:other-repo"],
+      );
+
+      const withPr = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:mcp-test"),
+        hasPullRequest: true,
+      });
+      assert.deepStrictEqual(
+        withPr.threads.map((thread) => thread.threadId),
+        ["thread:open", "thread:merged", "thread:unsynced", "thread:other-repo"],
+      );
+
+      const byNumber = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:mcp-test"),
+        pullRequest: { number: 10, repository: "acme/app" },
+      });
+      assert.deepStrictEqual(
+        byNumber.threads.map((thread) => thread.threadId),
+        ["thread:open"],
+      );
+
+      const byUrl = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:mcp-test"),
+        pullRequest: { url: "https://github.com/acme/app/pull/11/files" },
+      });
+      assert.deepStrictEqual(
+        byUrl.threads.map((thread) => thread.threadId),
+        ["thread:merged"],
+      );
+    }).pipe(Effect.provide(service)),
+  );
+});
+
 describe("OrchestratorMcpService thread stop", () => {
   const driver = ProviderDriverKind.make("codex");
   const instanceId = ProviderInstanceId.make("codex");

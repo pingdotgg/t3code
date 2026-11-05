@@ -335,6 +335,28 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
   }),
 );
 
+/** Linked pull-request identity. Needs `number` or `url`. */
+export const OrchestratorMcpThreadListPullRequest = Schema.Struct({
+  number: Schema.optional(PositiveInt),
+  repository: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(256)).annotate({
+      description: "owner/repo",
+    }),
+  ),
+  url: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(2048)).annotate({
+      description: "Full or prefix URL",
+    }),
+  ),
+}).check(
+  Schema.makeFilter((value) =>
+    value.number !== undefined || value.url !== undefined
+      ? true
+      : "pullRequest needs number or url.",
+  ),
+);
+export type OrchestratorMcpThreadListPullRequest = typeof OrchestratorMcpThreadListPullRequest.Type;
+
 export const OrchestratorMcpThreadListInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
@@ -345,7 +367,22 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   settled: Schema.optional(Schema.Boolean),
   snoozed: Schema.optional(Schema.Boolean),
-  includeSubagents: Schema.optional(Schema.Boolean),
+  hasPullRequest: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Only threads with a linked PR, or without when false.",
+    }),
+  ),
+  pullRequestStates: Schema.optional(
+    Schema.Array(PullRequestState).check(Schema.isMaxLength(3)).annotate({
+      description: "At least one linked PR in these states. Null state never matches.",
+    }),
+  ),
+  pullRequest: Schema.optional(OrchestratorMcpThreadListPullRequest),
+  includeSubagents: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Default false.",
+    }),
+  ),
   cursor: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
 });

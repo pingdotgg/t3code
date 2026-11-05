@@ -1165,6 +1165,52 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
       );
     }),
   );
+
+  it.effect("labels linked PR identity hits and skips mention-only message matches", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:pr-identity");
+      yield* createProject(project);
+      const linked = ThreadId.make("thread:pr-linked");
+      const mentioned = ThreadId.make("thread:pr-mentioned");
+      const pullRequest: ThreadLinkedPullRequest = {
+        projectId: project,
+        repository: "acme/app",
+        number: 4101,
+        url: "https://github.com/acme/app/pull/4101",
+      };
+      yield* Effect.forEach(
+        [
+          thread(linked, project, { title: "Ship the change", linkedPullRequest: pullRequest }),
+          thread(mentioned, project, { title: "Triage notes" }),
+          message(
+            mentioned,
+            "pr-mention",
+            "assistant",
+            "See https://github.com/acme/app/pull/4101",
+          ),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+
+      const byNumber = yield* search.searchThreads({ query: "4101", projectId: project });
+      assert.deepEqual(
+        byNumber.matches.map((match) => [match.threadId, match.source, match.pullRequest?.number]),
+        [[linked, "pull_request", 4101]],
+      );
+
+      const byUrl = yield* search.searchThreads({
+        query: "https://github.com/acme/app/pull/4101/files",
+        projectId: project,
+      });
+      assert.deepEqual(
+        byUrl.matches.map((match) => [match.threadId, match.source]),
+        [[linked, "pull_request"]],
+      );
+    }),
+  );
 });
 
 it.effect("starts snippets a few words before the match so one line shows it", () =>
