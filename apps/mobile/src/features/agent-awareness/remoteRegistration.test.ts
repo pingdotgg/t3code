@@ -37,6 +37,7 @@ import {
   releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
   updateAgentAwarenessRegistrationPreferences,
+  type AgentAwarenessRegistrationError,
 } from "./remoteRegistration";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
@@ -227,7 +228,11 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
       }
       idlePasses = 0;
       const exit = yield* Effect.exit(
-        pending.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
+        pending.operation as Effect.Effect<
+          unknown,
+          AgentAwarenessRegistrationError,
+          ManagedRelay.ManagedRelayClient
+        >,
       );
       yield* Effect.sync(() => {
         pending.resolve(exit);
@@ -406,7 +411,11 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       // activity lock, or, without one, at its device-id lookup.
       const rotatedRegistration = yield* Effect.forkChild(
         Effect.exit(
-          rotated.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
+          rotated.operation as Effect.Effect<
+            unknown,
+            AgentAwarenessRegistrationError,
+            ManagedRelay.ManagedRelayClient
+          >,
         ),
         { startImmediately: true },
       );
