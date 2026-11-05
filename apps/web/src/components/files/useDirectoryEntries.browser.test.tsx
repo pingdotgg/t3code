@@ -37,7 +37,7 @@ vi.mock("~/state/projects", () => ({
   },
 }));
 
-import { useDirectoryEntries } from "./useDirectoryEntries";
+import { FOLDER_READS_IN_FLIGHT, useDirectoryEntries } from "./useDirectoryEntries";
 
 function setup() {
   mocks.reconnect = false;
@@ -144,8 +144,8 @@ it("shares the follow-up promise and does not resolve callers before the final l
   expect(completed).toBe(true);
 });
 
-it("retains the four-query concurrency bound across directories and refreshes", async () => {
-  const folders = Array.from({ length: 8 }, (_, index) => ({
+it("retains the query concurrency bound across directories and refreshes", async () => {
+  const folders = Array.from({ length: FOLDER_READS_IN_FLIGHT + 4 }, (_, index) => ({
     path: `folder-${index}`,
     kind: "directory" as const,
   }));
@@ -163,17 +163,17 @@ it("retains the four-query concurrency bound across directories and refreshes", 
   const refreshStart = state.calls.length;
   state.resetPeakQueries();
   await act(async () => state.view.refresh());
-  expect(state.peakQueries).toBe(4);
-  expect(state.activeQueries).toBe(4);
+  expect(state.peakQueries).toBe(FOLDER_READS_IN_FLIGHT);
+  expect(state.activeQueries).toBe(FOLDER_READS_IN_FLIGHT);
   await act(async () => {
     for (let index = 0; index < 20; index++) state.view.refresh();
   });
   for (let index = refreshStart; index < state.calls.length; index++) {
     await state.settle(index, state.calls[index]!.path === "" ? folders : []);
-    expect(state.activeQueries).toBeLessThanOrEqual(4);
+    expect(state.activeQueries).toBeLessThanOrEqual(FOLDER_READS_IN_FLIGHT);
   }
-  expect(state.peakQueries).toBe(4);
-  expect(new Set(state.calls.map((call) => call.path)).size).toBe(9);
+  expect(state.peakQueries).toBe(FOLDER_READS_IN_FLIGHT);
+  expect(new Set(state.calls.map((call) => call.path)).size).toBe(folders.length + 1);
   for (const path of ["", ...folders.map((folder) => folder.path)]) {
     expect(state.calls.filter((call) => call.path === path).length).toBeLessThanOrEqual(3);
   }
