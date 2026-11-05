@@ -4,7 +4,7 @@ A newer client connected to an older T3 Learn server offers only what that serve
 
 ## Sub-features
 
-- `skew-hidden`: against an older server, New lesson is missing from the sidebar and the command palette, and the selection toolbar offers no "Create lesson".
+- `skew-hidden`: against an older server, New lesson is missing from the sidebar and the command palette.
 - `skew-shown`: against a same-version server, New lesson is offered.
 
 ## Driving it with the Browser panel
