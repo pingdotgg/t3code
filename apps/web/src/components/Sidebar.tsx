@@ -2565,7 +2565,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }, canRename?: boolean) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
@@ -2632,6 +2632,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              canRename: canRename ?? true,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2863,6 +2864,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
       })();
     },
+  );
+  const handleSearchResultContextMenu = useStableCallback(
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }) =>
+      handleThreadContextMenu(threadRef, position, false),
   );
 
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
@@ -3263,7 +3268,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         searchMatchQuery={threadSearch.query}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
-                        onContextMenu={handleThreadContextMenu}
+                        onContextMenu={handleSearchResultContextMenu}
                         onFileDropThreads={handleThreadFileDrop}
                       />
                     );
