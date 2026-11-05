@@ -3,6 +3,18 @@
 Connect a phone, browser, or another desktop app to T3 Code running on a different
 machine. That machine must stay running and reachable while you work.
 
+## View your Mac screen from mobile
+
+Open a thread on a Mac environment and choose **View Mac screen** in its header.
+The view shows the Mac's main display and refreshes about once a second. You can
+pause or close it; leaving the app also stops refreshes. It does not send clicks
+or keystrokes, change display brightness, or keep the Mac awake.
+
+Screen viewing requires terminal access to the environment and macOS Screen
+Recording permission for T3 Code (or the terminal hosting the server). The Mac
+must stay awake and provide an active display; closed-lid capture depends on your
+Mac's setup. Update both the Mac host and mobile app to use this feature.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting

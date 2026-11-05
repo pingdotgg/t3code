@@ -216,6 +216,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.deviceOpen]: "device",
   [WS_METHODS.deviceClose]: "device",
   [WS_METHODS.deviceShutdown]: "device",
+  [WS_METHODS.hostScreenCapture]: "hostScreen",
   [WS_METHODS.deviceDetail]: "device",
   [WS_METHODS.deviceAction]: "device",
   [WS_METHODS.subscribeDeviceState]: "device",

@@ -1,3 +1,5 @@
+import { OfflineMessages } from "./chat/OfflineMessages";
+import { useNetworkOffline } from "../state/offlineMessages";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -1165,8 +1167,10 @@ export default function ChatView(props: ChatViewProps) {
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
+  const networkOffline = useNetworkOffline();
   const activeEnvironmentUnavailable =
-    activeEnvironment !== null && activeEnvironment.connection.phase !== "connected";
+    networkOffline ||
+    (activeEnvironment !== null && activeEnvironment.connection.phase !== "connected");
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
   const activeEnvironmentUnavailableState = (() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
@@ -3632,7 +3636,7 @@ export default function ChatView(props: ChatViewProps) {
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
-                                !canOperateThread
+                                !canOperateThread && !activeEnvironmentUnavailable
                                   ? "This connection cannot change threads."
                                   : isEnvironmentChanging
                                     ? "Preparing machine"
@@ -3640,13 +3644,21 @@ export default function ChatView(props: ChatViewProps) {
                                       ? "Rewinding conversation"
                                       : feedbackUploading
                                         ? "Sending feedback"
-                                        : threadDetailLoading
+                                        : threadDetailLoading && !activeEnvironmentUnavailable
                                           ? "Messages loading"
                                           : worktreeSetupBlocksSend
                                             ? "Preparing worktree"
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
+                              offlineMessages={
+                                activeThread ? (
+                                  <OfflineMessages
+                                    environmentId={environmentId}
+                                    threadId={activeThread.id}
+                                  />
+                                ) : null
+                              }
                               bannerItems={
                                 isDraftHeroState || composerBannerItems.length === 0
                                   ? EMPTY_COMPOSER_BANNER_ITEMS

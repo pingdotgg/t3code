@@ -26,6 +26,12 @@ export function ThreadHeader(
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
+    if (native.openHostScreen)
+      actions.push({
+        accessibilityLabel: "View Mac screen",
+        icon: "desktopcomputer",
+        onPress: native.openHostScreen,
+      });
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -63,6 +69,7 @@ export function ThreadHeader(
     }
     return actions;
   }, [
+    native.openHostScreen,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,

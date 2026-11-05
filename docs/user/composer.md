@@ -88,7 +88,19 @@ running the send button shows which action it will take. Long-press it to use th
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
 
-## Queue messages offline on mobile
+## Queue messages offline
+
+On desktop and web, send a message while disconnected to save it in the local
+offline queue. Keep T3 Code open: queued messages send in order when your network
+and the destination environment reconnect. You can switch threads while waiting.
+The queue and its attachments survive app restarts. Cancel a message from the
+queue beneath its thread, or use Retry if delivery reports an error. Offline
+messages join the thread's queue instead of interrupting a running agent.
+
+Editing server-queued runs, answering agent requests, and starting multiple models
+at once require a connection.
+
+### Mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue
 messages while disconnected. Uploads resume when you reconnect. Drafts and queued

@@ -7,6 +7,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
+  AuthTerminalOperateScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
@@ -67,6 +68,31 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination terminal grant to capture its screen", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const capture = createCommandPermissions(runtime, WS_METHODS.hostScreenCapture);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(capture.permissionAtom(env))).toBe(false);
+        expect(yield* capture.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+        });
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthTerminalOperateScope],
+            permissions: [AuthTerminalOperateScope],
+          }),
+        );
+        expect(registry.get(capture.permissionAtom(env))).toBe(true);
+        yield* capture.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(capture.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
   it.effect("requires the destination read grant to refresh providers", () =>
     Effect.scoped(
       Effect.gen(function* () {

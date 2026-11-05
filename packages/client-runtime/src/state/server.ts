@@ -1202,6 +1202,10 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
+    captureHostScreen: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:host-screen:capture",
+      tag: WS_METHODS.hostScreenCapture,
+    }),
     runStorageCleanup: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:run-storage-cleanup",
       tag: WS_METHODS.serverRunStorageCleanup,

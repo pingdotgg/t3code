@@ -1,3 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
+import { EnvironmentId } from "@t3tools/contracts";
+import { serverEnvironment } from "../../state/server";
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { threadHeaderAppearance } from "./thread-header-appearance";
@@ -23,7 +26,14 @@ export function useThreadHeaderOptions(props: {
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
+  readonly onOpenHostScreen?: () => void;
 }) {
+  const canViewScreen = useAtomValue(
+    serverEnvironment.captureHostScreen.permissionAtom(
+      EnvironmentId.make(props.gitControls.environmentId),
+    ),
+  );
+  const openHostScreen = canViewScreen ? props.onOpenHostScreen : undefined;
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
   const usesDuoHeader = usesNativeWorkspaceColumns && isDuoDevice(deviceType);
@@ -77,6 +87,18 @@ export function useThreadHeaderOptions(props: {
     }),
   ];
 
+  const screenItems = openHostScreen
+    ? [
+        withNativeGlassHeaderItem({
+          accessibilityLabel: "View Mac screen",
+          icon: { name: "desktopcomputer", type: "sfSymbol" as const },
+          identifier: "thread-host-screen",
+          label: "Mac screen",
+          onPress: openHostScreen,
+          type: "button" as const,
+        }),
+      ]
+    : [];
   const options: AppNativeStackNavigationOptions = {
     ...threadHeaderAppearance(props.usesNativeHeaderGlass),
     headerTitle: props.title,
@@ -88,8 +110,12 @@ export function useThreadHeaderOptions(props: {
         ? undefined
         : () => compactHomeHeaderItems,
     // The workspace navigator adds compose to the Duo detail column's bar.
-    unstable_headerRightItems: () =>
-      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+    unstable_headerRightItems: () => [
+      ...screenItems,
+      ...(usesDuoHeader || layout.usesSplitView
+        ? threadCenterHeaderItems
+        : compactRightHeaderItems),
+    ],
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
@@ -97,8 +123,10 @@ export function useThreadHeaderOptions(props: {
   const { environmentId, threadId, gitStatus } = props.gitControls;
   return {
     options,
+    openHostScreen,
     // Factories re-read only on version changes; include displayed items and hidden callback state such as default refs.
     optionsVersion: [
+      screenItems,
       splitLeftHeaderItems,
       threadCenterHeaderItems,
       compactRightHeaderItems,
