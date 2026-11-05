@@ -84,6 +84,7 @@ const CURSOR_DIFFERENCES = new Set([
   ":s/a/z/g<CR>",
   // Vim rests on the closing brace's line.
   "di{",
+  "di(",
 ]);
 
 // Each row is real vim's result for those keys, with expandtab and shiftwidth=2.

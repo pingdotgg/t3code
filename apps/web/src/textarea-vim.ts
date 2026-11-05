@@ -399,7 +399,10 @@ export function createTextareaVimHost(textarea: HTMLTextAreaElement) {
     }
     // Native edits would replace the selection that draws the cursor.
     event.preventDefault();
-    if (event.inputType === "insertFromPaste" && event.data) cm.pasteAtCursor(event.data);
+    if (event.inputType === "insertFromPaste" && event.data) {
+      controller.nextSession();
+      cm.pasteAtCursor(event.data);
+    }
   };
   const onInput = () => cm.onNativeInput();
   const onBlur = () => {
@@ -420,7 +423,15 @@ export function createTextareaVimHost(textarea: HTMLTextAreaElement) {
       if (!textarea.value && lastValue && !inInsert()) controller.returnToInsert();
       // Setting a value drops native undo history, so one history serves both.
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
-        controller.handleKey(event.shiftKey ? "<C-r>" : "u");
+        if (controller.vim().visualMode) controller.handleKey("<Esc>");
+        if (inInsert()) {
+          // Insert mode has no undo key: u is text and <C-r> reads a register.
+          if (event.shiftKey) cm.redoChange();
+          else cm.undoChange();
+          controller.nextSession();
+        } else {
+          controller.handleKey(event.shiftKey ? "<C-r>" : "u");
+        }
         return true;
       }
       const handled = controller.handleKeyDown(event, () => false);

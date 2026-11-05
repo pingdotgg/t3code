@@ -30,10 +30,15 @@ const composerVimKeyName = new PluginKey<ComposerVimPluginState>("composer-vim")
 const FIRST_ATOM_CODE = 0xe000;
 const LAST_ATOM_CODE = 0xf8ff;
 const atomCharacters = new Map<string, string>();
-const atomJson = new Map<string, unknown>();
+const atomJson = new Map<string, ComposerVimAtomJson>();
 
-function atomCharacter(node: ProseMirrorNode): string {
-  const json = node.toJSON() as unknown;
+interface ComposerVimAtomJson {
+  readonly type: string;
+  /** Set on a private-use character from the text itself, which only stands for that text. */
+  readonly text?: string;
+}
+
+function atomCharacter(json: ComposerVimAtomJson): string {
   const key = JSON.stringify(json);
   const existing = atomCharacters.get(key);
   if (existing) return existing;
@@ -45,11 +50,18 @@ function atomCharacter(node: ProseMirrorNode): string {
   return character;
 }
 
-export function composerVimAtomJson(character: string): unknown {
+export function composerVimAtomJson(character: string) {
   return atomJson.get(character);
 }
 
 export const COMPOSER_VIM_ATOM_PATTERN = /[-]/;
+
+/** Real private-use text gets a placeholder too, or a chip's could read back as that text. */
+export function escapeComposerVimText(text: string) {
+  return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), (character) =>
+    atomCharacter({ type: "text", text: character }),
+  );
+}
 
 export interface ComposerVimFlatDocument {
   readonly text: string;
@@ -76,10 +88,13 @@ export function flattenComposerVimDocument(doc: ProseMirrorNode): ComposerVimFla
     node.forEach((child, offset) => {
       const start = position + 1 + offset;
       if (child.isText) {
-        text += child.text;
+        text += escapeComposerVimText(child.text!);
         for (let index = 0; index < child.text!.length; index += 1) positions.push(start + index);
       } else {
-        text += child.type.name === "hardBreak" ? "\n" : atomCharacter(child);
+        text +=
+          child.type.name === "hardBreak"
+            ? "\n"
+            : atomCharacter(child.toJSON() as ComposerVimAtomJson);
         positions.push(start);
       }
     });
