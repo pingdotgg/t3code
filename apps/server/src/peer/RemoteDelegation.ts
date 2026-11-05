@@ -748,7 +748,7 @@ const make = Effect.gen(function* () {
       // Refused for the caller's modes, the cancel fails, so nothing here owes that stop:
       // it would otherwise go out again under the listing thread's.
       const stop = stopThere(there, remote, key, reason, limits).pipe(
-        Effect.map((): string | undefined => undefined),
+        Effect.asVoid,
         Effect.catchIf(
           (error) => !isModeRefusal(error),
           (error) => Effect.succeed(error.message),
