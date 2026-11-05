@@ -136,6 +136,7 @@ describe("makeMcpAppHost", () => {
         content: [
           { type: "text", text: "rendered" },
           { type: "image", mimeType: "image/png", sizeBytes: 300 },
+          { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
         ],
         structuredContent: { rendered: true },
       }),
@@ -168,8 +169,10 @@ describe("makeMcpAppHost", () => {
       structuredContent: unknown;
     };
     expect(answered.structuredContent).toEqual({ rendered: true });
-    expect(answered.content).toContainEqual({ type: "text", text: "rendered" });
-    expect(answered.content).not.toContainEqual(expect.objectContaining({ type: "image" }));
+    expect(answered.content).toEqual([
+      { type: "text", text: "rendered" },
+      { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+    ]);
   });
 
   it("sends a later result for a call that had none, without repeating its input", () => {
