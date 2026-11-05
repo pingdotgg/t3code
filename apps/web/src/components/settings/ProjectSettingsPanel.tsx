@@ -288,7 +288,6 @@ function ProjectDetail({
   });
   const projectNameEditedRef = useRef(false);
 
-  const projectIcon = representative.projectIcon ?? null;
   const iconSource = resolveProjectIconSource<ProjectFaviconProject>(representative, groupIcon);
   const shownProjectIcon = iconSource.projectIcon ?? null;
   const pickProjectFavicon =
@@ -714,7 +713,7 @@ function ProjectDetail({
       {iconPickerOpen && canEditGroup ? (
         <Suspense fallback={null}>
           <ProjectIconPickerDialog
-            current={projectIcon}
+            current={shownProjectIcon}
             projectName={representative.title}
             open
             onOpenChange={setIconPickerOpen}
