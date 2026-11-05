@@ -1108,13 +1108,7 @@ it.effect("a task on another model waits for the user's answer before the box la
       const a = yield* makeLaptop(database, offers);
       yield* linkTo(a.links, b, "full-access");
       yield* seedParent(a);
-      const approvals = yield* DelegationApprovals.DelegationApprovals.pipe(
-        Effect.provide(
-          DelegationApprovals.layer.pipe(
-            Layer.provide(Layer.succeed(ThreadManagement.ThreadManagementService, a.threads)),
-          ),
-        ),
-      );
+      const approvals = yield* approvalsOn(a);
       const delegate = (clientRequestId: string) =>
         a.call("delegate_task", {
           task: "Run the full suite on the box.",
@@ -1126,27 +1120,8 @@ it.effect("a task on another model waits for the user's answer before the box la
           mode: "async",
           clientRequestId,
         });
-      const nextCard = (afterSequence: number) =>
-        a.orchestrator
-          .streamStoredEventsFrom({
-            threadId: parentThreadId,
-            afterSequence,
-            eventType: "turn-item.updated",
-          })
-          .pipe(
-            Stream.filterMap((stored) =>
-              stored.event.type === "turn-item.updated" &&
-              stored.event.payload.type === "delegation_approval" &&
-              stored.event.payload.approvalStatus === "pending"
-                ? Result.succeed(stored.event.payload)
-                : Result.failVoid,
-            ),
-            Stream.runHead,
-            Effect.map(Option.getOrThrow),
-          );
-
       const declined = yield* delegate("declined").pipe(Effect.forkChild);
-      const card = yield* nextCard(0);
+      const card = yield* nextCard(a, 0);
       expect(card).toMatchObject({
         environmentId: box.environmentId,
         current: modelSelection,
@@ -1179,7 +1154,7 @@ it.effect("a task on another model waits for the user's answer before the box la
 
       const sequence = yield* a.threads.getThreadEventSequence(parentThreadId);
       const approved = yield* delegate("approved").pipe(Effect.forkChild);
-      const second = yield* nextCard(sequence);
+      const second = yield* nextCard(a, sequence);
       expect(second.id).not.toBe(card.id);
       expect(yield* Ref.get(thread.launched)).toBeNull();
       expect((yield* a.projections.getThread(parentThreadId)).snoozedUntil).not.toBeNull();
@@ -1224,7 +1199,7 @@ it.effect("a task on another model waits for the user's answer before the box la
       }
       const beforeStop = yield* a.threads.getThreadEventSequence(parentThreadId);
       const stopping = yield* delegate("stopping").pipe(Effect.forkChild);
-      const third = yield* nextCard(beforeStop);
+      const third = yield* nextCard(a, beforeStop);
       const parent = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
       const now = yield* DateTime.now;
       yield* a.projections.apply({
