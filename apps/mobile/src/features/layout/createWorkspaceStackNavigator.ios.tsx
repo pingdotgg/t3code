@@ -71,6 +71,7 @@ import {
   partitionStackPresentations,
   reconcileStackScreens,
   type CollapsedSplitColumn,
+  isPresentedRoute,
 } from "../../native/workspace-stack-projection";
 import {
   NativePrimaryColumnContext,
@@ -505,8 +506,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const [primaryVisible, setPrimaryVisible] = useState(false);
   const metrics = useNativeLayoutMetrics();
   const projection = projectWorkspaceStack(props.state, (route) => {
-    const presentation = props.descriptors[route.key]?.options.presentation;
-    return presentation !== undefined && presentation !== "card";
+    return isPresentedRoute(props.descriptors[route.key]?.options);
   });
   // The root's willDisappear reaches JS frames into the push, so hide the dock in the commit that
   // pushes; the native events still own every later change, including back gestures.
@@ -566,8 +566,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     ),
   };
   const overlays = partitionStackPresentations(projection.overlays, (route) => {
-    const presentation = props.descriptors[route.key]?.options.presentation;
-    return presentation !== undefined && presentation !== "card";
+    return isPresentedRoute(props.descriptors[route.key]?.options);
   });
   const routes = [baseRoute, ...overlays.map((group) => group[0]!)];
   return (
@@ -646,8 +645,7 @@ function WorkspaceStackNavigator({
   if (!nativeWorkspaceColumnsReady) return null;
   const settingsOpen = settingsOpenIn(
     state.routes.slice(0, state.index + 1).filter((route) => {
-      const presentation = descriptors[route.key]?.options.presentation;
-      return presentation === undefined || presentation === "card";
+      return !isPresentedRoute(descriptors[route.key]?.options);
     }),
   );
   return (
