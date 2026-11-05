@@ -1,6 +1,7 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { Atom, AsyncResult } from "effect/reactivity";
 
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
@@ -30,6 +31,8 @@ import {
 } from "./use-composer-drafts";
 import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
 import { workspaceConnections } from "./workspace";
+
+const isComposerDraftPersistenceError = Schema.is(ComposerDraftPersistenceError);
 
 export {
   composerAttachmentUploadBlockReason,
@@ -164,7 +167,7 @@ export function createComposerAttachmentUploadWorker(
             if (!retained) return "abandon";
             // Draft-save failure only costs re-upload after restart; the outbox saves references independently, so preserve accepted uploads.
             await flushComposerDrafts().catch((error: unknown) => {
-              if (!(error instanceof ComposerDraftPersistenceError)) throw error;
+              if (!isComposerDraftPersistenceError(error)) throw error;
               console.warn("[composer-attachments] could not save the uploaded reference", error);
             });
             return "persisted";

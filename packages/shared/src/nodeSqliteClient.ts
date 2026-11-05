@@ -443,8 +443,7 @@ const makeReader = Effect.fnUntraced(function* (
         if (current === reader) current = undefined;
         void reader.worker.terminate();
       }
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-      if (pool.unavailable) return Effect.succeed(undefined);
+      if (pool.unavailable) return Effect.undefined;
       pool.unavailable = true;
       return Effect.logWarning("SQLite reader worker unavailable; reads use the main connection", {
         reason,
@@ -452,8 +451,7 @@ const makeReader = Effect.fnUntraced(function* (
     });
 
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-    if (pool.unavailable) return Effect.succeed(undefined);
+    if (pool.unavailable) return Effect.undefined;
     let reader: NonNullable<typeof current>;
     try {
       reader = current ?? start();
@@ -473,8 +471,7 @@ const makeReader = Effect.fnUntraced(function* (
       (startup): Effect.Effect<Connection | undefined> =>
         // A late ready event must not hand out a worker retired by another acquire timeout.
         pool.unavailable || current !== reader
-          ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-            Effect.succeed(undefined)
+          ? Effect.undefined
           : Option.isSome(startup) && startup.value.type === "ready"
             ? Effect.succeed(reader.connection)
             : turnOff(
