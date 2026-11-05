@@ -495,6 +495,8 @@ it("sorts unranked models by recommendation, accuracy, speed, then name", async 
   });
   await using _screen = await renderPanel();
 
+  expect(modelDescriptions(_screen.container)).toEqual(["Recommended description"]);
+  await userEvent.click(button("Show all 5 models"));
   expect(modelDescriptions(_screen.container)).toEqual([
     "Recommended description",
     "Accurate description",
@@ -502,6 +504,58 @@ it("sorts unranked models by recommendation, accuracy, speed, then name", async 
     "Alpha description",
     "Zulu description",
   ]);
+});
+it("shows installed and up to five recommended models until the full list is opened", async () => {
+  using _env = setup();
+  const model = (name: string, state: string, recommended: boolean, accuracy = 90) => ({
+    id: name,
+    name,
+    description: `${name} description`,
+    languages: ["en"],
+    state,
+    active: false,
+    recommended,
+    supportsStreaming: false,
+    size: 100,
+    accuracy,
+    speed: 90,
+  });
+  mocks.listModels.mockResolvedValue({
+    models: [
+      model("Other", "downloadable", false, 99),
+      model("Installed", "installed", false),
+      ...[1, 2, 3, 4, 5, 6].map((rank) => model(`Pick ${rank}`, "downloadable", true, 90 - rank)),
+    ],
+  });
+  await using _screen = await renderPanel();
+
+  const shortList = [
+    "Installed description",
+    "Pick 1 description",
+    "Pick 2 description",
+    "Pick 3 description",
+    "Pick 4 description",
+    "Pick 5 description",
+  ];
+  expect(modelDescriptions(_screen.container)).toEqual(shortList);
+  const search = page.getByRole("searchbox", { name: "Search transcription models" });
+  await userEvent.fill(search, "other");
+  expect(modelDescriptions(_screen.container)).toEqual(["Other description"]);
+  await expect.element(button("Show all 8 models")).not.toBeInTheDocument();
+  await userEvent.click(button("Clear model search"));
+  await userEvent.click(button("Show all 8 models"));
+  expect(modelDescriptions(_screen.container)).toEqual([
+    "Installed description",
+    "Pick 1 description",
+    "Pick 2 description",
+    "Pick 3 description",
+    "Pick 4 description",
+    "Pick 5 description",
+    "Pick 6 description",
+    "Other description",
+  ]);
+  await userEvent.click(button("Show fewer"));
+  expect(modelDescriptions(_screen.container)).toEqual(shortList);
 });
 it("shows cancellation errors without clearing the download state", async () => {
   using _env = setup();
