@@ -3951,6 +3951,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect.each([
     { name: "completed", completed: true, path: viewedImage, preview: true },
     { name: "started only", completed: false, path: viewedImage, preview: false },
+    { name: "non-image path", completed: true, path: "/workspace/notes.txt", preview: false },
     { name: "newline in path", completed: true, path: "/workspace/a\nb.png", preview: false },
     {
       name: "path over 4096 chars",
@@ -3980,6 +3981,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           entries: [
             ...base.entries.slice(0, -2),
             imageView("started"),
+            {
+              type: "emit_inbound" as const,
+              label: "search-completed",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: `native-${scenario}-thread`,
+                  turnId: `native-${scenario}-turn`,
+                  item: { type: "webSearch", id: "search-between", query: "reference" },
+                },
+              },
+            },
             ...(completed ? [imageView("completed")] : []),
             ...base.entries.slice(-2),
           ],
@@ -4011,6 +4024,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const item = items[0];
         assert.strictEqual(item?.type, "dynamic_tool");
         assert.strictEqual(item?.title, `Read ${path}`);
+        const search = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "search-between",
+        );
+        // item/started reserves the row's place ahead of items that finish first.
+        assert.isBelow(
+          item?.ordinal ?? Infinity,
+          search?.type === "turn_item.updated" ? search.turnItem.ordinal : -Infinity,
+        );
         assert.strictEqual(
           item?.type === "dynamic_tool" ? item.viewedImagePath : null,
           preview ? path : undefined,
