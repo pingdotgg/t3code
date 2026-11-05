@@ -50,16 +50,16 @@ export function SubagentTooltipContent(props: {
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
-  const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
-  const preview = subagentDetailPreview(props);
-  const model = props.model?.trim();
-  const modelSlug = props.provider
-    ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
-    : model;
-  const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
   const childSelection =
     props.modelSelection ??
     (props.origin === "app_owned" ? props.childThread?.modelSelection : undefined);
+  const {
+    modelLabel,
+    modelSlug,
+    workspace: metadata,
+  } = resolveSubagentMetadata({ ...props, modelSelection: childSelection });
+  const preview = subagentDetailPreview(props);
+  const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
   const childModel = props.provider
     ? (resolveSelectableModel(
         props.provider.driver,
@@ -69,7 +69,7 @@ export function SubagentTooltipContent(props: {
     : childSelection?.model.trim();
   const provider = props.provider;
   const matchingSelection =
-    childModel === (modelSlug ?? model) && childSelection?.instanceId === props.providerInstanceId
+    childModel === modelSlug && childSelection?.instanceId === props.providerInstanceId
       ? childSelection
       : undefined;
   const effort = REASONING_EFFORT_OPTION_IDS.map((id) =>
