@@ -1,7 +1,8 @@
+import { USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import type { ModelTotals } from "@t3tools/shared/usageMerge";
 import { describe, expect, it } from "vite-plus/test";
 
-import { cacheHitRate, costPerMillionTokens } from "./usageBreakdown";
+import { cacheHitRate, costPerMillionTokens, usageEmptyState } from "./usageBreakdown";
 
 const model = (
   name: string,
@@ -47,4 +48,17 @@ describe("model rates", () => {
     expect(costPerMillionTokens(mixed)).toBe(2);
     expect(costPerMillionTokens({ ...mixed, unpricedRecords: 4 })).toBeNull();
   });
+});
+
+it("waits for reconnecting environments before declaring usage empty", () => {
+  const answered = { summary: { contractVersion: USAGE_CONTRACT_VERSION }, error: null };
+  const reconnecting = { summary: null, error: null };
+  const failed = { summary: null, error: "Could not report usage" };
+  const selection = { hasUsage: false, loading: false, allProvidersHidden: false };
+  expect(usageEmptyState({ ...selection, environments: [answered, reconnecting] })).toBe("pending");
+  expect(usageEmptyState({ ...selection, environments: [answered] })).toBe("empty");
+  expect(usageEmptyState({ ...selection, environments: [failed] })).toBe("unavailable");
+  expect(usageEmptyState({ ...selection, environments: [failed], allProvidersHidden: true })).toBe(
+    "hidden",
+  );
 });

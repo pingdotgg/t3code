@@ -6,8 +6,8 @@ export interface SegmentedControlProps<Value extends number | string> {
   }[];
   readonly selected: Value;
   readonly onSelect: (value: Value) => void;
-  /** Compact uses a 32-point capsule; default uses 36 points on iOS and 40 on Android. */
-  readonly size?: "default" | "compact";
+  /** Large provides 44-point targets; compact and default use smaller capsules. */
+  readonly size?: "default" | "compact" | "large";
   readonly variant?: "standalone" | "card";
   readonly role?: "tab" | "button";
   readonly className?: string;
