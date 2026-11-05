@@ -75,3 +75,39 @@ it.effect("gives a thread caller the modes its active run executes in, not the t
     expect(denied.code).toBe("capability_denied");
   }),
 );
+
+it.effect("lowers a running caller's modes when its thread is lowered mid-run", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:lowered-mid-run");
+    const runId = RunId.make("run:sent-full-access");
+    const caller = yield* readCaller().pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...client,
+        client: undefined,
+        thread: {
+          threadId,
+          providerSessionId: `provider:${threadId}`,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+      }),
+      Effect.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) =>
+            Effect.succeed(
+              liveThreadShell(id, {
+                activeRunId: runId,
+                runtimeMode: "approval-required",
+                interactionMode: "plan",
+              }),
+            ),
+          getThreadRecords: () =>
+            Effect.succeed({
+              runs: [{ id: runId, runtimeMode: "full-access", interactionMode: "default" }],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+      ),
+    );
+
+    expect(caller.limits).toEqual({ runtimeMode: "approval-required", interactionMode: "plan" });
+  }),
+);

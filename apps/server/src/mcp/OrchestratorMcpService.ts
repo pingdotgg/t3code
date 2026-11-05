@@ -93,7 +93,7 @@ import {
 import {
   DispatchModeLimit,
   type DispatchModeRefusal,
-  runModes,
+  callerModes,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import type {
   ProjectionRecordField,
@@ -1150,7 +1150,7 @@ const make = Effect.gen(function* () {
     const parent = yield* loadProjection(scope.thread.threadId, false);
     return {
       parent,
-      limits: runModes(parent.thread, ThreadManagementService.latestActiveRun(parent)),
+      limits: callerModes(parent.thread, ThreadManagementService.latestActiveRun(parent)),
     } as const;
   });
 
@@ -2409,7 +2409,7 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
-      const parentModes = runModes(parent.thread, parentRun);
+      const parentModes = callerModes(parent.thread, parentRun);
       const runtimeMode = yield* resolveRuntimeMode(
         parentModes.runtimeMode,
         input.runtimeMode,
@@ -2584,7 +2584,7 @@ const make = Effect.gen(function* () {
       const parentProjection = yield* loadThreadRecords(scope.thread.threadId, ["runs"], {
         runStatuses: ["preparing", "starting", "running", "waiting"],
       });
-      const parentModes = runModes(
+      const parentModes = callerModes(
         parentProjection.thread,
         ThreadManagementService.latestActiveRun(parentProjection),
       );
@@ -2787,7 +2787,7 @@ const make = Effect.gen(function* () {
           );
         }
         const parentNodeId = parentRun.rootNodeId;
-        const parentModes = runModes(parent.thread, parentRun);
+        const parentModes = callerModes(parent.thread, parentRun);
         const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
