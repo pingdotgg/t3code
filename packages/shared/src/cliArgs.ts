@@ -8,7 +8,7 @@ export interface ParseCliArgsOptions {
 }
 
 export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
-  const input = args?.trim();
+  const input = args;
   if (!input) return [];
 
   const tokens: string[] = [];

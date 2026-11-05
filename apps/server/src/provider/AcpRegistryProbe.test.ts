@@ -2,7 +2,9 @@
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { describe, expect, it } from "@effect/vitest";
@@ -229,6 +231,7 @@ describe("ACP Registry probe", () => {
           { id: "medium", label: "Medium" },
           { id: "high", label: "High" },
         ],
+        role: "reasoning",
       },
     ]);
   });
@@ -369,7 +372,7 @@ describe("ACP Registry probe", () => {
       yield* logoutAcpRegistry(input);
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Effect.scoped,
     );
   });
