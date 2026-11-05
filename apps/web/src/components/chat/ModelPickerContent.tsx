@@ -544,6 +544,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const flatModels = (() => {
     const out: ModelPickerItem[] = [];
+    const seenModelKeys = new Set<string>();
     for (const [instanceId, models] of modelOptionsByInstance) {
       const entry = entryByInstanceId.get(instanceId);
       if (!entry) {
@@ -560,6 +561,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ) {
           continue;
         }
+        // Rows and jump shortcuts are keyed by instance and slug, so a slug reported twice
+        // would leave a blank row holding a shortcut.
+        const modelKey = modelPickerModelKey(instanceId, model.slug);
+        if (seenModelKeys.has(modelKey)) continue;
+        seenModelKeys.add(modelKey);
         out.push({
           slug: model.slug,
           name: model.name,

@@ -1,4 +1,10 @@
-import { ProviderDriverKind, ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import {
+  MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelSelection,
+} from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -168,4 +174,64 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
+});
+
+it("shows a model its provider reports twice as one row and numbers shortcuts by row", async () => {
+  const instanceId = ProviderInstanceId.make("claude");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const keybindings = compileResolvedKeybindingsConfig(
+    MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+      key: `mod+${index + 1}`,
+      command,
+      when: "modelPickerOpen",
+    })),
+  );
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "sonnet", name: "Sonnet" },
+        { slug: "glm", name: "GLM" },
+        { slug: "glm", name: "GLM" },
+        { slug: "deepseek", name: "DeepSeek" },
+      ],
+    ],
+  ]);
+
+  await using _screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={instanceId}
+      model="sonnet"
+      lockedProvider={null}
+      instanceEntries={entries}
+      keybindings={keybindings}
+      modelOptionsByInstance={options}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await page.getByRole("button", { name: "Choose model" }).click();
+  // A row reads its model name first and ends with its shortcut's jump number.
+  await vi.waitFor(() =>
+    expect(Array.from(page.getByRole("option").elements(), (row) => row.textContent)).toEqual([
+      expect.stringMatching(/^Sonnet\b.*1$/),
+      expect.stringMatching(/^GLM\b.*2$/),
+      expect.stringMatching(/^DeepSeek\b.*3$/),
+    ]),
+  );
 });
