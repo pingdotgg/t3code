@@ -62,6 +62,8 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
+  resolveProjectProviderInstanceEnabled,
+  SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -746,7 +748,14 @@ function threadTitle(input: {
 }): string {
   const detail = input.title?.trim() || input.prompt?.trim();
   if (!detail) return `${input.parentTitle} thread ${input.index + 1}`;
-  return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
+  if (detail.length <= 80) return detail;
+  let end = 77;
+  const previous = detail.charCodeAt(end - 1);
+  const next = detail.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${detail.slice(0, end)}...`;
 }
 
 function threadSettlement(
@@ -1093,11 +1102,9 @@ const make = Effect.gen(function* () {
 
   // Task waits read on every wake of a parent that may hold thousands of
   // tasks, so they read only the task they watch and what its status needs.
-  const loadTaskParent = (threadId: ThreadId, taskId: NodeId) =>
+  const loadTaskParent = (threadId: ThreadId) =>
     threadManagement
-      .getThreadRecords(threadId, ["runs", "subagents", "contextTransfers"], {
-        subagentIds: [taskId],
-      })
+      .getThreadRecords(threadId, ["runs", "contextTransfers"])
       .pipe(
         Effect.mapError((error) =>
           failure(
@@ -1472,8 +1479,7 @@ const make = Effect.gen(function* () {
     acknowledgementOperation = "task-status-acknowledge",
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     yield* requireCapability(scope);
-    const parentProjection = yield* loadTaskParent(scope.thread.threadId, taskId);
-    const task = parentProjection.subagents.find(
+    const task = (yield* loadTasks(scope.thread.threadId, [taskId])).find(
       (candidate) =>
         candidate.id === taskId &&
         candidate.origin === "app_owned" &&
@@ -1488,6 +1494,7 @@ const make = Effect.gen(function* () {
     if (task.childThreadId === null) {
       return yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);
     }
+    const parentProjection = yield* loadTaskParent(scope.thread.threadId);
     const childControls = yield* threadManagement
       .getThreadRecords(
         task.childThreadId,
@@ -2129,6 +2136,26 @@ const make = Effect.gen(function* () {
           "Asking for a secret requires an active run owned by this MCP provider session.",
         );
       }
+      // A secret the user already pasted needs no card: it goes straight to a file.
+      if (input.value !== undefined) {
+        if (input.delivery === "secretRef") {
+          return yield* failure(
+            "invalid_request",
+            'A pasted `value` is saved as a file. Leave out `delivery: "secretRef"`.',
+          );
+        }
+        const file = yield* secretRequests
+          .savePasted({
+            threadId,
+            requestNamespace: scope.requestNamespace,
+            requestKey: yield* requestKey(input.clientRequestId),
+            value: input.value,
+          })
+          .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+        yield* Effect.annotateCurrentSpan({ "secret_request.status": "saved_pasted" });
+        yield* Metrics.increment(Metrics.secretRequestsTotal, { status: "saved_pasted" });
+        return { status: "saved" as const, file };
+      }
       const runId = run.id;
       const nodeId = run.rootNodeId;
       const key = yield* requestKey(input.clientRequestId);
@@ -2229,7 +2256,7 @@ const make = Effect.gen(function* () {
             );
       yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
       yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
-      if (status !== "saved") return { status };
+      if (status !== "saved") return { status, note: SECRET_REQUEST_UNSAVED_NOTE[status] };
       if (input.delivery === "file") {
         const file = yield* secretRequests
           .saveToFile({ threadId, turnItemId })
@@ -2270,8 +2297,16 @@ const make = Effect.gen(function* () {
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
+          // Snapshots list instances any project enables; delegate_task checks the caller's project.
+          const enabledForCaller =
+            parent === undefined ||
+            resolveProjectProviderInstanceEnabled(
+              settings,
+              parent.thread.projectId,
+              provider.instanceId,
+            );
           const constraints = providerConstraints(
-            provider,
+            enabledForCaller ? provider : { ...provider, enabled: false },
             orchestrationCapableInstanceIds.has(provider.instanceId),
           );
           const { listed, omitted } = listCapabilityModels({
