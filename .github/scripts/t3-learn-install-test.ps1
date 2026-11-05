@@ -69,9 +69,6 @@ if ($Scenario -eq "fresh") {
     if ($LASTEXITCODE -ne 0) { Fail "the previous installer failed" }
     $previousRunning = Wait-Server (Join-Path $HOME ".t3-learn") $previous
     Log "OminaX $previousRunning is running"
-    $knowledge = Join-Path $HOME ".t3-learn\userdata\knowledge.json"
-    '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content $knowledge
-    Copy-Item $knowledge (Join-Path $artifacts "knowledge.json")
   } else {
     Log "No distinct previous promoted release; installing OminaX $Version fresh"
   }
@@ -92,11 +89,6 @@ Screenshot "t3-learn"
 $learnDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
 if (-not (Test-Path (Join-Path $learnDir "OminaX.exe"))) { Fail "OminaX.exe is missing" }
 if (Test-Path (Join-Path $learnDir "T3 Learn.exe")) { Fail "the old T3 Learn.exe is still installed" }
-$knowledge = Join-Path $HOME ".t3-learn\userdata\knowledge.json"
-if (-not (Test-Path $knowledge)) {
-  '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content $knowledge
-  Copy-Item $knowledge (Join-Path $artifacts "knowledge.json")
-}
 $uninstallKeys = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
   ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like "OminaX*" }
 if (-not $uninstallKeys) { Fail "OminaX has no entry in Installed apps" }

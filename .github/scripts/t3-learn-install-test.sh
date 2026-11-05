@@ -85,13 +85,20 @@ if [ "$scenario" = fresh ]; then
   previous="$(gh release view -R "$repo" --json tagName -q .tagName 2>/dev/null | sed 's/^v//' || true)"
   if [ -n "$previous" ] && [ "$previous" != "$version" ]; then
     log "Installing the previous release, $previous"
+    # A leftover bundle from an earlier run on a reused Mac would be updated instead.
+    if [ "$os" = Darwin ]; then rm -rf /Applications/OminaX.app "/Applications/T3 Learn.app"; fi
     curl -fsSL "https://github.com/$repo/releases/download/v$previous/install.sh" |
-      env T3LEARN_VERSION="$previous" T3LEARN_FORMAT="${format:-}" sh 2>&1 | tee "$artifacts/install-previous.log"
+      env T3LEARN_VERSION="$previous" T3LEARN_FORMAT="$format" sh 2>&1 | tee "$artifacts/install-previous.log"
     previous_running="$(wait_for_server "$HOME/.t3-learn" "$previous")"
-    log "OminaX $previous_running is running"
+    log "The previous release, $previous_running, is running"
     knowledge="$HOME/.t3-learn/userdata/knowledge.json"
     printf '%s\n' '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' >"$knowledge"
     cp "$knowledge" "$artifacts/knowledge.json"
+    # The deb upgrade leaves the old app running, and the new one would lose the single-instance lock to it.
+    if [ "$os" = Linux ]; then
+      pkill -u "$(id -u)" -x t3learn || true
+      while pgrep -u "$(id -u)" -x t3learn >/dev/null; do sleep 1; done
+    fi
   else
     log "No distinct previous promoted release; installing OminaX $version fresh"
   fi
