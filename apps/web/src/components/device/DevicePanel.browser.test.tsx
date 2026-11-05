@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 
@@ -229,11 +230,11 @@ describe("DevicePanel discovery warning", () => {
     await using screen = await render(devicePanel(threadA), { container });
 
     await screen.getByRole("button", { name: "Details for This Mac" }).click();
-    await expect.element(screen.getByText("first cause")).toBeVisible();
+    await expect.element(page.getByText("first cause")).toBeVisible();
 
     currentState = withCause("second cause");
     await screen.rerender(devicePanel(threadA));
-    await expect.element(screen.getByText("second cause")).toBeVisible();
+    await expect.element(page.getByText("second cause")).toBeVisible();
 
     await screen.getByRole("button", { name: "Dismiss device warning for This Mac" }).click();
     await screen.rerender(devicePanel(threadA));

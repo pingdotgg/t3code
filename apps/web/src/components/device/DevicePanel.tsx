@@ -16,9 +16,9 @@ import {
   type RightPanelSurface,
 } from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { DiscoveryList } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
@@ -428,62 +428,59 @@ function DeviceDiscoveryWarning(props: {
     platform === "ios" ? "iOS" : "Android",
   );
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div
-        role="status"
-        className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-3 py-1 text-xs text-muted-foreground"
-      >
-        <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
-          <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
-          <span className="min-w-0">
-            {platforms.length > 0
-              ? `${platforms.join(" and ")} ${platforms.length > 1 ? "lists" : "list"} on ${props.label} may be incomplete.`
-              : `Device discovery on ${props.label} reported a warning.`}
-          </span>
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-3 py-1 text-xs text-muted-foreground"
+    >
+      <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
+        <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
+        <span className="min-w-0">
+          {platforms.length > 0
+            ? `${platforms.join(" and ")} ${platforms.length > 1 ? "lists" : "list"} on ${props.label} may be incomplete.`
+            : `Device discovery on ${props.label} reported a warning.`}
         </span>
-        <span className="ml-auto flex shrink-0 items-center gap-0.5">
-          {platforms.length > 0 ? (
-            <Button
-              size="micro"
-              variant="ghost"
-              disabled={retrying}
-              aria-label={`Retry device discovery on ${props.label}`}
-              onClick={() => {
-                setRetrying(true);
-                void props.onRetry().finally(() => setRetrying(false));
-              }}
-            >
-              {retrying ? "Retrying…" : "Retry"}
-            </Button>
-          ) : null}
-          <CollapsibleTrigger
+      </span>
+      <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        {platforms.length > 0 ? (
+          <Button
+            size="micro"
+            variant="ghost"
+            disabled={retrying}
+            aria-label={`Retry device discovery on ${props.label}`}
+            onClick={() => {
+              setRetrying(true);
+              void props.onRetry().finally(() => setRetrying(false));
+            }}
+          >
+            {retrying ? "Retrying…" : "Retry"}
+          </Button>
+        ) : null}
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
             aria-label={`Details for ${props.label}`}
             render={<Button size="micro" variant="ghost" />}
           >
             Details
-          </CollapsibleTrigger>
-          <Button
-            size="icon-micro"
-            variant="ghost"
-            aria-label={`Dismiss device warning for ${props.label}`}
-            onClick={() => {
-              setOpen(false);
-              setDismissedCause(cause);
-            }}
-          >
-            <X />
-          </Button>
-        </span>
-      </div>
-      <CollapsiblePanel>
-        <div
-          className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words border-b bg-warning-surface px-3 py-2 font-mono text-xs text-warning-foreground"
-          tabIndex={0}
+          </PopoverTrigger>
+          <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
+            <p className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
+              {props.detail}
+            </p>
+          </PopoverPopup>
+        </Popover>
+        <Button
+          size="icon-micro"
+          variant="ghost"
+          aria-label={`Dismiss device warning for ${props.label}`}
+          onClick={() => {
+            setOpen(false);
+            setDismissedCause(cause);
+          }}
         >
-          {props.detail}
-        </div>
-      </CollapsiblePanel>
-    </Collapsible>
+          <X />
+        </Button>
+      </span>
+    </div>
   );
 }
 
