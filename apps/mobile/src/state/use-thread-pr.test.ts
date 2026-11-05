@@ -141,6 +141,18 @@ describe("resolveThreadPrSource compatibility", () => {
         linkedPr(7, { snapshot: { ...snapshot, mergeability: "conflicting" } }),
       ]),
     ).toMatchObject({ isInMergeQueue: false, conflicting: true });
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(1, { snapshot: { ...snapshot, headBranch: "base" } }),
+        linkedPr(2, { snapshot: { ...snapshot, baseBranch: "base" } }),
+      ]),
+    ).toMatchObject({
+      kind: "stack",
+      state: "open",
+      isInMergeQueue: true,
+      accessibilityLabel: "2 pull requests in stack, queued",
+      textClassName: "text-adaptive-amber-700-400",
+    });
   });
 
   it("polls the stored reference before the server config loads", () => {

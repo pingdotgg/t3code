@@ -74,3 +74,50 @@ it.each([
   await page.getByRole("dialog").getByRole("button", { name: row.label, exact: true }).click();
   await expect.element(page.getByText(row.description, { exact: true })).toBeInTheDocument();
 });
+
+it("does not offer Merge stack through a queued layer", async () => {
+  setup("");
+  await using screen = await render(
+    <ToastProvider>
+      <PullRequestStackMenu
+        environmentId={EnvironmentId.make("environment")}
+        reference={{
+          projectId: ProjectId.make("project"),
+          repository: "owner/repository",
+          number: 2,
+        }}
+        hostLabel="GitHub"
+        terminology={sourceControlClients.get("github").changeRequest}
+        stack={{
+          id: "stack",
+          number: 1,
+          url: "https://github.com/owner/repository/stack/1",
+          base: "main",
+          layers: [
+            {
+              number: 1,
+              headBranch: "bottom",
+              headSha: "abc123",
+              state: "open",
+              isInMergeQueue: true,
+            },
+            { number: 2, headBranch: "top", headSha: "def456", state: "open" },
+          ],
+        }}
+        canMerge
+        stale={false}
+        canRebase
+        mergeMethod="squash"
+        onActed={() => {}}
+      />
+    </ToastProvider>,
+  );
+  await expect.element(screen.getByRole("button", { name: "Merge stack" })).toBeDisabled();
+  await screen.getByRole("button", { name: "Stack 1, layer 2 of 2" }).click();
+  await expect
+    .element(page.getByRole("menuitem", { name: "Merge stack (2)" }))
+    .toHaveAttribute("aria-disabled", "true");
+  await expect
+    .element(page.getByText("A layer being merged is already in the merge queue."))
+    .toBeInTheDocument();
+});

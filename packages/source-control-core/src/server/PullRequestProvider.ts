@@ -135,6 +135,7 @@ export interface ProviderChangeRequestSummary {
 export interface ProviderChangeRequestStackLayer {
   readonly title?: string;
   readonly isDraft?: boolean;
+  readonly isInMergeQueue?: boolean;
   readonly headSha?: string;
   readonly number: number;
   readonly headBranch: string;

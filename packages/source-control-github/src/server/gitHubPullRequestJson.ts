@@ -1911,6 +1911,7 @@ const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
 export interface GitHubPullRequestStackLayer {
   readonly title?: string;
   readonly isDraft?: boolean;
+  readonly isInMergeQueue?: boolean;
   readonly headSha?: string;
   readonly number: number;
   readonly headBranch: string;

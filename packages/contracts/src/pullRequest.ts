@@ -517,6 +517,7 @@ export const PullRequestStack = Schema.Struct({
       number: PositiveInt,
       title: Schema.optional(Schema.String),
       isDraft: Schema.optional(Schema.Boolean),
+      isInMergeQueue: Schema.optional(Schema.Boolean),
       headSha: Schema.optional(TrimmedNonEmptyString),
       headBranch: TrimmedNonEmptyString,
       state: PullRequestState,

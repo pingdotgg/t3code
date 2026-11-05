@@ -29,6 +29,8 @@ import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { readableFailure } from "./pullRequestDetail.logic";
 
+const QUEUED_LAYER_REASON = "A layer being merged is already in the merge queue.";
+
 export function PullRequestStackMenu({
   hostLabel,
   terminology,
@@ -73,12 +75,14 @@ export function PullRequestStackMenu({
     layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
   );
   const hasUnknownHead = expectedStackHeads.length !== unmerged.length;
+  const mergeHasQueued = mergeLayers.some((layer) => layer.isInMergeQueue);
   const mergeDisabled =
     pending ||
     stale ||
     selectedLayer?.state !== "open" ||
     mergeLayers.some((layer) => !layer.headSha) ||
     mergeHasClosed ||
+    mergeHasQueued ||
     mergeLayers.length === 0 ||
     mergeLayers.some((layer) => layer.isDraft);
   const rebaseDisabled = pending || stale || hasUnknownHead || hasClosed || unmerged.length === 0;
@@ -203,6 +207,8 @@ export function PullRequestStackMenu({
                 <p className="px-2 py-1 text-xs text-muted-foreground">
                   Every layer being merged must be open and ready for review.
                 </p>
+              ) : mergeHasQueued ? (
+                <p className="px-2 py-1 text-xs text-muted-foreground">{QUEUED_LAYER_REASON}</p>
               ) : null}
             </>
           ) : null}
@@ -230,7 +236,9 @@ export function PullRequestStackMenu({
           <TooltipPopup>
             {stale
               ? notice
-              : `Merge stack through #${reference.number} into ${stack.base} (${mergeLayers.length} ${mergeLayers.length === 1 ? terminology.singular : terminology.plural})`}
+              : mergeHasQueued
+                ? QUEUED_LAYER_REASON
+                : `Merge stack through #${reference.number} into ${stack.base} (${mergeLayers.length} ${mergeLayers.length === 1 ? terminology.singular : terminology.plural})`}
           </TooltipPopup>
         </Tooltip>
       ) : null}

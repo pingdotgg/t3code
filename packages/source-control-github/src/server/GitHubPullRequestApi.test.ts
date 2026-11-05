@@ -1256,6 +1256,86 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { label: "answers", queued: true, queueState: { isInMergeQueue: true } },
+    { label: "fails", queued: false, queueState: {} },
+  ])("adds queue state to open layers in one read, which $label", ({ queued, queueState }) =>
+    Effect.gen(function* () {
+      const rawStack = {
+        id: 42,
+        number: 3,
+        url: "https://api.github.com/repos/acme/queued/stacks/3",
+        base: { ref: "main" },
+        pull_requests: [
+          { number: 6, head: { ref: "one" }, state: "closed", merged_at: "2026-09-02" },
+          { number: 7, head: { ref: "two" }, state: "open", merged_at: null },
+          { number: 8, head: { ref: "three" }, state: "open", merged_at: null },
+        ],
+      };
+      const node = (number: number, isInMergeQueue: boolean) => ({
+        number,
+        title: "Change",
+        url: `https://github.com/acme/queued/pull/${number}`,
+        author: null,
+        baseRefName: "main",
+        headRefName: "two",
+        state: "OPEN",
+        isDraft: false,
+        isInMergeQueue,
+        mergeable: "MERGEABLE",
+        reviewDecision: null,
+        latestReviews: { nodes: [] },
+        additions: 1,
+        deletions: 1,
+        changedFiles: 1,
+        updatedAt: "2026-08-24T12:34:56.000Z",
+        mergedAt: null,
+        closedAt: null,
+        commits: { nodes: [] },
+      });
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(encodeJson([rawStack]))))
+        .mockReturnValueOnce(Effect.succeed(output(encodeJson(rawStack))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson(
+                queued
+                  ? {
+                      data: {
+                        _0_repository: { pullRequest: node(7, true) },
+                        _1_repository: { pullRequest: node(8, true) },
+                      },
+                    }
+                  : { errors: [{ message: "Something went wrong" }] },
+              ),
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const read = yield* cli
+        .getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/queued",
+          host: "github.com",
+          number: 7,
+          includeDetails: true,
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const stack = yield* Fiber.join(read);
+
+      assert.deepStrictEqual(stack?.layers, [
+        { number: 6, headBranch: "one", state: "merged" },
+        { number: 7, headBranch: "two", state: "open", ...queueState },
+        { number: 8, headBranch: "three", state: "open", ...queueState },
+      ]);
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      expect(varsAt(2)).toMatchObject({ _0_number: 7, _1_number: 8 });
+    }),
+  );
+
   it.effect("revalidates a polled stack, per credential, so an unchanged one costs no quota", () =>
     Effect.gen(function* () {
       const listing = encodeJson([

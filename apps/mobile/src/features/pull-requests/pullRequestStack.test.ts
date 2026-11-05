@@ -59,6 +59,18 @@ describe("mobile stack merge scope", () => {
     expect(scope.reason).toBeNull();
     expect(pullRequestStackMerge(stack, 3, GITHUB).heads).toHaveLength(3);
   });
+  it("blocks a merge through a queued layer but not below one", () => {
+    const updated = {
+      ...stack,
+      layers: stack.layers.map((layer) =>
+        layer.number === 2 ? { ...layer, isInMergeQueue: true } : layer,
+      ),
+    };
+    expect(pullRequestStackMerge(updated, 3, GITHUB).reason).toBe(
+      "A layer being merged is already in the merge queue.",
+    );
+    expect(pullRequestStackMerge(updated, 1, GITHUB).reason).toBeNull();
+  });
   it("excludes already merged layers from the expected head revisions", () => {
     const updated = {
       ...stack,

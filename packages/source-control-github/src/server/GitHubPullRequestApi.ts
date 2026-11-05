@@ -1766,6 +1766,38 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  // The stacks API has no queue state. Merge stack needs it for layers the thread never linked.
+  const withLayerQueueState = (
+    input: { readonly cwd: string; readonly repository: string; readonly host: string },
+    stack: GitHubPullRequestStack,
+  ) =>
+    !asksMergeQueue(input.host)
+      ? Effect.succeed(stack)
+      : Effect.forEach(
+          stack.layers,
+          (layer) =>
+            layer.state !== "open"
+              ? Effect.succeed(layer)
+              : getPullRequestSummary({
+                  cwd: input.cwd,
+                  repository: input.repository,
+                  host: input.host,
+                  number: layer.number,
+                }).pipe(
+                  Effect.map(({ isInMergeQueue }) =>
+                    isInMergeQueue === undefined ? layer : { ...layer, isInMergeQueue },
+                  ),
+                  Effect.catch((error) =>
+                    Effect.logWarning("Pull request stack queue state read failed", {
+                      operation: "getPullRequestStack",
+                      host: input.host,
+                      error: error._tag,
+                    }).pipe(Effect.as(layer)),
+                  ),
+                ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((layers) => ({ ...stack, layers })));
+
   // A missing fingerprint triggers a full watch read; a failed request fails the whole batch.
   const watchFingerprintResolver = GraphQLResolver.aliased(client.PullRequestWatchFingerprint, {
     batchKey: GitHubGraphQlClient.batchKey,
@@ -2080,7 +2112,11 @@ export const make = Effect.gen(function* () {
             operation: "getPullRequestStack",
             path: `repos/${owner}/${name}/stacks/${stack.number}`,
             decode: (raw) => decodePullRequestStacksJson(`[${raw}]`),
-          });
+          }).pipe(
+            Effect.flatMap((detailed) =>
+              detailed === null ? Effect.succeed(null) : withLayerQueueState(input, detailed),
+            ),
+          );
         }),
         // 404 means stacks are unsupported; other failures must preserve synced stacks for a retry.
         Effect.catchTags({
