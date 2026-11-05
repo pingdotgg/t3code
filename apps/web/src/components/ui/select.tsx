@@ -187,7 +187,10 @@ function SelectPopup({
             }
           >
             <SelectPrimitive.List
-              className={cn("max-h-(--available-height) overflow-y-auto p-1.5", className)}
+              className={cn(
+                "max-h-(--available-height) overflow-y-auto p-1.5 [--popup-item-radius:calc(var(--radius-card)-7px)]",
+                className,
+              )}
               data-slot="select-list"
             >
               {children}
@@ -216,7 +219,7 @@ function SelectItem({
   return (
     <SelectPrimitive.Item
       className={cn(
-        "flex min-h-8 cursor-pointer items-center rounded-[8px] px-2.5 py-1 text-label text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        "flex min-h-8 cursor-pointer items-center rounded-[var(--popup-item-radius,8px)] px-2.5 py-1 text-label text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className,
       )}
       data-slot="select-item"
