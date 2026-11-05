@@ -149,6 +149,7 @@ import {
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
 } from "./scheduledTasks/ScheduledTaskService.ts";
+import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   decodeRuntimeConfig,
@@ -659,6 +660,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* ScheduledTaskRunReactor.ScheduledTaskRunReactor;
+      yield* service.start();
+    }),
+  ).pipe(Layer.provide(ScheduledTaskRunReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
