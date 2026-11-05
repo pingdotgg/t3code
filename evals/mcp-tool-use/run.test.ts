@@ -114,6 +114,19 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
     ),
     ["distinctCalls"],
   );
+  assert.deepEqual(
+    failed(
+      { distinctCalls },
+      run([
+        {
+          ...cards[0]!,
+          input: { ...cards[0]!.input, label: "application key, application secret, consumer key" },
+        },
+        ...cards.slice(1),
+      ]),
+    ),
+    ["distinctCalls"],
+  );
 });
 
 it("matches shellMust, not shellMustNot, against a command's argv lists as a command line", () => {
