@@ -204,6 +204,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    readonly awaitCommandEffects?: boolean;
     readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Effect.Effect<
@@ -229,7 +230,23 @@ export function runOrchestratorV2ProviderReplayScenario<
   });
 
   return Effect.gen(function* () {
-    const result = yield* runOrchestratorV2Scenario(scenario, { replayGate });
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const result = yield* runOrchestratorV2Scenario(scenario, {
+      replayGate,
+      ...(options.runEffectWorker === false || options.awaitCommandEffects !== true
+        ? {}
+        : {
+            afterSteps: Effect.gen(function* () {
+              // A command can commit before its provider response clears an earlier
+              // checkpoint on the effect lane. Await the receipt before teardown.
+              for (const command of scenario.commands ?? []) {
+                for (const effect of yield* outbox.listByCommandId(command.commandId)) {
+                  yield* outbox.awaitSettled(effect.id);
+                }
+              }
+            }).pipe(Effect.orDie),
+          }),
+    });
     const recorder = yield* CommandOutputRecorder.CommandOutputRecorder;
     return { ...result, commandOutput: yield* recorder.snapshot };
   }).pipe(Effect.provide(layer));
@@ -253,6 +270,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
+  | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
   | CommandOutputRecorder.CommandOutputRecorder
   | ProviderSessionManager.ProviderSessionManagerV2,
@@ -286,6 +304,7 @@ export function layerWithRegistry<Error>(
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
+  | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | CommandOutputRecorder.CommandOutputRecorder,
@@ -534,6 +553,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
   const layerReplayRuntime = Layer.mergeAll(
+    layerStores,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
