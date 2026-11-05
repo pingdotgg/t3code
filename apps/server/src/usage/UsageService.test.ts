@@ -56,14 +56,20 @@ import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
-vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof MuseSdk>()),
-  createMuseSdkHostEffect: vi.fn(() =>
-    Effect.try(() => {
-      throw new Error("Muse is not installed in this test");
-    }),
-  ),
-}));
+vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => {
+  const original = await importOriginal<typeof MuseSdk>();
+  return {
+    ...original,
+    createMuseSdkHostEffect: vi.fn(() =>
+      Effect.fail(
+        new original.MuseSdkError({
+          operation: "start",
+          cause: new Error("Muse is not installed in this test"),
+        }),
+      ),
+    ),
+  };
+});
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));

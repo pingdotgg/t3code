@@ -203,7 +203,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     }
     // Publishing without replacement keeps an upload and its cached text immutable.
     const published = yield* fileSystem.link(partPath, finalPath).pipe(
-      Effect.map(() => true),
+      Effect.as(true),
       Effect.catch((error) => {
         if (error.reason._tag === "AlreadyExists") return Effect.succeed(false);
         return Effect.tryPromise({
