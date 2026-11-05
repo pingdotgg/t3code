@@ -1,5 +1,4 @@
 import type { MenuAction } from "@react-native-menu/menu";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { ThreadListToolbar } from "./ThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
@@ -83,16 +82,13 @@ export function HomeHeader(props: HomeHeaderProps) {
   };
 
   return (
-    <>
-      <NativeStackScreenOptions options={{ headerShown: false }} />
-      <ThreadListToolbar
-        searchQuery={props.searchQuery}
-        onSearchQueryChange={props.onSearchQueryChange}
-        filterActions={menuActions}
-        filterCustomized={hasCustomListOptions}
-        onFilterSelect={(event) => handleMenuAction({ nativeEvent: { event } })}
-        onOpenEnvironments={props.onOpenEnvironments}
-      />
-    </>
+    <ThreadListToolbar
+      searchQuery={props.searchQuery}
+      onSearchQueryChange={props.onSearchQueryChange}
+      filterActions={menuActions}
+      filterCustomized={hasCustomListOptions}
+      onFilterSelect={(event) => handleMenuAction({ nativeEvent: { event } })}
+      onOpenEnvironments={props.onOpenEnvironments}
+    />
   );
 }

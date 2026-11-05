@@ -28,7 +28,6 @@ import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { SubagentStopButton } from "./SubagentStopButton";
 import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -48,7 +47,6 @@ export function useThreadTurnSubagents(target: AgentsTarget | null): ThreadTurnS
 }
 
 export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const target = route.params;
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
@@ -130,7 +128,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader title="Agents" onClose={() => navigation.goBack()} />
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+      <ScreenContent>{content}</ScreenContent>
     </View>
   );
 }

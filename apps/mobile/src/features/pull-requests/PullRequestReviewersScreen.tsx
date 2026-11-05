@@ -1,4 +1,4 @@
-import { SheetHeader } from "../../components/ui/SheetHeader";
+import { AppBar, type AppBarSearch } from "../../components/ui/AppBar";
 import { AsyncResult } from "effect/reactivity";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { usePullRequestConnected } from "./usePullRequestConnected";
@@ -8,48 +8,23 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import {
-  FlatList,
-  Platform,
-  Pressable,
-  ScrollView,
-  View,
-  type ScrollViewProps,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { FlatList, Pressable, ScrollView, View } from "react-native";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { useContentTopInset, useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Button } from "../../components/ui/Button";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
-} from "../layout/native-mail-search-toolbar";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 
-function ReviewerScrollView(props: ScrollViewProps) {
-  return (
-    <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView {...props} contentInsetAdjustmentBehavior="automatic" />
-    </ScrollViewMarker>
-  );
-}
-
 export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequestParams>) {
   const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
   const listRef = useRef<FlatList<PullRequestReviewerCandidate>>(null);
-  const nativeMetrics = useNativeLayoutMetrics();
-  const integratedSearch =
-    NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
-    (!nativeMetrics || nativeMetrics.verticalBarEdge === "none");
   const target = pullRequestTarget(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const pr = detail.data;
@@ -90,7 +65,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const search = (next: string) => {
     setQuery(next);
     listRef.current?.scrollToOffset({
-      offset: Platform.OS === "ios" ? -insets.top : 0,
+      offset: -contentTopInset,
       animated: false,
     });
   };
@@ -124,70 +99,41 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     }
   };
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
-  const searchOptions = {
-    placeholder: "Search reviewers",
-    autoCapitalize: "none" as const,
-    onChangeText: (event: { nativeEvent: { text: string } }) => search(event.nativeEvent.text),
-    onCancelButtonPress: () => search(""),
-    hideNavigationBar: false,
-    hideWhenScrolling: false,
-    obscureBackground: false,
-    allowToolbarIntegration: integratedSearch,
-    placement: integratedSearch ? ("automatic" as const) : ("stacked" as const),
-  };
+  const reviewerSearch: AppBarSearch | undefined = listCandidates
+    ? {
+        mode: "inline",
+        compactToolbar: true,
+        value: query,
+        onChangeText: search,
+        placeholder: "Search reviewers",
+      }
+    : undefined;
+  const searchToolbarInset = useSearchToolbarInset(reviewerSearch);
   return (
     <View className="flex-1 bg-sheet">
-      <SheetHeader
+      <AppBar
         title="Request review"
         subtitle={`#${route.params.number} · ${route.params.repository}`}
         onClose={() => navigation.goBack()}
-        accessibilityLabel="Close request review"
-      />
-      <NativeStackScreenOptions
-        options={{
-          headerSearchBarOptions: listCandidates ? searchOptions : undefined,
-          unstable_headerToolbarItems: () =>
-            listCandidates && integratedSearch
-              ? [
-                  createNativeMailSearchToolbarItem({
-                    placeholder: "Search reviewers",
-                    onSearchTextChange: search,
-                    showsSearchDismissButton: true,
-                    searchTextChangeId: "pr-reviewer-search",
-                  }),
-                ]
-              : [],
-        }}
+        closeAccessibilityLabel="Close request review"
+        search={reviewerSearch}
       />
       {listCandidates ? (
         <FlatList
           ref={listRef}
           data={candidates}
           keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
-          renderScrollComponent={
-            Platform.OS === "ios" ? (props) => <ReviewerScrollView {...props} /> : undefined
-          }
-          contentInsetAdjustmentBehavior="never"
+          renderScrollComponent={NativeScrollView}
+          contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 24 }}
+          contentContainerStyle={{ paddingBottom: 24 + searchToolbarInset }}
           ListHeaderComponent={
             <View className="gap-3 px-4 py-4">
               <Text className="text-xs text-foreground-muted">
                 Tap someone to request a review. Tap a requested reviewer to remove the request.
               </Text>
-              {Platform.OS === "android" ? (
-                <TextInput
-                  accessibilityLabel="Search reviewers"
-                  placeholder="Search reviewers"
-                  placeholderTextColorClassName="accent-foreground-muted"
-                  value={query}
-                  onChangeText={search}
-                  autoCapitalize="none"
-                  className="min-h-11 rounded-xl bg-grouped-card px-3 text-sm"
-                />
-              ) : null}
               {!allowed ? (
                 <Text className="text-xs text-foreground-muted">
                   Requesting reviews requires write access and an open {singular}.

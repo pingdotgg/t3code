@@ -9,8 +9,7 @@ import {
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { use, useEffect, useRef, useState, type RefObject } from "react";
-import { HeaderHeightContext } from "@react-navigation/elements";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
 import { Pressable, StatusBar, View } from "react-native";
@@ -28,6 +27,7 @@ import {
   findHeaderMenuAction,
 } from "../../components/ui/headerMenu.android";
 import { AppBar } from "../../components/ui/AppBar";
+import { useBarOverlap } from "../../components/ui/useBarInset";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useAppForeground } from "../../lib/appState";
 import { useHardwareBack } from "../../lib/backHandler";
@@ -91,7 +91,7 @@ export function DevicePreviewScreen({
   const embedded = onMaximize !== undefined;
   const insets = useSafeAreaInsets();
   // In a pane the stream sits below the pane's bar, which content otherwise slides under.
-  const headerHeight = use(HeaderHeightContext) ?? 0;
+  const barOverlap = useBarOverlap();
   // NativeColumnContent already insets the sides, so only a book fold moves the hidden-controls pill.
   const handleBounds = deriveBottomControlInsets(useNativeColumnLayoutMetrics());
   const { themeVariables } = useAppearancePreferences();
@@ -280,7 +280,7 @@ export function DevicePreviewScreen({
               },
             ]}
           />
-          <View style={{ height: headerHeight }} />
+          <View style={{ height: barOverlap }} />
         </>
       ) : null}
       {preview && focused && foreground ? (

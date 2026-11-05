@@ -11,6 +11,7 @@ import { type KnownTerminalSession } from "@t3tools/client-runtime/state/termina
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppBar } from "../../components/ui/AppBar";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
 import { useMemo, useRef, useState } from "react";
@@ -377,6 +378,7 @@ function ThreadTerminal(props: {
   } = props.knownSessions;
   const insets = useSafeAreaInsets();
   const nativeColumnMetrics = useNativeColumnLayoutMetrics();
+  const contentTopInset = useContentTopInset();
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
@@ -839,8 +841,7 @@ function ThreadTerminal(props: {
                 ? themeVariables["--color-card-alt"]
                 : terminalTheme.background,
             // Measured top reservation is zero when UIKit already inset the body or moved the bar.
-            paddingTop:
-              Platform.OS === "ios" ? (nativeColumnMetrics?.safeArea.top ?? insets.top) : 0,
+            paddingTop: contentTopInset,
             paddingBottom:
               Platform.OS === "android" && !keyboardState.isVisible ? insets.bottom : 0,
           }}

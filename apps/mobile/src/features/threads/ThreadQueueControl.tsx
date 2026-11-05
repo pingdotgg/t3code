@@ -34,7 +34,6 @@ import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
@@ -117,7 +116,6 @@ function QueuedRunSender(props: {
 }
 
 export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const theme = useUniwindTheme();
   const target = route.params;
   const navigation = useNavigation();
@@ -362,7 +360,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View collapsable={false} className="flex-1 bg-sheet">
         <SheetHeader title="Queued" onClose={() => navigation.goBack()} />
-        <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+        <ScreenContent>{content}</ScreenContent>
       </View>
     </GestureHandlerRootView>
   );

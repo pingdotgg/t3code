@@ -69,7 +69,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const android = Platform.OS === "android";
   const header = (
     <SheetHeader
-      presentation={android ? "inline" : "native"}
       title="Commit changes"
       subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
       onCancel={() => navigation.goBack()}
@@ -85,7 +84,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       className="bg-sheet ios:flex-1 android:flex-col-reverse"
       style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
-      {android ? null : header}
       <ScreenContent fitToContents>
         <ScrollView
           nestedScrollEnabled
@@ -229,7 +227,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           </View>
         </ScrollView>
       </ScreenContent>
-      {android ? header : null}
+      {header}
     </View>
   );
 }

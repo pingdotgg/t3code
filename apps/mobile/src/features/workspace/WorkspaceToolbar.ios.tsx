@@ -2,9 +2,10 @@ import { useActiveNewTask } from "../../state/active-new-task";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef } from "react";
-import { Platform } from "react-native";
 import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
+import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
+import { useSettingsEnvironmentMenu } from "../settings/components/SettingsEnvironmentFilterHeader";
 import type { SearchBarCommands } from "react-native-screens";
 
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -39,7 +40,6 @@ export function WorkspaceToolbar(props: {
   const bottomSearch = duoSearch && sidebarTabs !== "picker";
   // On the Duo, compose belongs to the threads tab, in the detail column's bar when unfolded.
   const nativeToolbarCompose =
-    Platform.OS === "ios" &&
     deviceType === "duo-folded" &&
     !workspace.settingsOpen &&
     workspace.state.selectedTab === "threads" &&
@@ -48,6 +48,7 @@ export function WorkspaceToolbar(props: {
   const focused = useIsFocused();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const searchRef = useRef<SearchBarCommands>(null);
+  const settingsMenu = useSettingsEnvironmentMenu();
   // The Settings list takes the selected tab's place, so search follows it.
   const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
   const tab = workspace.state.tabs[selectedTab];
@@ -181,9 +182,13 @@ export function WorkspaceToolbar(props: {
               : undefined,
         }}
       />
-      {/* UIKit lays trailing items out from the edge inward. A trailing toolbar replaces the
-          header's own items, so an empty one would hide the Settings scope filter. */}
-      {workspace.settingsOpen && !foldedSearch ? null : (
+      {/* UIKit lays trailing items out from the edge inward. */}
+      {workspace.settingsOpen ? (
+        <Toolbar placement="right">
+          {searchButton}
+          {createNativeHeaderMenu(settingsMenu)}
+        </Toolbar>
+      ) : (
         <Toolbar placement="right">
           {searchButton}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
