@@ -17,13 +17,13 @@ export function ProjectRowLeading(props: {
     | undefined;
 }) {
   const { selection } = props;
-  if (!selection) return <span className="flex shrink-0">{props.icon}</span>;
+  if (!selection) return <span className="flex shrink-0 pointer-coarse:mr-2">{props.icon}</span>;
   return (
     <button
       type="button"
       tabIndex={-1}
       aria-hidden="true"
-      className="group/toggle -m-1 flex shrink-0 cursor-pointer p-1"
+      className="group/toggle -m-1 flex shrink-0 cursor-pointer p-1 pointer-coarse:-my-2 pointer-coarse:mr-0 pointer-coarse:-ml-3 pointer-coarse:py-2 pointer-coarse:pr-2 pointer-coarse:pl-3"
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.preventDefault()}
       onClick={(event) => {
