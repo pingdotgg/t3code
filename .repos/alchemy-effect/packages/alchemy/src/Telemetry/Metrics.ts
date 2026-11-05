@@ -9,8 +9,7 @@ import * as Metric from "effect/Metric";
  * and `status` (`success`/`error`).
  */
 export const resourceCounter = Metric.counter("alchemy.resource.operations", {
-  description:
-    "Number of resource lifecycle operations dispatched by alchemy apply.",
+  description: "Number of resource lifecycle operations dispatched by alchemy apply.",
   incremental: true,
 });
 
@@ -18,8 +17,7 @@ export const resourceCounter = Metric.counter("alchemy.resource.operations", {
  * Histogram of how long each lifecycle operation takes.
  */
 export const resourceDuration = Metric.timer("alchemy.resource.duration", {
-  description:
-    "Wall-clock duration of resource lifecycle operations dispatched by alchemy apply.",
+  description: "Wall-clock duration of resource lifecycle operations dispatched by alchemy apply.",
 });
 
 /**
@@ -37,14 +35,11 @@ export const cliCounter = Metric.counter("alchemy.cli.invocations", {
  * state store itself can be tracked separately from regular
  * resource lifecycle ops.
  */
-export const stateStoreCounter = Metric.counter(
-  "alchemy.state_store.operations",
-  {
-    description:
-      "Number of Cloudflare State Store deploy/bootstrap operations dispatched by alchemy.",
-    incremental: true,
-  },
-);
+export const stateStoreCounter = Metric.counter("alchemy.state_store.operations", {
+  description:
+    "Number of Cloudflare State Store deploy/bootstrap operations dispatched by alchemy.",
+  incremental: true,
+});
 
 export type StateStoreOp = "deploy";
 
@@ -55,13 +50,10 @@ export type StateStoreOp = "deploy";
  * spans. Open-ended on purpose: third-party state stores get counted
  * automatically by setting their `StateService.id`.
  */
-export const stateStoreInitCounter = Metric.counter(
-  "alchemy.state_store.inits",
-  {
-    description: "Number of times a State store layer is constructed.",
-    incremental: true,
-  },
-);
+export const stateStoreInitCounter = Metric.counter("alchemy.state_store.inits", {
+  description: "Number of times a State store layer is constructed.",
+  incremental: true,
+});
 
 /**
  * Wraps a resource lifecycle Effect to record a counter + timer entry,
@@ -80,11 +72,7 @@ export const recordResourceOp =
       const baseAttrs = { resource_type: resourceType, op } as const;
       return self.pipe(
         Effect.onExit((exit) =>
-          recordOutcome(
-            baseAttrs,
-            Exit.isSuccess(exit) ? "success" : "error",
-            elapsed(startNs),
-          ),
+          recordOutcome(baseAttrs, Exit.isSuccess(exit) ? "success" : "error", elapsed(startNs)),
         ),
       );
     });
@@ -154,10 +142,7 @@ export const recordStateStoreInit = <A extends { readonly id: string }, E, R>(
       Effect.all(
         [
           Effect.logDebug(`state store: ready (${service.id})`),
-          Metric.update(
-            Metric.withAttributes(stateStoreInitCounter, { id: service.id }),
-            1,
-          ),
+          Metric.update(Metric.withAttributes(stateStoreInitCounter, { id: service.id }), 1),
           Effect.annotateCurrentSpan("alchemy.state_store.id", service.id),
         ],
         { discard: true },
@@ -166,7 +151,7 @@ export const recordStateStoreInit = <A extends { readonly id: string }, E, R>(
     Effect.withSpan("state_store.init"),
   );
 
-export type ResourceOp = "precreate" | "create" | "update" | "delete" | "read";
+export type ResourceOp = "observe" | "precreate" | "create" | "update" | "delete" | "read";
 
 const elapsed = (startNs: bigint): Duration.Duration =>
   Duration.nanos(process.hrtime.bigint() - startNs);
