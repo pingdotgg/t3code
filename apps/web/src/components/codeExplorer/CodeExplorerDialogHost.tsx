@@ -21,6 +21,7 @@ export function CodeExplorerDialogHost(props: {
   readonly projectId: ProjectId;
 }) {
   const [request, setRequest] = useAtom(codeExplorerRequestAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the keep-alive request atom on unmount so a stale request cannot reopen the dialog
   useEffect(() => () => setRequest(null), [setRequest]);
   const active =
     request !== null &&

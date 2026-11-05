@@ -22,6 +22,7 @@ export function LoomMinimap(props: {
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to this element's size through a ResizeObserver
   useLayoutEffect(() => {
     const element = ref.current;
     if (element === null) return;

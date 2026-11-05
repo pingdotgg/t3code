@@ -57,6 +57,7 @@ export interface LoomTimelineProps {
 function useElementWidth() {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to this element's size through a ResizeObserver
   useLayoutEffect(() => {
     const element = ref.current;
     if (element === null) return;
@@ -78,6 +79,7 @@ export function LoomTimeline(props: LoomTimelineProps) {
   const scale = loomScale(props.view, timelineWidth);
   const asOfMs = Date.parse(props.window.asOf);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the scroller's height through a ResizeObserver to window visible rows
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (element === null) return;

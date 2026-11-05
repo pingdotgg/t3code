@@ -31,7 +31,7 @@ export function useLoomViewGestures(args: {
       onViewChange(panLoomView(view, bounds, delta * scale.msPerPx));
     }
   });
-  // Wheel zoom needs preventDefault, which React's passive wheel listener cannot do.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a non-passive wheel listener, since React's passive one cannot preventDefault for zoom
   useEffect(() => {
     const element = wheelRef.current;
     if (element === null) return;

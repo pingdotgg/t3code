@@ -58,6 +58,7 @@ export function ProjectKnowledgeFactEditor(props: {
     tags !== (base?.tags.join(", ") ?? "") ||
     kind !== (base?.kind ?? "note");
   const { onDirtyChange } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the parent's leave guard in step, including pre-filled drafts, and releases it on unmount
   useEffect(() => {
     onDirtyChange(dirty);
     return () => onDirtyChange(false);

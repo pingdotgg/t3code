@@ -65,6 +65,7 @@ export interface LoomWeaveFieldProps {
 function useElementSize() {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to this element's size through a ResizeObserver
   useLayoutEffect(() => {
     const element = ref.current;
     if (element === null) return;
@@ -452,7 +453,7 @@ function BranchLayer(
   const labelRoom = laneLabelRoom(paths, layout, width);
   const rootY = layout.cy;
   const { scrollRef } = props;
-  // A workstream taller than the field opens scrolled to its root, not to its topmost branch.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sets the DOM scroll position so a tall workstream opens on its root, not its topmost branch
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (element !== null) element.scrollTop = Math.max(0, rootY - element.clientHeight / 2);
