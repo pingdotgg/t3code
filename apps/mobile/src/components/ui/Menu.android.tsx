@@ -18,6 +18,7 @@ export function Menu(props: MenuProps) {
           cloneElement(child, {
             onLongPress: () => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              props.onOpenMenu?.();
               open();
             },
           })

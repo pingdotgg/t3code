@@ -73,9 +73,15 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
+  threadListV2ThreadItemKey,
   layoutThreadListV2RowMenuActions,
   type ThreadListV2Status,
 } from "./threadListV2";
+import {
+  ThreadListDragRow,
+  useThreadListDragTarget,
+  type ThreadListDragTarget,
+} from "./thread-list-drag";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -664,6 +670,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly autoSettleOptOutSupported: boolean;
   readonly titleRegenerationSupported: boolean;
   readonly reorderSupported?: boolean;
+  /** Present when the list supports press-and-drag arrangement. */
+  readonly dragTarget?: ThreadListDragTarget;
   readonly onMoveThread?: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -797,6 +805,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  // Cards in live sections can be lifted when any drop could apply to them.
+  const drag = useThreadListDragTarget({
+    target: props.dragTarget,
+    itemKey: threadListV2ThreadItemKey(thread),
+    thread,
+    enabled:
+      variant === "card" &&
+      !snoozedRow &&
+      (props.reorderSupported === true || props.pinningSupported || props.settlementSupported),
+  });
 
   const canUnsettle = variant === "slim";
   // The gate's only time-dependent edge is the queued-turn grace window, so its
@@ -1484,7 +1502,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
 
   return (
-    <View collapsable={false}>
+    <ThreadListDragRow drag={drag}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}
@@ -1507,11 +1525,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         threadTitle={thread.title}
       >
         {(close) => (
-          <Menu actions={menuActions} onPressAction={handleMenuAction} shouldOpenOnLongPress>
+          <Menu
+            actions={menuActions}
+            onPressAction={handleMenuAction}
+            onOpenMenu={drag.onMenuOpen}
+            shouldOpenOnLongPress
+          >
             {rowContent(close)}
           </Menu>
         )}
       </ThreadSwipeable>
-    </View>
+    </ThreadListDragRow>
   );
 });
