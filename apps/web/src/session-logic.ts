@@ -1025,11 +1025,18 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
 }): Map<ChatMessage["id"], number> {
-  const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
-  for (const checkpoint of input.checkpoints) {
+  const revertTurnCountByRunId = new Map<RunId, number>();
+  let previousRetainedTurnCount = 0;
+  // Ordinals keep increasing after rewind, so the retained boundary can skip stale turns.
+  for (const checkpoint of input.checkpoints.toSorted(
+    (left, right) => left.checkpointTurnCount - right.checkpointTurnCount,
+  )) {
+    if (checkpoint.status === "stale") continue;
     if (checkpoint.status === "ready") {
-      readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+      revertTurnCountByRunId.set(checkpoint.runId, previousRetainedTurnCount);
     }
+    // An unavailable retained checkpoint must still block rewinding past that turn.
+    previousRetainedTurnCount = checkpoint.checkpointTurnCount;
   }
   const byUserMessageId = new Map<ChatMessage["id"], number>();
   for (const entry of input.timelineEntries) {
@@ -1038,9 +1045,9 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       continue;
     }
     if (entry.message.runId === null) continue;
-    const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+    const revertTurnCount = revertTurnCountByRunId.get(entry.message.runId);
+    if (revertTurnCount === undefined) continue;
+    byUserMessageId.set(entry.message.id, revertTurnCount);
   }
   return byUserMessageId;
 }

@@ -2,6 +2,7 @@ import {
   MessageId,
   RuntimeRequestId,
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   PlanId,
@@ -293,6 +294,83 @@ describe("V2 session presentation", () => {
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
   });
+
+  it.each([
+    {
+      name: "a stale turn between retained turns",
+      checkpoints: [
+        [4, "ready"],
+        [3, "stale"],
+        [1, "ready"],
+        [2, "ready"],
+      ],
+      runOrdinal: 4,
+      expected: 2,
+    },
+    {
+      name: "all earlier turns were rolled back",
+      checkpoints: [
+        [3, "ready"],
+        [2, "stale"],
+        [1, "stale"],
+      ],
+      runOrdinal: 3,
+      expected: 0,
+    },
+    {
+      name: "the previous retained checkpoint is missing",
+      checkpoints: [
+        [4, "ready"],
+        [3, "stale"],
+        [2, "missing"],
+        [1, "ready"],
+      ],
+      runOrdinal: 4,
+      expected: 2,
+    },
+    {
+      name: "the previous retained checkpoint failed",
+      checkpoints: [
+        [4, "ready"],
+        [3, "stale"],
+        [2, "error"],
+        [1, "ready"],
+      ],
+      runOrdinal: 4,
+      expected: 2,
+    },
+  ] as const)(
+    "targets the previous retained boundary when $name",
+    ({ checkpoints, runOrdinal, expected }) => {
+      const runId = RunId.make(`run-${runOrdinal}`);
+      const message: ChatMessage = {
+        id: MessageId.make(`message-${runOrdinal}`),
+        role: "user",
+        text: "Continue after rewind",
+        runId,
+        inputIntent: "turn_start",
+        streaming: false,
+        createdAt: "2026-06-20T00:00:00.000Z",
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      };
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: [
+          { id: message.id, kind: "message", createdAt: message.createdAt, message },
+        ],
+        checkpoints: checkpoints.map(([ordinal, status]) => ({
+          runId: RunId.make(`run-${ordinal}`),
+          checkpointTurnCount: ordinal,
+          checkpointRef: CheckpointRef.make(`checkpoint-run-${ordinal}`),
+          status,
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-06-20T00:00:03.000Z",
+        })),
+      });
+
+      expect(targets.get(message.id)).toBe(expected);
+    },
+  );
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
