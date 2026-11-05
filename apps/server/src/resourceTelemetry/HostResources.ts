@@ -43,6 +43,10 @@ function darwinAvailableMemory(output: string): number | null {
 
 type OsUpdates = NonNullable<HostResourcesSnapshot["osUpdates"]>;
 
+class HostDiskReadError extends Schema.TaggedError<HostDiskReadError>()("HostDiskReadError", {
+  cause: Schema.Defect(),
+}) {}
+
 const decodeRecommendedUpdates = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Array(
@@ -135,7 +139,10 @@ const make = Effect.fn("makeHostResources")(function* () {
     timeToLive: "10 minutes",
   });
 
-  const readDisk = Effect.tryPromise(() => NodeFSP.statfs(homeDirectory, { bigint: true })).pipe(
+  const readDisk = Effect.tryPromise({
+    try: () => NodeFSP.statfs(homeDirectory, { bigint: true }),
+    catch: (cause) => new HostDiskReadError({ cause }),
+  }).pipe(
     Effect.timeout("1 second"),
     Effect.map(({ bavail, blocks, bsize }) => ({
       availableBytes: Number(bavail * bsize),
