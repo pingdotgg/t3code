@@ -65,6 +65,18 @@ function metadataCommand(input: {
   readonly update: ThreadMetadataMcpUpdateInput;
 }): Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }> {
   switch (input.update.action) {
+    case "change_workspace":
+      return {
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        expectedIdle: true,
+        ...(input.update.projectId === undefined ? {} : { projectId: input.update.projectId }),
+        ...(input.update.worktreePath === undefined
+          ? {}
+          : { worktreePath: input.update.worktreePath }),
+        ...(input.update.branch === undefined ? {} : { branch: input.update.branch }),
+      };
     case "rename":
       return {
         type: "thread.metadata.update",
