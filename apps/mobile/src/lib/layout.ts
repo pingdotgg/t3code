@@ -60,7 +60,7 @@ const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
 // UIKit's inspector column keeps its own width, so the sidebar steps aside only when the page
 // would get narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
-const NATIVE_INSPECTOR_MIN_MAIN_WIDTH = 320;
+export const NATIVE_INSPECTOR_MIN_MAIN_WIDTH = 320;
 
 /**
  * The window's width class. Compact: the sidebar is the root and pages push over it. Medium: the
@@ -268,8 +268,21 @@ export function deriveWorkspacePaneLayout(input: {
   };
 }
 
-export function nativeInspectorColumnWidth(viewportWidth: number, fraction: number) {
-  return Math.max(260, Math.min(viewportWidth * 0.6, viewportWidth * fraction));
+/**
+ * UIKit drops the inspector column, and refuses to show it again, once the page beside it would
+ * fall under its minimum inside the safe area (the Duo's system bar takes width from the window).
+ */
+export function nativeInspectorColumnWidth(input: {
+  readonly viewportWidth: number;
+  readonly horizontalSafeArea: number;
+  readonly fraction: number;
+}) {
+  const { viewportWidth } = input;
+  const maxWidth = Math.min(
+    viewportWidth * 0.6,
+    viewportWidth - input.horizontalSafeArea - NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
+  );
+  return Math.max(260, Math.min(maxWidth, viewportWidth * input.fraction));
 }
 
 export function deriveFileInspectorPaneLayout(input: {
