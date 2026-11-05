@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -41,6 +42,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
+
+const LinuxDesktopSessionConfig = Config.all({
+  current: Config.String("XDG_CURRENT_DESKTOP").pipe(Config.option),
+  session: Config.String("XDG_SESSION_DESKTOP").pipe(Config.option),
+});
 
 const makeDesktopRunId = SecureRandom.SecureRandom.pipe(
   Effect.flatMap((random) => random.uuidV4()),
@@ -307,12 +313,13 @@ const startup = Effect.gen(function* () {
   yield* desktopSettings.load;
 
   if (linuxElectronOptions !== null) {
+    const xdgDesktop = yield* LinuxDesktopSessionConfig;
     yield* logStartupInfo("linux password store configured", {
       passwordStore: hasCommandLinePasswordStore
         ? "command-line"
         : (linuxElectronOptions.passwordStore ?? "electron-default"),
-      xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
-      xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
+      xdgCurrentDesktop: Option.getOrNull(xdgDesktop.current),
+      xdgSessionDesktop: Option.getOrNull(xdgDesktop.session),
     });
   }
 

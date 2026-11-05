@@ -84,7 +84,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         prefix: "t3-claude-fork-config-",
       });
       const projectDir = yield* writeClaudeSession(configDir);
-      const hostConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const hostConfigDir = (yield* HostProcess.Environment).CLAUDE_CONFIG_DIR;
       const inProcessFork = vi.spyOn(ClaudeSdk, "forkSession");
       yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
 
@@ -110,7 +110,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         ?.match(/"uuid"\s*:\s*"([^"]+)"/)?.[1];
       assert.isString(inheritedHead);
       assert.equal(forked.headMessageId, inheritedHead);
-      assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
+      assert.equal((yield* HostProcess.Environment).CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
