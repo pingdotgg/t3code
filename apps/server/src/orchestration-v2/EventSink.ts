@@ -291,11 +291,7 @@ const layerBase: Layer.Layer<
         const staleRequests = new Set<RuntimeRequestId>();
         const staleNodes = new Set<NodeId>();
         for (const event of events) {
-          if (
-            event.type !== "runtime-request.updated" ||
-            event.payload.kind !== "user_input" ||
-            event.payload.status !== "cancelled"
-          )
+          if (event.type !== "runtime-request.updated" || event.payload.status !== "cancelled")
             continue;
           const current = yield* projectionStore.getRuntimeRequest(
             event.threadId,
@@ -303,7 +299,7 @@ const layerBase: Layer.Layer<
           );
           if (
             current?.status !== "pending" ||
-            current.kind !== "user_input" ||
+            current.kind !== event.payload.kind ||
             current.providerTurnId !== event.payload.providerTurnId ||
             current.responseCapability.type === "message"
           ) {
@@ -311,22 +307,44 @@ const layerBase: Layer.Layer<
             staleNodes.add(event.payload.nodeId);
           }
         }
-        return events.filter((event) => {
-          switch (event.type) {
-            case "runtime-request.updated":
-              return event.payload.status !== "cancelled" || !staleRequests.has(event.payload.id);
-            case "node.updated":
-              return event.payload.status !== "cancelled" || !staleNodes.has(event.payload.id);
-            case "turn-item.updated":
-              return (
-                event.payload.type !== "user_input_request" ||
-                event.payload.status !== "cancelled" ||
-                !staleRequests.has(event.payload.requestId)
-              );
-            default:
-              return true;
-          }
-        });
+        return yield* Effect.filter(
+          events,
+          Effect.fnUntraced(function* (event) {
+            const requestId =
+              event.type === "node.updated" &&
+              (event.payload.kind === "user_input_request" ||
+                event.payload.kind === "approval_request")
+                ? event.payload.runtimeRequestId
+                : event.type === "turn-item.updated" &&
+                    (event.payload.type === "user_input_request" ||
+                      event.payload.type === "approval_request")
+                  ? event.payload.requestId
+                  : null;
+            if (
+              requestId !== null &&
+              (event.type === "node.updated" || event.type === "turn-item.updated") &&
+              event.payload.status === "cancelled"
+            ) {
+              const current = yield* projectionStore.getRuntimeRequest(event.threadId, requestId);
+              if (current?.status === "resolved") return false;
+            }
+            switch (event.type) {
+              case "runtime-request.updated":
+                return event.payload.status !== "cancelled" || !staleRequests.has(event.payload.id);
+              case "node.updated":
+                return event.payload.status !== "cancelled" || !staleNodes.has(event.payload.id);
+              case "turn-item.updated":
+                return (
+                  (event.payload.type !== "user_input_request" &&
+                    event.payload.type !== "approval_request") ||
+                  event.payload.status !== "cancelled" ||
+                  !staleRequests.has(event.payload.requestId)
+                );
+              default:
+                return true;
+            }
+          }),
+        );
       });
 
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
