@@ -828,9 +828,7 @@ export function useThreadComposerState(input: {
       return null;
     }
     const thread = selectedThreadShell;
-    const threadKey = scopedThreadKey(thread.environmentId, thread.id);
-    const draft = getComposerDraftSnapshot(threadKey);
-    // Goal commands belong to the provider that owns the goal, not a model picked in the draft.
+    // Goal commands belong to the thread itself, not the model or modes picked in the draft.
     const modelSelection = thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
     if (
@@ -858,11 +856,8 @@ export function useThreadComposerState(input: {
       text,
       attachments: [],
       modelSelection,
-      runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: resolveProviderInteractionMode(
-        provider,
-        draft.interactionMode ?? thread.interactionMode,
-      ),
+      runtimeMode: thread.runtimeMode,
+      interactionMode: resolveProviderInteractionMode(provider, thread.interactionMode),
       createdAt: metadata.createdAt,
     });
     return messageId;

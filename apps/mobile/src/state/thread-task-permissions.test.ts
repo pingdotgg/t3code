@@ -433,16 +433,21 @@ describe("mobile task permissions", () => {
     expect(state.draft.text).toBe("Keep my draft");
   });
 
-  it("sends a goal command with the thread's model, not the draft's", async () => {
+  it("sends a goal command with the thread's model and modes, not the draft's", async () => {
     state.grantedEnvironments.add("secondary");
     state.draft.modelSelection = {
       instanceId: ProviderInstanceId.make("claudeAgent"),
       model: "claude-sonnet-5-5",
     };
+    Object.assign(state.draft, { runtimeMode: "approval-required", interactionMode: "plan" });
     const composer = useThreadComposerState(NO_SIDE_CHATS);
     await composer.onSendCommand("/goal resume");
     expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ modelSelection: state.thread.modelSelection }),
+      expect.objectContaining({
+        modelSelection: state.thread.modelSelection,
+        runtimeMode: state.thread.runtimeMode,
+        interactionMode: state.thread.interactionMode,
+      }),
     );
   });
 
