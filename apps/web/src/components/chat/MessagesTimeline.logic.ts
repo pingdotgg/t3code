@@ -2003,9 +2003,7 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "quiz-card") {
       const answered =
         index < lastUserMessageIndex ||
-        (input.latestQueuedUserMessageAt !== null &&
-          input.latestQueuedUserMessageAt !== undefined &&
-          input.latestQueuedUserMessageAt > timelineEntry.createdAt);
+        (input.latestQueuedUserMessageAt ?? "") > timelineEntry.createdAt;
       nextRows.push({
         kind: "quiz-card",
         id: timelineEntry.id,

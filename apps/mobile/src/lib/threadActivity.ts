@@ -66,10 +66,12 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
+import type { QuizCard } from "@t3tools/shared/quizCard";
 import {
   compactDynamicToolOutput,
   htmlRenderFromToolItem,
   mcpAppFromToolItem,
+  quizCardFromToolItem,
 } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 import {
@@ -187,6 +189,13 @@ type RawThreadFeedEntry =
       readonly itemId: TurnItemId;
       readonly revision: string;
       readonly app: McpAppReference;
+    }
+  | {
+      readonly type: "quiz-card";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly quizCard: QuizCard;
     };
 
 export type ThreadFeedEntry = ThreadFeedEntryContent & {
@@ -195,7 +204,7 @@ export type ThreadFeedEntry = ThreadFeedEntryContent & {
 };
 
 type ThreadFeedEntryContent =
-  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "mcp-app" }>
+  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "mcp-app" | "quiz-card" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -1101,7 +1110,8 @@ function deriveThreadFeedRunFolds(
         ? (entry.message.runId ?? runlessKey)
         : entry.type === "activity-group" ||
             entry.type === "html-render" ||
-            entry.type === "mcp-app"
+            entry.type === "mcp-app" ||
+            entry.type === "quiz-card"
           ? (entry.runId ?? runlessKey)
           : null;
     if (!ownRunId) continue;
@@ -1155,6 +1165,7 @@ function deriveThreadFeedRunFolds(
             entry.id !== terminalAssistantId &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
+            entry.type !== "quiz-card" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
             !(
               entry.type === "activity-group" &&
@@ -2084,6 +2095,23 @@ export function buildThreadFeed(
       continue;
     }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
+    const quizCard =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? quizCardFromToolItem(item)
+        : undefined;
+    if (quizCard !== undefined) {
+      const entry: RawThreadFeedEntry = {
+        type: "quiz-card",
+        id: item.id,
+        createdAt,
+        runId: item.runId,
+        quizCard,
+      };
+      projectedEntriesCache.set(row, { attemptId, entry });
+      entries.push(entry);
+      entryRows.push(index);
+      continue;
+    }
     const render =
       item.type === "dynamic_tool" && item.status === "completed"
         ? htmlRenderFromToolItem(item)

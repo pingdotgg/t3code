@@ -29,6 +29,7 @@ export function QuizCard(props: {
   const [error, setError] = useState<string | null>(null);
   const revealed = props.answered || submitted;
   const picked = options.find((option) => option.option === selected);
+  const sentPick = submitted ? picked : undefined;
 
   const submit = async () => {
     if (sending || revealed || selected === null) return;
@@ -62,7 +63,7 @@ export function QuizCard(props: {
   return (
     <View className="mb-3 rounded-2xl border border-border bg-card p-4">
       <Text className="font-t3-medium text-base">{props.quizCard.question}</Text>
-      <View className="mt-3 gap-2">
+      <View accessibilityRole="radiogroup" accessibilityLabel="Answer" className="mt-3 gap-2">
         {options.map((option) => (
           <Pressable
             key={option.option}
@@ -75,7 +76,10 @@ export function QuizCard(props: {
               selected === option.option ? "border-primary bg-primary/10" : "border-border",
             )}
           >
-            <Text>{option.option}</Text>
+            <Text>
+              {option.option}
+              {revealed && option.correct ? " (right)" : ""}
+            </Text>
           </Pressable>
         ))}
         <Pressable
@@ -96,11 +100,16 @@ export function QuizCard(props: {
           {selected === "__unknown__" ? null : (
             <View className="mt-4 gap-2">
               <Text className="font-t3-medium text-sm">How sure are you? {confidence}%</Text>
-              <View className="flex-row gap-2">
+              <View
+                accessibilityRole="radiogroup"
+                accessibilityLabel="How sure are you?"
+                className="flex-row gap-2"
+              >
                 {[0, 25, 50, 75, 100].map((value) => (
                   <Pressable
                     key={value}
                     accessibilityRole="radio"
+                    accessibilityLabel={`${value} percent`}
                     accessibilityState={{ checked: confidence === value }}
                     disabled={sending}
                     onPress={() => setConfidence(value)}
@@ -121,6 +130,7 @@ export function QuizCard(props: {
             onChangeText={setThinking}
             editable={!sending}
             multiline
+            accessibilityLabel="Your thinking (optional)"
             className="mt-2 min-h-20"
           />
           <Button
@@ -131,7 +141,11 @@ export function QuizCard(props: {
             tone="primary"
             size="compact"
           />
-          {error ? <Text className="mt-2 text-sm text-danger">{error}</Text> : null}
+          {error ? (
+            <Text accessibilityRole="alert" className="mt-2 text-sm text-danger">
+              {error}
+            </Text>
+          ) : null}
         </>
       ) : (
         <View className="mt-4 gap-2">
@@ -144,7 +158,13 @@ export function QuizCard(props: {
                   : "text-danger"
             }
           >
-            {picked === undefined ? "I don't know." : picked.correct ? "Right." : "Wrong."}
+            {sentPick === undefined
+              ? submitted
+                ? "I don't know."
+                : "Answered."
+              : sentPick.correct
+                ? "Right."
+                : "Wrong."}
           </Text>
           <Text>{props.quizCard.explanation}</Text>
           {options.map((option) =>

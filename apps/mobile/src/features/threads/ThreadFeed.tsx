@@ -40,7 +40,10 @@ import {
   resolveUserMessageFileCards,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
-import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  canForkProjectedAssistantItem,
+  latestQueuedUserMessageCreatedAt,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -232,7 +235,6 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { QuizCard } from "./QuizCard";
-import { quizCardFromToolItem } from "@t3tools/shared/toolOutput";
 import {
   appendGuestPendingMessages,
   appendPendingThreadMessages,
@@ -267,7 +269,11 @@ import { serverEnvironment } from "../../state/server";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadShells,
+  threadEnvironment,
+  useEnvironmentThread,
+} from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
@@ -1783,27 +1789,20 @@ function renderFeedEntry(
     );
   }
 
-  if (entry.type === "activity-group" && entry.activities.length === 1) {
-    const activity = entry.activities[0]!;
-    const item = activity.projectedItem.item;
-    if (item.type === "dynamic_tool" && item.status === "completed") {
-      const quizCard = quizCardFromToolItem(item);
-      if (quizCard !== undefined) {
-        return (
-          <QuizCard
-            quizCard={quizCard}
-            seed={entry.id}
-            answered={
-              (props.latestUserMessageAt !== null && props.latestUserMessageAt > entry.createdAt) ||
-              (props.latestQueuedUserMessageAt !== null &&
-                props.latestQueuedUserMessageAt > entry.createdAt)
-            }
-            environmentId={props.environmentId}
-            threadId={props.threadId}
-          />
-        );
-      }
-    }
+  if (entry.type === "quiz-card") {
+    return (
+      <QuizCard
+        quizCard={entry.quizCard}
+        seed={entry.id}
+        answered={
+          (props.latestUserMessageAt !== null && props.latestUserMessageAt > entry.createdAt) ||
+          (props.latestQueuedUserMessageAt !== null &&
+            props.latestQueuedUserMessageAt > entry.createdAt)
+        }
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+      />
+    );
   }
 
   if (entry.type === "work-toggle") {
@@ -2687,6 +2686,11 @@ export const ThreadFeed = memo(function ThreadFeed({
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
+  const threadProjection = Option.getOrNull(
+    useEnvironmentThread(props.environmentId, props.threadId).data,
+  );
+  const latestQueuedUserMessageAt =
+    threadProjection === null ? null : latestQueuedUserMessageCreatedAt(threadProjection);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
@@ -3351,11 +3355,6 @@ export const ThreadFeed = memo(function ThreadFeed({
       (latest === null || entry.createdAt > latest)
         ? entry.createdAt
         : latest,
-    null,
-  );
-  const latestQueuedUserMessageAt = props.queuedMessages.reduce<string | null>(
-    (latest, message) =>
-      latest === null || message.createdAt > latest ? message.createdAt : latest,
     null,
   );
   const jumpRunId =
