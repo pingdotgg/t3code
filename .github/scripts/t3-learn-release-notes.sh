@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints a T3 Learn release's notes: a "What's new" line per change on main
 # since <since>, then every change and the install steps under "Full changelog".
-# The desktop update prompt shows only what comes before that <details> block.
+# The release job copies the part before <details> into the updater manifests.
 set -euo pipefail
 
 since="${1:?usage: t3-learn-release-notes.sh <previous release tag> <commit>}"

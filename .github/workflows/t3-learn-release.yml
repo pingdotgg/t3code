@@ -67,7 +67,8 @@ jobs:
           RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
         run: |
           set -euo pipefail
-          since="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          since="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)" ||
+            since="$(git tag --list 'v*-learn.*' | sort -V | tail -n 1)"
           bash .github/scripts/t3-learn-release-notes.sh "$since" "$RELEASE_COMMIT" > release-notes.md
           cat release-notes.md
 
@@ -78,7 +79,6 @@ jobs:
           name: release-notes
           path: release-notes.md
           if-no-files-found: error
-          retention-days: 1
 
   # The server bundle, web client and Electron main are built once and handed
   # to every platform job as `js-bundle`, as in upstream's release.yml.
