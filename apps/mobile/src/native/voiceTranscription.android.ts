@@ -1,5 +1,6 @@
 import { requireOptionalNativeModule } from "expo";
 import type { RecorderState, RecordingStatus } from "expo-audio";
+import { Platform } from "react-native";
 import type { NativeVoiceRecorder } from "../features/voice-input/lazyVoiceRecorder";
 
 import {
@@ -38,7 +39,9 @@ const nativeErrorMessages: Readonly<Record<string, string>> = {
 let nextOperationId = 0;
 
 export function createLiveVoiceRecorder() {
-  return native?.LiveVoiceRecorder ? new native.LiveVoiceRecorder() : null;
+  return Number(Platform.Version) >= 31 && native?.LiveVoiceRecorder
+    ? new native.LiveVoiceRecorder()
+    : null;
 }
 
 export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {

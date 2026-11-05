@@ -86,7 +86,9 @@ class T3VoiceTranscriptionModule : Module() {
       }
     }
 
-    defineLiveRecorder()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      defineLiveRecorder()
+    }
 
     AsyncFunction("cancel") { id: Int, promise: Promise ->
       scope.launch {
