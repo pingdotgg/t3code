@@ -179,7 +179,13 @@ To see pooled accounts, open **Settings → Providers → Usage providers → Ad
 environment that will connect to the hub and enter its URL and management key.
 
 The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
-account and choose **Use reset** to redeem one. No hub plugin is required.
+account and choose **Use reset** to redeem one. The account shows both the reset date and how long
+is left in that period. No hub plugin is required.
+
+Enable **Reset when empty** on a period to use one banked credit after that period reaches 0% left.
+The environment checks every 30 seconds, including while the app is closed, without stopping
+running threads. The toggle turns off after one attempt; cancel it at any time. A manual reset,
+a change of account or credit, or the period resetting naturally cancels the queued reset.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same

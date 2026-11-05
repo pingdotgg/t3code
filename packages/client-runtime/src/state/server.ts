@@ -1384,6 +1384,10 @@ export function createServerEnvironmentAtoms<R, E>(
           ),
         ),
     }),
+    setResetWhenEmpty: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:reset-when-empty",
+      tag: WS_METHODS.providerSetResetWhenEmpty,
+    }),
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:consume-reset-credit",
       tag: WS_METHODS.providerConsumeResetCredit,

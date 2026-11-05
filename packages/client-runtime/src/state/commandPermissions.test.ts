@@ -7,6 +7,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
+  AuthProvidersManageScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
@@ -97,6 +98,32 @@ describe("command permissions", () => {
         expect((yield* refresh.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
+      }),
+    ),
+  );
+
+  it.effect("requires provider management on the destination to queue or cancel a reset", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const reset = createCommandPermissions(runtime, WS_METHODS.providerSetResetWhenEmpty);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(reset.permissionAtom(env))).toBe(false);
+        expect((yield* reset.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthProvidersManageScope],
+            permissions: [AuthProvidersManageScope],
+          }),
+        );
+        expect(registry.get(reset.permissionAtom(env))).toBe(true);
+        yield* reset.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(reset.permissionAtom(other))).toBe(false);
       }),
     ),
   );

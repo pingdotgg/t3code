@@ -92,6 +92,24 @@ export const ProviderConsumeResetCreditInput = Schema.Union([
 ]);
 export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditInput.Type;
 
+export const ResetCreditWhenEmpty = Schema.Struct({
+  target: ProviderConsumeResetCreditInput,
+  windowId: TrimmedNonEmptyString,
+  resetsAt: IsoDateTime,
+  availableCount: NonNegativeInt,
+  nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  nativeAccountIdentity: Schema.optional(TrimmedNonEmptyString),
+  credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
+});
+export type ResetCreditWhenEmpty = typeof ResetCreditWhenEmpty.Type;
+
+export const ProviderSetResetWhenEmptyInput = Schema.Struct({
+  target: ProviderConsumeResetCreditInput,
+  windowId: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+});
+export type ProviderSetResetWhenEmptyInput = typeof ProviderSetResetWhenEmptyInput.Type;
+
 export class UsageLimitSourceError extends Schema.TaggedError<UsageLimitSourceError>()(
   "UsageLimitSourceError",
   { detail: Schema.String },

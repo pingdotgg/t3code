@@ -877,3 +877,9 @@ export function collectProviderUsageLimits(
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
+
+export function resetCreditTargetKey(input: ProviderConsumeResetCreditInput): string {
+  return "instanceId" in input
+    ? JSON.stringify(["instance", input.instanceId])
+    : JSON.stringify(["source", input.sourceId, input.accountId]);
+}

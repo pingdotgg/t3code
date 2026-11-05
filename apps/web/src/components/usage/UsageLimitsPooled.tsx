@@ -1,3 +1,5 @@
+import { ResetWhenEmpty } from "./ResetWhenEmpty";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -137,7 +139,7 @@ function SegmentPopover({
   account,
   window,
   reset,
-  now,
+  now: snapshotNow,
   redeem,
   onRedeem,
 }: {
@@ -148,7 +150,9 @@ function SegmentPopover({
   readonly redeem: ReturnType<typeof useResetCredit> | null;
   readonly onRedeem: () => void;
 }) {
+  const now = Math.max(snapshotNow, Date.parse(`${useNowMinute()}:00Z`));
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const reportedWindow = account.limits.windows.find((entry) => entry.id === window.id);
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);
@@ -210,6 +214,13 @@ function SegmentPopover({
               {redeem.busy ? "Using…" : "Use reset"}
             </Button>
           </span>
+          {account.redeem && reportedWindow ? (
+            <ResetWhenEmpty
+              environmentId={account.redeem.environmentId}
+              target={account.redeem.input}
+              window={reportedWindow}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>
