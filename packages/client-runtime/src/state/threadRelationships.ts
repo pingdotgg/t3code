@@ -222,6 +222,7 @@ export interface SideChatTreeRow {
   readonly label: string;
   readonly state: "lesson" | "open" | "done";
   readonly noteStatus: "generating" | "ready" | "none" | "failed" | null;
+  readonly section: string | null;
 }
 
 type SideChatTreeShell = Pick<EnvironmentThreadShell, "id" | "title" | "createdAt" | "sideChat">;
@@ -285,6 +286,7 @@ export function deriveSideChatTree(
       label: shellsById.get(lessonThreadId)?.title ?? "Lesson",
       state: "lesson",
       noteStatus: null,
+      section: null,
     },
   ];
   const visited = new Set<ThreadId>();
@@ -301,6 +303,7 @@ export function deriveSideChatTree(
         label: member.sideChat.label,
         state: member.sideChat.state,
         noteStatus: member.sideChat.noteStatus,
+        section: member.sideChat.section ?? null,
       });
       const children = childrenByParentId.get(member.id) ?? [];
       for (let index = children.length - 1; index >= 0; index -= 1) {

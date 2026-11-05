@@ -489,6 +489,10 @@ export type OrchestrationV2SideChatOutcome = typeof OrchestrationV2SideChatOutco
 export const OrchestrationV2SideChat = Schema.Struct({
   lessonThreadId: ThreadId,
   anchor: OrchestrationV2SideChatAnchor,
+  /** The lesson's "Lesson N" heading in effect at the anchor. */
+  section: Schema.optional(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(SIDE_CHAT_LABEL_MAX_CHARS))),
+  ),
   excerpt: Schema.String.check(
     Schema.isNonEmpty(),
     Schema.isMaxLength(SIDE_CHAT_EXCERPT_MAX_CHARS),
@@ -508,6 +512,7 @@ export type OrchestrationV2SideChat = typeof OrchestrationV2SideChat.Type;
 export const OrchestrationV2ThreadShellSideChat = Schema.Struct({
   lessonThreadId: ThreadId,
   anchor: OrchestrationV2SideChatAnchor,
+  section: OrchestrationV2SideChat.fields.section,
   label: OrchestrationV2SideChat.fields.label,
   state: Schema.Literals(["open", "done"]),
   noteStatus: Schema.NullOr(OrchestrationV2SideChatOutcome.fields.status),
@@ -647,6 +652,7 @@ export function threadShellSideChatOf(
   return {
     lessonThreadId: sideChat.lessonThreadId,
     anchor: sideChat.anchor,
+    ...(sideChat.section === undefined ? {} : { section: sideChat.section }),
     label: sideChat.label,
     state: sideChat.done === null ? "open" : "done",
     noteStatus: sideChat.done?.outcome.status ?? null,

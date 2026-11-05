@@ -30,6 +30,91 @@ export function deriveSideChatLabel(excerpt: string): string {
   return `${truncateGraphemes(collapsed, SIDE_CHAT_LABEL_MAX_CHARS - ELLIPSIS.length).trimEnd()}${ELLIPSIS}`;
 }
 
+const LESSON_SECTION_HEADING = /^#{1,3}\s+Lesson\s+\d+\b/i;
+const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[A-Za-z]?:/;
+
+/**
+ * The last section heading at or above the highlight, or undefined when the anchor message is
+ * missing. An embed highlight (`embedTitle`) covers its whole reply.
+ */
+export function lessonSectionAt(
+  messages: ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>,
+  anchor: {
+    readonly messageId: string;
+    readonly start: number;
+    readonly embedTitle?: string | undefined;
+  },
+): string | undefined {
+  let section: string | undefined;
+  for (const message of messages) {
+    const isAnchor = message.id === anchor.messageId;
+    if (message.role === "assistant") {
+      // A heading counts when its line starts before the highlight, even if the highlight is inside it.
+      const lineEnd = message.text.indexOf("\n", anchor.start);
+      const text =
+        isAnchor && anchor.embedTitle === undefined && lineEnd !== -1
+          ? message.text.slice(0, lineEnd)
+          : message.text;
+      for (const line of text.split("\n")) {
+        if (LESSON_SECTION_HEADING.test(line) || CODE_SECTION_HEADING.test(line)) {
+          section = truncateGraphemes(
+            line.replace(/^#{1,3}/, "").trim(),
+            SIDE_CHAT_LABEL_MAX_CHARS,
+          );
+        }
+      }
+    }
+    if (isAnchor) return section;
+  }
+  return undefined;
+}
+
+export interface SideChatSectionBackfillInput {
+  readonly lessons: ReadonlyMap<
+    string,
+    ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>
+  >;
+  readonly sideChats: ReadonlyArray<{
+    readonly threadId: string;
+    readonly createdAt: string;
+    readonly lessonThreadId: string;
+    readonly anchor: {
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly start: number;
+      readonly embedTitle?: string | undefined;
+    };
+    readonly section: string | null | undefined;
+  }>;
+}
+
+/** Resolves missing section fields in creation order so nested chats inherit their parent. */
+export function backfillSideChatSections(
+  input: SideChatSectionBackfillInput,
+): ReadonlyArray<{ readonly threadId: string; readonly section: string | null }> {
+  const resolved = new Map<string, string | null>();
+  const sideChats = [...input.sideChats].toSorted(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.threadId.localeCompare(right.threadId),
+  );
+  for (const sideChat of sideChats) {
+    let section = sideChat.section;
+    if (section === undefined) {
+      section = resolved.get(sideChat.anchor.threadId);
+      if (section === undefined) {
+        section =
+          lessonSectionAt(input.lessons.get(sideChat.lessonThreadId) ?? [], sideChat.anchor) ??
+          null;
+      }
+    }
+    resolved.set(sideChat.threadId, section ?? null);
+  }
+  return sideChats.map((sideChat) => ({
+    threadId: sideChat.threadId,
+    section: resolved.get(sideChat.threadId) ?? null,
+  }));
+}
+
 interface PlainText {
   readonly text: string;
   /** For each character of `text`, where it came from in the raw string. */

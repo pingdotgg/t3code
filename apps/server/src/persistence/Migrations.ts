@@ -1,6 +1,7 @@
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import { backfillSideChatSections } from "../orchestration-v2/sideChat/sideChatText.ts";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -215,6 +216,86 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
 
 const run = Migrator.make({});
 
+const backfillSideChatSectionsAtStartup = Effect.fn("backfillSideChatSectionsAtStartup")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Projection rebuilds from events drop section for pre-APP-55 side chats; refill it at the next start.
+    const rows = yield* sql<{
+      readonly thread_id: string;
+      readonly created_at: string;
+      readonly side_chat_json: string;
+    }>`
+    SELECT thread_id, created_at,
+      json_object(
+        'lessonThreadId', json_extract(payload_json, '$.sideChat.lessonThreadId'),
+        'anchor', json_extract(payload_json, '$.sideChat.anchor'),
+        'section', json_extract(payload_json, '$.sideChat.section'),
+        'checked', json_type(payload_json, '$.sideChat.section') IS NOT NULL
+      ) AS side_chat_json
+    FROM orchestration_v2_projection_threads
+    WHERE json_valid(payload_json)
+      AND json_type(payload_json, '$.sideChat') IS NOT NULL
+    ORDER BY created_at, thread_id
+  `;
+    const sideChats = rows.map((row) => {
+      const sideChat = JSON.parse(row.side_chat_json) as {
+        lessonThreadId: string;
+        anchor: { threadId: string; messageId: string; start: number; embedTitle?: string };
+        section: string | null;
+        checked: number;
+      };
+      return {
+        threadId: row.thread_id,
+        createdAt: row.created_at,
+        lessonThreadId: sideChat.lessonThreadId,
+        anchor: sideChat.anchor,
+        section: sideChat.checked === 1 ? sideChat.section : undefined,
+      };
+    });
+    const lessonIds = [
+      ...new Set(
+        sideChats.flatMap((sideChat) =>
+          sideChat.section === undefined ? [sideChat.lessonThreadId] : [],
+        ),
+      ),
+    ];
+    if (lessonIds.length === 0) return;
+    const pendingIds = new Set(
+      sideChats.flatMap((sideChat) => (sideChat.section === undefined ? [sideChat.threadId] : [])),
+    );
+    const messages = yield* sql<{
+      readonly thread_id: string;
+      readonly message_id: string;
+      readonly role: string;
+      readonly text: string;
+    }>`
+    SELECT thread_id, message_id, role, json_extract(payload_json, '$.text') AS text
+    FROM orchestration_v2_projection_messages
+    WHERE role = 'assistant' AND thread_id IN ${sql.in(lessonIds)}
+    ORDER BY created_at, message_id
+  `;
+    const lessonMessages = new Map<string, Array<{ id: string; role: string; text: string }>>();
+    for (const message of messages) {
+      const list = lessonMessages.get(message.thread_id);
+      const value = { id: message.message_id, role: message.role, text: message.text };
+      if (list === undefined) lessonMessages.set(message.thread_id, [value]);
+      else list.push(value);
+    }
+    const resolved = backfillSideChatSections({
+      lessons: lessonMessages,
+      sideChats,
+    });
+    for (const update of resolved) {
+      if (!pendingIds.has(update.threadId)) continue;
+      yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.sideChat.section', ${update.section})
+      WHERE thread_id = ${update.threadId}
+    `;
+    }
+  },
+);
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -268,6 +349,11 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
       WHERE CASE WHEN json_valid(payload_json)
         THEN json_extract(payload_json, '$.sideChat.anchor.threadId') END IS NOT NULL
     `.pipe(Effect.catch((cause) => Effect.logWarning("Side-chat anchor index failed", { cause })));
+    yield* backfillSideChatSectionsAtStartup().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Side-chat section backfill failed", { cause }),
+      ),
+    );
   }
   return executedMigrations;
 });

@@ -197,7 +197,11 @@ import {
   buildSideChatContextHandoff,
   pendingSideChatOpeningEffect,
 } from "./sideChat/sideChatOpening.ts";
-import { deriveSideChatLabel, extractExcerptContext } from "./sideChat/sideChatText.ts";
+import {
+  deriveSideChatLabel,
+  extractExcerptContext,
+  lessonSectionAt,
+} from "./sideChat/sideChatText.ts";
 import {
   sideChatChildren,
   sideChatDescendants,
@@ -4705,7 +4709,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const anchorProjection = yield* projectionStore
       .getThreadRecords(command.anchorThreadId, ["messages"], {
-        messageIds: [command.anchor.messageId],
+        messageRoles: ["assistant"],
       })
       .pipe(
         Effect.mapError(
@@ -4748,6 +4752,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       sideChat: {
         lessonThreadId: anchorThread.sideChat?.lessonThreadId ?? anchorThread.id,
         anchor: command.anchor,
+        section:
+          anchorThread.sideChat === undefined
+            ? (lessonSectionAt(anchorProjection.messages, command.anchor) ?? null)
+            : (anchorThread.sideChat.section ?? null),
         excerpt: command.excerpt,
         excerptContext:
           command.anchor.embedTitle === undefined

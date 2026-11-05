@@ -7,6 +7,7 @@ The side-chat map shows the lesson and all nested side chats as an accessible tr
 - `map-open` opens the map toggle.
 - `map-tree` exposes lesson and side-chat treeitems.
 - `map-navigation` opens a node and returns to chat view.
+- `map-sections` groups side chats under lesson headings and collapses a section.
 
 ## How to get to it (user POV)
 
@@ -23,6 +24,7 @@ Preconditions: features 1–2 created a parent and child.
 - **Fit.** `preview_click` `role=button[name='Fit map to panel']`. The tree stays visible.
 - **Command palette** (unverified, not yet driven live). `preview_press` `{key:"k", modifiers:["Control"]}` (`Meta` on macOS), `preview_type` `Toggle side-chat map`, then `preview_click` `role=option[name=/Toggle side-chat map/]`. The same tree appears.
 - **Open node.** `preview_click` `role=treeitem[name=/^<label>/]`. The panel returns to chat with that child as the current breadcrumb; call `preview_snapshot` for proof.
+- **Sections (unverified, not yet driven live).** Use a lesson reply containing `## Lesson 1: …`; with Replay, use a replay script whose reply has that heading. Open two side chats from that reply and confirm the map shows a `Lesson 1: …` section treeitem, with its side chats below it; click the section (or press Enter/Space) to collapse it and confirm `aria-expanded="false"` and the hidden count.
 
 ## Gotchas
 

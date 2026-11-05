@@ -14,6 +14,7 @@ function row(id: string, parentId: string | null, depth: number): SideChatTreeRo
     label: id,
     state: depth === 0 ? "lesson" : "open",
     noteStatus: null,
+    section: null,
   };
 }
 

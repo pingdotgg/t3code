@@ -179,6 +179,7 @@ describe("thread.side_chat.open", () => {
         assert.deepEqual(opened.thread.sideChat, {
           lessonThreadId: LESSON_THREAD_ID,
           anchor,
+          section: null,
           excerpt: OBSERVATION_EXCERPT,
           excerptContext,
           label: OBSERVATION_EXCERPT,
@@ -228,8 +229,18 @@ describe("thread.side_chat.open", () => {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sideChatReplyId = MessageId.make("message:side-chat:a1");
       const nestedThreadId = ThreadId.make("thread:side-chat:nested");
-      yield* createLesson();
+      yield* createLesson({
+        messages: LESSON_MESSAGES.map((message) =>
+          message.id === LESSON_ANCHOR_MESSAGE_ID
+            ? { ...message, text: `## Lesson 1: big picture\n${message.text}` }
+            : message,
+        ),
+      });
       yield* openOnObservation;
+      assert.equal(
+        (yield* readThread(SIDE_CHAT_THREAD_ID)).sideChat?.section,
+        "Lesson 1: big picture",
+      );
       yield* seedThreadMessages(SIDE_CHAT_THREAD_ID, [
         {
           id: sideChatReplyId,
@@ -256,6 +267,7 @@ describe("thread.side_chat.open", () => {
 
       const nested = yield* readThread(nestedThreadId);
       assert.equal(nested.sideChat?.lessonThreadId, LESSON_THREAD_ID);
+      assert.equal(nested.sideChat?.section, "Lesson 1: big picture");
       assert.equal(nested.lineage.parentThreadId, SIDE_CHAT_THREAD_ID);
     }).pipe(Effect.provide(openHarness())),
   );
