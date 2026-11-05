@@ -2,7 +2,12 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
-import { ActivityShimmerOverlay, WORKING_BAR_CLASS_NAME, WorkingBarChip } from "./TimelineRowParts";
+import {
+  ActivityShimmerOverlay,
+  WORKING_BAR_CLASS_NAME,
+  WorkFoldToggle,
+  WorkingBarChip,
+} from "./TimelineRowParts";
 import {
   AssistantMetaTimelineRow,
   AssistantTimelineRow,
@@ -125,6 +130,7 @@ import {
   turnFoldStartsOpen,
   withRunGroupsOpen,
   withTurnFoldOpen,
+  liveRunlessTurnFoldRunId,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
@@ -448,6 +454,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => listState.rememberedPosition?.disclosures?.runs ?? new Set(),
   );
+  const [openHistoryRunId, setOpenHistoryRunId] = useState<RunId | null>(null);
+  const [foldRevealBaseIds, setFoldRevealBaseIds] = useState<ReadonlySet<string> | null>(null);
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
     () => listState.rememberedPosition?.disclosures?.workGroups ?? new Set(),
   );
@@ -486,6 +494,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // A viewer pinned in another thread must not keep live follow off here,
     // nor when that thread comes back.
     setFullscreenAppRowId(null);
+    setOpenHistoryRunId(null);
+    setFoldRevealBaseIds(null);
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
@@ -499,6 +509,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // The open history belongs to the prompt that opened it; sending closes it.
   const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
+  const [workingHistoryCollapsing, setWorkingHistoryCollapsing] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -533,8 +544,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
 
+  const revealFoldRows = (opening: boolean) =>
+    setFoldRevealBaseIds(
+      opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
+    );
   const onToggleTurnFold = (runId: RunId) => {
     suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
+    revealFoldRows(
+      rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
+    );
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -547,6 +565,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
     suspendEndScrollMaintenanceForDisclosure(anchorKey);
+    const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
+    if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -672,6 +692,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const workingHistoryOpen = rows.some(
     (row) => row.kind === "working" && row.window?.historyOpen === true,
   );
+  if (rows.some((row) => row.kind === "working")) {
+    const historyRunId = workingHistoryOpen
+      ? ((runlessWorkActive ? liveRunlessTurnFoldRunId(timelineEntries) : null) ??
+        latestRun?.runId ??
+        null)
+      : null;
+    if (historyRunId !== openHistoryRunId) setOpenHistoryRunId(historyRunId);
+  } else if (openHistoryRunId !== null) {
+    const fold = rows.find((row) => row.kind === "turn-fold" && row.runId === openHistoryRunId);
+    if (fold?.kind === "turn-fold") {
+      setOpenHistoryRunId(null);
+      setExpandedRunIds((existing) => withTurnFoldOpen(existing, fold));
+    }
+  }
   // Opens whatever hides a cited response. False when nothing does, so the citation stops waiting.
   const revealCitedEntry = (entryId: string, runId: RunId | null) => {
     const fold = timelineTurnFoldRunIdsByEntryId({
@@ -1137,6 +1171,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     onToggleWorkingHistory,
+    onWorkingHistoryCollapsing: setWorkingHistoryCollapsing,
     onFocusComposer: onFocusComposer ?? null,
     workGroupViewState,
   };
@@ -1319,6 +1354,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     <TimelineRowCtx value={sharedState}>
       <div
         className="messages-timeline-row-frame"
+        data-fold-reveal={foldRevealBaseIds?.has(item.id) === false ? "" : undefined}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) setFoldRevealBaseIds(null);
+        }}
         onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
@@ -1434,7 +1473,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 !liveFollowEnabled ||
                 fullscreenAppRowId !== null ||
                 disclosureToggleSettling ||
-                workingHistoryOpen
+                workingHistoryOpen ||
+                workingHistoryCollapsing
                   ? false
                   : isWorking && !prefersReducedMotion && settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
@@ -1757,51 +1797,32 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const isLatestRun = latestRunId === row.runId;
   // One line says why the run failed: its error, unless the composer banner
   // already does, then the provider notice that carries the limit's reset.
-  const failureLine =
+  const failureMessage =
     row.failureMessage !== null && !(isLatestRun && row.failureMessage === threadErrorMessage)
       ? row.failureMessage
       : row.noticeMessage;
-  const labelClassName = cn(
-    "flex shrink-0 items-center gap-2 self-stretch text-label whitespace-nowrap tabular-nums",
-    row.ending === "failed"
-      ? "text-error-foreground"
-      : row.ending === "limited"
-        ? "text-warning-foreground"
-        : "text-muted-foreground",
-  );
-  const labelContent = (
-    <>
-      {row.ending === "failed" ? <CircleAlertIcon aria-hidden className="size-3 shrink-0" /> : null}
-      <span>
-        {row.label}
-        {error ? <span className="block text-error-foreground">{error}</span> : null}
-      </span>
-    </>
-  );
   const limit = row.ending === "limited" && usageLimit?.runId === row.runId ? usageLimit : null;
 
   return (
     <div>
       <div className={WORKING_BAR_CLASS_NAME}>
-        {row.foldable ? (
-          <button
-            type="button"
-            aria-expanded={row.expanded}
-            data-scroll-anchor-ignore
-            onClick={toggle}
-            aria-busy={loading}
-            className={cn(
-              "cursor-pointer select-none rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-              labelClassName,
-              row.ending === "worked" || row.ending === "stopped" ? "hover:text-foreground" : null,
-            )}
-          >
-            {labelContent}
-            <span aria-hidden className="size-3 shrink-0" />
-          </button>
-        ) : (
-          <span className={labelClassName}>{labelContent}</span>
-        )}
+        <WorkFoldToggle
+          togglable={row.foldable}
+          expanded={row.expanded}
+          tone={
+            row.ending === "failed" ? "error" : row.ending === "limited" ? "warning" : "neutral"
+          }
+          aria-busy={loading}
+          onClick={toggle}
+        >
+          {row.ending === "failed" ? (
+            <CircleAlertIcon aria-hidden className="size-3 shrink-0" />
+          ) : null}
+          <span>
+            {row.label}
+            {error ? <span className="block text-error-foreground">{error}</span> : null}
+          </span>
+        </WorkFoldToggle>
         <span className="min-w-0 flex-1" />
         {limit?.resetAt ? (
           <TurnFoldUsageLimit limit={limit} timestampFormat={ctx.timestampFormat} />
@@ -1815,9 +1836,15 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         <p className="px-1 pt-2 text-body text-muted-foreground">
           {row.diff ? "Stopped by you. Changes so far are kept." : "Stopped by you."}
         </p>
-      ) : failureLine ? (
+      ) : row.ending === "limited" && row.resetAt ? (
+        <TurnFoldRetryNotice
+          message={failureMessage}
+          resetAt={row.resetAt}
+          timestampFormat={ctx.timestampFormat}
+        />
+      ) : failureMessage ? (
         <p className="whitespace-pre-wrap break-words px-1 pt-2 text-body text-muted-foreground">
-          {failureLine}
+          {failureMessage}
         </p>
       ) : null}
     </div>
@@ -1859,6 +1886,26 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 const EMPTY_TIMELINE_SLASH_COMMANDS: ReadonlyArray<{ readonly name: string }> = [];
 export type { TimelinePendingRequest, TimelineUsageLimit } from "./timelineRowContext";
 
+function TurnFoldRetryNotice({
+  message,
+  resetAt,
+  timestampFormat,
+}: {
+  message: string | null;
+  resetAt: string;
+  timestampFormat: TimestampFormat;
+}) {
+  const nowMinute = useNowMinute();
+  const nowMs = Date.parse(`${nowMinute}:00Z`);
+  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const resetTime = formatUpcomingTimestamp(resetAt, timestampFormat, nowMs, timeZone);
+  return (
+    <p className="whitespace-pre-wrap break-words px-1 pt-2 text-body text-muted-foreground">
+      {message ? `${message} ` : ""}Retry after {resetTime} ({timeZone}).
+    </p>
+  );
+}
+
 function TurnFoldUsageLimit({
   limit,
   timestampFormat,
@@ -1870,10 +1917,12 @@ function TurnFoldUsageLimit({
   const nowMs = Date.parse(`${nowMinute}:00Z`);
   const resetPassed = useDeadlinePassed(limit.resetAt === null ? null : Date.parse(limit.resetAt));
   if (!limit.resetAt || resetPassed || !(Date.parse(limit.resetAt) > nowMs)) return null;
+  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <>
       <span className="shrink-0 text-meta text-muted-foreground">
-        resumes {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs)}
+        resumes {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs, timeZone)} (
+        {timeZone})
       </span>
       {limit.onToggleSnooze ? (
         <WorkingBarChip

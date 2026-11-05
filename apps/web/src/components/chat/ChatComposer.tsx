@@ -6,7 +6,7 @@ import { BackgroundThreadContext } from "./backgroundThread";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
-  runtimeModeOptions as runtimeModes,
+  resolveRuntimeModeOptions,
 } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -298,8 +298,6 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   deadline.current = 0;
   return armed;
 }
-
-const runtimeModeOptions = runtimeModes.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
@@ -947,12 +945,10 @@ export function ChatComposer(props: ChatComposerProps) {
     );
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const managedPolicy = useManagedPolicy(environmentId);
-  const compatibleRuntimeModeOptions = runtimeModeOptions
-    .filter((option) => compatibleRuntimeModes.includes(option.mode))
-    .map((option) => {
-      const disabledReason = managedRuntimeModeDenial(managedPolicy, option.mode);
-      return disabledReason === undefined ? option : { ...option, disabledReason };
-    });
+  const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
+    compatibleRuntimeModes,
+    managedPolicy,
+  );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
   const runtimeModeCeilingDenial = managedRuntimeModeDenial(managedPolicy, compatibleRuntimeMode);
   const runtimeModeCeilingFallback =
@@ -1343,7 +1339,7 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const addComposerFilesToDraft = (files: ComposerFileAttachment[]) =>
     addComposerDraftFiles(attachmentDraftTarget, files, {
-      appendReference: false,
+      appendReference: questionAttachmentTarget === null,
     });
 
   const removeComposerImageFromDraft = (imageId: string) => {
@@ -1679,7 +1675,6 @@ export function ChatComposer(props: ChatComposerProps) {
       return;
     }
     onTypingGuardDraftChange();
-    const previousReferencedContextIds = new Set(collectInlineContextIds(promptRef.current));
     promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     if (promptHistoryPositionRef.current?.position.recalled !== nextPrompt) {
@@ -1769,7 +1764,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
     const attachmentChanges = reconcileAttachmentContextReferences({
       referencedContextIds: referenced,
-      previousReferencedContextIds,
       files: composerFiles,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
@@ -2606,6 +2600,7 @@ export function ChatComposer(props: ChatComposerProps) {
       pendingUserInputs,
       supportsQuestionAttachments,
       isLiteralPendingAnswer,
+      projectSelectionRequired,
       questionAttachmentTarget,
       attachmentTargetKey,
       fileStagingLimit,
@@ -3592,7 +3587,7 @@ export function ChatComposer(props: ChatComposerProps) {
                 {composerAttachmentFileList}
               </div>
 
-              <div className="composer-prompt-editor relative min-w-0 py-1.5 [grid-area:prompt]">
+              <div className="relative min-w-0 py-1.5 [grid-area:prompt]">
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
@@ -3652,6 +3647,7 @@ export function ChatComposer(props: ChatComposerProps) {
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
+                    // The placeholder stays clear of the inline buttons, like typed text.
                     placeholderClassName="truncate"
                     narrowPlaceholder={
                       !isComposerApprovalState &&

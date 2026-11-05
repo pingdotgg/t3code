@@ -13,7 +13,6 @@ import { SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
-  searchFieldRef?: RefObject<HTMLDivElement | null>;
   /** Without projects there is nothing to scope, so the scope picker stays out. */
   hasProjects: boolean;
   projectScope: ReactNode;
@@ -32,7 +31,6 @@ export interface SidebarThreadHeaderProps {
 }
 
 export function SidebarThreadHeader({
-  searchFieldRef,
   hasProjects,
   projectScope,
   onNewProject,
@@ -57,7 +55,7 @@ export function SidebarThreadHeader({
 
   return (
     <div className="flex items-center gap-1">
-      <InputGroup ref={searchFieldRef} size="sidebar" className="min-w-0 flex-1">
+      <InputGroup size="sidebar" className="min-w-0 flex-1">
         <InputGroupAddon>
           {/* A 16px slot like a row's favicon, pulled out like the addon's own
               svg: the glyph centers on the icon column and the placeholder

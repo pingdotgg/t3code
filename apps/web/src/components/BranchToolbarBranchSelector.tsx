@@ -85,8 +85,12 @@ interface BranchToolbarBranchSelectorProps {
   /** Composer only: one chip for the branch, workspace mode, and machine. */
   renderWorkspaceMenu?: (branch: {
     label: string;
-    onChooseRef: () => void;
     disabled: boolean;
+    open: boolean;
+    focusSearch: boolean;
+    onOpenChange: (open: boolean) => void;
+    children: ReactNode;
+    onContextMenu: (event: ReactMouseEvent) => void;
   }) => ReactNode;
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -302,6 +306,7 @@ export function BranchToolbarBranchSelector({
   };
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
+  const [focusBranchSearch, setFocusBranchSearch] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
 
   const branchStatusQuery = useEnvironmentQuery(
@@ -312,6 +317,12 @@ export function BranchToolbarBranchSelector({
           input: { cwd: branchCwd },
         }),
   );
+  const projectStatusQuery = useEnvironmentQuery(
+    activeProjectCwd === null
+      ? null
+      : vcsEnvironment.status({ environmentId, input: { cwd: activeProjectCwd } }),
+  );
+  const activeProjectCheckoutRoot = projectStatusQuery.data?.workingTree.rootPath;
   const trimmedBranchQuery = branchQuery.trim();
   const branchRefState = usePaginatedBranches({
     environmentId,
@@ -484,6 +495,7 @@ export function BranchToolbarBranchSelector({
 
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
+      activeProjectCheckoutRoot,
       activeWorktreePath,
       refName,
     });
@@ -603,6 +615,7 @@ export function BranchToolbarBranchSelector({
       void refreshStatus({ environmentId, input: { cwd: branchCwd, localOnly: true } });
     }
     if (!open) {
+      setFocusBranchSearch(false);
       setBranchQuery("");
     }
   };
@@ -612,6 +625,7 @@ export function BranchToolbarBranchSelector({
     () => ({
       open: () => {
         if (isInitialBranchesLoadPending || isBranchActionPending) return;
+        setFocusBranchSearch(true);
         handleOpenChange(true);
       },
     }),
@@ -675,6 +689,7 @@ export function BranchToolbarBranchSelector({
       : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
 
   function selectPickerItem(itemValue: string) {
+    if (isInitialBranchesLoadPending || isBranchActionPending) return;
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
       handleOpenChange(false);
       onComposerFocusRequest?.();
@@ -790,6 +805,7 @@ export function BranchToolbarBranchSelector({
             (!activeProjectCwd ||
               !resolveBranchSelectionTarget({
                 activeProjectCwd,
+                activeProjectCheckoutRoot,
                 activeWorktreePath,
                 refName,
               }).reuseExistingWorktree))
@@ -829,6 +845,20 @@ export function BranchToolbarBranchSelector({
           ? { checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }
           : undefined
       }
+      renderPopup={
+        displayMode === "toolbar" && renderWorkspaceMenu
+          ? (children) =>
+              renderWorkspaceMenu({
+                label: isActiveBranchResolving ? "Loading ref…" : triggerLabel,
+                disabled: isBranchActionPending,
+                open: isBranchMenuOpen,
+                focusSearch: focusBranchSearch,
+                onOpenChange: handleOpenChange,
+                children,
+                onContextMenu: (event) => handleBranchContextMenu(event, resolvedActiveBranch),
+              })
+          : undefined
+      }
       popupProps={{
         ...(displayMode === "toolbar"
           ? {
@@ -849,7 +879,7 @@ export function BranchToolbarBranchSelector({
       <div
         ref={toolbarAnchorRef}
         className={cn(
-          "flex min-w-0",
+          displayMode === "toolbar" && renderWorkspaceMenu ? "hidden" : "flex min-w-0",
           displayMode === "panel" ? "w-full flex-col items-stretch" : "items-center gap-1",
           className,
         )}
@@ -863,14 +893,7 @@ export function BranchToolbarBranchSelector({
           }}
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
-          {displayMode === "toolbar" && renderWorkspaceMenu ? (
-            renderWorkspaceMenu({
-              label:
-                resolvedActiveBranch ?? (isActiveBranchResolving ? "Loading ref…" : "Select ref"),
-              onChooseRef: () => handleOpenChange(true),
-              disabled: isInitialBranchesLoadPending || isBranchActionPending,
-            })
-          ) : (
+          {displayMode === "toolbar" && renderWorkspaceMenu ? null : (
             <ComboboxTrigger
               render={
                 displayMode === "panel" ? (

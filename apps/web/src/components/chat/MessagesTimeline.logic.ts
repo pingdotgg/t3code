@@ -32,7 +32,6 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
-  formatDuration,
   isStreamingMessageTextUpdate,
   isStreamingTurnItemTextUpdate,
   timelineEntryIsPersistentResourceCard,
@@ -77,6 +76,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { formatWorkingDuration } from "./TimelineWorkGroupRows.logic";
 import {
   EMPTY_SLASH_COMMAND_CATALOG,
   parseSlashCommandMessage,
@@ -593,6 +593,7 @@ type MessagesTimelineRowContent =
       foldable: boolean;
       failureMessage: string | null;
       noticeMessage: string | null;
+      resetAt: string | null;
     }
   | {
       kind: "attempt-fold";
@@ -767,6 +768,7 @@ interface TurnFold {
   endingEntryIds: ReadonlySet<string>;
   failureMessage: string | null;
   noticeMessage: string | null;
+  resetAt: string | null;
 }
 
 interface SupersededAttemptFold {
@@ -996,6 +998,17 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
   return null;
 }
 
+function runlessTurnFoldRunId(promptEntryId: string): RunId {
+  return RunId.make(`runless:${promptEntryId}`);
+}
+
+export function liveRunlessTurnFoldRunId(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): RunId | null {
+  const prompt = timelineEntries.findLast(timelineEntryStartsResponse);
+  return prompt && responseBoundaryRunId(prompt) === null ? runlessTurnFoldRunId(prompt.id) : null;
+}
+
 // Group promptless restarts under the initiating prompt until settled.
 function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
   return timelineEntries.findLastIndex(timelineEntryStartsResponse);
@@ -1211,7 +1224,7 @@ function deriveTurnFolds(input: {
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
         : null;
       const boundaryRunId = responseBoundaryRunId(entry);
-      runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
+      runlessKey = boundaryRunId == null ? runlessTurnFoldRunId(entry.id) : null;
       responseKey = boundaryRunId ?? runlessKey;
       continue;
     }
@@ -1293,6 +1306,7 @@ function deriveTurnFolds(input: {
     const endingEntryIds = new Set<string>();
     let failureMessage: string | null = null;
     let noticeMessage: string | null = null;
+    let resetAt: string | null = null;
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
@@ -1305,7 +1319,13 @@ function deriveTurnFolds(input: {
         const notice =
           entry.kind === "work" && entry.entry.itemType === "system_notice" ? entry.entry : null;
         if (failedItem !== null || notice !== null) {
-          if (failedItem !== null) failureMessage = failedItem.failure.message;
+          if (failedItem !== null) {
+            failureMessage = failedItem.failure.message;
+            resetAt =
+              failedItem.failure.class === "usage_limit"
+                ? (failedItem.failure.resetAt ?? null)
+                : null;
+          }
           if (notice !== null) noticeMessage = notice.label;
           hiddenEntryIds.add(entry.id);
           endingEntryIds.add(entry.id);
@@ -1398,13 +1418,14 @@ function deriveTurnFolds(input: {
       endingEntryIds,
       failureMessage,
       noticeMessage,
+      resetAt,
     });
   }
   return foldsByAnchorEntryId;
 }
 
 function turnFoldLabel(ending: TurnFoldEnding, elapsedMs: number | null): string {
-  const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+  const duration = elapsedMs !== null ? formatWorkingDuration(elapsedMs) : null;
   switch (ending) {
     case "stopped":
       return duration ? `Stopped at ${duration}` : "Stopped";
@@ -2010,6 +2031,7 @@ export function deriveMessagesTimelineRows(input: {
         ),
         failureMessage: turnFold.failureMessage,
         noticeMessage: turnFold.noticeMessage,
+        resetAt: turnFold.resetAt,
       });
     }
 
@@ -3270,6 +3292,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.foldable === bf.foldable &&
         a.failureMessage === bf.failureMessage &&
         a.noticeMessage === bf.noticeMessage &&
+        a.resetAt === bf.resetAt &&
         (a.deferredWorkItemIds ?? []).length === (bf.deferredWorkItemIds ?? []).length &&
         (a.deferredWorkItemIds ?? []).every((id, index) => id === bf.deferredWorkItemIds?.[index])
       );

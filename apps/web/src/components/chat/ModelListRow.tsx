@@ -67,6 +67,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           >
             {getDisplayModelName(model)}
           </div>
+          {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
           {props.showNewBadge ? (
             <span
               className="shrink-0 rounded-model-tag border border-transparent bg-badge-neutral px-0.5 py-px text-3xs font-bold leading-none text-muted-foreground"
@@ -99,14 +100,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                className="-mr-1 shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
                   props.onToggleFavorite(props.instanceId, props.slug);
@@ -130,11 +129,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
           </TooltipPopup>
         </Tooltip>
-        {/* Keep the selection column reserved when a different row is selected. */}
-        <CheckIcon
-          className={cn("size-3.5", !props.isSelected && "invisible")}
-          aria-hidden="true"
-        />
+        {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
       </div>
     </ComboboxItem>
   );

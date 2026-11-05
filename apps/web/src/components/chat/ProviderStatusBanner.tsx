@@ -1,4 +1,13 @@
-import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { useRef, useState } from "react";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { RefreshIcon } from "../ui/refresh-icon";
+import {
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { BotOffIcon, CircleAlertIcon, KeyRoundIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
@@ -89,11 +98,13 @@ export function getProviderStatusMessage(status: ServerProvider): string {
  * title; a clipped one opens in the notice's details popover.
  */
 export function providerStatusBannerItem({
+  environmentId,
   onDismiss,
   onOpenProviderSetup,
   onOpenTerminal,
   status,
 }: {
+  environmentId: EnvironmentId;
   onDismiss: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   /** Offered for a signed-out provider whose sign-in runs in its CLI. */
@@ -132,6 +143,7 @@ export function providerStatusBannerItem({
 
   return {
     id: `provider-status:${bannerKey}`,
+    textSize: "body",
     variant: isWarning ? "warning" : "error",
     icon: isUnauthenticated ? (
       <KeyRoundIcon />
@@ -144,16 +156,63 @@ export function providerStatusBannerItem({
     ),
     title,
     description: message,
-    actions: openSetup ? (
-      <Button size="xs" variant="secondary" onClick={() => openSetup(instanceId)}>
-        Provider setup
-      </Button>
-    ) : isUnauthenticated && onOpenTerminal ? (
-      <Button size="xs" variant="secondary" onClick={onOpenTerminal}>
-        Open terminal
-      </Button>
-    ) : undefined,
+    actions: (
+      <>
+        {openSetup ? (
+          <Button size="xs" variant="secondary" onClick={() => openSetup(instanceId)}>
+            Provider setup
+          </Button>
+        ) : isUnauthenticated && onOpenTerminal ? (
+          <Button size="xs" variant="secondary" onClick={onOpenTerminal}>
+            Open terminal
+          </Button>
+        ) : null}
+        <ProviderStatusRefreshButton
+          key={`${environmentId}:${instanceId}`}
+          environmentId={environmentId}
+          instanceId={instanceId}
+          providerName={providerName}
+        />
+      </>
+    ),
     dismissLabel: `Dismiss ${providerName} provider ${status.status}`,
     onDismiss,
   };
+}
+
+function ProviderStatusRefreshButton({
+  environmentId,
+  instanceId,
+  providerName,
+}: {
+  environmentId: EnvironmentId;
+  instanceId: ProviderInstanceId;
+  providerName: string;
+}) {
+  const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    label: "Refresh provider status",
+  });
+  const refreshingRef = useRef(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refresh = async () => {
+    if (!canRefresh || refreshingRef.current) return;
+    refreshingRef.current = true;
+    setIsRefreshing(true);
+    await refreshProviders({ environmentId, input: { instanceId, refreshModels: true } });
+    refreshingRef.current = false;
+    setIsRefreshing(false);
+  };
+  return (
+    <Button
+      aria-label={`Refresh ${providerName} provider status`}
+      disabled={!canRefresh || isRefreshing}
+      onClick={() => void refresh()}
+      size="xs"
+      variant="secondary"
+    >
+      <RefreshIcon />
+      {isRefreshing ? "Refreshing..." : "Refresh"}
+    </Button>
+  );
 }
