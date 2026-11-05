@@ -225,17 +225,18 @@ export function codexProviderTurnTokenUsage(
 }
 
 // A "body_after_prefix" limit excludes the carried prefix, so it is not a point on the full-context meter.
-// A token-budget fallback prompt makes Codex add its buffer to the limit before compacting.
+// An enabled token budget can add a fallback buffer (possibly from model defaults) to the limit.
 export function codexAutoCompactLimit(config: CodexSchema.V2ConfigReadResponse["config"]) {
   const limit = config.model_auto_compact_token_limit;
   const tokenBudget = Predicate.isObject(config.features)
     ? Reflect.get(config.features, "token_budget")
     : undefined;
-  const fallbackPrompt = Predicate.isObject(tokenBudget)
-    ? Reflect.get(tokenBudget, "auto_compact_fallback_prompt")
-    : undefined;
+  const tokenBudgetEnabled =
+    tokenBudget != null &&
+    tokenBudget !== false &&
+    !(Predicate.isObject(tokenBudget) && Reflect.get(tokenBudget, "enabled") === false);
   return config.model_auto_compact_token_limit_scope !== "body_after_prefix" &&
-    fallbackPrompt == null &&
+    !tokenBudgetEnabled &&
     limit != null &&
     Number.isSafeInteger(limit) &&
     limit > 0
@@ -4628,7 +4629,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 tokenUsage: codexProviderTurnTokenUsage(
                   payload.tokenUsage,
                   DateTime.formatIso(now),
-                  autoCompactLimitByCwd.get(context.input.runtimePolicy.cwd),
+                  // Codex can drop the inherited limit for children (subagent_default_context_limits).
+                  context.subagent === null
+                    ? autoCompactLimitByCwd.get(context.input.runtimePolicy.cwd)
+                    : undefined,
                 ),
               },
             });

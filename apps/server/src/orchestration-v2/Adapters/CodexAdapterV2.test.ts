@@ -145,6 +145,14 @@ describe("CodexAdapterV2 context usage", () => {
     const config = { model_auto_compact_token_limit: 100_000 };
 
     assert.equal(CodexAdapterV2.codexAutoCompactLimit(config), 100_000);
+    assert.equal(
+      CodexAdapterV2.codexAutoCompactLimit({ ...config, features: { token_budget: false } }),
+      100_000,
+    );
+    // Model defaults can supply the fallback buffer, which config/read does not show.
+    assert.isUndefined(
+      CodexAdapterV2.codexAutoCompactLimit({ ...config, features: { token_budget: true } }),
+    );
     assert.isUndefined(
       CodexAdapterV2.codexAutoCompactLimit({
         ...config,
