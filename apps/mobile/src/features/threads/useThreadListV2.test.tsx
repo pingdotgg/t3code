@@ -9,6 +9,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { olderSettledThreads } from "../../state/threads";
+import { workspaceConnections } from "../../state/workspace";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
 
@@ -17,9 +18,14 @@ vi.mock("../../state/threads", () => ({
   threadFamilies: { mountRows: () => () => {} },
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
+vi.mock("../../state/workspace", () => ({
+  workspaceConnections: { environmentsAtom: vi.fn() },
+}));
+vi.mock("../../state/shell", () => ({ environmentShell: { statusAtom: vi.fn() } }));
 
 it("reuses a large thread list across tab renders and updates when its inputs change", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.mocked(workspaceConnections).environmentsAtom = Atom.make([]);
   using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
   const shelfAtom = Atom.make<ReadonlyMap<EnvironmentId, OlderSettledShelfEnvironment>>(new Map());
   vi.mocked(olderSettledThreads.shelfAtom).mockReturnValue(shelfAtom);
