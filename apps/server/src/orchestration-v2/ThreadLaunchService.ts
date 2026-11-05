@@ -373,9 +373,26 @@ const make = Effect.gen(function* () {
 
       const requestedBranch = input.workspaceStrategy.branch;
       let branch: string | null;
+      // A branch read from an attached checkout is not this launch's to rename, even a temporary one.
+      let branchFromCheckout = false;
       if (input.workspaceStrategy.type === "worktree" && requestedBranch === undefined) {
         const uuid = yield* randomUuidV4;
         branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
+      } else if (
+        input.workspaceStrategy.type === "existing_worktree" &&
+        requestedBranch === undefined
+      ) {
+        const checkout = input.workspaceStrategy.worktreePath;
+        branch = yield* git.currentBranch(checkout).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to read the attached worktree's branch", {
+              threadId,
+              worktreePath: checkout,
+              cause,
+            }).pipe(Effect.as(null)),
+          ),
+        );
+        branchFromCheckout = true;
       } else {
         branch = requestedBranch ?? null;
       }
@@ -481,6 +498,7 @@ const make = Effect.gen(function* () {
 
       if (
         reused === undefined &&
+        !branchFromCheckout &&
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&
