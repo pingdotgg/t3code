@@ -2905,7 +2905,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["commit", "-m", "Add feature"]);
         yield* runGit(repoDir, ["push", "-u", "origin", "feature/long-conventions"]);
 
-        let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
+        let generatedInstructions = "";
         const preference = "Mention related issues.";
         const { manager } = yield* makeManager({
           serverSettings: {
@@ -2914,7 +2914,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           providerScenario: { prListSequence: [[], []] },
           textGeneration: {
             generatePrContent: (input) => {
-              generatedPolicy = input.policy;
+              generatedInstructions = input.policy?.changeRequestInstructions ?? "";
               return Effect.succeed({ title: "Feature PR", body: "Feature body" });
             },
           },
@@ -2923,10 +2923,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
 
         expect(result.pr.status).toBe("created");
-        const instructions = generatedPolicy?.changeRequestInstructions ?? "";
-        expect(instructions.endsWith(preference)).toBe(true);
-        expect(instructions.length).toBeLessThanOrEqual(20_000);
-        expect(instructions).toContain("[truncated]");
+        expect(generatedInstructions.endsWith(preference)).toBe(true);
+        expect(generatedInstructions.length).toBeLessThanOrEqual(20_000);
+        expect(generatedInstructions).toContain("[truncated]");
       }),
   );
 
