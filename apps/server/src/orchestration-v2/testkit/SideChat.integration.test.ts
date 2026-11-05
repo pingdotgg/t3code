@@ -1246,6 +1246,49 @@ describe("side chat cascade", () => {
     }).pipe(Effect.provide(openHarness())),
   );
 
+  it.effect("does not retry a side-chat archive the server refused", () =>
+    Effect.gen(function* () {
+      const sideChat = ThreadId.make("thread:side-chat:archive-refused");
+      const layer = openHarness(
+        (dispatch) => (command) =>
+          command.type === "thread.archive" && command.threadId === sideChat
+            ? Effect.fail(
+                new Orchestrator.OrchestratorCommandRejectedError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                }),
+              )
+            : dispatch(command),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* createLesson();
+        yield* seedSideChatThread({
+          threadId: sideChat,
+          anchorThreadId: LESSON_THREAD_ID,
+          sideChat: pendingSideChat({
+            anchor: observationAnchor(),
+            excerpt: OBSERVATION_EXCERPT,
+            requestId: "command:side-chat:open-archive-refused",
+          }),
+        });
+        const cascadeId = CommandId.make("command:side-chat:archive-refused");
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: cascadeId,
+          threadId: LESSON_THREAD_ID,
+        });
+        yield* worker.drain();
+        const cascade = (yield* outbox.listByCommandId(cascadeId)).find(
+          (effect) => effect.request.type === "side-chat.cascade",
+        );
+        assert.equal(cascade?.status, "succeeded");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("retries a side-chat archive after a child dispatch fails", () =>
     Effect.gen(function* () {
       const failOnce = yield* Ref.make(true);
