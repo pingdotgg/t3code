@@ -23,7 +23,7 @@ export const QuizCardInput = Schema.Struct({
 const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   description: T3_LEARN_QUIZ_RULES_FULL,
   parameters: QuizCardInput,
-  success: Schema.Struct({ quizCard: Schema.Any, message: Schema.String }),
+  success: Schema.Struct({ quizCard: QuizCardInput, message: Schema.String }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [

@@ -105,7 +105,15 @@ export function QuizCardTimelineCard(props: {
       ) : null}
       {revealed ? (
         <div className="mt-4 space-y-2 text-sm">
-          <p className={picked?.correct === true ? "text-success" : "text-destructive"}>
+          <p
+            className={
+              picked === undefined
+                ? undefined
+                : picked.correct
+                  ? "text-success"
+                  : "text-destructive"
+            }
+          >
             {picked?.correct === true
               ? "Right."
               : selected === "__unknown__"

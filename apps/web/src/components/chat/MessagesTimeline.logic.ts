@@ -1716,6 +1716,9 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
+  const lastUserMessageIndex = timelineEntries.findLastIndex(
+    (entry) => entry.kind === "message" && entry.message.role === "user",
+  );
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
@@ -1997,12 +2000,7 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "quiz-card") {
-      const answered = input.timelineEntries.some(
-        (entry, entryIndex) =>
-          entryIndex > input.timelineEntries.indexOf(timelineEntry) &&
-          entry.kind === "message" &&
-          entry.message.role === "user",
-      );
+      const answered = index < lastUserMessageIndex;
       nextRows.push({
         kind: "quiz-card",
         id: timelineEntry.id,
