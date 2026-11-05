@@ -375,7 +375,7 @@ describe("evaluatePullRequestWatch", () => {
       remark(
         "summary-bot",
         "2026-10-02T12:10:00Z",
-        `<!-- ${"x".repeat(3_000)} -->\nCheck the retry.`,
+        `<!-- ${"x".repeat(3_000)} -->\nCheck the retry.\n   <!-- GitHub hides this unclosed block`,
       ),
     ]);
     const { text } = pullRequestWatchMessage({
