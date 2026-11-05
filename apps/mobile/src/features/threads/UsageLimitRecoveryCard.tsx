@@ -39,6 +39,7 @@ export function UsageLimitRecoveryCard({
   const scheduled =
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
   const [copied, setCopied] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
   const code = thread.runtime?.lastErrorCode;
   // OpenAI's partner guidelines specify the ChatGPT notice and its action.
   const workspaceLimit = code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
@@ -92,10 +93,13 @@ export function UsageLimitRecoveryCard({
         run: () => {
           setError(null);
           setCopied(false);
-          void Clipboard.setStringAsync(CHATGPT_WORKSPACE_ADMIN_REQUEST).then(
-            () => setCopied(true),
-            () => setError("Could not copy the request. Try again."),
-          );
+          setActionPending(true);
+          void Clipboard.setStringAsync(CHATGPT_WORKSPACE_ADMIN_REQUEST)
+            .then(
+              () => setCopied(true),
+              () => setError("Could not copy the request. Try again."),
+            )
+            .finally(() => setActionPending(false));
         },
       }
     : {
@@ -103,9 +107,10 @@ export function UsageLimitRecoveryCard({
         role: "link" as const,
         run: () => {
           setError(null);
-          void Linking.openURL(CHATGPT_USAGE_URL).catch(() =>
-            setError("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."),
-          );
+          setActionPending(true);
+          void Linking.openURL(CHATGPT_USAGE_URL)
+            .catch(() => setError("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."))
+            .finally(() => setActionPending(false));
         },
       };
   return (
@@ -130,7 +135,9 @@ export function UsageLimitRecoveryCard({
             </Text>
             <Pressable
               accessibilityRole={action.role}
-              hitSlop={12}
+              accessibilityState={{ disabled: actionPending }}
+              disabled={actionPending}
+              hitSlop={14}
               className="mt-1 self-start active:opacity-70"
               onPress={action.run}
             >

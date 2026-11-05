@@ -14,8 +14,8 @@ type ButtonProps = { label: string; disabled?: boolean; onPress: () => void };
 
 vi.mock("react-native", () => ({
   Linking: { openURL: vi.fn() },
-  Pressable: ({ children, onPress }: { children: ReactNode; onPress: () => void }) => (
-    <button type="button" onClick={onPress}>
+  Pressable: ({ children, disabled, onPress }: ButtonProps & { children: ReactNode }) => (
+    <button type="button" disabled={disabled} onClick={onPress}>
       {children}
     </button>
   ),
@@ -107,6 +107,28 @@ describe("UsageLimitRecoveryCard", () => {
     await act(async () => copy());
     expect(container.textContent).toContain("Request copied");
     expect(container.textContent).not.toContain("Could not copy the request");
+  });
+
+  it("ignores a second copy while the first is still in flight", async () => {
+    const first = Promise.withResolvers<boolean>();
+    vi.mocked(Clipboard.setStringAsync).mockReset().mockReturnValueOnce(first.promise);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    act(() =>
+      root.render(
+        <UsageLimitRecoveryCard
+          thread={failedThread(null, CHATGPT_WORKSPACE_USAGE_LIMIT_CODE)}
+          environmentId={"env-1" as EnvironmentId}
+        />,
+      ),
+    );
+    const copy = () => container.querySelector("button")!.click();
+    act(() => copy());
+    act(() => copy());
+    expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1);
+    await act(async () => first.resolve(true));
+    expect(container.textContent).toContain("Request copied");
   });
 
   it("disables Snooze once a reset more than 24.8 days away passes", () => {
