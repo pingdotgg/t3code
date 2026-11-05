@@ -131,7 +131,7 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
-## Repository worktrees
+## Repository Worktrees
 
 Some projects are a folder that holds several Git repositories, such as a team folder with a service, a client, and shared libraries. Select that project and turn on **Repository worktrees** in **Settings → General** (on mobile, **Settings → New threads**). It is off by default. Threads in the project stay in the folder, and the agent creates or reuses a worktree for each repository the work needs, including ones it discovers partway through a task. The setting applies from the agent's next turn.
 
