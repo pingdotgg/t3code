@@ -11,7 +11,11 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { useContext, useEffect, useRef, useState } from "react";
 
-import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import {
+  persistClientSettingsUpdate,
+  useClientSettings,
+  updateClientSettings,
+} from "../../hooks/useSettings";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
   saveSnapShotSetupResume,
@@ -197,7 +201,7 @@ export function SnapShotSettings() {
   useEffect(() => {
     if (policyDenial === undefined || !resume) return;
     const restored = captureSetupShouldDisableOnClose(resume.wasEnabled, false)
-      ? updateClientSettings({ snapShotEnabled: false })
+      ? persistClientSettingsUpdate((current) => ({ ...current, snapShotEnabled: false }))
       : Promise.resolve();
     void restored.then(clearSnapShotSetupResume, () => undefined);
   }, [policyDenial, resume]);
