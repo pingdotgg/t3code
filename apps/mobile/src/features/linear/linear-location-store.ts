@@ -5,17 +5,20 @@ import { linearLocationFromStack, type StoredLinearLocation } from "./linearResu
 
 // Memory is the source while the app runs; storage only carries it across a restart.
 let location: StoredLinearLocation | null = null;
+// Set by any record or clear, so a cold-start deep link is not overwritten by the saved location.
+let changedThisSession = false;
 let hydration: Promise<void> | null = null;
 
 function persist() {
+  changedThisSession = true;
   void savePreferencesPatch({ linearLocation: location ?? undefined }).catch(() => undefined);
 }
 
-/** Loads the saved location once; a screen visited before it resolves wins over the saved one. */
+/** Loads the saved location once; anything recorded or cleared before it resolves wins. */
 export function hydrateLinearLocation(): Promise<void> {
   hydration ??= loadPreferences()
     .then((preferences) => {
-      location ??= preferences.linearLocation ?? null;
+      if (!changedThisSession) location = preferences.linearLocation ?? null;
     })
     .catch(() => undefined);
   return hydration;
@@ -46,7 +49,6 @@ export function setLinearLocationOrganization(environmentId: string, organizatio
 }
 
 export function clearLinearLocation(): void {
-  if (location === null) return;
   location = null;
   persist();
 }

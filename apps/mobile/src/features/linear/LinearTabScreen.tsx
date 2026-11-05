@@ -50,7 +50,7 @@ import {
   hydrateLinearLocation,
   setLinearLocationOrganization,
 } from "./linear-location-store";
-import { isLinearStackRoute, linearRoutesToResume } from "./linearResume";
+import { linearRoutesToResume } from "./linearResume";
 import { useLinearNavigation } from "./useLinearNavigation";
 
 const EMPTY_LIST: ReadonlyArray<never> = [];
@@ -126,9 +126,8 @@ function useResumeLinearLocation(input: {
       }
       setLinearLocationOrganization(environmentId, organizationId);
       const state = navigation.getState();
-      const top = state?.routes[state.index]?.name;
-      // A deep link already put a Linear screen on top; it wins and was recorded as the location.
-      if (isLinearStackRoute(top)) return;
+      // Only over the workspace itself: a deep link's Linear screen or a chat opened meanwhile wins.
+      if (state?.routes[state.index]?.name !== "Home") return;
       for (const route of routes) {
         navigation.dispatch(StackActions.push(route.name, route.params));
       }

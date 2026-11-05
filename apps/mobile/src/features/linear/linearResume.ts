@@ -59,15 +59,16 @@ export function linearLocationFromStack(
     if (params === null) return null;
     trailing.unshift({ name: route.name, params });
   }
-  const environmentId = trailing[0]?.params.environmentId;
+  // Each Linear screen stands on its own, so a long issue-to-issue chain keeps its newest screens.
+  const kept = trailing.slice(-MAX_STORED_ROUTES);
+  const environmentId = kept[0]?.params.environmentId;
   if (
     environmentId === undefined ||
-    trailing.length > MAX_STORED_ROUTES ||
-    trailing.some((route) => route.params.environmentId !== environmentId)
+    kept.some((route) => route.params.environmentId !== environmentId)
   ) {
     return null;
   }
-  return { environmentId, organizationId: null, routes: trailing };
+  return { environmentId, organizationId: null, routes: kept };
 }
 
 /**
@@ -90,9 +91,4 @@ export function linearRoutesToResume(input: {
     return [];
   }
   return stored.routes;
-}
-
-/** A top-of-stack route that already shows Linear needs no resume (a deep link got there first). */
-export function isLinearStackRoute(name: string | undefined): boolean {
-  return name !== undefined && isLinearRouteName(name);
 }

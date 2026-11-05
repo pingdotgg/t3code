@@ -30,6 +30,21 @@ describe("linearLocationFromStack", () => {
     });
   });
 
+  it("keeps the newest eight screens of a long chain and refuses mixed environments", () => {
+    const chain = Array.from({ length: 9 }, (_, i) => ({
+      name: "LinearIssue" as const,
+      params: { environmentId: "e1", issueId: `i${i}` },
+    }));
+    expect(linearLocationFromStack([home, team, ...chain])?.routes).toEqual(chain.slice(1));
+    expect(
+      linearLocationFromStack([
+        home,
+        team,
+        { name: "LinearIssue", params: { environmentId: "e2", issueId: "i1" } },
+      ]),
+    ).toBeNull();
+  });
+
   it("leaves the stored location alone when a non-Linear screen is on top", () => {
     expect(linearLocationFromStack([home, team, { name: "Thread" }])).toBeNull();
     expect(linearLocationFromStack([home])).toBeNull();
