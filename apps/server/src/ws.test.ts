@@ -1062,6 +1062,13 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
             ? { instanceId, snapshotForCwd: () => Effect.die("unused") }
             : { instanceId }) as never,
         ]),
+        getInstance: () =>
+          Effect.sync(
+            () =>
+              (scansCwd
+                ? { instanceId, snapshotForCwd: () => Effect.die("unused") }
+                : { instanceId }) as never,
+          ),
       }),
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
@@ -1195,6 +1202,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
     // A failed scan still gives a client without the machine catalog its commands.
+    scansCwd = true;
     yield* server.write(0, {
       _tag: "Request",
       id: RpcMessage.RequestId("refresh-failed-scan"),

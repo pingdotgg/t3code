@@ -448,7 +448,7 @@ function workspaceSnapshotOrCatalog(
 
 // On-demand catalog clients read full entries from the cwd snapshot they fetch. Names still
 // change the config when the machine catalog does, so the client refetches, and skill names
-// keep skill links working where no snapshot is fetched.
+// and labels keep skill links working where no snapshot is fetched.
 function withoutWorkspaceSnapshots(
   providers: ReadonlyArray<ServerProvider>,
   catalogsPerCwd: ReadonlySet<string> = new Set(),
@@ -459,7 +459,7 @@ function withoutWorkspaceSnapshots(
           ...provider,
           slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
           skills: provider.skills.map(
-            ({ description: _d, shortDescription: _s, displayName: _n, ...skill }) => skill,
+            ({ description: _d, shortDescription: _s, ...skill }) => skill,
           ),
         }
       : provider,
@@ -2534,6 +2534,9 @@ export const layerWsRpc = (
             if (instanceId === undefined || cwd === undefined) {
               return { providers: withoutWorkspaceSnapshots(commandProviders) };
             }
+            const catalogOnDemand =
+              input.providerCatalogsOnDemand === true &&
+              (yield* providerInstances.getInstance(instanceId))?.snapshotForCwd !== undefined;
             return {
               providers: commandProviders
                 .filter((provider) => provider.instanceId === instanceId)
@@ -2543,11 +2546,7 @@ export const layerWsRpc = (
                   models: [],
                   slashCommands: [],
                   skills: [],
-                  workspaceSnapshots: workspaceSnapshotOrCatalog(
-                    provider,
-                    cwd,
-                    input.providerCatalogsOnDemand === true,
-                  ),
+                  workspaceSnapshots: workspaceSnapshotOrCatalog(provider, cwd, catalogOnDemand),
                 })),
             };
           }),
