@@ -46,7 +46,9 @@ import {
   COMPUTER_USE_TOOL_SOURCE,
   dynamicToolSurface,
   dynamicToolTitle,
+  formatReadToolLabel,
 } from "@t3tools/shared/toolActivity";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -1334,6 +1336,8 @@ type PendingCodexRuntimeRequest =
       readonly type: "user_input";
       readonly answers: Deferred.Deferred<ProviderUserInputAnswers, never>;
     };
+
+type CodexImageViewItem = { readonly id: string; readonly path: string };
 
 type CodexWebSearchItem = {
   readonly id: string;
@@ -3826,6 +3830,73 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        const buildImageViewArtifacts = Effect.fn("CodexAdapterV2.buildImageViewArtifacts")(
+          function* (input: {
+            readonly context: ActiveCodexTurnContext;
+            readonly item: CodexImageViewItem;
+            readonly completed: boolean;
+          }) {
+            const updatedAt = yield* DateTime.now;
+            const completedAt = input.completed ? updatedAt : null;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: input.item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: input.item.id,
+            });
+            const { ordinal, startedAt } = yield* resolveItemPosition(input.context, input.item.id);
+            const status = input.completed ? "completed" : "running";
+            const path = input.item.path.trim();
+            const viewedImagePath =
+              path.length > 0 &&
+              path.length <= 4096 &&
+              !/[\r\n]/.test(path) &&
+              isWorkspaceImagePreviewPath(path)
+                ? path
+                : undefined;
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: input.context.projectionThreadId,
+              runId: input.context.projectionRunId,
+              parentNodeId: input.context.itemParentNodeId,
+              rootNodeId: input.context.rootNodeId,
+              kind: "tool_call",
+              status,
+              countsForRun: false,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: input.context.projectionThreadId,
+              runId: input.context.projectionRunId,
+              nodeId,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.item.id),
+              parentItemId: null,
+              ordinal,
+              status,
+              title: formatReadToolLabel(path),
+              startedAt,
+              completedAt,
+              updatedAt,
+              type: "dynamic_tool",
+              toolName: "view_image",
+              ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
+              input: { path: input.item.path },
+            };
+            return { node, turnItem };
+          },
+        );
+
         const buildDynamicToolArtifacts = Effect.fn("CodexAdapterV2.buildDynamicToolArtifacts")(
           function* (context: ActiveCodexTurnContext, item: CodexDynamicToolItem) {
             const updatedAt = yield* DateTime.now;
@@ -4967,15 +5038,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
-            if (payload.item.type !== "webSearch") {
+            if (payload.item.type !== "webSearch" && payload.item.type !== "imageView") {
               return;
             }
 
-            const artifacts = yield* buildWebSearchArtifacts({
-              context,
-              item: payload.item,
-              completed: false,
-            });
+            const artifacts =
+              payload.item.type === "imageView"
+                ? yield* buildImageViewArtifacts({
+                    context,
+                    item: payload.item,
+                    completed: false,
+                  })
+                : yield* buildWebSearchArtifacts({
+                    context,
+                    item: payload.item,
+                    completed: false,
+                  });
             yield* emitProviderEvent({
               type: "node.updated",
               driver: CODEX_PROVIDER,
@@ -5150,12 +5228,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
-            if (payload.item.type === "webSearch") {
-              const artifacts = yield* buildWebSearchArtifacts({
-                context,
-                item: payload.item,
-                completed: true,
-              });
+            if (payload.item.type === "webSearch" || payload.item.type === "imageView") {
+              const artifacts =
+                payload.item.type === "imageView"
+                  ? yield* buildImageViewArtifacts({
+                      context,
+                      item: payload.item,
+                      completed: true,
+                    })
+                  : yield* buildWebSearchArtifacts({
+                      context,
+                      item: payload.item,
+                      completed: true,
+                    });
               yield* emitProviderEvent({
                 type: "node.updated",
                 driver: CODEX_PROVIDER,
