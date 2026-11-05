@@ -16,11 +16,11 @@ const SNIPPET_LENGTH = 200;
 // Remark bodies are untrusted and run to 64 KB, and unclosed openers make the markup pass
 // backtrack, so it only reads far enough to fill an excerpt.
 const SNIPPET_SCAN_LENGTH = 2_000;
-// One left-to-right pass: code spans keep their tags, and backticks inside a tag's attributes are
-// not code. Element names are lowercase, and one-letter ones need attributes, so Promise<A>,
-// Promise<a> and Promise<void> stay.
+// One left-to-right pass keeps code spans' tags and reads attribute backticks as part of the tag.
+// A lookahead pins each delimiter run at full length, so a long run can't backtrack cubically.
+// Element names are lowercase, and one-letter ones need attributes, so Promise<a> and <A> stay.
 const MARKUP =
-  /(?<code>(?<ticks>`+)[\s\S]*?(?<!`)\k<ticks>(?!`)|(?<tildes>~{3,})[\s\S]*?\k<tildes>)|<!--[\s\S]*?(?:-->|$)|<\/(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)\s*>|<(?:blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|img|li|ol|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>|<(?:a|b|i|p)\s(?:[^>"']|"[^"]*"|'[^']*')*>/g;
+  /(?<code>(?<!`)(?=(?<ticks>`+))\k<ticks>[\s\S]*?(?<!`)\k<ticks>(?!`)|(?<!~)(?=(?<tildes>~{3,}))\k<tildes>[\s\S]*?\k<tildes>)|<!--[\s\S]*?(?:-->|$)|<\/(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)\s*>|<(?:blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|img|li|ol|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>|<(?:a|b|i|p)\s(?:[^>"']|"[^"]*"|'[^']*')*>/g;
 
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
