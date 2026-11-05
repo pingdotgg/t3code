@@ -202,6 +202,73 @@ it.effect("does not wait for an in-flight detail read to display a preview", () 
   }),
 );
 
+it.effect("shows a listed pull request's preview without asking the host again", () =>
+  Effect.gen(function* () {
+    let previewReads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              previewReads++;
+              return { ...changeRequest(1, "2026-07-02T00:00:00Z"), title: "Renamed" };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.list({ state: "open" });
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    assert.strictEqual(previewReads, 0);
+    yield* service.refreshAfterTurn(ref.projectId);
+    assert.strictEqual((yield* service.preview(ref)).title, "Renamed");
+    assert.strictEqual(previewReads, 1);
+    yield* service.list({ state: "open", limit: 1 });
+    assert.strictEqual((yield* service.preview(ref)).title, "Renamed");
+  }),
+);
+
+it.effect("a list read under a pinned account leaves the shared preview to the host", () =>
+  Effect.gen(function* () {
+    let previewReads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getRoutingIdentity: () => Effect.succeed({ accountId: "101", viewer: "octocat" }),
+          withVerifiedCredential: (_, use) =>
+            use({ accountId: "101", viewer: "octocat", credentialFingerprint: "pinned" }),
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [{ ...changeRequest(1, "2026-07-02T00:00:00Z"), title: "Pinned view" }],
+              truncated: false,
+              continues: false,
+            }),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              previewReads++;
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.withRoutingCredential(
+      { ...ref, host: "github.com", expectedAccountId: "101" },
+      service.list({ state: "open" }),
+    );
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    assert.strictEqual(previewReads, 1);
+  }),
+);
+
 function unusable(provider: SourceControlProviderKind, reason: "missing-tool" | "unauthenticated") {
   return new PullRequestProviderError({
     provider,
@@ -1172,7 +1239,7 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
                       detail: "HTTP 504",
                     }),
                   )
-                : Effect.succeed({ ...changeRequest(1, mergedAt), state }),
+                : Effect.succeed({ ...changeRequest(1, mergedAt), state, mergedAt }),
           }),
         ],
       });
@@ -1181,7 +1248,7 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
         Effect.forkChild({ startImmediately: true }),
       );
 
-      yield* service.runAction({ ...reference, action: "merge" });
+      assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
       const queuedRefresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
       confirmationFails = true;
       yield* service.runAction({ ...reference, action: "merge" });
@@ -1191,7 +1258,8 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
       );
       confirmationFails = false;
       state = "merged";
-      yield* TestClock.setTime(Date.parse(mergedAt));
+      // The event carries the host's merge time, not the moment the confirmation ran.
+      yield* TestClock.setTime(Date.parse(mergedAt) + 60_000);
       yield* service.runAction({
         ...reference,
         repository: " ACME/WEB ",
@@ -1199,6 +1267,71 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
         mergeMethod: "merge",
       });
 
+      assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
+        ...reference,
+        mergedAt,
+      });
+    }),
+  ),
+);
+
+it.effect("returns the host's merged reply as a summary and trusts it without another read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const mergedAt = "2026-09-03T02:00:00.000Z";
+      const merged = {
+        number: 1,
+        title: "Change request 1",
+        url: "https://host/pull/1",
+        headBranch: "feat/1",
+        baseBranch: "main",
+        state: "merged" as const,
+        isDraft: false,
+        updatedAt: mergedAt,
+        mergedAt,
+        headSha: "abc123",
+        autoMergeEnabled: false,
+      };
+      let summaryReads = 0;
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            runAction: () => Effect.succeed(merged),
+            getChangeRequestSummary: () =>
+              Effect.sync(() => {
+                summaryReads++;
+                return { ...changeRequest(1, mergedAt), state: "merged" as const, mergedAt };
+              }),
+          }),
+        ],
+      });
+      const merges = yield* service.subscribeMerges;
+      const observedMerge = yield* Stream.runHead(merges).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const observedAt = Date.parse("2026-09-03T02:00:01.000Z");
+      yield* TestClock.setTime(observedAt);
+
+      // Clients that did not ask decode the success as void, so they must get nothing back.
+      assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
+      const result = yield* service.runAction({
+        ...reference,
+        action: "merge",
+        replyWithSummary: true,
+      });
+
+      assert.deepStrictEqual(result, {
+        ...merged,
+        provider: SourceControlProviderKind.make("github"),
+        projectId: reference.projectId,
+        repository: reference.repository,
+        observedAt,
+      });
+      assert.strictEqual(summaryReads, 0);
       assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
         ...reference,
         mergedAt,
