@@ -42,7 +42,12 @@ import { ReplaceStep } from "@tiptap/pm/transform";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
-import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
+import {
+  MARKDOWN_SOURCE_MARK,
+  parseInlineMarkdown,
+  RICH_TEXT_DELIMITERS,
+  type RichTextMark,
+} from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 
@@ -90,6 +95,7 @@ function codePairCaretPlugin(type: MarkType) {
         if (view.composing || from !== to || text !== "`") return false;
         const $from = view.state.doc.resolve(from);
         if (!$from.parent.isTextblock || $from.parent.type.spec.code) return false;
+        if (touchesMarkdownSource(view.state, from, to)) return false;
         const before = $from.nodeBefore?.text ?? "";
         if (closesBacktickPair($from)) {
           view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
@@ -218,7 +224,10 @@ export const ComposerCodeExtension = Code.extend({
           find: rule.find,
           undoable: rule.undoable,
           handler: (props) => {
-            if (literalBackticksBefore(props.state.doc.resolve(props.range.from)) % 2 === 1) {
+            if (
+              literalBackticksBefore(props.state.doc.resolve(props.range.from)) % 2 === 1 ||
+              touchesMarkdownSource(props.state, props.range.from, props.range.to)
+            ) {
               return null;
             }
 
@@ -246,6 +255,18 @@ function literalBackticksBefore($pos: ResolvedPos): number {
   return count;
 }
 
+/**
+ * Whether `from`-`to`, or the caret at `from`, is in shown Markdown source.
+ * Typed delimiters there stay text until the caret leaves and the source is parsed.
+ */
+function touchesMarkdownSource(state: EditorState, from: number, to: number): boolean {
+  const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!type) return false;
+  if (from < to) return state.doc.rangeHasMark(from, to, type);
+  const $pos = state.doc.resolve(from);
+  return [$pos.nodeBefore, $pos.nodeAfter].some((node) => node && type.isInSet(node.marks));
+}
+
 // Code permits nested emphasis, so Tiptap's exclusion check cannot protect literal delimiters.
 function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
   const rule = markInputRule({ find, type });
@@ -257,6 +278,7 @@ function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
       const content = match[match.length - 1] ?? "";
       const textStart = range.from + match[0].indexOf(content);
       const textEnd = textStart + content.length;
+      if (touchesMarkdownSource(state, range.from, range.to)) return null;
       if (
         code &&
         (state.doc.rangeHasMark(range.from + match[0].search(/\S/), textStart, code) ||
@@ -1206,7 +1228,8 @@ function renumberFollowingItems(
   });
 }
 
-export function splitOrLiftListItem(editor: Editor): boolean {
+/** `prepare` runs first in the same transaction, which the split then reads. */
+export function splitOrLiftListItem(editor: Editor, prepare: Command): boolean {
   const $from = editor.state.selection.$from;
   const itemType = listItemTypeAt($from);
   if (!itemType) return false;
@@ -1221,7 +1244,7 @@ export function splitOrLiftListItem(editor: Editor): boolean {
     if (moved) alignListItemWithSiblings(tr, itemType);
     return moved;
   };
-  return editor.can().command(move) && editor.chain().command(move).run();
+  return editor.can().command(move) && editor.chain().command(prepare).command(move).run();
 }
 
 export function convertBulletItemToTask(
@@ -1639,15 +1662,20 @@ export function pmToFlat(map: RichDocMap, pmPos: number): number {
 
 // Styled boundaries need two caret stops at one position, one for each side's marks.
 
+// Shown Markdown source has real characters at its edges, so it needs no extra stop.
+function styleMarks(marks: readonly Mark[]): readonly Mark[] {
+  return marks.filter((mark) => mark.type.name !== MARKDOWN_SOURCE_MARK);
+}
+
 function styledEdge(state: EditorState) {
   const { selection } = state;
   if (!selection.empty) return null;
   const { $from } = selection;
   if (!$from.parent.inlineContent) return null;
-  const before = $from.nodeBefore?.marks ?? Mark.none;
-  const after = $from.nodeAfter?.marks ?? Mark.none;
+  const before = styleMarks($from.nodeBefore?.marks ?? Mark.none);
+  const after = styleMarks($from.nodeAfter?.marks ?? Mark.none);
   if (Mark.sameSet(before, after)) return null;
-  return { before, after, current: state.storedMarks ?? $from.marks() };
+  return { before, after, current: styleMarks(state.storedMarks ?? $from.marks()) };
 }
 
 export function caretTakesMarksBefore(state: EditorState): boolean {
