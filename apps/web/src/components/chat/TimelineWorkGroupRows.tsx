@@ -1021,8 +1021,9 @@ function CollapsedWorkingWindow({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
-  const prependRef = useRef<{ height: number; top: number } | null>(null);
+  const prependRef = useRef<{ height: number; top: number; inSpacer: boolean } | null>(null);
   const [following, setFollowing] = useState(true);
   const [start, setStart] = useState(() => Math.max(0, items.length - WORKING_WINDOW_TAIL));
   const getViewport = () =>
@@ -1034,7 +1035,8 @@ function CollapsedWorkingWindow({
     if (!prepend) return;
     const viewport = getViewport();
     if (!viewport) return;
-    viewport.scrollTop = prepend.top + viewport.scrollHeight - prepend.height;
+    viewport.scrollTop =
+      prepend.top + (prepend.inSpacer ? 0 : viewport.scrollHeight - prepend.height);
     prependRef.current = null;
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- content can grow between renders while markdown and command output stream
@@ -1049,6 +1051,30 @@ function CollapsedWorkingWindow({
       if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
     });
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as scrolling brings the spacer near the viewport
+  useEffect(() => {
+    const viewport = rootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    const spacer = spacerRef.current;
+    if (start === 0 || !viewport || !spacer) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (prependRef.current || !entries.some((entry) => entry.isIntersecting)) return;
+        prependRef.current = {
+          height: viewport.scrollHeight,
+          top: viewport.scrollTop,
+          inSpacer:
+            viewport.scrollTop === 0 ||
+            viewport.scrollTop + viewport.clientHeight <= spacer.offsetHeight,
+        };
+        setStart((current) => Math.max(0, current - WORKING_HISTORY_BATCH));
+      },
+      { root: viewport, rootMargin: "80px 0px" },
+    );
+    observer.observe(spacer);
+    return () => observer.disconnect();
+  }, [start]);
 
   return (
     <div className="relative min-h-0 min-w-0 shrink-0">
@@ -1065,15 +1091,18 @@ function CollapsedWorkingWindow({
           const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
           followRef.current = atEnd;
           setFollowing(atEnd);
-          if (atEnd) {
-            setStart(Math.max(start, items.length - WORKING_WINDOW_TAIL));
-          } else if (viewport.scrollTop < 80 && start > 0) {
-            prependRef.current = { height: viewport.scrollHeight, top: viewport.scrollTop };
-            setStart(Math.max(0, start - WORKING_HISTORY_BATCH));
-          }
+          if (atEnd) setStart(Math.max(start, items.length - WORKING_WINDOW_TAIL));
         }}
       >
         <div ref={contentRef} className="flex min-w-0 flex-col gap-1">
+          {start > 0 ? (
+            <div
+              ref={spacerRef}
+              aria-hidden
+              className="shrink-0"
+              style={{ height: start * (compactWorkEntryHeight + 4) }}
+            />
+          ) : null}
           {items.slice(start).map((item) => (
             <div key={item.id} className="min-w-0">
               <WorkingWindowItemView
