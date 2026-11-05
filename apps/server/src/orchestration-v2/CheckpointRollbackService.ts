@@ -256,6 +256,7 @@ export const layer: Layer.Layer<
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (
       input: Parameters<CheckpointRollbackServiceV2Shape["execute"]>[0],
+      heldLeaseKeys: ReadonlySet<string>,
     ) {
       const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
       const { providerThread, checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } =
@@ -398,6 +399,16 @@ export const layer: Layer.Layer<
           repository: plan.repository.repository,
           worktreePath: plan.repository.worktreePath,
         });
+      }
+      // A worktree attached while this waited for its leases needs its own lease first.
+      if (plan !== null) {
+        const neededKeys = yield* Effect.forEach(plan.repositories, (repository) =>
+          checkpoints.repositoryLeaseKey(repository),
+        );
+        const missingLeaseKeys = neededKeys.filter(
+          (key): key is string => key !== null && !heldLeaseKeys.has(key),
+        );
+        if (missingLeaseKeys.length > 0) return { missingLeaseKeys };
       }
       // Every repository is checked before the provider or any file changes.
       const repositoryTargets =
@@ -658,6 +669,7 @@ export const layer: Layer.Layer<
         ),
       );
       yield* commit({ complete: true });
+      return undefined;
     });
 
     return CheckpointRollbackServiceV2.of({
@@ -667,8 +679,15 @@ export const layer: Layer.Layer<
           // Storage cleanup removes worktrees under the same lease.
           const thread = yield* projections.getThread(input.threadId);
           const locked = Effect.gen(function* () {
-            const keys = yield* repositoryLeaseKeys({ ...input, thread });
-            yield* keys.length === 0 ? execute(input) : withRepositoryLeases(keys, execute(input));
+            const keys = [...(yield* repositoryLeaseKeys({ ...input, thread }))];
+            for (;;) {
+              const held = new Set(keys);
+              const result = yield* keys.length === 0
+                ? execute(input, held)
+                : withRepositoryLeases(keys, execute(input, held));
+              if (result === undefined) return;
+              keys.push(...result.missingLeaseKeys);
+            }
           });
           yield* thread.worktreePath === null
             ? locked
