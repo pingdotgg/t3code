@@ -1438,7 +1438,8 @@ function ComposerPromptEditorTiptapInner(
         },
         handleDrop: (view, event, _slice, moved) => {
           const data = event.dataTransfer;
-          if (moved || !data || data.files.length > 0 || !data.getData("text/plain")) return false;
+          if (moved || view.dragging || !data || data.files.length > 0) return false;
+          if (!data.getData("text/plain")) return false;
           const target = view.posAtCoords({ left: event.clientX, top: event.clientY });
           if (!target) return false;
           view.dispatch(
