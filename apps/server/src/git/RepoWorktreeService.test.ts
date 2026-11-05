@@ -625,6 +625,13 @@ describe("RepoWorktreeService", () => {
           detached: false,
           worktreePath,
         });
+        // A client's own detach command, sent again by a double tap or another device.
+        yield* (yield* ThreadManagement.ThreadManagementService).dispatch({
+          type: "thread.repo-worktree.detach",
+          commandId: CommandId.make("detach:again"),
+          threadId,
+          worktreePath,
+        });
       }),
     ),
   );
