@@ -237,6 +237,31 @@ describe("Linux device scale persistence failures", () => {
       );
     });
 
+    it("treats --ozone-platform=auto as an unspecified platform", () => {
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland" },
+          ozonePlatform: "auto",
+        }),
+      );
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { WAYLAND_DISPLAY: "wayland-0" },
+          ozonePlatform: "auto",
+        }),
+      );
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "x11" },
+          ozonePlatform: "auto",
+          hasLiveWaylandSocket: () => false,
+        }),
+      );
+    });
+
     it("respects --ozone-platform-hint=x11 on a Wayland login", () => {
       assert.isFalse(
         shouldDisableGpuOnNvidiaWayland({

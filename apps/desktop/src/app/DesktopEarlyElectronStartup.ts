@@ -93,9 +93,9 @@ const isWaylandPlatform = (
   hasLiveWaylandSocket: () => boolean,
 ): boolean => {
   // --ozone-platform selects the backend directly; --ozone-platform-hint only
-  // breaks the default/auto tie, so an explicit platform always wins.
+  // breaks the auto/default tie, so an explicit platform always wins.
   const explicit = normalizeSwitchValue(ozonePlatform);
-  if (explicit !== null) return explicit === "wayland";
+  if (explicit !== null && explicit !== "auto") return explicit === "wayland";
   const hint = normalizeSwitchValue(ozonePlatformHint);
   if (hint === "wayland") return true;
   if (hint === "x11") return false;
