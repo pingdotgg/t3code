@@ -318,12 +318,6 @@ export function composerStateAtPromptEnd(
   };
 }
 
-/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
-export function parseSideChatCommand(text: string): { prompt: string } | null {
-  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
-  return match ? { prompt: match[1]?.trim() ?? "" } : null;
-}
-
 /** Sends trim the prompt, so leading whitespace before `!` still makes a shell command. */
 export function isShellModePrompt(prompt: string): boolean {
   return prompt.trimStart().startsWith("!");
