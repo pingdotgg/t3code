@@ -82,6 +82,7 @@ export function LayoutOnboarding() {
   const [completed, setCompleted] = useLocalStorage(TOUR_KEY, false, Schema.Boolean);
   const [step, setStep] = useState<number | null>(null);
   const nextRef = useRef<HTMLButtonElement | null>(null);
+  const [learnedBeforeTour, setLearnedBeforeTour] = useState<ReadonlyArray<string>>([]);
   const keys = isMacPlatform(navigator.platform) ? "⌥⌘" : "Ctrl+Alt";
   const steps = [
     {
@@ -179,7 +180,13 @@ export function LayoutOnboarding() {
               ))}
             </div>
             <div className="flex justify-end gap-2">
-              <Button size="standard" onClick={() => setStep(0)}>
+              <Button
+                size="standard"
+                onClick={() => {
+                  setLearnedBeforeTour(learned);
+                  setStep(0);
+                }}
+              >
                 Show me
               </Button>
               <Button size="standard" variant="secondary" onClick={finish}>
@@ -191,6 +198,9 @@ export function LayoutOnboarding() {
       </Dialog>
     );
   if (!current) return null;
+  const lesson = (["tabs", "split", null, "overview", "keys"] as const)[step];
+  const tried =
+    lesson != null && (lesson === "overview" ? learnedBeforeTour : learned).includes(lesson);
   return (
     <Popover
       open
@@ -222,9 +232,7 @@ export function LayoutOnboarding() {
           <div className="mt-2 flex items-center gap-2">
             <span className="mr-auto flex items-center gap-2 text-meta text-dim-foreground">
               <span>{step + 1} of 5</span>
-              {learned.includes(["tabs", "split", "scroll", "overview", "keys"][step]!) ? (
-                <Badge variant="success">Tried</Badge>
-              ) : null}
+              {tried ? <Badge variant="success">Tried</Badge> : null}
             </span>
             <Button size="standard" variant="ghost-muted" onClick={finish}>
               Skip
