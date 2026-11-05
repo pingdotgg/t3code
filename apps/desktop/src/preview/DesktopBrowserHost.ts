@@ -495,7 +495,7 @@ export const make = Effect.gen(function* () {
     // Kept for the popup's lifetime; `webContents.debugger` throws once it is destroyed.
     const debuggee = webContents.debugger;
     // DevTools, or another client, already holds its debugger.
-    if (debuggee.isAttached()) return;
+    if (webContents.isDevToolsOpened() || debuggee.isAttached()) return;
     try {
       debuggee.attach("1.3");
     } catch {
@@ -538,10 +538,18 @@ export const make = Effect.gen(function* () {
   };
 
   const openedPopup = (opener: Electron.WebContents, popup: Electron.WebContents) => {
+    if (popup.isDestroyed()) return;
     const popups = openedPopups.get(opener) ?? new Set();
+    if (popups.has(popup)) return;
     openedPopups.set(opener, popups);
     popups.add(popup);
+    const show = () => {
+      for (const tab of tabs.values())
+        if (tab.debuggee.webContents === opener) showPopup(tab, popup);
+    };
+    popup.on("devtools-closed", show);
     popup.once("destroyed", () => {
+      popup.off("devtools-closed", show);
       popups.delete(popup);
       if (popups.size === 0 && openedPopups.get(opener) === popups) openedPopups.delete(opener);
       for (const tab of tabs.values()) {
@@ -549,7 +557,7 @@ export const make = Effect.gen(function* () {
         if (shown) hidePopup(shown, true);
       }
     });
-    for (const tab of tabs.values()) if (tab.debuggee.webContents === opener) showPopup(tab, popup);
+    show();
   };
 
   const targetOf = (source: Electron.WebContents) => {

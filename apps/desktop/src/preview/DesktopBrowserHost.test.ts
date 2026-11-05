@@ -72,6 +72,7 @@ const makeDebuggee = (
     attached: false,
     isAttached: () => debuggee.attached,
     attach: () => {
+      if (devToolsOpened) throw new Error("DevTools is open");
       debuggee.attached = true;
     },
     detach: vi.fn(() => {
@@ -79,12 +80,14 @@ const makeDebuggee = (
     }),
   });
   let destroyed = false;
+  let devToolsOpened = false;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     debugger: debuggee,
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
     isDestroyed: () => destroyed,
+    isDevToolsOpened: () => devToolsOpened,
     close: vi.fn(),
   });
   return {
@@ -94,6 +97,15 @@ const makeDebuggee = (
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     debuggee,
+    openDevTools: () => {
+      devToolsOpened = true;
+      debuggee.attached = false;
+      debuggee.emit("detach", {}, "replaced_with_devtools");
+    },
+    closeDevTools: () => {
+      devToolsOpened = false;
+      webContents.emit("devtools-closed");
+    },
     destroy: () => {
       destroyed = true;
       webContents.emit("destroyed");
@@ -1166,6 +1178,118 @@ describe("DesktopBrowserHost", () => {
       expect(early.debuggee.detach).toHaveBeenCalledOnce();
       expect(late.debuggee.detach).not.toHaveBeenCalled();
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["before", "after"] as const)(
+    "recovers the same popup when DevTools opened %s relay attachment closes",
+    (when) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const page = makeDebuggee();
+        const popup = makeDebuggee({ targetId: "POPUP" });
+        const sibling = makeDebuggee({ targetId: "SIBLING" });
+        const attach = vi.spyOn(popup.debuggee, "attach");
+        const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
+          ),
+          Effect.forkScoped,
+        );
+        const cdp = (message: Record<string, unknown>) =>
+          host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+        const nextCdp = Effect.gen(function* () {
+          let event = yield* Queue.take(events);
+          while (event.type !== "cdp") event = yield* Queue.take(events);
+          return JSON.parse(event.message) as Record<string, unknown>;
+        });
+        const reply = (id: number) =>
+          Effect.gen(function* () {
+            let message = yield* nextCdp;
+            while (message["id"] !== id) message = yield* nextCdp;
+            return message;
+          });
+        host.attach(key, page.tab);
+        expect(yield* Queue.take(events)).toEqual({ type: "attached", ...key });
+        if (when === "before") popup.openDevTools();
+        host.openedPopup(page.tab.webContents, popup.tab.webContents);
+        host.openedPopup(page.tab.webContents, sibling.tab.webContents);
+        yield* host.handleCommandLine(encodeJson({ type: "popups", ...key }));
+        yield* cdp({ id: 1, method: "Target.setAutoAttach" });
+        const sessions = new Map<string, string>();
+        while (sessions.size < (when === "before" ? 2 : 3)) {
+          const message = yield* nextCdp;
+          if (message["method"] !== "Target.attachedToTarget") continue;
+          const params = message["params"] as {
+            sessionId: string;
+            targetInfo: { targetId: string };
+          };
+          sessions.set(params.targetInfo.targetId, params.sessionId);
+        }
+        if (when === "after") {
+          popup.openDevTools();
+          const message = yield* nextCdp;
+          expect(message).toMatchObject({
+            method: "Target.detachedFromTarget",
+            params: { sessionId: sessions.get("POPUP"), targetId: "POPUP" },
+          });
+        }
+        expect(popup.debuggee.attached).toBe(false);
+        attach.mockClear();
+        popup.closeDevTools();
+        expect(popup.debuggee.attached).toBe(true);
+        let restored = yield* nextCdp;
+        while (restored["method"] !== "Target.attachedToTarget") restored = yield* nextCdp;
+        const restoredParams = restored["params"] as { sessionId: string };
+        expect(restored).toMatchObject({
+          params: { targetInfo: { targetId: "POPUP", openerId: "GUEST" } },
+        });
+        expect(restoredParams.sessionId).not.toBe(sessions.get("POPUP"));
+        popup.closeDevTools();
+        expect(attach).toHaveBeenCalledOnce();
+        if (when === "after") {
+          yield* cdp({ id: 2, method: "Runtime.evaluate", sessionId: sessions.get("POPUP") });
+          expect(yield* reply(2)).toHaveProperty("error");
+        }
+        for (const [index, sessionId] of [
+          restoredParams.sessionId,
+          sessions.get("SIBLING"),
+          sessions.get("GUEST"),
+        ].entries()) {
+          yield* cdp({
+            id: index + 3,
+            method: "Runtime.evaluate",
+            params: { id: index + 3 },
+            sessionId,
+          });
+        }
+        yield* settle;
+        expect([popup.sent, sibling.sent, page.sent]).toEqual([[3], [4], [5]]);
+        popup.release();
+        sibling.release();
+        page.release();
+        yield* reply(5);
+        yield* cdp({ id: 6, method: "Target.getTargets" });
+        expect(yield* reply(6)).toMatchObject({
+          result: {
+            targetInfos: ["GUEST", "SIBLING", "POPUP"].map((targetId) =>
+              expect.objectContaining({ targetId, attached: true }),
+            ),
+          },
+        });
+        const siblingAttach = vi.spyOn(sibling.debuggee, "attach");
+        sibling.openDevTools();
+        sibling.destroy();
+        sibling.closeDevTools();
+        expect(siblingAttach).not.toHaveBeenCalled();
+        yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+        popup.closeDevTools();
+        expect(attach).toHaveBeenCalledOnce();
+        popup.destroy();
+        popup.closeDevTools();
+        expect(attach).toHaveBeenCalledOnce();
+        expect(popup.tab.webContents.close).not.toHaveBeenCalled();
+      }).pipe(Effect.scoped),
   );
 
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>
