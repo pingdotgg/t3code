@@ -93,10 +93,14 @@ describe("mobile review state spelling", () => {
 });
 
 describe("mobile overview check status", () => {
-  it("prioritizes failed checks while others are running", () => {
+  it("keeps progress and failure together while checks still run", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
-    ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
+    ).toMatchObject({
+      title: "Checks failing",
+      label: "2 of 3 completed · 1 failed",
+      count: "2 of 3",
+    });
   });
 
   it("counts finished checks toward the total while work remains", () => {
@@ -108,6 +112,16 @@ describe("mobile overview check status", () => {
       title: "Checks running",
       label: "3 of 4 completed",
       count: "3 of 4",
+    });
+  });
+
+  it("keeps failure-only wording once every check has settled", () => {
+    expect(
+      pullRequestChecksSummary({ checks: [check("success"), check("failure")] }),
+    ).toMatchObject({
+      title: "1 check failing",
+      label: "1 check failing",
+      count: "1 of 2",
     });
   });
 });

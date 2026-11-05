@@ -89,11 +89,31 @@ export function checkStatus(check: PullRequestCheck) {
 }
 
 export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) {
-  const failed = pr.checks.filter((check) => check.status === "failure").length;
+  const failed = pr.checks.filter(
+    (check) => check.status === "failure" || check.status === "cancelled",
+  ).length;
   const required = pr.checks.filter((check) => check.status === "action-required").length;
   const pending = pr.checks.filter((check) => check.status === "pending").length;
   const passed = pr.checks.filter((check) => check.status === "success").length;
-  const count = pr.checks.length ? `${passed} of ${pr.checks.length}` : undefined;
+  const incomplete = pending + required;
+  const progress =
+    incomplete > 0 ? `${pr.checks.length - incomplete} of ${pr.checks.length}` : undefined;
+  const count = progress ?? (pr.checks.length ? `${passed} of ${pr.checks.length}` : undefined);
+  if (incomplete > 0) {
+    const parts = [`${progress} completed`];
+    if (required > 0) {
+      parts.push(`${required} ${required === 1 ? "check" : "checks"} awaiting action`);
+    }
+    if (failed > 0) parts.push(`${failed} failed`);
+    return {
+      label: parts.join(" · "),
+      title:
+        failed > 0 ? "Checks failing" : required > 0 ? "Checks need attention" : "Checks running",
+      count: progress,
+      icon: failed > 0 || required > 0 ? "exclamationmark.circle" : "clock",
+      tint: failed > 0 ? "accent-danger-foreground" : "accent-warning-foreground",
+    } as const;
+  }
   if (failed)
     return {
       label: `${failed} ${failed === 1 ? "check" : "checks"} failing`,
@@ -101,22 +121,6 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
       count,
       icon: "exclamationmark.circle",
       tint: "accent-danger-foreground",
-    } as const;
-  if (required)
-    return {
-      label: `${required} need attention`,
-      title: "Checks need attention",
-      count: `${required} awaiting action`,
-      icon: "exclamationmark.circle",
-      tint: "accent-warning-foreground",
-    } as const;
-  if (pending)
-    return {
-      label: `${pr.checks.length - pending} of ${pr.checks.length} completed`,
-      title: "Checks running",
-      count: `${pr.checks.length - pending} of ${pr.checks.length}`,
-      icon: "clock",
-      tint: "accent-warning-foreground",
     } as const;
   if (passed)
     return {

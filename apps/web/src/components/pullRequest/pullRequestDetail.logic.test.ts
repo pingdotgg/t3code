@@ -1243,6 +1243,14 @@ describe("pull request checks progress", () => {
     expect(describePullRequestChecks([check("success"), check("pending"), check("failure")])).toBe(
       "2 of 3 completed · 1 failed",
     );
+    expect(summarizePullRequestChecks([check("success"), check("pending"), check("failure")])).toBe(
+      "2 of 3 completed · 1 failed",
+    );
+  });
+
+  it("keeps failure-only wording once every check has settled", () => {
+    expect(describePullRequestChecks([check("success"), check("failure")])).toBe("1 of 2 failing");
+    expect(summarizePullRequestChecks([check("success"), check("failure")])).toBe("1 of 2 failing");
   });
 });
 
