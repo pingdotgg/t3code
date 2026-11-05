@@ -1,5 +1,6 @@
 import { useState } from "react";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import {
   AuthDiagnosticsReadScope,
   AuthOrchestrationOperateScope,
@@ -72,12 +73,14 @@ export function SessionContextMeter({
   const retainedNativeUsage = useRetainedValue(contextKey, nativeUsage);
   const retainedProvider = useRetainedValue(contextKey, providerThread ?? null);
   const retainedLive = deriveLatestContextWindowSnapshot([], retainedNativeUsage, retainedProvider);
-  const reported = context
-    ? deriveLatestContextWindowSnapshot([], null, {
-        contextUsage: context.usage,
-        updatedAt: DateTime.makeUnsafe(context.updatedAt),
-      })
-    : null;
+  const reportedAt = context ? DateTime.make(context.updatedAt) : Option.none();
+  const reported =
+    context && Option.isSome(reportedAt)
+      ? deriveLatestContextWindowSnapshot([], null, {
+          contextUsage: context.usage,
+          updatedAt: reportedAt.value,
+        })
+      : null;
   const usage =
     retainedLive &&
     (!reported || Date.parse(retainedLive.updatedAt) > Date.parse(reported.updatedAt))
