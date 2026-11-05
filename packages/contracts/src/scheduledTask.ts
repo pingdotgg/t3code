@@ -224,6 +224,20 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
+/**
+ * Where runs go. One-thread modes launch their thread on the first run and keep it; `fresh_session`
+ * starts each later run in a new provider session there.
+ */
+export const ScheduledTaskThreadMode = Schema.Literals(["new_thread", "continue", "fresh_session"]);
+export type ScheduledTaskThreadMode = typeof ScheduledTaskThreadMode.Type;
+
+/** Servers before thread modes omit it; their bound tasks continue the conversation. */
+export function scheduledTaskThreadMode(
+  task: Pick<ScheduledTask, "threadId" | "threadMode">,
+): ScheduledTaskThreadMode {
+  return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
+}
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -232,6 +246,7 @@ export const ScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
+  threadMode: Schema.optional(ScheduledTaskThreadMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -273,6 +288,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   schedule: ScheduledTaskUpsertSchedule,
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** Omitted: keep the stored mode, or derive it from `threadId` for a new or rebound task. */
+  threadMode: Schema.optional(ScheduledTaskThreadMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

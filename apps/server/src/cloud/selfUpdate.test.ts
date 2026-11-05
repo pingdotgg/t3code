@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -26,6 +27,8 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly preflightDuration?: Duration.Input;
+  readonly preflightStarted?: Deferred.Deferred<void>;
   readonly beforeDownload?: Effect.Effect<void>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
@@ -33,9 +36,10 @@ interface HarnessOptions {
 }
 
 const archiveBytes = new TextEncoder().encode("not really a tarball");
-const releaseHttpClient = (order: string[], beforeDownload?: Effect.Effect<void>) =>
+const releaseHttpClient = (order: string[], urls: string[], beforeDownload?: Effect.Effect<void>) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
+      urls.push(request.url);
       if (request.url.endsWith("/SHA256SUMS")) {
         const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", archiveBytes));
         const hex = Array.from(new Uint8Array(digest), (byte) =>
@@ -59,6 +63,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
   const order: string[] = [];
+  const urls: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
@@ -77,6 +82,21 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
             stdoutInvalidUtf8: false,
             stderrInvalidUtf8: false,
           };
+        }
+        if (options.preflightStarted) yield* Deferred.succeed(options.preflightStarted, undefined);
+        if (options.preflightDuration !== undefined) {
+          // Like the real runner, fail once the caller's timeout elapses.
+          const timeout = Duration.fromInputUnsafe(input.timeout ?? "60 seconds");
+          const finished = yield* Effect.sleep(options.preflightDuration).pipe(
+            Effect.timeoutOption(timeout),
+          );
+          if (finished._tag === "None") {
+            return yield* new ProcessRunner.ProcessTimeoutError({
+              command: input.command,
+              argumentCount: input.args.length,
+              timeoutMs: Duration.toMillis(timeout),
+            });
+          }
         }
         order.push("preflight");
         const result =
@@ -123,7 +143,10 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         run: () => Effect.die("unexpected desktop app update run"),
       },
     ),
-    Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, options.beforeDownload)),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      releaseHttpClient(order, urls, options.beforeDownload),
+    ),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provide(
@@ -133,7 +156,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       ),
     ),
   );
-  return { selfUpdate, order };
+  return { selfUpdate, order, urls };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -180,11 +203,17 @@ it.layer(NodeServices.layer)("server self update", (it) => {
 
   it.effect("lets a user start an update, but only to stable without nightly", () =>
     Effect.gen(function* () {
-      const { selfUpdate, order } = yield* makeHarness({
+      const { selfUpdate, order, urls } = yield* makeHarness({
         policy: {
           schemaVersion: 1,
           organization: "Example Corp",
-          limits: { updates: { mode: "auto", allowNightly: false } },
+          limits: {
+            updates: {
+              mode: "auto",
+              allowNightly: false,
+              feedUrl: "https://updates.example.com/t3code/",
+            },
+          },
         },
       });
       expect(
@@ -192,7 +221,15 @@ it.layer(NodeServices.layer)("server self update", (it) => {
           .reason,
       ).toBe("Example Corp manages T3 Code updates. Only stable releases can be installed.");
       expect(order).toEqual([]);
+      // The mirror lists only 1.1.0's archive.
+      expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
+        "Example Corp's update mirror has no t3@1.2.0 for this machine.",
+      );
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
+      // The release comes from the policy's mirror, not GitHub.
+      expect(urls.length).toBeGreaterThan(0);
+      for (const url of urls)
+        expect(url).toMatch(/^https:\/\/updates\.example\.com\/t3code\/v1\.[12]\.0\//);
     }),
   );
 
@@ -237,6 +274,27 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
       yield* Deferred.succeed(accepted, "launcher-id");
       expect((yield* Fiber.join(first)).updateId).toBe("launcher-id");
+    }),
+  );
+
+  // regression: #28198 a slow staged preflight on a loaded host no longer fails the update
+  it.effect("waits for a staged preflight that takes a minute on a loaded host", () =>
+    Effect.gen(function* () {
+      const preflightStarted = yield* Deferred.make<void>();
+      const { selfUpdate, order } = yield* makeHarness({
+        preflightDuration: "60 seconds",
+        preflightStarted,
+      });
+      const update = yield* Effect.forkChild(selfUpdate.update({ targetVersion: "1.1.0" }), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(preflightStarted);
+      yield* TestClock.adjust("60 seconds");
+      const exit = yield* Fiber.await(update);
+      expect(exit._tag === "Failure" ? String(exit.cause) : "launcher handoff").toBe(
+        "launcher handoff",
+      );
+      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
     }),
   );
 
