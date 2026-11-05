@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock(import("../motion/stripCamera"), () => ({ settleStripCamera: () => {} }));
 
 import { overviewRowShift, selectOverviewStage } from "./Overview";
-import { countedLayoutWorkspacesAcrossSwitch } from "./layoutCommands";
 import {
   focusLayoutWorkspaceStep,
   type LayoutState,
@@ -47,8 +46,6 @@ function stack(focusedWorkspaceId: string): LayoutState {
 }
 
 const stageOf = (layout: LayoutState) => selectOverviewStage(layout, viewport, viewport.width);
-const hintedIds = (previous: LayoutState, next: LayoutState) =>
-  countedLayoutWorkspacesAcrossSwitch(previous, next).map((workspace) => workspace.id);
 
 describe("overviewRowShift", () => {
   it("counts the rows the stack moved when a new workspace opens above it, and back", () => {
@@ -58,9 +55,6 @@ describe("overviewRowShift", () => {
     expect(stageOf(onNewAbove).focusedRow.workspace.columns).toEqual([]);
     expect(overviewRowShift(stageOf(onFirst).rows, stageOf(onNewAbove).rows)).toBe(1);
     expect(overviewRowShift(stageOf(onNewAbove).rows, stageOf(backOnFirst).rows)).toBe(-1);
-    const newAbove = onNewAbove.focusedWorkspaceId;
-    expect(hintedIds(onFirst, onNewAbove)).toEqual([newAbove, "a", "b"]);
-    expect(hintedIds(onNewAbove, backOnFirst)).toEqual([newAbove, "a", "b"]);
   });
 
   it("leaves the stack in place when the empty workspace below it shows or hides", () => {
@@ -69,7 +63,5 @@ describe("overviewRowShift", () => {
     expect(stageOf(onNewBelow).focusedRow.workspace.id).toBe("trailing");
     expect(overviewRowShift(stageOf(onLast).rows, stageOf(onNewBelow).rows)).toBe(0);
     expect(overviewRowShift(stageOf(onNewBelow).rows, stageOf(onLast).rows)).toBe(0);
-    expect(hintedIds(onLast, onNewBelow)).toEqual(["a", "b", "trailing"]);
-    expect(hintedIds(onNewBelow, onLast)).toEqual(["a", "b", "trailing"]);
   });
 });

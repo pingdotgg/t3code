@@ -10,7 +10,7 @@ import { cn } from "../lib/utils";
 import { observeResize } from "../lib/observeResize";
 import { useThreadShell } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { countedLayoutWorkspacesAcrossSwitch } from "./layoutCommands";
+import { countedLayoutWorkspaces } from "./layoutCommands";
 import {
   selectFocusedTab,
   selectFocusedWorkspace,
@@ -181,10 +181,13 @@ export function LayoutStripHint() {
             if (state.layout.focusedWorkspaceId === previous.layout.focusedWorkspaceId) return;
             if (state.overviewOpen) return;
             if (state.hint?.kind === "workspace" && state.hint.id !== previous.hint?.id) return;
-            const workspaces = countedLayoutWorkspacesAcrossSwitch(previous.layout, state.layout);
+            const workspaces = countedLayoutWorkspaces(state.layout);
             const workspace = selectFocusedWorkspace(state.layout);
             // One workspace has nothing to tell apart.
-            if (workspaces.length < 2) return;
+            if (workspaces.length < 2) {
+              if (state.hint?.kind === "workspace-name") state.clearHint(state.hint.id);
+              return;
+            }
             state.showHint({
               kind: "workspace-name",
               workspaceId: workspace.id,
