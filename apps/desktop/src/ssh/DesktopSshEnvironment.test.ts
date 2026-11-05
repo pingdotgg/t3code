@@ -35,29 +35,12 @@ describe("resolveDesktopSshCliRunner", () => {
       const environment = yield* packagedEnvironment;
 
       const runner = resolveDesktopSshCliRunner(environment, {
-        feedUrl: undefined,
-        env: { [CLI_RELEASE_BASE_URL_ENV]: "https://mirror.example.com/t3code" },
+        [CLI_RELEASE_BASE_URL_ENV]: "https://mirror.example.com/t3code",
       });
 
       assert.deepStrictEqual(runner, {
         archiveVersion: "0.0.22",
         releaseBaseUrl: "https://mirror.example.com/t3code",
-      });
-    }),
-  );
-
-  it.effect("prefers the managed policy feed over the release mirror", () =>
-    Effect.gen(function* () {
-      const environment = yield* packagedEnvironment;
-
-      const runner = resolveDesktopSshCliRunner(environment, {
-        feedUrl: "https://feed.example.com/t3code",
-        env: { [CLI_RELEASE_BASE_URL_ENV]: "https://mirror.example.com/t3code" },
-      });
-
-      assert.deepStrictEqual(runner, {
-        archiveVersion: "0.0.22",
-        releaseBaseUrl: "https://feed.example.com/t3code",
       });
     }),
   );

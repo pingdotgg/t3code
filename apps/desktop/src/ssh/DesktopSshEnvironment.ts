@@ -78,7 +78,7 @@ export interface DesktopSshEnvironmentLayerOptions {
 
 export const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
-  release: { readonly feedUrl: string | undefined; readonly env: NodeJS.ProcessEnv },
+  env: NodeJS.ProcessEnv,
 ): SshTunnel.RemoteT3RunnerOptions => {
   const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
   if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
@@ -87,8 +87,7 @@ export const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
-  const releaseBaseUrl =
-    release.feedUrl ?? (release.env[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined);
+  const releaseBaseUrl = env[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined;
   return {
     archiveVersion: environment.appVersion,
     ...(releaseBaseUrl === undefined ? {} : { releaseBaseUrl }),
