@@ -28,6 +28,8 @@ import {
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -50,6 +52,7 @@ import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderR
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ProviderRegistryMock from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerConfig from "../../config.ts";
+import { createPendingAttachmentId } from "../../attachmentStore.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -945,6 +948,21 @@ describe("a thread's own delegated child above its modes", () => {
       Effect.provideService(McpSchema.McpServerClient, client),
     );
 
+  const sendAsParent = (tool: string, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      if (tool === "t3_thread_send") return yield* callAsParent(tool, { threadId, message: "Go." });
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const id = createPendingAttachmentId();
+      yield* fs.writeFileString(path.join(config.attachmentsDir, `${id}.png`), "test");
+      return yield* callAsParent(tool, {
+        threadId,
+        message: "Go.",
+        attachments: [{ type: "image", id, name: "test.png", mimeType: "image/png", sizeBytes: 4 }],
+      });
+    });
+
   interface Modes {
     readonly runtimeMode?: RuntimeMode;
     readonly interactionMode?: ProviderInteractionMode;
@@ -1075,7 +1093,13 @@ describe("a thread's own delegated child above its modes", () => {
         // The declaration reads the caller through the calling context's service.
         Effect.provideService(ThreadManagement.ThreadManagementService, threads),
         Effect.provide(
-          Layer.mergeAll(layerThreadToolkit, layerOrchestratorToolkit).pipe(
+          Layer.mergeAll(
+            layerThreadToolkit,
+            layerOrchestratorToolkit,
+            McpHttpServer.layerAttachmentToolkit.pipe(
+              Layer.provide(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
+            ),
+          ).pipe(
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provide(
               Layer.mergeAll(
@@ -1097,81 +1121,94 @@ describe("a thread's own delegated child above its modes", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(Layer.merge(layerOrchestrator, layerThreads)));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerOrchestrator,
+          layerThreads,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-own-child-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+          Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
+        ),
+      ),
+    );
 
-  it.effect("moves it to another account and resumes it at its own modes", () =>
-    withOwnChild({ parentRuntimeMode: "auto" }, (childId) =>
-      Effect.gen(function* () {
-        const moved = yield* callAsParent("t3_thread_configure", {
-          threadId: childId,
-          modelSelection: { instanceId: accountB, model: "gpt-5" },
-        });
-        expect(moved.isError).toBe(false);
-        const resumed = yield* callAsParent("t3_thread_send", {
-          threadId: childId,
-          message: "Resume.",
-        });
-        expect(resumed.structuredContent).toMatchObject({ delivery: "started" });
-        const child = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(childId);
-        expect(child.thread).toMatchObject({
-          providerInstanceId: accountB,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          snoozedUntil: null,
-          lineage: { parentThreadId: parentId, relationshipToParent: "subagent" },
-        });
-        expect(child.runs.at(-1)?.modelSelection.instanceId).toBe(accountB);
-      }),
-    ),
+  it.effect.each(["t3_thread_send", "t3_thread_send_attachments"])(
+    "%s moves it to another account and resumes it at its own modes",
+    (tool) =>
+      withOwnChild({ parentRuntimeMode: "auto" }, (childId) =>
+        Effect.gen(function* () {
+          const moved = yield* callAsParent("t3_thread_configure", {
+            threadId: childId,
+            modelSelection: { instanceId: accountB, model: "gpt-5" },
+          });
+          expect(moved.isError).toBe(false);
+          const resumed = yield* sendAsParent(tool, childId);
+          expect(resumed.isError).toBe(false);
+          const child = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(childId);
+          expect(child.thread).toMatchObject({
+            providerInstanceId: accountB,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            snoozedUntil: null,
+            lineage: { parentThreadId: parentId, relationshipToParent: "subagent" },
+          });
+          expect(child.runs.at(-1)?.modelSelection.instanceId).toBe(accountB);
+          if (tool === "t3_thread_send_attachments")
+            expect(child.messages.at(-1)?.attachments).toMatchObject([{ name: "test.png" }]);
+        }),
+      ),
   );
 
-  it.effect.each([
-    {
-      name: "an unrelated Full-access thread once its caller drops to Auto",
-      setup: { parentRuntimeMode: "full-access", narrow: { runtimeMode: "auto" } },
-      target: "unrelated",
-      code: "runtime_mode_escalation_denied",
-    },
-    {
-      name: "its own child once its caller drops to plan",
-      setup: { parentRuntimeMode: "auto", narrow: { interactionMode: "plan" } },
-      target: "child",
-      code: "interaction_mode_escalation_denied",
-    },
-    {
-      name: "its own plan child raised to default once its caller drops to plan",
-      setup: {
-        parentRuntimeMode: "auto",
-        narrow: { interactionMode: "plan" },
-        child: { interactionMode: "plan" },
-        childBeforeSend: { interactionMode: "default" },
+  for (const tool of ["t3_thread_send", "t3_thread_send_attachments"])
+    it.effect.each([
+      {
+        name: "an unrelated Full-access thread once its caller drops to Auto",
+        setup: { parentRuntimeMode: "full-access", narrow: { runtimeMode: "auto" } },
+        target: "unrelated",
+        code: "runtime_mode_escalation_denied",
       },
-      target: "child",
-      code: "interaction_mode_escalation_denied",
-    },
-    {
-      name: "its own Auto child raised to Full access once its caller drops to Auto",
-      setup: {
-        parentRuntimeMode: "full-access",
-        narrow: { runtimeMode: "auto" },
-        child: { runtimeMode: "auto" },
-        childBeforeSend: { runtimeMode: "full-access" },
+      {
+        name: "its own child once its caller drops to plan",
+        setup: { parentRuntimeMode: "auto", narrow: { interactionMode: "plan" } },
+        target: "child",
+        code: "interaction_mode_escalation_denied",
       },
-      target: "child",
-      code: "runtime_mode_escalation_denied",
-    },
-  ] as const)("t3_thread_send refuses $name", ({ setup, target, code }) =>
-    withOwnChild(setup, (childId) =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threadId = target === "child" ? childId : unrelatedId;
-        const runs = (yield* orchestrator.getThreadProjection(threadId)).runs.length;
-        const sent = yield* callAsParent("t3_thread_send", { threadId, message: "Go." });
-        expect(declaredFailure(sent)).toMatchObject({ code });
-        expect((yield* orchestrator.getThreadProjection(threadId)).runs).toHaveLength(runs);
-      }),
-    ),
-  );
+      {
+        name: "its own plan child raised to default once its caller drops to plan",
+        setup: {
+          parentRuntimeMode: "auto",
+          narrow: { interactionMode: "plan" },
+          child: { interactionMode: "plan" },
+          childBeforeSend: { interactionMode: "default" },
+        },
+        target: "child",
+        code: "interaction_mode_escalation_denied",
+      },
+      {
+        name: "its own Auto child raised to Full access once its caller drops to Auto",
+        setup: {
+          parentRuntimeMode: "full-access",
+          narrow: { runtimeMode: "auto" },
+          child: { runtimeMode: "auto" },
+          childBeforeSend: { runtimeMode: "full-access" },
+        },
+        target: "child",
+        code: "runtime_mode_escalation_denied",
+      },
+    ] as const)(`${tool} refuses $name`, ({ setup, target, code }) =>
+      withOwnChild(setup, (childId) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threadId = target === "child" ? childId : unrelatedId;
+          const runs = (yield* orchestrator.getThreadProjection(threadId)).runs.length;
+          const sent = yield* sendAsParent(tool, threadId);
+          expect(declaredFailure(sent)).toMatchObject({ code });
+          expect((yield* orchestrator.getThreadProjection(threadId)).runs).toHaveLength(runs);
+        }),
+      ),
+    );
 });
 
 it.effect("discovers workflow stop targets and requires orchestration capability", () => {
