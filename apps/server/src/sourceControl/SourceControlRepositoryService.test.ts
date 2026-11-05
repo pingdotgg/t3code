@@ -368,6 +368,51 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
 );
 
 it.effect.each([
+  [
+    "Git has no credentials for the remote",
+    "authentication_failed",
+    ["fatal: could not read Username for 'https://github.com': terminal prompts disabled"],
+  ],
+  [
+    "the remote hides the repository",
+    "remote_unreachable",
+    [
+      "remote: Repository not found.",
+      "fatal: repository 'https://github.com/octocat/t3code/' not found",
+    ],
+  ],
+] as const)(
+  "explains that clones use this environment's Git credentials when %s",
+  ([, reason, stderrLines]) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        cloneInTemporaryDirectory(
+          {
+            execute: (input) =>
+              Effect.gen(function* () {
+                for (const line of stderrLines) {
+                  yield* input.progress?.onStderrLine?.(line) ?? Effect.void;
+                }
+                return yield* new GitCommandError({
+                  operation: input.operation,
+                  command: "git",
+                  cwd: input.cwd,
+                  reason,
+                  detail: "Git command exited with a non-zero status.",
+                  exitCode: 128,
+                });
+              }),
+          },
+          { remoteUrl: CLONE_URLS.url },
+        ),
+      );
+
+      assert.match(error.detail, /credential/i);
+      assert.match(error.detail, /Settings/);
+    }),
+);
+
+it.effect.each([
   "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
   "ssh://user:pa@rt@ssh.dev.azure.com/v3/Fabrikam/Project1/fab_repo",
   "ssh://us%40er:pa%40ss@ssh.dev.azure.com/v3/Fabrikam/Project1/fab_repo",
