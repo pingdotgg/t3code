@@ -22,26 +22,41 @@ function Probe(props: {
 }
 
 describe("useLiveRefresh", () => {
-  it("schedules usage intervals after a slow refresh completes", async () => {
-    let complete!: () => void;
-    const pending = new Promise<void>((resolve) => {
-      complete = resolve;
-    });
-    const refresh = vi.fn().mockReturnValueOnce(pending);
-    using _timers = fakeTimers({ now: 3_000_000 });
-    // A bare hook probe; nothing here navigates.
-    await using _screen = await render(
-      <Probe refresh={refresh} viewKey="slow-usage" refreshOnShow refreshWhileIdle />,
-      { router: false },
-    );
-    expect(refresh).toHaveBeenCalledTimes(1);
-    await act(() => vi.advanceTimersByTime(1000));
-    await act(() => complete());
-    await act(() => vi.advanceTimersByTime(299_000));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    await act(() => vi.advanceTimersByTime(1000));
-    expect(refresh).toHaveBeenCalledTimes(2);
-  });
+  it.each(["continuous", "reenabled", "remounted"])(
+    "schedules usage intervals after a slow refresh completes (%s)",
+    async (lifecycle) => {
+      let complete!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const refresh = vi.fn().mockReturnValueOnce(pending);
+      using _timers = fakeTimers({ now: 3_000_000 });
+      const probe = (enabled: boolean) => (
+        <Probe
+          refresh={refresh}
+          viewKey={`slow-usage:${lifecycle}`}
+          enabled={enabled}
+          refreshOnShow
+          refreshWhileIdle
+        />
+      );
+      // A bare hook probe; nothing here navigates.
+      await using screen = await render(probe(true), { router: false });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTime(1000));
+      if (lifecycle !== "continuous") {
+        await screen.rerender(lifecycle === "remounted" ? <></> : probe(false));
+      }
+      await act(() => vi.advanceTimersByTime(1000));
+      if (lifecycle !== "continuous") await screen.rerender(probe(true));
+      await act(() => vi.advanceTimersByTime(28_000));
+      await act(() => complete());
+      await act(() => vi.advanceTimersByTime(299_000));
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTime(1000));
+      expect(refresh).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it.each([true, false])(
     "refreshes a hidden mount on arrival with refreshOnShow=%s",

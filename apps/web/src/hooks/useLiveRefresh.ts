@@ -42,6 +42,7 @@ function shouldRefreshOnInterval(input: {
 
 // Survive remounts so returning to a view does not make fresh reads look overdue.
 const lastRefreshedAtByView = new Map<string, number>();
+const pendingRefreshesByView = new Map<string, Promise<unknown>>();
 
 let lastInteractedAt = 0;
 const interactionWatchers = new Set<() => void>();
@@ -109,14 +110,23 @@ export function useLiveRefresh(
     let pending = false;
     const read = (now: number) => {
       if (refreshWhileIdle && pending) return;
-      const result = runRefresh(viewId, now);
-      if (!refreshWhileIdle) return;
+      if (!refreshWhileIdle) {
+        runRefresh(viewId, now);
+        return;
+      }
+      let result = pendingRefreshesByView.get(viewId);
+      if (result === undefined) {
+        result = Promise.resolve(runRefresh(viewId, now)).finally(() => {
+          pendingRefreshesByView.delete(viewId);
+          lastRefreshedAtByView.set(viewId, Date.now());
+        });
+        pendingRefreshesByView.set(viewId, result);
+      }
       pending = true;
       clearInterval(timer);
       const completed = () => {
         pending = false;
         if (disposed) return;
-        lastRefreshedAtByView.set(viewId, Date.now());
         syncTimer();
       };
       void Promise.resolve(result).then(completed, completed);
@@ -125,6 +135,10 @@ export function useLiveRefresh(
     const onArrival = () => {
       const now = Date.now();
       if (!refreshWhileIdle && now - lastInteractedAt >= LIVE_REFRESH_IDLE_AFTER_MS) return;
+      if (refreshWhileIdle && visible() && pendingRefreshesByView.has(viewId)) {
+        read(now);
+        return;
+      }
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId);
       if (lastRefreshedAt === undefined) {
         if (!refreshOnShow) lastRefreshedAtByView.set(viewId, now);
@@ -169,7 +183,11 @@ export function useLiveRefresh(
     if (refreshOnShow && visible()) {
       const now = Date.now();
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId);
-      if (lastRefreshedAt === undefined || now - lastRefreshedAt >= LIVE_REFRESH_MIN_INTERVAL_MS) {
+      if (
+        (refreshWhileIdle && pendingRefreshesByView.has(viewId)) ||
+        lastRefreshedAt === undefined ||
+        now - lastRefreshedAt >= LIVE_REFRESH_MIN_INTERVAL_MS
+      ) {
         read(now);
       }
     } else onArrival();
