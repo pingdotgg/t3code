@@ -25,7 +25,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-const mockAgentCommand = "node";
+const mockAgentCommand = process.execPath;
 const mockAgentArgs = [mockAgentPath];
 const mockRuntimeOptions = {
   spawn: { command: mockAgentCommand, args: mockAgentArgs },
@@ -311,7 +311,7 @@ describe("AcpSessionRuntime", () => {
       });
       const runtime = yield* AcpSessionRuntime.make({
         ...mockRuntimeOptions,
-        spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_FLOOD_STDERR: "1" }, extendEnv: true },
+        spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_FLOOD_STDERR: "1" } },
         onStderr: () => Effect.fail(failure),
       });
       expect(yield* runtime.start().pipe(Effect.flip)).toBe(failure);
@@ -380,11 +380,7 @@ describe("AcpSessionRuntime", () => {
         yield* Effect.gen(function* () {
           const runtime = yield* AcpSessionRuntime.make({
             ...mockRuntimeOptions,
-            spawn: {
-              ...mockRuntimeOptions.spawn,
-              env: { T3_ACP_FLOOD_STDERR: "1" },
-              extendEnv: true,
-            },
+            spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_FLOOD_STDERR: "1" } },
             ...(logStderr
               ? {
                   onStderr: (text: string) =>

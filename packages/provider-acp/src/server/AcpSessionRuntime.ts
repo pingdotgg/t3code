@@ -1383,6 +1383,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           ...(options.spawn.env ? { env: options.spawn.env } : {}),
           extendEnv: spawnExtendsEnv(options.spawn),
         });
+  const commandLookupEnv = spawnExtendsEnv(options.spawn)
+    ? { ...process.env, ...options.spawn.env }
+    : (options.spawn.env ?? {});
   const linuxCgroupLease =
     options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
       ? yield* Effect.sync(() => {
@@ -1411,7 +1414,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const resolved = resolveLinuxCgroupTargetCommand(
             spawnCommand.command,
             options.spawn.cwd ?? options.cwd,
-            { ...process.env, ...options.spawn.env },
+            commandLookupEnv,
           );
           if (resolved !== undefined) return resolved;
           return yield* new EffectAcpErrors.AcpSpawnError({
@@ -1428,7 +1431,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           args: spawnCommand.args,
           name: "acp",
           threadId: yield* AgentScopeThreadId,
-          env: { ...process.env, ...options.spawn.env },
+          env: commandLookupEnv,
         });
   const scopedSpawnCommand =
     scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
