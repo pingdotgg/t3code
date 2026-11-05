@@ -3,9 +3,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock(import("../motion/stripCamera"), () => ({ settleStripCamera: () => {} }));
 
 import { overviewRowShift, selectOverviewStage } from "./Overview";
-import { countedLayoutWorkspacesAcrossSwitch } from "./layoutCommands";
+import { countedLayoutWorkspaces } from "./layoutCommands";
 import {
-  closeLayoutTab,
   focusLayoutWorkspaceStep,
   type LayoutState,
   type LayoutTabContent,
@@ -48,8 +47,8 @@ function stack(focusedWorkspaceId: string): LayoutState {
 }
 
 const stageOf = (layout: LayoutState) => selectOverviewStage(layout, viewport, viewport.width);
-const hintedIds = (previous: LayoutState, next: LayoutState) =>
-  countedLayoutWorkspacesAcrossSwitch(previous, next).map((workspace) => workspace.id);
+const hintedIds = (layout: LayoutState) =>
+  countedLayoutWorkspaces(layout).map((workspace) => workspace.id);
 
 describe("overviewRowShift", () => {
   it("counts the rows the stack moved when a new workspace opens above it, and back", () => {
@@ -60,8 +59,8 @@ describe("overviewRowShift", () => {
     expect(overviewRowShift(stageOf(onFirst).rows, stageOf(onNewAbove).rows)).toBe(1);
     expect(overviewRowShift(stageOf(onNewAbove).rows, stageOf(backOnFirst).rows)).toBe(-1);
     const newAbove = onNewAbove.focusedWorkspaceId;
-    expect(hintedIds(onFirst, onNewAbove)).toEqual([newAbove, "a", "b"]);
-    expect(hintedIds(onNewAbove, backOnFirst)).toEqual([newAbove, "a", "b"]);
+    expect(hintedIds(onNewAbove)).toEqual([newAbove, "a", "b"]);
+    expect(hintedIds(backOnFirst)).toEqual(["a", "b"]);
   });
 
   it("leaves the stack in place when the empty workspace below it shows or hides", () => {
@@ -70,32 +69,7 @@ describe("overviewRowShift", () => {
     expect(stageOf(onNewBelow).focusedRow.workspace.id).toBe("trailing");
     expect(overviewRowShift(stageOf(onLast).rows, stageOf(onNewBelow).rows)).toBe(0);
     expect(overviewRowShift(stageOf(onNewBelow).rows, stageOf(onLast).rows)).toBe(0);
-    expect(hintedIds(onLast, onNewBelow)).toEqual(["a", "b", "trailing"]);
-    expect(hintedIds(onNewBelow, onLast)).toEqual(["a", "b", "trailing"]);
-  });
-
-  it("keeps an emptied middle workspace in its place in the hint count when focus leaves it", () => {
-    const emptiedMiddle = closeLayoutTab(
-      {
-        workspaces: [
-          workspace("a", true),
-          workspace("b", true),
-          workspace("c", true),
-          workspace("trailing", false),
-        ],
-        focusedWorkspaceId: "b",
-      },
-      "tab-b",
-    );
-    expect(emptiedMiddle.workspaces.map((workspace) => workspace.id)).toEqual([
-      "a",
-      "b",
-      "c",
-      "trailing",
-    ]);
-    const up = focusLayoutWorkspaceStep(emptiedMiddle, -1);
-    const down = focusLayoutWorkspaceStep(emptiedMiddle, 1);
-    expect(hintedIds(emptiedMiddle, up)).toEqual(["a", "b", "c"]);
-    expect(hintedIds(emptiedMiddle, down)).toEqual(["a", "b", "c"]);
+    expect(hintedIds(onNewBelow)).toEqual(["a", "b", "trailing"]);
+    expect(hintedIds(onLast)).toEqual(["a", "b"]);
   });
 });
