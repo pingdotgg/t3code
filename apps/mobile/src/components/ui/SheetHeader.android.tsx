@@ -48,6 +48,7 @@ export function SheetHeader(props: SheetHeaderProps) {
         title={props.title}
         subtitle={props.subtitle}
         actions={props.actions}
+        menus={props.menus}
         leading={
           <SheetCloseButton
             {...(props.onCancel ? { onCancel: props.onCancel } : { onClose: props.onClose })}

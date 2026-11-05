@@ -64,7 +64,9 @@ import { ThreadListToolbar } from "../home/ThreadListToolbar";
 import { useFabScroll } from "../home/FabScrollContext";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
-import { SidebarNavigationShell } from "./sidebar-navigation-shell";
+import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
+import { StandaloneStack } from "../layout/nested-stacks";
+import { pageRoute } from "../layout/route-options";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
@@ -116,6 +118,12 @@ interface ThreadNavigationSidebarProps {
   readonly searchQuery: string;
 }
 
+// The iOS sidebar column hosts its own stack so it gets a native bar with the brand title.
+const SIDEBAR_COLUMN_OPTIONS = {
+  ...pageRoute(),
+  ...getCompactBrandHeaderOptions({ fontSize: 18, fontWeight: "800" }),
+};
+
 export function ThreadNavigationSidebar(props: ThreadNavigationSidebarProps) {
   return (
     <ThreadPrDemandProvider visible={props.visible}>
@@ -135,9 +143,9 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
       className="flex-1 border-border bg-drawer"
       style={{ borderRightWidth: StyleSheet.hairlineWidth, width: props.width }}
     >
-      <SidebarNavigationShell>
+      <StandaloneStack surface="sidebar" options={SIDEBAR_COLUMN_OPTIONS}>
         <ThreadNavigationSidebarPane {...props} nativeChrome />
-      </SidebarNavigationShell>
+      </StandaloneStack>
     </View>
   );
 }
