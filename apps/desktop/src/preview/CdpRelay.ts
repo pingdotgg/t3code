@@ -89,6 +89,7 @@ interface RelayedTarget {
   /** Known once announced; a closed target cannot be asked for it. */
   targetId: string | null;
   removed: boolean;
+  closedDialog?: unknown;
 }
 
 type RelaySession =
@@ -318,19 +319,38 @@ export function createCdpRelayConnection(
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
-    return owner.target.send(
+    const result = owner.target.send(
       command.method,
       command.params ?? {},
       child,
       extra ? command.sessionId : undefined,
     );
+    if (command.method !== "Page.enable" || child !== undefined) return result;
+    return result.then((result) => {
+      // Popup adoption may have buffered the dialog before this session existed.
+      if (
+        !owner.removed &&
+        sessions.get(command.sessionId!) === session &&
+        owner.closedDialog !== undefined
+      ) {
+        send({
+          method: "Page.javascriptDialogClosed",
+          params: owner.closedDialog,
+          sessionId: command.sessionId,
+        });
+      }
+      return result;
+    });
   };
 
   const eventFor =
     (relayed: RelayedTarget): CdpRelayEvent =>
     (method, params, sessionId) => {
-      if (relayed.removed || (announced(relayed) && !hasPageSession(relayed))) return;
+      if (relayed.removed) return;
       if (sessionId && children.get(sessionId)?.owner !== relayed) return;
+      if (method === "Page.javascriptDialogOpening") relayed.closedDialog = undefined;
+      else if (method === "Page.javascriptDialogClosed") relayed.closedDialog = params;
+      if (announced(relayed) && !hasPageSession(relayed)) return;
       const child = (params as { sessionId?: unknown } | null | undefined)?.sessionId;
       if (method === "Target.attachedToTarget" && typeof child === "string") {
         children.set(child, { owner: relayed, parent: sessionId || undefined });

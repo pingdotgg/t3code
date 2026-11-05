@@ -440,6 +440,9 @@ describe("CDP relay popups", () => {
       expect.objectContaining({ targetId: "LATE" }),
     ]);
     const browserSession = (resultOf(written, 4)["result"] as { sessionId: string }).sessionId;
+    const closedDialog = { result: true, userInput: "" };
+    late.event("Page.javascriptDialogOpening", { type: "alert", message: "hello" }, "");
+    late.event("Page.javascriptDialogClosed", closedDialog, "");
     relay.receive(
       JSON.stringify({
         id: 5,
@@ -467,12 +470,48 @@ describe("CDP relay popups", () => {
     expect(lateSend.mock.calls.at(-1)).toEqual(["Page.startScreencast", {}, undefined, extra]);
     expect(pageSend.mock.calls.at(-1)).toEqual(["Page.enable", {}, undefined, undefined]);
 
+    // The native response predates this CDP session, while popup adoption is waiting.
+    written.length = 0;
+    relay.receive(JSON.stringify({ id: 14, method: "Page.enable", sessionId: extra }));
+    await settle();
+    expect(written).toEqual([
+      { method: "Page.javascriptDialogClosed", params: closedDialog, sessionId: extra },
+      { id: 14, result: {}, sessionId: extra },
+    ]);
+
+    const enabling = Promise.withResolvers<object>();
+    lateSend.mockImplementationOnce(() => enabling.promise);
+    written.length = 0;
+    relay.receive(JSON.stringify({ id: 15, method: "Page.enable", sessionId: extra }));
+    late.event("Page.javascriptDialogOpening", { type: "confirm", message: "still open" }, "");
+    enabling.resolve({});
+    await settle();
+    expect(
+      written.filter((message) => message["method"] === "Page.javascriptDialogClosed"),
+    ).toEqual([]);
+    expect(resultOf(written, 15)).toMatchObject({ result: {} });
+
     // A frame's session belongs to the popup whose debugger attached it.
     late.event(
       "Target.attachedToTarget",
       { sessionId: "late-frame", targetInfo: { type: "iframe" } },
       "",
     );
+    late.event("Page.javascriptDialogClosed", closedDialog, "");
+    late.event("Page.javascriptDialogOpening", { type: "alert", message: "iframe" }, "late-frame");
+    written.length = 0;
+    relay.receive(JSON.stringify({ id: 16, method: "Page.enable", sessionId: extra }));
+    await settle();
+    expect(written).toEqual([{ id: 16, result: {}, sessionId: extra }]);
+    const closedFrameDialog = { result: false, userInput: "" };
+    late.event("Page.javascriptDialogClosed", closedFrameDialog, "late-frame");
+    written.length = 0;
+    relay.receive(JSON.stringify({ id: 17, method: "Page.enable", sessionId: extra }));
+    await settle();
+    expect(written).toEqual([
+      { method: "Page.javascriptDialogClosed", params: closedFrameDialog, sessionId: extra },
+      { id: 17, result: {}, sessionId: extra },
+    ]);
     relay.receive(JSON.stringify({ id: 11, method: "DOM.enable", sessionId: "late-frame" }));
     await settle();
     expect(lateSend.mock.calls.at(-1)).toEqual(["DOM.enable", {}, "late-frame", undefined]);
