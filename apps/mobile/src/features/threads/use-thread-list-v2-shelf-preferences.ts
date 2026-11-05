@@ -1,5 +1,6 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
+import { useMemo } from "react";
 
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 
@@ -11,7 +12,11 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSnoozedShelfExpanded === true;
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
-  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
+  const boringSidebarEnabled = loaded && preferencesResult.value.boringSidebarEnabled === true;
+  const workingShelfEnabled =
+    loaded && !boringSidebarEnabled && preferencesResult.value.workingShelfEnabled !== false;
+  const collapsed = loaded ? preferencesResult.value.collapsedProjectGroups : undefined;
+  const collapsedProjectKeys = useMemo(() => new Set(collapsed), [collapsed]);
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
@@ -40,6 +45,19 @@ export function useThreadListV2ShelfPreferences() {
       }),
     });
   };
+  const toggleProjectFolder = (key: string) => {
+    if (!loaded) return;
+    savePreferences({
+      transform: (current) => {
+        const collapsed = current.collapsedProjectGroups ?? [];
+        return {
+          collapsedProjectGroups: collapsed.includes(key)
+            ? collapsed.filter((entry) => entry !== key)
+            : [...collapsed, key],
+        };
+      },
+    });
+  };
 
   return {
     loaded,
@@ -47,6 +65,9 @@ export function useThreadListV2ShelfPreferences() {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    boringSidebarEnabled,
+    collapsedProjectKeys,
+    toggleProjectFolder,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,

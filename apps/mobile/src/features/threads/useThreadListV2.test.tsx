@@ -11,6 +11,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { olderSettledThreads } from "../../state/threads";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 
 vi.mock("../../state/threads", () => ({
   olderSettledThreads: { shelfAtom: vi.fn() },
@@ -140,6 +141,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     ),
   );
   expect(seen.at(-1)!.layout.items.map((item) => item.thread.title)).toEqual(["Updated title"]);
+
   const search = seen.at(-1)!;
   await act(async () =>
     root.render(
@@ -151,6 +153,44 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   );
   expect(seen.at(-1)!.layout).not.toBe(search.layout);
   expect(seen.at(-1)!.layout.items.map((item) => item.thread.title)).toEqual(["Updated title"]);
+
+  const folderScopes = buildHomeProjectScopes({
+    projects: [environmentId, otherEnvironmentId].map((environmentId) => ({
+      environmentId,
+      id: threads[0]!.projectId,
+      title: "Project",
+      workspaceRoot: "/workspaces/project",
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: input.now,
+      updatedAt: input.now,
+    })),
+    environmentId: null,
+    projectGroupingMode: "separate",
+  });
+  const folderInput = {
+    ...input,
+    workingShelfEnabled: false,
+    folderScopes,
+    collapsedProjectKeys: new Set(folderScopes.map((scope) => scope.key)),
+  };
+  await act(async () => root.render(<Probe input={folderInput} tab="chats" />));
+  const folded = seen.at(-1)!;
+  expect(folded.items.filter((item) => item.type === "v2-project-folder")).toHaveLength(2);
+  expect(folded.items.filter((item) => item.type === "v2-thread")).toHaveLength(10);
+  await act(async () => root.render(<Probe input={{ ...folderInput }} tab="settings" />));
+  expect(seen.at(-1)!.items).toBe(folded.items);
+  await act(async () =>
+    root.render(<Probe input={{ ...folderInput, searchQuery: "Thread 0" }} tab="chats" />),
+  );
+  expect(seen.at(-1)!.items.some((item) => item.type === "v2-project-folder")).toBe(false);
+  expect(seen.at(-1)!.items[0]).toMatchObject({
+    type: "v2-thread",
+    item: { thread: { id: "thread-0" } },
+  });
+  await act(async () => root.render(<Probe input={input} tab="chats" />));
+  expect(seen.at(-1)!.items).toEqual(initial.items);
 
   const clockThreads = threads.map((thread) =>
     thread.id === "thread-0" ? { ...thread, snoozedUntil: "2026-01-02T00:00:30.000Z" } : thread,

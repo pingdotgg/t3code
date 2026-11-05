@@ -6,9 +6,15 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
+  sortHomeProjectScopes,
+  type HomeProjectScope,
+  type HomeProjectSortOrder,
+} from "../home/homeThreadList";
+import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  groupThreadListV2ByProject,
   threadListInboxReturns,
   threadListV2LayoutTime,
 } from "./threadListV2";
@@ -65,6 +71,9 @@ export function useThreadListV2(input: {
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
+  readonly folderScopes?: ReadonlyArray<HomeProjectScope> | undefined;
+  readonly collapsedProjectKeys?: ReadonlySet<string>;
+  readonly projectSortOrder?: HomeProjectSortOrder;
 }) {
   const { threads, workingShelfEnabled } = input;
   const layoutTime = useMemo(
@@ -101,7 +110,9 @@ export function useThreadListV2(input: {
       });
     return new Map([
       ...sectionAvailability("pinned"),
-      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
+      ...(workingShelfEnabled || input.folderScopes !== undefined
+        ? []
+        : sectionAvailability("active")),
     ]);
   }, [
     threads,
@@ -113,6 +124,7 @@ export function useThreadListV2(input: {
     input.snoozeEnvironmentIds,
     input.queuedThreadKeys,
     workingShelfEnabled,
+    input.folderScopes,
   ]);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const scopes = useMemo(
@@ -242,7 +254,38 @@ export function useThreadListV2(input: {
       input.shelfPreferencesLoaded,
     ],
   );
-  return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
+  const folderItems = useMemo(() => {
+    if (input.folderScopes === undefined || input.searchQuery.trim().length > 0) return items;
+    return groupThreadListV2ByProject({
+      items,
+      scopes: [
+        ...sortHomeProjectScopes({
+          scopes: input.folderScopes,
+          threads,
+          pendingTasks,
+          projectSortOrder: input.projectSortOrder ?? "updated_at",
+        }),
+      ].sort(
+        (left, right) =>
+          Number(left.archived) - Number(right.archived) ||
+          Number(right.pinned) - Number(left.pinned),
+      ),
+      collapsedProjectKeys: input.collapsedProjectKeys ?? new Set(),
+      selectedThreadKey: input.selectedThreadKey,
+      disabled: !input.shelfPreferencesLoaded,
+    });
+  }, [
+    items,
+    input.folderScopes,
+    input.searchQuery,
+    input.projectSortOrder,
+    input.collapsedProjectKeys,
+    input.selectedThreadKey,
+    input.shelfPreferencesLoaded,
+    threads,
+    pendingTasks,
+  ]);
+  return { layout, items: folderItems, contentOnlyThreadKeys, olderSettledShelf };
 }
 
 /** The list's scope per environment: its projects there, or every project. */
