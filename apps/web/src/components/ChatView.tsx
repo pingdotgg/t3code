@@ -2488,6 +2488,7 @@ export default function ChatView(props: ChatViewProps) {
     !compactDisabled &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
+    pendingHandoff === null &&
     shouldOfferResumeCompaction({
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,
