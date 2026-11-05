@@ -22,8 +22,8 @@ import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
-  isCheckpointRestoreIsolated,
-  SHARED_WORKSPACE_RESTORE_MESSAGE,
+  checkpointRestoreRefusal,
+  checkpointRestoreRefusalMessage,
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -48,6 +48,8 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       "provider-turn-unavailable",
       "unexpected-failure",
       "shared-workspace",
+      "legacy-checkpoint",
+      "other-workspace",
     ]),
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
@@ -64,7 +66,9 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       case "provider-turn-unavailable":
         return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
       case "shared-workspace":
-        return SHARED_WORKSPACE_RESTORE_MESSAGE;
+      case "legacy-checkpoint":
+      case "other-workspace":
+        return checkpointRestoreRefusalMessage(this.reason);
       case "unexpected-failure":
         return ROLLBACK_FAILED_MESSAGE;
     }
@@ -234,17 +238,19 @@ export const layer: Layer.Layer<
         }
       }
 
-      if (
-        input.restoreFiles !== false &&
-        !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
-          fileSystem,
-          projections,
-          projects,
-          path,
-        }))
-      ) {
+      const refusal =
+        input.restoreFiles === false
+          ? null
+          : yield* checkpointRestoreRefusal(context.thread, scope, {
+              fileSystem,
+              idAllocator: ids,
+              projections,
+              projects,
+              path,
+            });
+      if (refusal !== null) {
         return yield* new CheckpointRollbackExecutionError({
-          reason: "shared-workspace",
+          reason: refusal,
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
           checkpointId: input.checkpointId,
@@ -290,8 +296,19 @@ export const layer: Layer.Layer<
               providerThreadTurns,
             });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+      const staleByScope = Map.groupBy(staleCheckpoints, (stale) => stale.scopeId);
+      const currentWorkspace =
+        context.thread.worktreePath ??
+        Option.match(yield* projects.get(context.thread.projectId), {
+          onNone: () => scope.cwd,
+          onSome: (project) => project.workspaceRoot,
+        });
+      for (const staleScope of context.staleCheckpointScopes) {
+        yield* checkpoints.deleteStaleRefs({
+          scope: staleScope,
+          checkpoints: staleByScope.get(staleScope.id) ?? [],
+          fallbackCwd: currentWorkspace,
+        });
       }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.

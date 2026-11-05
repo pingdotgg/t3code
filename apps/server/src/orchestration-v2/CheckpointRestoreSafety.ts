@@ -3,25 +3,49 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { legacyRootScopeId } from "./CheckpointService.ts";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
-export const SHARED_WORKSPACE_RESTORE_MESSAGE =
+const SHARED_WORKSPACE_RESTORE_MESSAGE =
   "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
 
+export const LEGACY_CHECKPOINT_RESTORE_MESSAGE =
+  "This turn was recorded before T3 Code tracked which worktree each turn ran in, so its files can't be restored. Rewind the conversation without restoring files instead.";
+
+const OTHER_WORKSPACE_RESTORE_MESSAGE =
+  "This turn ran in a different worktree, so its files can't be restored into this one. Rewind the conversation without restoring files instead.";
+
+export type CheckpointRestoreRefusal = "shared-workspace" | "legacy-checkpoint" | "other-workspace";
+
+const REFUSAL_MESSAGES: Record<CheckpointRestoreRefusal, string> = {
+  "shared-workspace": SHARED_WORKSPACE_RESTORE_MESSAGE,
+  "legacy-checkpoint": LEGACY_CHECKPOINT_RESTORE_MESSAGE,
+  "other-workspace": OTHER_WORKSPACE_RESTORE_MESSAGE,
+};
+
+export const checkpointRestoreRefusalMessage = (refusal: CheckpointRestoreRefusal) =>
+  REFUSAL_MESSAGES[refusal];
+
 // Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
-export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
+export const checkpointRestoreRefusal = Effect.fn("orchestrationV2.checkpointRestoreRefusal")(
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
-    scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
+    scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">,
     dependencies: {
       readonly fileSystem: FileSystem.FileSystem;
+      readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
       readonly projections: ProjectionStoreV2["Service"];
       readonly projects: ProjectStore.ProjectStoreV2["Service"];
       readonly path: Path.Path;
     },
   ) {
-    const { fileSystem, projections, projects, path } = dependencies;
+    const { fileSystem, idAllocator, projections, projects, path } = dependencies;
+    // The legacy scope's projected cwd is only its latest; older checkpoints may hold another workspace.
+    if (scope.id === (yield* legacyRootScopeId(idAllocator, thread.id))) {
+      return "legacy-checkpoint" as const;
+    }
     const contains = (parent: string, child: string) => {
       const relative = path.relative(parent, child);
       return (
@@ -41,8 +65,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           ),
         );
       const cwd = yield* resolve(scope.cwd);
-      const worktreeCwd = yield* resolve(worktreePath);
-      shared = cwd !== worktreeCwd;
+      if (cwd !== (yield* resolve(worktreePath))) return "other-workspace" as const;
       if (!shared) {
         const shell = yield* projections.getShellSnapshot();
         const checkedPaths = new Set<string>();
@@ -80,7 +103,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           ].filter((value): value is string => value !== null);
           if (otherThread.worktreePath === null) {
             const project = yield* projects.get(otherThread.projectId, { includeDeleted: true });
-            if (Option.isNone(project)) return false;
+            if (Option.isNone(project)) return "shared-workspace" as const;
             paths.push(project.value.workspaceRoot);
           }
           for (const candidate of paths) {
@@ -101,6 +124,6 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         }
       }
     }
-    return !shared;
+    return shared ? ("shared-workspace" as const) : null;
   },
 );

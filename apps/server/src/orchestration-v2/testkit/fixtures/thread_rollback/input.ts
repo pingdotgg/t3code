@@ -12,7 +12,6 @@ export function threadRollbackInput(): OrchestratorFixtureInput {
       { type: "message", text: THREAD_ROLLBACK_SECOND_PROMPT },
       {
         type: "rollback",
-        checkpointScopeSuffix: "root",
         checkpointSuffix: "1",
       },
       { type: "message", text: THREAD_ROLLBACK_AFTER_PROMPT },
