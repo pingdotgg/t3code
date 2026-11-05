@@ -74,9 +74,16 @@ function systemTime(now: string): Disposable {
 }
 
 // A fresh registry per test, so the capability atom reads this test's environments.
-function mount({ hostedStatic = false }: { readonly hostedStatic?: boolean } = {}) {
+function mount({
+  hostedStatic = false,
+  newLesson = false,
+}: {
+  readonly hostedStatic?: boolean;
+  readonly newLesson?: boolean;
+} = {}) {
   return render(
     <RegistryContext.Provider value={AtomRegistry.make()}>
+      {newLesson ? <button aria-label="New lesson">New lesson</button> : null}
       <WelcomeGuideHost hostedStatic={hostedStatic} />
     </RegistryContext.Provider>,
   );
@@ -134,13 +141,14 @@ it("moves through the steps and records the visit when the learner finishes", as
   await expect.element(heading("Welcome to OminaX")).toBeVisible();
   await expect.element(button("Back")).not.toBeInTheDocument();
   await userEvent.click(button("Next"));
-  await expect.element(heading("Highlight what you don't get")).toBeVisible();
-  await expect.element(button("Highlight, step 2")).toHaveAttribute("aria-current", "step");
-  await expect.element(guide()).toHaveAccessibleDescription(/^Highlight what you don't get /);
+  await expect.element(heading("Start a new lesson")).toBeVisible();
+  await expect.element(button("New lesson, step 2")).toHaveAttribute("aria-current", "step");
+  await expect.element(guide()).toHaveAccessibleDescription(/^Start a new lesson /);
   await userEvent.click(button("Back"));
   await expect.element(heading("Welcome to OminaX")).toBeVisible();
   await expect.element(button("Next")).toHaveFocus();
 
+  await userEvent.click(button("Next"));
   await userEvent.click(button("Next"));
   await userEvent.click(button("Next"));
   await expect.element(heading("Ask your own question")).toBeVisible();
@@ -148,8 +156,22 @@ it("moves through the steps and records the visit when the learner finishes", as
   await expect.element(heading("Press Done when it clicks")).toBeVisible();
   await userEvent.click(button("Next"));
   await expect.element(heading("See it all on the Map")).toBeVisible();
+  await userEvent.click(button("Next"));
+  await expect.element(heading("Quiz cards and practice")).toBeVisible();
+  await userEvent.click(button("Next"));
+  await expect.element(heading("Build a course")).toBeVisible();
+  await userEvent.click(button("Next"));
+  await expect.element(heading("See what you know")).toBeVisible();
+  await userEvent.click(button("Next"));
+  await expect.element(heading("Sync from T3 Code")).toBeVisible();
+  await userEvent.click(button("Next"));
+  await expect.element(heading("Keep OminaX up to date")).toBeVisible();
   await expect
-    .element(page.getByText("You can open this guide again from Settings."))
+    .element(
+      page.getByText(
+        "Open this tour again from Settings → About, Help → Welcome Guide, or the command palette.",
+      ),
+    )
     .toBeVisible();
   await expect.element(button("Skip")).not.toBeInTheDocument();
   expect(storedSeenAt()).toBeNull();
@@ -157,6 +179,32 @@ it("moves through the steps and records the visit when the learner finishes", as
   await userEvent.click(button("Start learning"));
   await expect.element(guide()).not.toBeInTheDocument();
   expect(storedSeenAt()).toBe(JSON.stringify(NOW));
+});
+
+it("anchors a target step and removes its highlight when moving on", async () => {
+  using _storage = setup();
+  await using _screen = await mount({ newLesson: true });
+
+  await userEvent.click(button("Next"));
+  const newLesson = _screen.container.querySelector('[aria-label="New lesson"]');
+  expect(newLesson).not.toBeNull();
+  expect(newLesson).toHaveAttribute("data-tour-target", "true");
+  await expect.element(heading("Start a new lesson")).toBeVisible();
+  await expect.element(guide()).not.toBeInTheDocument();
+
+  await userEvent.click(button("Next"));
+  await expect.element(heading("Highlight what you don't get")).toBeVisible();
+  expect(newLesson).not.toHaveAttribute("data-tour-target");
+  await expect.element(guide()).toBeVisible();
+});
+
+it("falls back to the centred dialog when a target is missing", async () => {
+  using _storage = setup();
+  await using _screen = await mount();
+
+  await userEvent.click(button("Next"));
+  await expect.element(heading("Start a new lesson")).toBeVisible();
+  await expect.element(guide()).toBeVisible();
 });
 
 it("closes on Skip and records the visit", async () => {

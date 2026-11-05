@@ -1791,7 +1791,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:welcome-guide",
       searchTerms: ["guide", "tour", "onboarding", "side chat", "OminaX"],
-      title: "Show welcome guide",
+      title: "Take the tour",
       icon: <MessageCircleQuestionIcon className={ITEM_ICON_CLASS} />,
       run: async () => openWelcomeGuide(),
     });
