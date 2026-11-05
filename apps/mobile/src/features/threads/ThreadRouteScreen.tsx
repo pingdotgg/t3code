@@ -631,8 +631,6 @@ function ThreadRouteContent(
                   {
                     key: "preview",
                     render: renderPreviewInspector,
-                    // A thread preview runs its own navigator, whose screens draw its bar.
-                    nativeStack: previewTarget?.type === "thread",
                   },
                 ]
               : []),
