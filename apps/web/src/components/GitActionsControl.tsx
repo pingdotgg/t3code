@@ -11,8 +11,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
+  EnvironmentId,
   GitRunStackedActionResult,
   GitStackedAction,
+  ProjectId,
   SourceControlCloneProtocol,
   SourceControlProviderDiscoveryItem,
   SourceControlPublishRepositoryResult,
@@ -60,6 +62,7 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
+  resolveTextGenerationSettingsLink,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 import { WizardPopup, WizardHeader, WizardSteps, WizardPanel, WizardFooter } from "./ui/wizard";
@@ -90,7 +93,14 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "../state/sourceControlActions";
-import { useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
+import { readProjects, useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
+import { getClientSettings } from "~/hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  selectProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
+import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -150,6 +160,24 @@ interface InlineGitActionSuccess {
 }
 
 const inlineSuccessExpiresAt = () => Date.now() + GIT_ACTION_SUCCESS_VISIBLE_MS;
+
+/** The project key Settings scopes to, read when needed so the control does not track projects. */
+function projectSettingsKey(environmentId: EnvironmentId, projectId: ProjectId | null) {
+  const projects = readProjects();
+  const project = projects.find(
+    (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
+  );
+  if (!project) return null;
+  const grouping = selectProjectGroupingSettings(getClientSettings());
+  return (
+    buildPhysicalToLogicalProjectKeyMap({
+      projects,
+      settings: grouping,
+      primaryEnvironmentId: null,
+    }).get(derivePhysicalProjectKey(project)) ??
+    deriveLogicalProjectKeyFromSettings(project, grouping)
+  );
+}
 
 type RefreshVcsStatus = (target: {
   readonly environmentId: ScopedThreadRef["environmentId"];
@@ -934,6 +962,7 @@ export default function GitActionsControl({
   onOpenChanges,
 }: GitActionsControlProps) {
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
+  const navigate = useNavigate();
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -1222,12 +1251,30 @@ export default function GitActionsControl({
 
       const error = squashAtomCommandFailure(result);
       const errorToastTiming = resolveGitActionResultToastTiming("error");
-      toastManager.add(
+      const settingsLink = resolveTextGenerationSettingsLink(error, {
+        environmentId: activeEnvironmentId,
+        projectKey: projectSettingsKey(
+          activeEnvironmentId,
+          activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+        ),
+      });
+      const toastId = toastManager.add(
         stackedThreadToast({
           type: "error",
           title: "Action failed",
           description: error instanceof Error ? error.message : "An error occurred.",
           timeout: errorToastTiming.timeout,
+          ...(settingsLink
+            ? {
+                actionProps: {
+                  children: "Settings",
+                  onClick: () => {
+                    toastManager.close(toastId);
+                    void navigate(settingsLink);
+                  },
+                },
+              }
+            : {}),
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),
       );

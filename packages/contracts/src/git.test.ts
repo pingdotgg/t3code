@@ -5,9 +5,11 @@ import {
   GitCommandError,
   GitPreparePullRequestThreadResult,
   GitRunStackedActionInput,
+  TextGenerationError,
 } from "./git.ts";
 
 const decodeGitCommandError = Schema.decodeUnknownSync(Schema.toCodecJson(GitCommandError));
+const decodeTextGenerationError = Schema.decodeUnknownSync(Schema.toCodecJson(TextGenerationError));
 const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadResult,
 );
@@ -28,6 +30,34 @@ describe("GitCommandError", () => {
     expect(error.message).toBe(
       "Git command failed in GitVcsDriver.createWorktree (/repo): git worktree add failed",
     );
+  });
+});
+
+describe("TextGenerationError", () => {
+  it("names the model that ran and keeps an unknown setting out", () => {
+    const error = decodeTextGenerationError({
+      _tag: "TextGenerationError",
+      operation: "generateCommitMessage",
+      detail: "model not found",
+      instanceId: "codex_work",
+      model: "gpt-6-luna",
+      modelSetting: "added_by_a_newer_server",
+    });
+
+    expect(error.modelSetting).toBeUndefined();
+    expect(error.message).toBe(
+      "Text generation failed in generateCommitMessage using gpt-6-luna (codex_work): model not found",
+    );
+  });
+
+  it("reads an older server's error without a model", () => {
+    const error = decodeTextGenerationError({
+      _tag: "TextGenerationError",
+      operation: "generatePrContent",
+      detail: "model not found",
+    });
+
+    expect(error.message).toBe("Text generation failed in generatePrContent: model not found");
   });
 });
 

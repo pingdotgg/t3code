@@ -22,7 +22,7 @@ import * as Scope from "effect/Scope";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
@@ -444,16 +444,13 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+const makePreflightTextGeneration = (
+  exhausted: boolean,
+  generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"],
+) =>
   Effect.gen(function* () {
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
-    const selection = {
-      instanceId: primary,
-      model: "chat-model",
-      options: [{ id: "effort", value: "high" }],
-    };
-    const calls: ModelSelection[] = [];
     const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
       const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
       const snapshot: ServerProvider = {
@@ -490,11 +487,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
-          generateThreadTitle: (input) =>
-            Effect.sync(() => {
-              calls.push(input.modelSelection);
-              return { title: "Generated title" };
-            }),
+          generateThreadTitle,
         }),
       };
     });
@@ -517,6 +510,23 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         ),
       ),
     );
+    return { service, primary, fallback };
+  });
+
+it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+  Effect.gen(function* () {
+    const selection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "chat-model",
+      options: [{ id: "effort", value: "high" }],
+    };
+    const calls: ModelSelection[] = [];
+    const { service, fallback } = yield* makePreflightTextGeneration(exhausted, (input) =>
+      Effect.sync(() => {
+        calls.push(input.modelSelection);
+        return { title: "Generated title" };
+      }),
+    );
     expect(
       yield* service.generateThreadTitle({
         cwd: "/tmp",
@@ -535,4 +545,32 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         : selection,
     ]);
   }),
+);
+
+it.effect.each([false, true])(
+  "a text generation failure names the model that ran: exhausted=%s",
+  (exhausted) =>
+    Effect.gen(function* () {
+      const { service, primary, fallback } = yield* makePreflightTextGeneration(exhausted, () =>
+        Effect.fail(
+          new TextGenerationError({ operation: "generateThreadTitle", detail: "model rejected" }),
+        ),
+      );
+      const error = yield* service
+        .generateThreadTitle({
+          cwd: "/tmp",
+          message: "hello",
+          linkedContext: "",
+          modelSelection: { instanceId: primary, model: "chat-model" },
+        })
+        .pipe(Effect.flip);
+      const fallbackModel =
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")];
+
+      expect(error.message).toBe(
+        exhausted
+          ? `Text generation failed in generateThreadTitle using ${fallbackModel} (${fallback}): model rejected`
+          : `Text generation failed in generateThreadTitle using chat-model (${primary}): model rejected`,
+      );
+    }),
 );

@@ -8,6 +8,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -385,16 +386,30 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
   }
 }
 
+/** The setting that picked the model, so a failure can point at where to change it. */
+export const TextGenerationModelSetting = Schema.Literals([
+  "textGeneration",
+  "sourceControlWriter",
+]);
+export type TextGenerationModelSetting = typeof TextGenerationModelSetting.Type;
+
 export class TextGenerationError extends Schema.TaggedError<TextGenerationError>()(
   "TextGenerationError",
   {
     operation: Schema.String,
     detail: Schema.String,
+    instanceId: Schema.optional(ProviderInstanceId),
+    model: Schema.optional(Schema.String),
+    modelSetting: ForwardCompatibleOptional(TextGenerationModelSetting),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Text generation failed in ${this.operation}: ${this.detail}`;
+    const attempted =
+      this.model === undefined
+        ? ""
+        : ` using ${this.model}${this.instanceId === undefined ? "" : ` (${this.instanceId})`}`;
+    return `Text generation failed in ${this.operation}${attempted}: ${this.detail}`;
   }
 }
 
