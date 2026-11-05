@@ -425,6 +425,22 @@ it("passes a good run and names every rule a bad run breaks", () => {
     .trim()
     .split("\n")
     .map((line) => decodeCase(line));
+  const clear = projectCases.find((entry) => entry.id === "clear-non-git-grouping-identity")!;
+  const clearArgs = clear.expect.calls![0]!.args!;
+  const clearRun = (input: Record<string, unknown>): SampleRun => ({
+    calls: [{ step: 0, tool: "t3_project_update", input }],
+    text: "The grouping identity is cleared.",
+    stopReason: "end_turn",
+  });
+  assert.deepEqual(failed(clear.expect, clearRun(clearArgs)), []);
+  const { groupingIdentity: _identity, ...omittedIdentity } = clearArgs;
+  for (const input of [
+    omittedIdentity,
+    { ...clearArgs, groupingIdentity: undefined },
+    { ...clearArgs, groupingIdentity: "a87b5fa1-6ade-4f2d-8ef2-4cfe1eb9b8ac" },
+  ]) {
+    assert.isNotEmpty(failed(clear.expect, clearRun(input)));
+  }
   const preview = projectCases.find(
     (entry) => entry.id === "title-only-project-creation-side-effects",
   )!;
