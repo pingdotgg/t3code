@@ -54,7 +54,10 @@ vi.mock("../state/environments", async (original) => ({
         connection: { phase: "connected" },
         entry: { target: { _tag: "PrimaryConnectionTarget" } },
         serverConfig: {
-          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
+          environment: {
+            platform: { os: "windows" },
+            capabilities: { projectCloneTracking: true },
+          },
           settings: { addProjectBaseDirectory: "/workspace/" },
         },
       },
@@ -132,4 +135,20 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
       await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
     }
   });
+});
+
+it("keeps the caret when editing a Windows project path", async () => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  const input = page.getByRole("combobox");
+  await input.fill("C:\\Users\\me\\projects");
+  const element = input.element() as HTMLInputElement;
+  element.setSelectionRange(0, 1);
+  await userEvent.keyboard("{Backspace}");
+  await expect.element(input).toHaveValue(":\\Users\\me\\projects");
+  expect((input.element() as HTMLInputElement).selectionStart).toBe(0);
+  await userEvent.keyboard("D");
+  await expect.element(input).toHaveValue("D:\\Users\\me\\projects");
+  expect((input.element() as HTMLInputElement).selectionStart).toBe(1);
 });

@@ -2788,7 +2788,7 @@ function OpenCommandPaletteDialog(props: {
 
   return (
     <CommandPaletteContent
-      key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
+      key={`${viewStack.length}-${browseGeneration}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
       aria-label="Command palette"
       autoHighlight={autoHighlightsFirstRow ? "always" : false}
       footerActionLabel={footerActionLabel}
