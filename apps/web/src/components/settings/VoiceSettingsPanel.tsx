@@ -596,6 +596,11 @@ function EnvironmentModelsSection(props: {
         (!query || (model.name + " " + model.description).toLocaleLowerCase().includes(query)),
     )
     .toSorted((left, right) => modelSortOrder(left) - modelSortOrder(right));
+  const activeModel = models.find((model) => model.active);
+  const renderedModels =
+    activeModel && !sortedModels.includes(activeModel)
+      ? [activeModel, ...sortedModels]
+      : sortedModels;
 
   return (
     <SettingsSection id={searchableSetting("speech-models").id} title="Transcription models">
@@ -712,7 +717,7 @@ function EnvironmentModelsSection(props: {
             <p className="px-4 py-2 text-sm text-muted-foreground">No matching models.</p>
           ) : null}
           <div className="divide-y divide-border/60" aria-label="Transcription models">
-            {sortedModels.map((model) => {
+            {renderedModels.map((model) => {
               const card: ModelCardProps = {
                 model:
                   model.id === requestedDownload && model.state === "downloadable"
@@ -743,6 +748,7 @@ function EnvironmentModelsSection(props: {
                 <TranscriptionTest
                   key={model.id}
                   card={card}
+                  hidden={!sortedModels.includes(model)}
                   environmentId={props.testEnvironmentId}
                   projectId={props.projectId}
                   projectName={props.projectName}
@@ -764,6 +770,7 @@ function EnvironmentModelsSection(props: {
  */
 function TranscriptionTest(props: {
   readonly card: ModelCardProps;
+  readonly hidden: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
   readonly projectName: string | null;
@@ -790,7 +797,7 @@ function TranscriptionTest(props: {
     commitDraft: (text) => setTranscript(text),
   });
   return (
-    <SettingsSearchTarget {...searchableSetting("transcription-test")}>
+    <SettingsSearchTarget {...searchableSetting("transcription-test")} hidden={props.hidden}>
       <ModelCard
         {...props.card}
         testControls={
