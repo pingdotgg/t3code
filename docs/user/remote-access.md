@@ -5,6 +5,9 @@ machine. That machine must stay running and reachable while you work.
 
 ## T3 Connect
 
+OminaX does not include T3 Connect yet, so its Connect settings are hidden. [Pair over a LAN or
+private network](#pair-over-a-lan-or-private-network) instead.
+
 T3 Connect makes an environment available to your other devices without setting
 up router forwarding. In the desktop app on the host, open **Settings →
 Sharing & access**, sign in, and enable **T3 Connect** for that environment.

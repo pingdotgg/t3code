@@ -87,6 +87,7 @@ import {
   scheduledTaskEditorSessionAtom,
 } from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
@@ -1309,7 +1310,7 @@ function WebhookScheduleDetails({
   const httpBaseUrl =
     preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
   const webhook = task?.schedule.type === "webhook" ? task.webhook : undefined;
-  const resolved = webhook ? webhookAddress(webhook, httpBaseUrl) : null;
+  const resolved = webhook ? webhookAddress(webhook, httpBaseUrl, hasCloudPublicConfig()) : null;
   return (
     <View className="gap-2 border-t border-border-subtle px-4 py-3">
       <Text className="text-sm text-foreground-muted">
