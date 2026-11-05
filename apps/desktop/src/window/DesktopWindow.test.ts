@@ -1227,13 +1227,23 @@ describe("DesktopWindow", () => {
         const second = download("CLIP.mp4");
         first.finish("cancelled");
         const third = download("clip.mp4");
+        const composed = download("caf\u00e9.mp4");
+        const decomposed = download("cafe\u0301.mp4");
 
         assert.deepEqual(
-          [...first.savePaths, ...second.savePaths, ...third.savePaths],
+          [
+            ...first.savePaths,
+            ...second.savePaths,
+            ...third.savePaths,
+            ...composed.savePaths,
+            ...decomposed.savePaths,
+          ],
           [
             path.join(downloads, "clip.mp4"),
             path.join(downloads, "CLIP (1).mp4"),
             path.join(downloads, "clip.mp4"),
+            path.join(downloads, "caf\u00e9.mp4"),
+            path.join(downloads, "cafe\u0301 (1).mp4"),
           ],
         );
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -1257,6 +1267,13 @@ describe("DesktopWindow", () => {
       const [savePath] = download(longName).savePaths;
       assert.strictEqual(path.basename(savePath ?? ""), `${"a".repeat(247)} (1).mp4`);
       yield* fileSystem.writeFileString(savePath ?? "", "duplicate");
+
+      const longExtension = `a.${"b".repeat(253)}`;
+      yield* fileSystem.writeFileString(path.join(downloads, longExtension), "existing");
+      const [extensionSavePath = ""] = download(longExtension).savePaths;
+      assert.strictEqual(path.basename(extensionSavePath), `a (1).${"b".repeat(249)}`);
+      assert.isAtMost(Buffer.byteLength(path.basename(extensionSavePath)), 255);
+      yield* fileSystem.writeFileString(extensionSavePath, "duplicate");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

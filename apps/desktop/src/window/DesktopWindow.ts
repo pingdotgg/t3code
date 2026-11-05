@@ -336,33 +336,40 @@ export const make = Effect.gen(function* () {
   const byteLength = (text: string) => utf8.encode(text).length;
   const downloadSessions = new WeakSet<Electron.Session>();
   const reservedDownloadPaths = new Set<string>();
+  // macOS and Windows treat names differing only in case or Unicode normalization as the same file.
+  const reservationKey = (filePath: string) => filePath.normalize("NFC").toLowerCase();
+  const truncateToBytes = (text: string, maxBytes: number) => {
+    let budget = maxBytes;
+    let kept = "";
+    for (const char of text) {
+      budget -= byteLength(char);
+      if (budget < 0) break;
+      kept += char;
+    }
+    return kept;
+  };
   // Electron needs the save path before will-download returns, so the name is picked synchronously.
   const reserveDownloadPath = (fileName: string) => {
     const { path } = environment;
     const directory = Electron.app.getPath("downloads");
     const extension = path.extname(fileName);
     const stem = path.basename(fileName, extension) || "download";
-    // Filesystems cap a name at 255 bytes, so a suffix shortens the stem instead of overflowing.
+    const [stemHead = ""] = stem;
+    // Filesystems cap a name at 255 bytes, so a suffix shortens the stem, and then the extension.
     const nameWith = (suffix: string) => {
-      let budget = 255 - byteLength(`${suffix}${extension}`);
-      let kept = "";
-      for (const char of stem) {
-        budget -= byteLength(char);
-        if (budget < 0) break;
-        kept += char;
-      }
-      return `${kept}${suffix}${extension}`;
+      const budget = 255 - byteLength(suffix);
+      const kept = truncateToBytes(extension, budget - byteLength(stemHead));
+      return `${truncateToBytes(stem, budget - byteLength(kept))}${suffix}${kept}`;
     };
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const target = path.join(directory, nameWith(attempt === 0 ? "" : ` (${attempt})`));
-      // macOS and Windows treat names differing only in case as the same file.
-      if (reservedDownloadPaths.has(target.toLowerCase()) || NodeFS.existsSync(target)) continue;
-      reservedDownloadPaths.add(target.toLowerCase());
+      if (reservedDownloadPaths.has(reservationKey(target)) || NodeFS.existsSync(target)) continue;
+      reservedDownloadPaths.add(reservationKey(target));
       return target;
     }
     // @effect-diagnostics-next-line cryptoRandomUUID:off -- Must stay synchronous, as above.
     const target = path.join(directory, nameWith(` (${crypto.randomUUID()})`));
-    reservedDownloadPaths.add(target.toLowerCase());
+    reservedDownloadPaths.add(reservationKey(target));
     return target;
   };
   const saveDownloadsToDownloadsFolder = (session: Electron.Session) => {
@@ -372,7 +379,7 @@ export const make = Effect.gen(function* () {
       const savePath = reserveDownloadPath(item.getFilename());
       item.setSavePath(savePath);
       item.once("done", (_doneEvent, state) => {
-        reservedDownloadPaths.delete(savePath.toLowerCase());
+        reservedDownloadPaths.delete(reservationKey(savePath));
         if (state === "completed") Electron.shell.showItemInFolder(savePath);
       });
     });
