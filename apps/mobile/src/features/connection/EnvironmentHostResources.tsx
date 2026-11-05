@@ -12,25 +12,30 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { SettingsSection } from "../settings/components/SettingsSection";
 
-function useHostResources(environmentId: EnvironmentId) {
-  return useEnvironmentQuery(serverEnvironment.hostResources({ environmentId, input: {} })).data;
+function useHostResources(environmentId: EnvironmentId | null) {
+  return useEnvironmentQuery(
+    environmentId ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
+  ).data;
 }
 
-/** One line for environment pickers; mounted only while the picker is open. */
-export function EnvironmentHostSummaryText({
-  environmentId,
-}: {
-  readonly environmentId: EnvironmentId;
-}) {
+/** One line for environment pickers; pass null to skip sampling a disconnected environment. */
+export function useEnvironmentHostSummary(environmentId: EnvironmentId | null) {
   const data = useHostResources(environmentId);
   const summary = data ? hostResourcesSummary(data) : "";
   if (!data || !summary) return null;
+  return { summary, warning: isHostDiskLow(data) || data.rebootRequired };
+}
+
+export function EnvironmentHostSummaryText({
+  summary,
+  warning,
+}: {
+  readonly summary: string;
+  readonly warning: boolean;
+}) {
   return (
     <Text
-      className={cn(
-        "text-xs text-foreground-muted",
-        (isHostDiskLow(data) || data.rebootRequired) && "text-warning-foreground",
-      )}
+      className={cn("text-xs text-foreground-muted", warning && "text-warning-foreground")}
       numberOfLines={1}
     >
       {summary}
@@ -73,7 +78,7 @@ export function EnvironmentSystemSection({
         {updates ? (
           <Text className="text-base text-foreground">
             {updates.available === 0
-              ? "OS is up to date"
+              ? "No updates in the last OS check"
               : `${updates.available} OS ${updates.available === 1 ? "update" : "updates"}${
                   updates.security ? ` (${updates.security} security)` : ""
                 }`}

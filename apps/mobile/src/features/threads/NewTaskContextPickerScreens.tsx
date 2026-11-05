@@ -55,7 +55,10 @@ import {
   useConnectionDiagnosis,
 } from "../connection/ConnectionDiagnosisDetails";
 import { environmentStatusText } from "../connection/environmentStatusText";
-import { EnvironmentHostSummaryText } from "../connection/EnvironmentHostResources";
+import {
+  EnvironmentHostSummaryText,
+  useEnvironmentHostSummary,
+} from "../connection/EnvironmentHostResources";
 
 const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
@@ -75,12 +78,17 @@ function EnvironmentPickerRow(props: {
   const status =
     diagnosis?.headline ??
     (connection ? environmentStatusText({ ...connection, error: null }) : "Offline");
+  const hostSummary = useEnvironmentHostSummary(
+    connection?.phase === "connected" ? props.environmentId : null,
+  );
   return (
     <View className={cn("bg-grouped-card", !props.isLast && "border-b border-border-subtle")}>
       <View className="flex-row items-center">
         <Pressable
           accessibilityRole="radio"
-          accessibilityLabel={`${props.title}, ${status}`}
+          accessibilityLabel={[props.title, status, hostSummary?.summary]
+            .filter(Boolean)
+            .join(", ")}
           accessibilityState={{ checked: props.selected }}
           disabled={props.disabled}
           onPress={props.onPress}
@@ -101,9 +109,7 @@ function EnvironmentPickerRow(props: {
                 {status}
               </Text>
             </View>
-            {connection?.phase === "connected" ? (
-              <EnvironmentHostSummaryText environmentId={props.environmentId} />
-            ) : null}
+            {hostSummary ? <EnvironmentHostSummaryText {...hostSummary} /> : null}
           </View>
           {props.selected ? (
             <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
