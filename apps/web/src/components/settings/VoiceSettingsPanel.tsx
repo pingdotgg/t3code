@@ -686,7 +686,12 @@ export function VoiceSettingsPanel() {
                   });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Transcription environment" className="max-w-80">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label="Transcription environment"
+                className="max-w-80"
+              >
                 <SelectValue>{selectedEnvironmentLabel}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -735,7 +740,12 @@ export function VoiceSettingsPanel() {
                     });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Microphone" className="min-w-0 flex-1">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  aria-label="Microphone"
+                  className="min-w-0 flex-1"
+                >
                   <SelectValue
                     placeholder={loadingMicrophones ? "Finding microphones…" : "Microphone"}
                   >
@@ -782,7 +792,12 @@ export function VoiceSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" aria-label="Dictation shortcut mode" className="max-w-80">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label="Dictation shortcut mode"
+                className="max-w-80"
+              >
                 <SelectValue>
                   {voiceShortcutMode === "auto"
                     ? "Auto (hold or tap)"
@@ -856,7 +871,12 @@ export function VoiceSettingsPanel() {
                   .finally(() => setOperation(null));
               }}
             >
-              <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-80">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label="Transcription language"
+                className="max-w-80"
+              >
                 <SelectValue>
                   {currentStatus?.supported && currentStatus.effectiveLanguage === "auto"
                     ? "Auto"
@@ -960,7 +980,7 @@ export function VoiceSettingsPanel() {
                 >
                   <ComboboxTrigger
                     aria-label="Browse transcription models by language"
-                    render={<SelectButton size="sm" />}
+                    render={<SelectButton variant="well" size="compact" />}
                   >
                     {language ? languageLabel(language) : "Choose language"}
                   </ComboboxTrigger>
@@ -989,8 +1009,8 @@ export function VoiceSettingsPanel() {
               control={
                 <div className="flex w-full max-w-80 items-center gap-1">
                   <Input
+                    size="settings"
                     type="search"
-                    size="compact"
                     aria-label="Search transcription models"
                     placeholder="Search models"
                     value={modelSearch}
@@ -1113,6 +1133,7 @@ export function VoiceSettingsPanel() {
             <div className="w-full max-w-80">
               <div className="flex items-center gap-1.5">
                 <Input
+                  size="settings"
                   value={customWordDraft}
                   maxLength={50}
                   placeholder="Add a word or phrase"
@@ -1127,7 +1148,7 @@ export function VoiceSettingsPanel() {
                 />
                 <Button
                   type="button"
-                  size="sm"
+                  size="standard"
                   disabled={
                     !currentStatus?.supported ||
                     !normalizedCustomWord ||
@@ -1198,7 +1219,7 @@ export function VoiceSettingsPanel() {
                 </div>
                 <Button
                   type="button"
-                  size="sm"
+                  size="standard"
                   disabled={
                     !currentStatus?.supported ||
                     bulkWords.entries.length === 0 ||
@@ -1291,6 +1312,7 @@ export function VoiceSettingsPanel() {
                           ) : null}
                           <div className="flex max-w-80 gap-1.5">
                             <Input
+                              size="settings"
                               value={aliasDrafts[term] ?? ""}
                               maxLength={50}
                               placeholder="Common mis-transcription"
@@ -1317,7 +1339,7 @@ export function VoiceSettingsPanel() {
                             />
                             <Button
                               type="button"
-                              size="sm"
+                              size="standard"
                               disabled={!draft || used || aliases.length >= 8 || operation !== null}
                               onClick={() => addAlias(term, draft)}
                             >
@@ -1430,7 +1452,12 @@ export function VoiceSettingsPanel() {
                   .finally(() => setOperation(null));
               }}
             >
-              <SelectTrigger size="sm" aria-label="Model unload" className="max-w-80">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label="Model unload"
+                className="max-w-80"
+              >
                 <SelectValue>
                   {
                     {
@@ -1483,7 +1510,12 @@ export function VoiceSettingsPanel() {
                   .finally(() => setOperation(null));
               }}
             >
-              <SelectTrigger size="sm" aria-label="Transcription acceleration" className="max-w-80">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label="Transcription acceleration"
+                className="max-w-80"
+              >
                 <SelectValue>
                   {acceleration === "auto"
                     ? "Auto"

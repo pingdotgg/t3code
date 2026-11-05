@@ -158,6 +158,7 @@ export function VoicePostProcessingSettings({ advanced = false }: { readonly adv
             control={
               <div className="w-40">
                 <Input
+                  size="settings"
                   key={settings.speechCorrectionWord}
                   defaultValue={settings.speechCorrectionWord}
                   maxLength={50}
@@ -201,7 +202,8 @@ export function VoicePostProcessingSettings({ advanced = false }: { readonly adv
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   className="w-full sm:w-56"
                   aria-label="Voice post-processing prompt"
                 >
