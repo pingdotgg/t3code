@@ -680,7 +680,7 @@ function EnvironmentModelsSection(props: {
           <SettingsRow
             title="Find a model"
             control={
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid w-full grid-cols-[minmax(0,1fr)_9rem] items-center gap-2 @min-[32rem]/settings-row:w-96">
                 <Input
                   aria-label="Search transcription models"
                   placeholder="Search models"
