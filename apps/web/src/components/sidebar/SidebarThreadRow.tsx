@@ -197,7 +197,7 @@ const SIDEBAR_STATUSES: Record<
   input: {
     label: "Input",
     Icon: MessageCircleQuestionIcon,
-    className: "text-indigo-600 dark:text-indigo-300",
+    className: "text-(--sidebar-status-input)",
   },
   request: { label: "Request", Icon: UserRoundIcon, className: "text-guest-foreground" },
   limited: { label: "Limited", Icon: CircleAlertIcon, className: "text-warning-foreground" },
