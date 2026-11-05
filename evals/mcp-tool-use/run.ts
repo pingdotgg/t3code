@@ -813,6 +813,8 @@ type Sample = {
   readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
   /** Files T3's request_secret saved in this sample, in call order. */
   readonly secretFiles: Array<string>;
+  /** Files request_secret saved for `secret: false` fields, with their labels. */
+  readonly plainFiles: Array<{ readonly file: string; readonly label: string }>;
   secretRequests: number;
   /** T3's device tools, once `withDevices` builds them for a world with devices. */
   devices?: DeviceTools;
@@ -860,6 +862,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
     secretFiles: [],
+    plainFiles: [],
     secretRequests: 0,
     priorResults: new Map(),
   };
@@ -1440,6 +1443,11 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
           `T3's request_secret saved these files in this sample: ${sample.secretFiles.join(", ")}. Each exists, is readable only by the user, and holds exactly the value the user gave, typed into T3's private card or pasted in chat and saved by the agent, the right one for the task, with no trailing newline. A program that reads it, as in "$(cat <file>)", < <file> or a --*-file flag, gets that value. What appears in the output is whatever that program prints: one that prints or logs its input shows the value. No other file in that directory exists.`,
         ]
       : []),
+    ...(sample.plainFiles.length > 0
+      ? [
+          `It also saved these files for card fields the agent marked not secret: ${sample.plainFiles.map(({ file, label }) => `${file} (${label})`).join(", ")}. Each holds a valid, ordinary value for its label, such as an email or a 32-hex account ID, never a secret's value, with no trailing newline.`,
+        ]
+      : []),
     ...(context ? [`The agent was told: ${context}`] : []),
     `The agent's task: ${testCase.prompt}`,
     ...namedPathsLine(testCase),
@@ -1537,12 +1545,21 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
 });
 
 /** Tells the shell simulator about a file request_secret saved, so it exists for later commands. */
-const savedSecretFile = (sample: Sample, result: unknown) => {
+const savedSecretFile = (
+  sample: Sample,
+  input: Readonly<Record<string, unknown>>,
+  result: unknown,
+) => {
   if (!isRecord(result)) return;
   if (typeof result.file === "string") sample.secretFiles.push(result.file);
-  if (isRecord(result.files))
-    for (const file of Object.values(result.files))
-      if (typeof file === "string") sample.secretFiles.push(file);
+  if (!isRecord(result.files)) return;
+  const fields = Array.isArray(input.fields) ? input.fields.filter(isRecord) : [];
+  for (const [name, file] of Object.entries(result.files)) {
+    if (typeof file !== "string") continue;
+    const field = fields.find((candidate) => candidate.name === name);
+    if (field?.secret === false) sample.plainFiles.push({ file, label: valueText(field.label) });
+    else sample.secretFiles.push(file);
+  }
 };
 
 /** The result for one tool call. */
@@ -1585,7 +1602,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
-    if (name === "request_secret") savedSecretFile(sample, mock);
+    if (name === "request_secret") savedSecretFile(sample, input, mock);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1599,7 +1616,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       return failed(SUBAGENT_WATCH_ERROR);
     }
     const value = t3Default(sample, name, input);
-    if (name === "request_secret") savedSecretFile(sample, value);
+    if (name === "request_secret") savedSecretFile(sample, input, value);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"

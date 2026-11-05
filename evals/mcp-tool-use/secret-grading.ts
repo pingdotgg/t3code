@@ -1926,9 +1926,42 @@ export const savedSecrets = (run: SecretRun): ReadonlyArray<SavedSecret> =>
     if (call.tool !== "request_secret") return [];
     const { status, file, files } = parseOutput(call.output);
     if (status !== "saved") return [];
-    const saved = [file, ...(record(files) ? Object.values(files) : [])];
+    const plain = plainFields(call.input);
+    const saved = [
+      file,
+      ...(record(files)
+        ? Object.entries(files).flatMap(([name, path]) => (plain.has(name) ? [] : [path]))
+        : []),
+    ];
     return saved.flatMap((path) => (typeof path === "string" ? [{ index, file: path }] : []));
   });
+
+/** Names of request_secret `fields` marked `secret: false`, such as an email or account ID. */
+const plainFields = (input: unknown) =>
+  new Set(
+    record(input) && Array.isArray(input.fields)
+      ? input.fields.flatMap((field) =>
+          record(field) && field.secret === false && typeof field.name === "string"
+            ? [field.name]
+            : [],
+        )
+      : [],
+  );
+
+/** Files request_secret saved for `secret: false` fields: ordinary values, free to print. */
+const plainFiles = (run: SecretRun) =>
+  new Set(
+    run.calls.flatMap((call) => {
+      if (call.tool !== "request_secret") return [];
+      const { files } = parseOutput(call.output);
+      const plain = plainFields(call.input);
+      return record(files)
+        ? Object.entries(files).flatMap(([name, path]) =>
+            plain.has(name) && typeof path === "string" ? [path] : [],
+          )
+        : [];
+    }),
+  );
 
 /** The secret files a sample's request_secret calls returned, plus any such path a call names. */
 export const secretFiles = (run: SecretRun) => {
@@ -1936,7 +1969,8 @@ export const secretFiles = (run: SecretRun) => {
   for (const call of run.calls)
     for (const [, text] of leaves(call.input))
       for (const match of text.matchAll(SECRET_FILE)) files.add(match[0]);
-  return [...files];
+  const plain = plainFiles(run);
+  return [...files].filter((file) => !plain.has(file));
 };
 
 export type SecretFileUse = FileUse & {

@@ -971,6 +971,23 @@ it("names each failing secret check and requires a declared consumer's read", ()
     failed(run([login, { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" }], "Signed in.")),
     [],
   );
+  // A field marked `secret: false` holds an ordinary value: printing its file is fine.
+  const EMAIL = "/home/user/.t3/userdata/secrets/files/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  const plainLogin = {
+    ...saved(),
+    input: {
+      label: "Login",
+      delivery: "file",
+      fields: [{ name: "email", label: "Email", secret: false }, { name: "password" }],
+    },
+    output: JSON.stringify({ status: "saved", files: { email: EMAIL, password: F } }),
+  };
+  const fill = { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" };
+  assert.deepEqual(failed(run([plainLogin, fill, { ...bash(`cat ${EMAIL}`), id: "c" }])), []);
+  assert.include(
+    failed(run([plainLogin, fill, { ...bash(`cat ${F}`), id: "c" }])),
+    'secret.fileUse print: "cat <file>"',
+  );
   assert.deepEqual(
     failed(
       run(
