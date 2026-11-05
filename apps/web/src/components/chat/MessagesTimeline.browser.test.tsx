@@ -407,17 +407,22 @@ describe("MessagesTimeline work rows", () => {
     const barElement = bar.element();
     const barTop = barElement.getBoundingClientRect().top;
     const viewport = history.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
-    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(
-      2,
-    );
+    const fullHeight = viewport.scrollHeight;
+    expect(fullHeight).toBeGreaterThan(2000 * 20);
+    expect(fullHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(2);
+    const tailSources = mountedSources();
+    const tailAnchor = history.querySelector<HTMLElement>("[data-assistant-citation-source]")!;
+    let tailAnchorTop = 0;
     await act(() => {
-      viewport.scrollTop = 0;
+      viewport.scrollTop = fullHeight - viewport.clientHeight - 400;
       viewport.dispatchEvent(new Event("scroll"));
+      tailAnchorTop = tailAnchor.getBoundingClientRect().top;
     });
     await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await vi.waitFor(() => expect(mountedSources()).toBeGreaterThan(tailSources));
+    expect(Math.abs(tailAnchor.getBoundingClientRect().top - tailAnchorTop)).toBeLessThanOrEqual(1);
     await expect.element(bar).toHaveAttribute("aria-expanded", "false");
-    expect(viewport.scrollTop).toBeGreaterThan(0);
+    expect(Math.abs(viewport.scrollHeight - fullHeight)).toBeLessThan(fullHeight / 10);
     expect(mountedSources()).toBeLessThan(70);
     expect(barElement.getBoundingClientRect().top).toBe(barTop);
     await screen.getByRole("button", { name: "Jump to latest" }).click();
@@ -425,6 +430,13 @@ describe("MessagesTimeline work rows", () => {
     await expect
       .element(screen.getByRole("button", { name: "Jump to latest" }))
       .not.toBeInTheDocument();
+    await act(() => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await expect.element(screen.getByText("History answer 0", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(viewport.scrollTop).toBe(0));
+    await screen.getByRole("button", { name: "Jump to latest" }).click();
     const barTops = new Set<number>();
     const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
     resizes.observe(history);
@@ -464,6 +476,57 @@ describe("MessagesTimeline work rows", () => {
     await expect
       .element(screen.getByText("History answer 99", { exact: true }))
       .toBeInTheDocument();
+  });
+
+  it("keeps the bar still when work arrives while the history collapses at the bottom", async () => {
+    const runId = RunId.make("collapse-run");
+    const props = {
+      ...baseProps(),
+      isWorking: true,
+      activeTurnStartedAt: CREATED_AT,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+    };
+    const entries = (steps: number) => [
+      ...Array.from({ length: 40 }, (_, index) =>
+        message(`Earlier ${index}`, {}, `earlier-${index}`),
+      ),
+      message("Build it", { runId }),
+      ...Array.from({ length: steps }, (_, index) =>
+        message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
+      ),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries(30)} />,
+    );
+    const bar = screen.getByRole("button", { name: "Open work history" });
+    await expect.element(bar).toBeVisible();
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    const barElement = bar.element();
+    await bar.click();
+    const history = screen.getByRole("region", { name: "Work history" }).element();
+    await expect.element(screen.getByText("Step 0", { exact: true })).toBeInTheDocument();
+    await Promise.all(history.getAnimations().map((animation) => animation.finished));
+    const barTop = barElement.getBoundingClientRect().top;
+    const expandedHeight = history.clientHeight;
+    const barTops = new Set<number>();
+    const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
+    resizes.observe(history);
+    using _resizes = { [Symbol.dispose]: () => resizes.disconnect() };
+    history.style.transitionDuration = "10s";
+
+    await screen.getByRole("button", { name: "Close work history" }).click();
+    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(expandedHeight - 20));
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(31)} />);
+    const arrivedHeight = history.clientHeight;
+    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(arrivedHeight - 60));
+    for (const animation of history.getAnimations()) animation.finish();
+    await vi.waitFor(() =>
+      expect(history.querySelector('[data-slot="scroll-area-viewport"]')).not.toBeNull(),
+    );
+    expect([...barTops]).toEqual([barTop]);
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(
