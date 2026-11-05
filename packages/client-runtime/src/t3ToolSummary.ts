@@ -355,6 +355,18 @@ export function summarizeT3ToolCalls(
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;
+    case "course-read":
+      label = phrase("Read", "read", `the course ${times}`);
+      break;
+    case "course-update":
+      label = phrase("Updated", "update", `the course ${times}`);
+      break;
+    case "knowledge-read":
+      label = phrase("Checked", "check", `What you know ${times}`);
+      break;
+    case "knowledge-update":
+      label = phrase("Saved to", "save to", `What you know ${times}`);
+      break;
     case "environment-links":
       label = phrase("Listed", "list", `linked environments ${times}`);
       break;

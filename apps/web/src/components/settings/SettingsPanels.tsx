@@ -103,6 +103,7 @@ import { StorageCleanupSections } from "./StorageSettings";
 import { SideChatSettings } from "./SideChatSettings";
 import { ChatSyncSection } from "./ChatSyncSettings";
 import { KnowledgeMapSection } from "./KnowledgeMapSettings";
+import { CourseSettingsSection } from "./CourseSettings";
 import { hasSideChatSettings } from "./sideChatSettingsSupport";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
@@ -1870,6 +1871,7 @@ export function ThreadsSettingsPanel() {
       ) : null}
       {!isProjectScope ? <ChatSyncSection /> : null}
       {!isProjectScope ? <KnowledgeMapSection /> : null}
+      {!isProjectScope ? <CourseSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }

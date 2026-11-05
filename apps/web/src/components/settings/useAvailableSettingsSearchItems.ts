@@ -54,6 +54,11 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
       environment.connection.phase === "connected" &&
       environment.serverConfig?.environment.capabilities.knowledgeMap === true,
   );
+  const hasCourses = environments.some(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.courses === true,
+  );
   const hasChatSync = environments.some(
     (environment) =>
       environment.connection.phase === "connected" &&
@@ -88,6 +93,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasSideChats,
     hasChatSync,
     hasKnowledgeMap,
+    hasCourses,
     managedTunnelActive,
     hasPeerLinkHost,
   });

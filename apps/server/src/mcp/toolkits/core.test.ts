@@ -62,6 +62,17 @@ import * as AttachmentHandlers from "./attachment/handlers.ts";
 import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
+import * as ManimRender from "../../animation/ManimRender.ts";
+import * as CourseService from "../../course/CourseService.ts";
+import * as HtmlRender from "../../htmlRender/HtmlRender.ts";
+import * as ProcessRunner from "../../processRunner.ts";
+import * as OrchestratorMcpService from "../OrchestratorMcpService.ts";
+import * as AnimationHandlers from "./animation/handlers.ts";
+import { AnimationToolkit } from "./animation/tools.ts";
+import * as CourseHandlers from "./course/handlers.ts";
+import { CourseToolkit } from "./course/tools.ts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -278,6 +289,7 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(Layer.succeed(CourseService.CourseService, CourseService.unavailable)),
         Layer.provide(McpProviderSessions.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
@@ -1083,3 +1095,165 @@ it.effect(
     );
   },
 );
+
+const liveCallerLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
+  getThreadShell: () =>
+    Effect.succeed({
+      id: threadId,
+      deletedAt: null,
+      archivedAt: null,
+      activeRunId: RunId.make("mcp-core-run"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    } as OrchestrationV2ThreadShell),
+});
+const courseServiceLayer = Layer.effect(
+  CourseService.CourseService,
+  Effect.gen(function* () {
+    return yield* CourseService.make((yield* ServerConfig.ServerConfig).stateDir);
+  }),
+);
+const callAs = (name: string, args: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    return yield* (yield* McpServer.McpServer)
+      .callTool({ name, arguments: args })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+  });
+
+it.effect("animation_render caches a concept clip and replays it without rendering", () => {
+  const renders: string[] = [];
+  const published: string[] = [];
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const course = yield* (yield* CourseService.CourseService).add({
+      lessonThreadId: threadId,
+      title: "Linear Algebra",
+      units: ["Vectors"],
+    });
+    const rendered = yield* callAs("animation_render", {
+      code: "scene",
+      concept: "Eigen Vectors",
+      title: "Eigenvectors",
+    });
+    expect(rendered.isError).not.toBe(true);
+    const cacheDir = path.join(stateDir, "visuals", "eigen-vectors");
+    expect(yield* fs.readFileString(path.join(cacheDir, "scene.py"))).toBe("scene");
+    expect([...(yield* fs.readFile(path.join(cacheDir, "clip.mp4")))]).toEqual([1, 2, 3]);
+    expect(JSON.parse(yield* fs.readFileString(path.join(cacheDir, "meta.json")))).toMatchObject({
+      concept: "Eigen Vectors",
+      courseId: course.id,
+    });
+
+    const replayed = yield* callAs("animation_render", {
+      concept: "eigen vectors",
+      title: "Again",
+    });
+    expect(replayed.isError).not.toBe(true);
+    expect(renders).toEqual(["scene"]);
+    expect(published).toHaveLength(2);
+    expect(published[1]).toContain("base64,AQID");
+
+    expect(
+      declaredFailure(yield* callAs("animation_render", { concept: "unknown", title: "None" })),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(
+      declaredFailure(yield* callAs("animation_render", { code: "missing", title: "No Manim" })),
+    ).toMatchObject({ code: "invalid_request" });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.toolkitRegistration(AnimationToolkit, AnimationHandlers.layer).pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(
+          Layer.succeed(
+            ManimRender.ManimRender,
+            ManimRender.ManimRender.of({
+              render: (code) =>
+                code === "missing"
+                  ? Effect.fail(new ManimRender.ManimUnavailableError())
+                  : Effect.sync(() => {
+                      renders.push(code);
+                      return new Uint8Array([1, 2, 3]);
+                    }),
+            }),
+          ),
+        ),
+        Layer.provide(
+          Layer.mock(HtmlRender.HtmlRender)({
+            publish: (input) =>
+              Effect.sync(() => {
+                published.push(input.html);
+                return { attachmentId: "clip", title: input.title, height: input.height };
+              }),
+          }),
+        ),
+        Layer.provideMerge(courseServiceLayer),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-animation-" })),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(liveCallerLayer),
+      ),
+    ),
+  );
+});
+
+it.effect("course_prepare starts a standalone prep thread and sends nothing to the lesson", () => {
+  const requests: unknown[] = [];
+  const prepThreadId = ThreadId.make("course-prep-thread");
+  return Effect.gen(function* () {
+    const service = yield* CourseService.CourseService;
+    const course = yield* service.add({
+      lessonThreadId: threadId,
+      title: "Signals",
+      units: ["One", "Two"],
+    });
+    const result = yield* callAs("course_prepare", { units: [2, 1] });
+    expect(result.isError).not.toBe(true);
+    // A plain create_threads request: no subagent relationship, so the lesson is never woken.
+    expect(requests).toEqual([
+      {
+        threads: [{ title: "Prep: Signals L1–2", prompt: expect.stringContaining(course.id) }],
+      },
+    ]);
+    expect((yield* service.get({ id: course.id })).prepThreadIds).toEqual([prepThreadId]);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.toolkitRegistration(CourseToolkit, CourseHandlers.layer).pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        // Every other orchestrator method dies, so a message into the lesson would fail the test.
+        Layer.provide(
+          Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+            createThreads: (_scope, input) =>
+              Effect.sync(() => {
+                requests.push(input);
+                return {
+                  threads: [
+                    {
+                      threadId: prepThreadId,
+                      runId: null,
+                      status: "idle" as const,
+                      title: "Prep",
+                      createdBy: "agent" as const,
+                      creationSource: "mcp" as const,
+                      providerInstanceId: ProviderInstanceId.make("codex"),
+                      model: "gpt-5.4",
+                    },
+                  ],
+                };
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.succeed(ProcessRunner.ProcessRunner, { run: () => Effect.die("unused") }),
+        ),
+        Layer.provideMerge(courseServiceLayer),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-course-" })),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(liveCallerLayer),
+      ),
+    ),
+  );
+});

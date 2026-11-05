@@ -69,5 +69,7 @@ describe("resolveT3McpSummaryAction", () => {
       "schedule-update",
     );
     expect(resolveT3McpSummaryAction("delegate_task", { task: "x" })).toBe("delegate");
+    expect(resolveT3McpSummaryAction("course_read", {})).toBe("course-read");
+    expect(resolveT3McpSummaryAction("knowledge_map_mark_done", {})).toBe("knowledge-update");
   });
 });

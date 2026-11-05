@@ -29,3 +29,7 @@ Lessons write the explanation first, then add a picture, an interactive demo, or
 ## Quizzes
 
 Lessons can ask graded quiz cards. Pick an option, set how sure you are, and optionally explain your thinking; your answer goes back to the lesson so it can respond. On mobile, quizzes appear as a tool row only.
+
+## Follow a course
+
+Paste an OCW or YouTube course link into a lesson, or attach a PDF, and ask to follow it. The lesson saves the outline and prepares the current and next units in a separate prep thread. OCW lessons include their MIT OpenCourseWare credit. YouTube caption fetching is off by default because it uses `yt-dlp` and may violate YouTube's terms; enable it in Settings → Threads → Courses for your own use. Remove saved courses from the same Courses section.

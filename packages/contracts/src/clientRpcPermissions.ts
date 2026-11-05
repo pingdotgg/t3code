@@ -22,6 +22,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverStartChatSync]: AuthSettingsWriteScope,
   [WS_METHODS.knowledgeRemove]: AuthSettingsWriteScope,
   [WS_METHODS.lessonCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.coursesRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.visualsClear]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,

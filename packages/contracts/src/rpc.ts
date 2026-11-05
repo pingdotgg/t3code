@@ -372,6 +372,7 @@ import {
   ServerSettingsPatch,
 } from "./settings.ts";
 import { KnowledgeMapEntries, KnowledgeMapError, KnowledgeMapRemoveInput } from "./knowledgeMap.ts";
+import { CourseId, CourseSummary, CourseError } from "./course.ts";
 import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
@@ -525,6 +526,9 @@ export const WS_METHODS = {
   serverGetChatSyncStatus: "server.getChatSyncStatus",
   knowledgeList: "knowledge.list",
   knowledgeRemove: "knowledge.remove",
+  coursesList: "courses.list",
+  coursesRemove: "courses.remove",
+  visualsClear: "visuals.clear",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   peerLinksList: "peerLinks.list",
   peerLinksLink: "peerLinks.link",
@@ -838,6 +842,23 @@ const WsKnowledgeRemoveRpc = Rpc.make(WS_METHODS.knowledgeRemove, {
   payload: KnowledgeMapRemoveInput,
   success: KnowledgeMapEntries,
   error: Schema.Union([KnowledgeMapError, EnvironmentAuthorizationError]),
+});
+const WsCoursesListRpc = Rpc.make(WS_METHODS.coursesList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(CourseSummary),
+  error: Schema.Union([CourseError, EnvironmentAuthorizationError]),
+});
+const WsCoursesRemoveRpc = Rpc.make(WS_METHODS.coursesRemove, {
+  payload: Schema.Struct({
+    id: CourseId,
+  }),
+  success: Schema.Void,
+  error: Schema.Union([CourseError, EnvironmentAuthorizationError]),
+});
+const WsVisualsClearRpc = Rpc.make(WS_METHODS.visualsClear, {
+  payload: Schema.Struct({}),
+  success: Schema.Int,
+  error: Schema.Union([CourseError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStorage, {
@@ -2076,6 +2097,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetChatSyncStatusRpc,
   WsKnowledgeListRpc,
   WsKnowledgeRemoveRpc,
+  WsCoursesListRpc,
+  WsCoursesRemoveRpc,
+  WsVisualsClearRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,

@@ -55,6 +55,10 @@ export type T3McpToolSummaryAction =
   | "environment-link"
   | "environment-unlink"
   | "environment-update"
+  | "course-read"
+  | "course-update"
+  | "knowledge-read"
+  | "knowledge-update"
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -374,11 +378,15 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   animation_render: tool(["Render", "Rendering", "Rendered", "an animation"], "html-render"),
-  knowledge_map_read: tool(["Read", "Reading", "Read", "What you know"], "environment-read"),
+  knowledge_map_read: tool(["Read", "Reading", "Read", "What you know"], "knowledge-read"),
   knowledge_map_mark_done: tool(
     ["Save", "Saving", "Saved", "to What you know"],
-    "environment-update",
+    "knowledge-update",
   ),
+  course_add: tool(["Add", "Adding", "Added", "a course"], "course-update"),
+  course_read: tool(["Read", "Reading", "Read", "a course"], "course-read"),
+  course_update: tool(["Update", "Updating", "Updated", "a course"], "course-update"),
+  course_prepare: tool(["Prepare", "Preparing", "Prepared", "course units"], "course-update"),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

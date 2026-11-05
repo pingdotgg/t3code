@@ -157,6 +157,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   lessonSideChats: Schema.optionalKey(Schema.Boolean),
   /** Server-backed learner knowledge map. */
   knowledgeMap: Schema.optionalKey(Schema.Boolean),
+  courses: Schema.optionalKey(Schema.Boolean),
   /** Server links to other environments (`PeerLink`) and its agents can work
       in them. Absent on servers from before linking, which clients must not
       offer linking for. */
