@@ -1321,18 +1321,33 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </span>
                   {variantAction === "unsnooze" ? (
                     !props.snoozeSupported ? null : (
-                      <button
-                        type="button"
-                        aria-label="Wake thread now"
-                        onClick={handleUnsnoozeClick}
-                        onPointerDown={handleActionPointerDown}
+                      <span
                         className={cn(
-                          "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                          isWoke && "group-any-hover/sidebar-row:static",
+                          // Mouse clicks leave Wake focused; focus-within would pin controls over
+                          // the wake label after the pointer leaves. Use focus-visible instead.
+                          "pointer-events-none absolute inset-y-0 right-0 -mr-1 flex items-stretch opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100",
+                          (isWoke || snoozeMenuOpen) && "pointer-events-auto static opacity-100",
                         )}
                       >
-                        <AlarmClockOffIcon className="mb-px size-3" />
-                      </button>
+                        {showSnoozeButton ? (
+                          <SnoozeMenuButton
+                            open={snoozeMenuOpen}
+                            onOpenChange={setSnoozeMenuOpen}
+                            onSnooze={handleSnoozePreset}
+                            timestampFormat={props.timestampFormat}
+                            environmentId={thread.environmentId}
+                          />
+                        ) : null}
+                        <button
+                          type="button"
+                          aria-label="Wake thread now"
+                          onClick={handleUnsnoozeClick}
+                          onPointerDown={handleActionPointerDown}
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          <AlarmClockOffIcon className="mb-px size-3" />
+                        </button>
+                      </span>
                     )
                   ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
                     <Tooltip>

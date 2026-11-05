@@ -955,12 +955,22 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
       SNOOZED_MENU_ACTIONS[0]!,
+      ...(swipeActions.secondary === "snooze"
+        ? [
+            {
+              id: "snooze",
+              title: "Snooze",
+              image: "clock",
+              subactions: snoozePresetActions,
+            } satisfies MenuAction,
+          ]
+        : []),
       ...titleMenuItems,
       ...autoSettleMenuItems,
       LEGACY_MENU_ACTIONS[0]!,
       SNOOZED_MENU_ACTIONS[1]!,
     ],
-    [autoSettleMenuItems, titleMenuItems],
+    [autoSettleMenuItems, snoozePresetActions, swipeActions.secondary, titleMenuItems],
   );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [

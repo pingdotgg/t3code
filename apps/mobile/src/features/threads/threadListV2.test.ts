@@ -37,6 +37,7 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
+  resolveThreadListV2SwipeActions,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
@@ -76,6 +77,29 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
         new Date(selectedAt.getTime() + 6 * 60 * 60 * 1_000).toISOString(),
       );
     }
+  });
+});
+
+describe("resolveThreadListV2SwipeActions", () => {
+  it("offers Snooze as a secondary action on snoozed rows that can reschedule", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        snoozed: true,
+      }),
+    ).toEqual({ primary: "unsnooze", secondary: "snooze" });
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: false,
+        snoozed: true,
+      }),
+    ).toEqual({ primary: "unsnooze", secondary: null });
   });
 });
 
