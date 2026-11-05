@@ -1396,7 +1396,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     threadKey: routeThreadKey,
     panelKey: usageLimitsKey,
-    visible: !rightPanelMaximized,
+    visible: embedded || (!rightPanelMaximized && !rightPanelControlsInPanel),
     providerInstanceId: activeProviderInstanceId,
     providerDriver: activeProviderStatus?.driver ?? null,
     providers: providerStatuses,

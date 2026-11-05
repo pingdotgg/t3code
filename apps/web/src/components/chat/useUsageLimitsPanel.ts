@@ -1,3 +1,4 @@
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { useUsageLimitsRefresh } from "../../hooks/useUsageLimitsRefresh";
 import type {
   EnvironmentId,
@@ -40,9 +41,11 @@ export function useUsageLimitsPanel(input: {
   if (panel !== null && panelKey !== null && panel.key !== panelKey) {
     setPanel(null);
   }
+  const nowMinute = useNowMinute(visible && panel !== null);
+  const reportNow = nowMinute ? Date.parse(`${nowMinute}:00Z`) : (panel?.now ?? 0);
   const report =
     panel !== null && panelKey !== null && panel.key === panelKey && providerInstanceId !== null
-      ? collectProviderUsageLimits(providerInstanceId, providers, sources, panel.now)
+      ? collectProviderUsageLimits(providerInstanceId, providers, sources, reportNow)
       : null;
   useUsageLimitsRefresh(
     environmentId,

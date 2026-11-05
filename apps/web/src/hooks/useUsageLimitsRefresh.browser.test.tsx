@@ -5,10 +5,13 @@ import { act, fakeTimers, render } from "../../test/render";
 import { BackgroundThreadContext } from "../components/chat/backgroundThread";
 import { useUsageLimitsPanel } from "../components/chat/useUsageLimitsPanel";
 
-vi.mock("../components/chat/ComposerUsageLimits", () => ({ usageLimitsBannerItem: () => ({}) }));
+vi.mock("../components/chat/ComposerUsageLimits", () => ({ usageLimitsBannerItem: mocks.banner }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
-const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  refresh: vi.fn(),
+  banner: vi.fn<(id: string, report: { createdAt: string }) => { id: string }>(),
+}));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => mocks.refresh }));
 vi.mock("../state/server", () => ({ serverEnvironment: { refreshProviders: {} } }));
 vi.mock("../state/presentation", async () => {
@@ -19,6 +22,7 @@ vi.mock("../state/presentation", async () => {
 
 function setup() {
   mocks.refresh.mockReset();
+  mocks.banner.mockReset().mockImplementation((id) => ({ id }));
   return mocks;
 }
 
@@ -61,7 +65,7 @@ function Probe({ visible }: { readonly visible: boolean }) {
 }
 
 it("pauses a retained report when its column is hidden or covered, then refreshes on return", async () => {
-  const { refresh } = setup();
+  const { refresh, banner } = setup();
   using _timers = fakeTimers({ now: 4_000_000 });
   const probe = (visible: boolean) => (
     <BackgroundThreadContext value>
@@ -71,6 +75,12 @@ it("pauses a retained report when its column is hidden or covered, then refreshe
   await using screen = await render(probe(true), { router: "/environment-one/thread-one" });
   expect(refresh).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Open usage report" }));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  const initialBannerId = banner.mock.lastCall?.[0];
+  const initialReportTime = banner.mock.lastCall?.[1].createdAt;
+  await act(() => vi.advanceTimersByTime(60_000));
+  expect(banner.mock.lastCall?.[1].createdAt).not.toBe(initialReportTime);
+  expect(banner.mock.lastCall?.[0]).toBe(initialBannerId);
   expect(refresh).toHaveBeenCalledTimes(1);
   await screen.rerender(probe(false));
   await act(() => vi.advanceTimersByTime(600_000));

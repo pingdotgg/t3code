@@ -82,6 +82,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   const unsupported = makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   if (!input.enabled || input.serverUrl.trim()) return unsupported;
 
+  let credentialFingerprint: string | undefined;
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -123,12 +124,19 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     if (!apiKey) return unsupported;
 
     const client = yield* HttpClient.HttpClient;
-    const readUsage = (key: string) =>
-      client.execute(
+    const digest = yield* Digest.Digest;
+    const readUsage = Effect.fn("readOpenCodeGoUsageLimits.readUsage")(function* (key: string) {
+      credentialFingerprint = undefined;
+      // Unkeyed hashes match across environments; random Go keys resist offline guessing.
+      credentialFingerprint = yield* digest
+        .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${key}`))
+        .pipe(Effect.map(Hex.encode), Effect.orDie);
+      return yield* client.execute(
         HttpClientRequest.get("https://opencode.ai/zen/go/v1/usage").pipe(
           HttpClientRequest.bearerToken(key),
         ),
       );
+    });
     let response = yield* readUsage(apiKey);
     for (const key of keys.slice(1)) {
       if (response.status !== 401 && response.status !== 403) break;
@@ -165,23 +173,19 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },
     ];
-    const digest = yield* Digest.Digest;
-    // Unkeyed hashes match across environments; random Go keys resist offline guessing.
-    const credentialFingerprint = yield* digest
-      .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${apiKey}`))
-      .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
       ...makeUsageLimits({ checkedAt: usageResponseCheckedAt(response, checkedAt), windows }),
       credentialFingerprint,
     };
   }).pipe(
     Effect.timeout("5 seconds"),
-    Effect.orElseSucceed(() =>
-      makeUnavailableUsageLimits({
+    Effect.orElseSucceed(() => ({
+      ...makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
         message: "OpenCode Go could not read usage.",
       }),
-    ),
+      ...(credentialFingerprint ? { credentialFingerprint } : {}),
+    })),
   );
 });

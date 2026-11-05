@@ -120,6 +120,10 @@ describe("resolveUsageLimitsAfterProbe", () => {
       resolveUsageLimitsAfterProbe({ published: identifiedLive, probed: switchedAccount }),
     ).toBe(switchedAccount);
 
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed: switchedAccount })).toBe(
+      switchedAccount,
+    );
+
     const sameTime = { ...probed, checkedAt: live.checkedAt };
     const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
     expect(resolveUsageLimitsAfterProbe({ published: live, probed: sameTime })).toEqual(sameTime);
@@ -133,6 +137,19 @@ describe("resolveUsageLimitsAfterProbe", () => {
       ...published,
       stale: true,
     });
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...published, credentialFingerprint: "account-a" },
+        probed: failed,
+      }),
+    ).toBe(failed);
+    const sameAccountFailure = { ...failed, credentialFingerprint: "account-a" };
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...published, credentialFingerprint: "account-a" },
+        probed: sameAccountFailure,
+      }),
+    ).toEqual({ ...published, credentialFingerprint: "account-a", stale: true });
     const otherAccountFailure = { ...failed, credentialFingerprint: "account-b" };
     expect(
       resolveUsageLimitsAfterProbe({
