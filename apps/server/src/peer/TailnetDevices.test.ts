@@ -613,3 +613,25 @@ describe("locating a tailnet target", () => {
     expect(TailnetIdentity.locateTailnetTarget(url, tailnet)).toEqual(expected);
   });
 });
+
+describe("tailnet scan probe addresses", () => {
+  const peer = (os: string | null) => ({
+    nodeName: "node",
+    magicDnsName: "node.tail.ts.net",
+    tailnetAddresses: ["100.64.0.7"],
+    userId: OWNER,
+    tags: [],
+    online: true,
+    os,
+  });
+
+  it.each([
+    ["macOS", 4],
+    ["linux", 4],
+    [null, 4],
+    ["iOS", 0],
+    ["android", 0],
+  ])("%s peers get %i probes", (os, count) => {
+    expect(TailnetIdentity.probeUrlsFor(peer(os))).toHaveLength(count);
+  });
+});

@@ -1,4 +1,5 @@
 import {
+  DEFLATED_RPC_FRAMES_QUERY_PARAM,
   type ServerConfig,
   type ServerConfigStreamEvent,
   WsSubscribeServerConfigRpc,
@@ -25,6 +26,7 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
+import { inflatingJson } from "./deflatedFrames.ts";
 import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
 import type {
@@ -62,6 +64,8 @@ export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  /** The WebSocket cannot negotiate permessage-deflate (iOS), so ask the server to deflate frames. */
+  readonly deflatedFrames?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -164,6 +168,16 @@ function socketFailureLocation(via: "relay" | "direct") {
   return { hop: via === "relay" ? "tunnel" : "server", via } as const;
 }
 
+// Only direct routes: a relay between this device and the host may not pass binary frames.
+function socketUrlFor(connection: PreparedConnection, options: RpcSessionOptions): string {
+  if (options.deflatedFrames !== true || connection.target._tag === "RelayConnectionTarget") {
+    return connection.socketUrl;
+  }
+  const url = new URL(connection.socketUrl);
+  url.searchParams.set(DEFLATED_RPC_FRAMES_QUERY_PARAM, "1");
+  return url.toString();
+}
+
 /** @public */
 export const make = Effect.fn("RpcSessionFactory.make")(function* (
   options: RpcSessionOptions = {},
@@ -225,7 +239,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       });
       return socket;
     };
-    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
+    const layerSocket = Socket.layerWebSocket(socketUrlFor(connection, options), {
       openTimeout: SOCKET_OPEN_TIMEOUT,
     }).pipe(
       Layer.provide(Layer.succeed(Socket.WebSocketConstructor, countingWebSocketConstructor)),
@@ -242,7 +256,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Layer.provide(
         Layer.mergeAll(
           layerSocket,
-          RpcSerialization.layerJson,
+          Layer.succeed(RpcSerialization.RpcSerialization, inflatingJson),
           Layer.succeed(RpcClient.ConnectionHooks, hooks),
         ),
       ),

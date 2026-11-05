@@ -1531,6 +1531,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       jszip:
         specifier: 3.10.1
         version: 3.10.1

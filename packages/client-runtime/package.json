@@ -567,6 +567,7 @@
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-definitions": "workspace:*",
     "effect": "catalog:",
+    "fflate": "0.8.3",
     "jszip": "3.10.1",
     "three": "0.180.0"
   },

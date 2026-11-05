@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/reactivity";
+import { Platform } from "react-native";
 
 import type { FoundationHotModule } from "../lib/foundation-fast-refresh";
 import { hotSwappableAtomRuntime } from "../lib/hot-swappable-atom-runtime";
@@ -38,7 +39,12 @@ type ConnectionLayerSource =
 
 const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   Layer.provideMerge(
-    Connection.layerWithOptions({ usageLimitSources: true, usageLimitsCommand: true }),
+    Connection.layerWithOptions({
+      usageLimitSources: true,
+      usageLimitsCommand: true,
+      // React Native's iOS WebSocket (SocketRocket) has no permessage-deflate; Android's has.
+      deflatedFrames: Platform.OS === "ios",
+    }),
   ),
   Layer.provideMerge(
     Layer.mergeAll(
