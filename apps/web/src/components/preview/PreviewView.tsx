@@ -976,7 +976,6 @@ export function PreviewView({
                     ? previewPdfAssetUrl(url, environmentHttpBaseUrl)
                     : null
                 }
-                pageUrl={url}
                 visible={visible}
                 onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
                 onControl={(control) =>

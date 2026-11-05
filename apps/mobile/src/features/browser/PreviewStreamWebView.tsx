@@ -20,14 +20,12 @@ import {
   useState,
   type Ref,
 } from "react";
-import { Platform, Pressable, TextInput, View } from "react-native";
+import { FlatList, Platform, Pressable, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
 import { AppText } from "../../components/ui/AppText";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
-import { ListSection } from "../../components/ui/ListSection";
-import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { Sheet } from "../../components/ui/Sheet";
 import { PdfPreview } from "../../components/PdfPreview";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -65,8 +63,6 @@ type NativeStreamBridge = {
   readonly onStreamingChange?: (streaming: boolean) => void;
   readonly compact?: boolean;
   readonly pdfUri?: string | null;
-  /** A select menu offered on an earlier page is not shown after the tab navigates. */
-  readonly pageUrl?: string;
 };
 
 async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean) {
@@ -223,7 +219,6 @@ function PreviewStreamDocumentView({
   background,
   compact,
   pdfUri,
-  pageUrl = "",
   onUnauthorized,
   onGone,
   onViewport,
@@ -264,10 +259,7 @@ function PreviewStreamDocumentView({
       ),
     );
   };
-  const [selectMenu, setSelectMenu] = useState<{
-    readonly menu: PreviewStreamSelectMenu;
-    readonly pageUrl: string;
-  } | null>(null);
+  const [selectMenu, setSelectMenu] = useState<PreviewStreamSelectMenu | null>(null);
   const command = (input: PreviewStreamInput) =>
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
@@ -416,7 +408,7 @@ function PreviewStreamDocumentView({
                 setFileChooser(message.chooser);
                 return;
               case "selectMenu":
-                setSelectMenu(message.menu && { menu: message.menu, pageUrl });
+                setSelectMenu(message.menu);
                 return;
               case "pictureInPicture":
                 onPictureInPicture?.(message, message.detail);
@@ -460,35 +452,34 @@ function PreviewStreamDocumentView({
           </View>
         </View>
       ) : null}
-      {!compact && selectMenu && selectMenu.pageUrl === pageUrl && control?.controller === "you" ? (
+      {!compact && selectMenu && control?.controller === "you" ? (
         <Sheet
-          key={selectMenu.menu.id}
+          key={selectMenu.id}
           title="Choose an option"
           onClose={() =>
-            setSelectMenu((current) => (current?.menu.id === selectMenu.menu.id ? null : current))
+            setSelectMenu((current) => (current?.id === selectMenu.id ? null : current))
           }
         >
-          <ScreenScrollView
+          <FlatList
+            data={selectMenu.options}
+            // The page answers by option index.
+            keyExtractor={(_, index) => String(index)}
+            className="flex-1"
             contentInsetAdjustmentBehavior="automatic"
             contentContainerClassName="p-4"
-          >
-            <ListSection>
-              {selectMenu.menu.options.map((option, index) => (
-                <ListChoiceRow
-                  // oxlint-disable-next-line react/no-array-index-key -- the page answers by option index
-                  key={index}
-                  label={option.label}
-                  selected={index === selectMenu.menu.selectedIndex}
-                  separated={index > 0}
-                  disabled={option.disabled}
-                  onPress={() => {
-                    setSelectMenu(null);
-                    command({ type: "selectMenu", id: selectMenu.menu.id, index });
-                  }}
-                />
-              ))}
-            </ListSection>
-          </ScreenScrollView>
+            renderItem={({ item, index }) => (
+              <ListChoiceRow
+                label={item.label}
+                selected={index === selectMenu.selectedIndex}
+                separated={index > 0}
+                disabled={item.disabled}
+                onPress={() => {
+                  setSelectMenu(null);
+                  command({ type: "selectMenu", id: selectMenu.id, index });
+                }}
+              />
+            )}
+          />
         </Sheet>
       ) : null}
       {!compact && control?.dialog ? (

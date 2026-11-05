@@ -214,7 +214,7 @@ export interface PreviewStreamEvents {
   readonly onDownload?: (download: PreviewStreamDownload) => void;
   readonly onPopup?: (tabId: string) => void;
   readonly onFileChooser?: (chooser: PreviewStreamFileChooser | null) => void;
-  /** `null` when the connection that offered the menu ends. */
+  /** `null` when the page withdraws the menu or the connection that offered it ends. */
   readonly onSelectMenu?: (menu: PreviewStreamSelectMenu | null) => void;
   readonly onConnectedChange: (connected: boolean) => void;
   /** The upgrade was refused; refresh access and start a new client. */
@@ -247,7 +247,7 @@ export function createPreviewStreamClient(
   let failures = 0;
   let control: PreviewStreamControl | null = null;
   let fileChooser: string | null = null;
-  let selectMenu = false;
+  let selectMenu: string | null = null;
 
   // The server re-offers a picker still open, under a new id, when this viewer reattaches.
   const withdrawFileChooser = () => {
@@ -257,8 +257,8 @@ export function createPreviewStreamClient(
   };
   // A menu's answer only reaches the server session that offered it.
   const withdrawSelectMenu = () => {
-    if (!selectMenu) return;
-    selectMenu = false;
+    if (selectMenu === null) return;
+    selectMenu = null;
     events.onSelectMenu?.(null);
   };
 
@@ -335,8 +335,10 @@ export function createPreviewStreamClient(
         typeof width === "number" &&
         typeof height === "number"
       ) {
-        selectMenu = true;
+        selectMenu = id;
         events.onSelectMenu?.({ id, options, selectedIndex, x, y, width, height });
+      } else if (type === "selectMenuClosed" && typeof id === "string") {
+        if (selectMenu === id) withdrawSelectMenu();
       } else if (type === "fileChooserClosed" && typeof id === "string") {
         if (fileChooser !== id) return;
         fileChooser = null;

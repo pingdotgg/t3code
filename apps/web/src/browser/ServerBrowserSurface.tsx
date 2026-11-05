@@ -154,8 +154,6 @@ export function ServerBrowserSurface(props: {
   readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
   readonly pdfUrl?: string | null;
-  /** A select menu offered on an earlier page is not shown after the tab navigates. */
-  readonly pageUrl?: string;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
   const {
@@ -171,7 +169,6 @@ export function ServerBrowserSurface(props: {
     onPopup,
     className,
     pdfUrl = null,
-    pageUrl = "",
     ref,
   } = props;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -187,13 +184,7 @@ export function ServerBrowserSurface(props: {
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [selectMenu, setSelectMenu] = useState<{
-    readonly menu: PreviewStreamSelectMenu;
-    readonly pageUrl: string;
-  } | null>(null);
-  const selectMenuOffered = useEffectEvent((menu: PreviewStreamSelectMenu | null) =>
-    setSelectMenu(menu && { menu, pageUrl }),
-  );
+  const [selectMenu, setSelectMenu] = useState<PreviewStreamSelectMenu | null>(null);
   const answerFileChooser = (files: ReadonlyArray<File>) => {
     const chooser = fileChooser;
     if (!chooser) return;
@@ -412,7 +403,7 @@ export function ServerBrowserSurface(props: {
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,
-        onSelectMenu: selectMenuOffered,
+        onSelectMenu: setSelectMenu,
         onViewport: (viewport) => {
           viewportRef.current = viewport;
           viewportChanged(viewport);
@@ -836,25 +827,23 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
           }}
         />
-        {selectMenu && selectMenu.pageUrl === pageUrl && control?.controller === "you" ? (
+        {selectMenu && control?.controller === "you" ? (
           <Menu open modal={false} onOpenChange={(open) => !open && setSelectMenu(null)}>
             <MenuPopup
-              anchor={() =>
-                selectMenuAnchor(selectMenu.menu, canvasRef.current, viewportRef.current)
-              }
+              anchor={() => selectMenuAnchor(selectMenu, canvasRef.current, viewportRef.current)}
               align="start"
               sideOffset={0}
               finalFocus={inputRef}
               aria-label="Page select options"
             >
               <MenuRadioGroup
-                value={selectMenu.menu.selectedIndex}
+                value={selectMenu.selectedIndex}
                 onValueChange={(index: number) => {
                   setSelectMenu(null);
-                  send({ type: "selectMenu", id: selectMenu.menu.id, index });
+                  send({ type: "selectMenu", id: selectMenu.id, index });
                 }}
               >
-                {selectMenu.menu.options.map((option, index) => (
+                {selectMenu.options.map((option, index) => (
                   // oxlint-disable-next-line react/no-array-index-key -- the page answers by option index
                   <MenuRadioItem key={index} value={index} disabled={option.disabled} closeOnClick>
                     {option.label}

@@ -1622,6 +1622,147 @@ it.live("a click on a native select offers its options to the viewer and takes i
   ).pipe(Effect.provide(layer)),
 );
 
+/** A controlling viewer on a real Chromium page; `click` presses and releases at a point. */
+const realSelectPage = (html: string) =>
+  Effect.gen(function* () {
+    const chromiumBrowser = yield* Effect.acquireRelease(
+      Effect.promise(() => chromium.launch({ headless: true })),
+      (launched) => Effect.promise(() => launched.close()),
+    );
+    const context = yield* Effect.promise(() => chromiumBrowser.newContext());
+    realContextNext = context;
+    const { browser, tabId } = yield* ready;
+    const page = context.pages()[0]!;
+    yield* Effect.promise(() => page.setContent(html));
+    const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+    yield* viewer.input({ type: "takeControl" });
+    yield* Queue.clear(viewer.output);
+    const click = (x: number, y: number) =>
+      Effect.gen(function* () {
+        const press = { type: "mouse", button: "left", x, y, clickCount: 1 };
+        yield* viewer.input({ ...press, action: "down", buttons: 1 });
+        yield* viewer.input({ ...press, action: "up", buttons: 0 });
+      });
+    const output = (tag: string) =>
+      Queue.clear(viewer.output).pipe(
+        Effect.map((items) => items.filter((item) => (item as { _tag: string })._tag === tag)),
+      ) as Effect.Effect<Array<{ _tag: string; id: string; options?: unknown }>>;
+    const evaluate = (expression: string) => Effect.promise(() => page.evaluate(expression));
+    return { page, viewer, click, output, evaluate };
+  });
+
+it.live("a relayed select press reaches page handlers, and a page can keep its own press", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { click, output, evaluate } = yield* realSelectPage(
+        `<style>
+          select { position: absolute; left: 40px; width: 200px; height: 30px }
+          #custom, #custom::picker(select) { appearance: base-select }
+        </style>
+        <select id="relayed" style="top: 20px"><option>One</option><option>Two</option></select>
+        <select id="readonly" style="top: 80px" onmousedown="return false">
+          <option>One</option><option>Two</option>
+        </select>
+        <select id="custom" style="top: 140px"><option>One</option><option>Two</option></select>
+        <script>
+          for (const select of document.querySelectorAll("select"))
+            for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"])
+              select.addEventListener(type, (event) => {
+                select.dataset.events =
+                  (select.dataset.events ?? "") + type + (event.isTrusted ? "!" : "") + " ";
+              });
+        </script>`,
+      );
+      const events = (id: string) =>
+        evaluate(`({
+          events: document.getElementById("${id}").dataset.events,
+          value: document.getElementById("${id}").value,
+          open: document.getElementById("${id}").matches(":open"),
+        })`);
+
+      yield* click(140, 35);
+      expect(yield* output("selectMenu"), "a plain select is offered").toHaveLength(1);
+      expect(yield* events("relayed"), "the page sees the press, never the native popup").toEqual({
+        events: "pointerdown mousedown pointerup mouseup click ",
+        value: "One",
+        open: false,
+      });
+
+      yield* click(140, 95);
+      expect(yield* output("selectMenu"), "a cancelled press offers nothing").toEqual([]);
+      expect(yield* events("readonly")).toEqual({
+        events: "pointerdown mousedown pointerup mouseup click ",
+        value: "One",
+        open: false,
+      });
+
+      yield* click(140, 155);
+      expect(yield* output("selectMenu"), "a customizable select draws its own picker").toEqual([]);
+      expect(
+        ((yield* events("custom")) as { events: string }).events,
+        "the real press reaches it",
+      ).toContain("mousedown!");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a select answer applies the option that was offered, wherever the page moved it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { viewer, click, output, evaluate } = yield* realSelectPage(
+        `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
+          <option hidden>Pick</option><option>One</option><option selected>Two</option>
+          <option>Three</option>
+        </select>`,
+      );
+      const value = () => evaluate(`document.querySelector("select").value`);
+
+      yield* click(140, 35);
+      const [offer] = yield* output("selectMenu");
+      expect(offer, "hidden options are not offered").toMatchObject({
+        options: [
+          { label: "One", disabled: false },
+          { label: "Two", disabled: false },
+          { label: "Three", disabled: false },
+        ],
+        selectedIndex: 1,
+      });
+      yield* evaluate(`(() => {
+        const select = document.querySelector("select");
+        for (const option of [...select.options].reverse()) select.append(option);
+      })()`);
+      yield* viewer.input({ type: "selectMenu", id: offer!.id, index: 0 });
+      expect(yield* value(), "the offered option, not whatever is first now").toBe("One");
+
+      yield* click(140, 35);
+      const [second] = yield* output("selectMenu");
+      yield* evaluate(
+        `[...document.querySelectorAll("option")].find((option) => option.text === "Three").remove()`,
+      );
+      yield* viewer.input({ type: "selectMenu", id: second!.id, index: 2 });
+      expect(yield* value(), "a removed option applies nothing").toBe("One");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("navigating away withdraws an offered select menu", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, click, output } = yield* realSelectPage(
+        `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
+          <option>One</option><option>Two</option>
+        </select>`,
+      );
+      yield* click(140, 35);
+      const [offer] = yield* output("selectMenu");
+      yield* Effect.promise(() => page.goto("data:text/html,<p>Next page</p>"));
+      expect(yield* output("selectMenuClosed")).toEqual([
+        { _tag: "selectMenuClosed", id: offer!.id },
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("overlapping file pickers keep the newer offer answerable", () =>
   Effect.scoped(
     Effect.gen(function* () {
