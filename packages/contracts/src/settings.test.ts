@@ -311,6 +311,18 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings PDF appearance", () => {
+  it("defaults existing settings to match the app and round-trips a saved preference", () => {
+    expect(decodeClientSettings({}).pdfAppearance).toBe("match-app");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("pdfAppearance");
+    for (const pdfAppearance of ["original", "dark", "match-app"] as const) {
+      const patch = decodeClientSettingsPatch({ pdfAppearance });
+      const saved = encodeClientSettings(decodeClientSettings(patch));
+      expect(decodeClientSettings(saved).pdfAppearance).toBe(pdfAppearance);
+    }
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

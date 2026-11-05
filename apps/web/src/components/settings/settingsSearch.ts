@@ -356,6 +356,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["latex tex katex equations formulas markdown"],
   },
   {
+    id: "pdf-appearance",
+    title: "PDF colors",
+    to: "/settings/appearance",
+    searchTerms: [
+      "preview document appearance dark original colors match theme app invert inverted",
+    ],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",
