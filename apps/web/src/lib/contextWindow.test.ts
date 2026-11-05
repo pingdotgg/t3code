@@ -134,6 +134,7 @@ describe("latestProviderTurnTokenUsage", () => {
       shouldOfferResumeCompaction({
         provider: "claudeAgent",
         usedTokens: snapshot?.usedTokens,
+        maxTokens: snapshot?.maxTokens,
         updatedAt: snapshot?.updatedAt,
         promptCacheTtlMs: usage?.promptCacheTtlMs,
         now: "2026-10-19T12:06:00.000Z",
