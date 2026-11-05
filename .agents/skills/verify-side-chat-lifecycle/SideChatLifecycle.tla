@@ -133,12 +133,21 @@ RunEnds(c) ==
   /\ turn' = [turn EXCEPT ![c] = "idle"]
   /\ UNCHANGED <<done, req, queued, held, parked, pending, nextReq, finishes, landed>>
 
-\* The next queued run starts once nothing is active and the queue is not held.
+\* The next queued run starts once nothing is active and the queue is not held
+\* (startNextQueuedRun, which never starts one in a done side chat).
 QueuedStarts(c) ==
-  /\ turn[c] = "idle" /\ queued[c] > 0 /\ ~held[c]
+  /\ done[c] = "open" /\ turn[c] = "idle" /\ queued[c] > 0 /\ ~held[c]
   /\ turn' = [turn EXCEPT ![c] = "running"]
   /\ queued' = [queued EXCEPT ![c] = @ - 1]
   /\ UNCHANGED <<done, req, held, parked, pending, nextReq, finishes, landed>>
+
+\* A parked run's hold can be lifted while the chat is done (the learner's /compact,
+\* releaseUnattendedHolds, queue.resume), so only startNextQueuedRun's done check stops it.
+StartParked(c) ==
+  /\ done[c] = "open" /\ turn[c] = "idle" /\ parked[c] > 0
+  /\ turn' = [turn EXCEPT ![c] = "running"]
+  /\ parked' = [parked EXCEPT ![c] = @ - 1]
+  /\ UNCHANGED <<done, req, queued, held, pending, nextReq, finishes, landed>>
 
 \* SideChatLifecycleService.writeOutcome, then dispatchSideChatOutcomeComplete: only the
 \* generating request of the chat lands; a stale one emits the row unchanged.
@@ -154,6 +163,7 @@ OutcomeComplete(e) ==
 
 Next ==
   \/ \E c \in Chats : Done(c) \/ UserSend(c) \/ ExternalSend(c) \/ Stop(c) \/ RunEnds(c) \/ QueuedStarts(c)
+     \/ StartParked(c)
   \/ LessonSend
   \/ \E e \in pending : OutcomeComplete(e)
 

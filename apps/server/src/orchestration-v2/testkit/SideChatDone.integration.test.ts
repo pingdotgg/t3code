@@ -503,6 +503,16 @@ describe("side chat Done", () => {
         assert.equal(parkedRun?.queueHeld, true);
         assert.equal(parkedProjection.thread.sideChat?.done?.outcome.status, "ready");
 
+        // The learner's /compact isn't a reopening message, so restart recovery must not start it.
+        yield* harness.send(space, "/compact", { await: "none" });
+        yield* orchestrator.resumeQueuedRuns;
+        const compacted = yield* orchestrator.getThreadProjection(space);
+        assert.deepEqual(
+          compacted.runs.filter((run) => run.status !== "completed").map((run) => run.status),
+          ["queued", "queued"],
+        );
+        assert.equal(compacted.thread.sideChat?.done?.outcome.status, "ready");
+
         const after = yield* harness.mark;
         yield* harness.send(space, BOX_QUESTION);
         assert.isNull((yield* harness.thread(space)).sideChat?.done);
