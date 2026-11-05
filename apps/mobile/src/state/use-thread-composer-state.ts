@@ -586,7 +586,13 @@ export function useThreadComposerState(input: {
             startingSideChatRef.current = false;
           });
         // Clear only what was sent; the draft may have changed while the side chat started.
-        if (started && getComposerDraftSnapshot(threadKey).text === draft.text) {
+        const current = getComposerDraftSnapshot(threadKey);
+        if (
+          started &&
+          current.text === draft.text &&
+          current.attachments.length === 0 &&
+          (current.context?.records.length ?? 0) === 0
+        ) {
           clearComposerDraftContent(threadKey);
         }
       }

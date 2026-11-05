@@ -356,6 +356,20 @@ describe("mobile task permissions", () => {
     );
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).toHaveBeenCalled();
+
+    // An attachment added while the side chat starts stays in the draft.
+    vi.clearAllMocks();
+    startSideChat.mockImplementationOnce(async () => {
+      state.draft = {
+        ...state.draft,
+        attachments: [{ id: "added" } as DraftComposerImageAttachment],
+      };
+      return true;
+    });
+    state.draft = { ...state.draft, text: "/side again?", attachments: [] };
+    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(startSideChat).toHaveBeenCalledOnce();
+    expect(state.clearDraft).not.toHaveBeenCalled();
   });
 
   it("rechecks a retained send callback before clearing or queueing the draft", async () => {
