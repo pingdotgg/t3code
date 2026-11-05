@@ -49,6 +49,7 @@ import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
 import { getOnboardingProviderState } from "../../onboarding/providerReadiness.logic";
 import { getProviderSummary } from "./providerStatus";
 import {
+  codexNeedsInstall,
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
@@ -550,7 +551,8 @@ function ManagedCodexSetup({
   const setup = async (methodId = "chatgpt") => {
     if (unavailable || busy) return;
     const signal = beginOperation();
-    if (installed && !updateAvailable) {
+    const canInstall = provider?.setup?.canInstall ?? false;
+    if (!codexNeedsInstall({ installed, updateAvailable, canInstall })) {
       await signIn(methodId, signal);
       return;
     }

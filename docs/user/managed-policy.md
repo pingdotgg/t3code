@@ -272,8 +272,16 @@ your fields. In the same way, an `opencode` entry like that rules out a server U
 starts the binary you set.
 
 `providers.installs: false` stops T3 Code from installing or updating provider software, including
-ACP Registry agents. Providers already on the machine keep running, and users can still remove what
-T3 Code installed. Set the provider up yourself, for example through your device management tool.
+ACP Registry agents. Users can still remove what T3 Code installed. Providers you install yourself,
+for example through your device management tool, run as usual.
+
+Software T3 Code installed earlier gets no more updates, so it can stop working:
+
+- [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt) stops when T3 Code no longer
+  supports the installed Codex version.
+- An ACP Registry agent stops when the registry publishes a new version, because T3 Code runs only
+  the version the registry lists. To avoid that, install the agent yourself and set its
+  **Executable override**, which `maxRuntimeMode` does not allow.
 
 ### Updates
 

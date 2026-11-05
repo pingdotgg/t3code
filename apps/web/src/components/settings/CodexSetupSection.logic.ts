@@ -20,6 +20,15 @@ const RUNNING_INSTALL_PHASES = new Set(["downloading", "extracting", "verifying"
  * The subscription can still carry the previous operation's state when start
  * returns, so only a state with the same operation id settles a running install.
  */
+/** Whether Codex must install before sign-in; a refused update signs in on what is installed. */
+export function codexNeedsInstall(input: {
+  readonly installed: boolean;
+  readonly updateAvailable: boolean;
+  readonly canInstall: boolean;
+}): boolean {
+  return !input.installed || (input.updateAvailable && input.canInstall);
+}
+
 export function settleProviderInstall(
   started: ProviderInstallState,
   current: ProviderInstallState | null,
