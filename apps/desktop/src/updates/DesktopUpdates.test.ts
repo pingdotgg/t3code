@@ -42,26 +42,35 @@ describe("DesktopUpdates", () => {
     }),
   );
 
-  it.effect("turns updates off when the macOS app runs from a read-only volume", () => {
-    const harness = makeHarness({ platform: "darwin", readOnlyBundle: true });
+  it.effect("turns updates off only when the macOS app runs from a read-only volume", () =>
+    Effect.gen(function* () {
+      const darwinUpdates = (bundleWriteError: "EROFS" | "EACCES") => {
+        const harness = makeHarness({ platform: "darwin", bundleWriteError });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            yield* TestClock.adjust(Duration.minutes(1));
+            yield* flushCallbacks;
+            return { state: yield* updates.getState, checks: harness.checkCount() };
+          }),
+        ).pipe(Effect.provide(harness.layer));
+      };
 
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        yield* flushCallbacks;
+      const readOnly = yield* darwinUpdates("EROFS");
+      assert.equal(readOnly.state.status, "disabled");
+      assert.equal(
+        readOnly.state.message,
+        "Automatic updates are off because T3 Code is running from a read-only location, such as a disk image. Move T3 Code to the Applications folder and open it from there.",
+      );
+      assert.equal(readOnly.checks, 0);
 
-        const state = yield* updates.getState;
-        assert.equal(state.status, "disabled");
-        assert.equal(state.enabled, false);
-        assert.isString(state.message);
-
-        yield* TestClock.adjust(Duration.minutes(1));
-        yield* flushCallbacks;
-        assert.equal(harness.checkCount(), 0);
-      }),
-    ).pipe(Effect.provide(harness.layer));
-  });
+      // ShipIt can ask for authorization over a bundle the user cannot write, so that still updates.
+      const notWritable = yield* darwinUpdates("EACCES");
+      assert.notEqual(notWritable.state.status, "disabled");
+      assert.equal(notWritable.checks, 1);
+    }),
+  );
 
   it.effect("keeps the disabled reason available after configuration and channel changes", () => {
     const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "true" } });

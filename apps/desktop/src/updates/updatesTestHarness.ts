@@ -36,8 +36,8 @@ export interface UpdatesHarnessOptions {
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
   readonly packageType?: string | undefined;
-  /** Puts the app bundle on a read-only volume, as a mounted disk image or App Translocation. */
-  readonly readOnlyBundle?: boolean;
+  /** Fails write checks on the app bundle: EROFS on a disk image or under App Translocation. */
+  readonly bundleWriteError?: "EROFS" | "EACCES";
   readonly installRecord?: string | undefined;
   readonly policy?: DesktopUpdatePolicy.UpdatePolicy;
   readonly appVersion?: string;
@@ -244,25 +244,26 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
   const layerFileSystem = FileSystem.layerNoop({
-    // The harness bundle sits at "/", so the whole volume is the bundle's; Node reports EROFS.
-    access: (path, accessOptions) =>
-      options.readOnlyBundle && accessOptions?.writable
+    // The harness bundle sits at "/", so every write check is a check on the bundle's volume.
+    access: (path, accessOptions) => {
+      const code = options.bundleWriteError;
+      return code && accessOptions?.writable
         ? Effect.fail(
             PlatformError.systemError({
               module: "FileSystem",
               method: "access",
-              _tag: "Unknown",
+              _tag: code === "EACCES" ? "PermissionDenied" : "Unknown",
               pathOrDescriptor: path,
               syscall: "access",
-              cause: Object.assign(new Error(`EROFS: read-only file system, access '${path}'`), {
-                code: "EROFS",
-                errno: -30,
+              cause: Object.assign(new Error(`${code}: access '${path}'`), {
+                code,
                 syscall: "access",
                 path,
               }),
             }),
           )
-        : Effect.void,
+        : Effect.void;
+    },
     readFileString: (path) => {
       const installRecord = isInstallRecord(path)
         ? (installRecords.get(path) ?? previousInstallRecord)

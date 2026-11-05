@@ -355,7 +355,7 @@ function getAutoUpdateDisabledReason(args: {
     return "Automatic updates on Linux require the AppImage or the .deb package.";
   }
   if (args.isReadOnlyMacBundle) {
-    return "Automatic updates are off because T3 Code is running from a read-only location, such as the disk image. Move T3 Code to the Applications folder and open it from there.";
+    return "Automatic updates are off because T3 Code is running from a read-only location, such as a disk image. Move T3 Code to the Applications folder and open it from there.";
   }
   return null;
 }
