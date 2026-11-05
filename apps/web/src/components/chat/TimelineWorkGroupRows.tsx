@@ -331,13 +331,13 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     pendingRequest,
     worktreeSetupCardOwnsHeader,
   } = use(TimelineRowActivityCtx);
-  if (worktreeSetupCardOwnsHeader) return null;
   const window = row.window;
   const [fit, onOverflowChange] = useReducer(
     (current: { overflows: boolean; fade: boolean }, overflows: boolean) =>
       current.overflows === overflows ? current : { overflows, fade: current.fade || !overflows },
     { overflows: false, fade: false },
   );
+  if (worktreeSetupCardOwnsHeader) return null;
   if (
     window?.compactCommand &&
     window.items.length === 0 &&
