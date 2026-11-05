@@ -6480,8 +6480,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND (i.run_id IS NULL OR r.status <> 'rolled_back')
         ${threadIds === undefined ? sql`` : sql`AND i.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
       -- A finished delegate's result commits before its wake run exists, and a delivery run ends
-      -- before the next delivery is claimed, so an owed task holds the parent while a delivery
-      -- is reserved. Without an owning instance it holds completion, not caller access.
+      -- before the next delivery is claimed, so an owed task holds the parent while its open
+      -- cohort has a delivery reserved. Without an owning instance it holds completion, not
+      -- caller access.
       UNION ALL
       SELECT i.thread_id, json_set(i.payload_json, '$.status', 'waiting') AS payload_json,
         NULL AS owning_provider_instance_id
