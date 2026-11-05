@@ -32,6 +32,12 @@ ME=$(basename "$0")
 T3=$(sed -n 's/^ExecStart=\(.*\) __service-launcher$/\1/p' "$HOME/.config/systemd/user/$UNIT" 2>/dev/null || true)
 [ -x "$T3" ] || { echo "$ME: $UNIT is not installed; install it first (see the guide)" >&2; exit 1; }
 VERSION=$(basename "$(dirname "$T3")")
+# After an update the unit's launcher stays put and serves the version the runtime state names.
+active=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("activeVersion",""))' \
+  "$LEARN/runtime/service-state.json" 2>/dev/null || true)
+if [ -n "$active" ] && [ -x "$LEARN/runtime/versions/$active/t3" ]; then
+  VERSION=$active T3=$LEARN/runtime/versions/$active/t3
+fi
 [ -e "$SOURCE/userdata/statev2.sqlite" ] || { echo "$ME: no T3 Code database at $SOURCE" >&2; exit 1; }
 
 say() { printf '%s %s\n' "$(date +%T)" "$*"; }
@@ -171,9 +177,9 @@ done
 [ -e "$LEARN/userdata/settings.json" ] || cp "$STAGE/userdata/settings.json" "$LEARN/userdata/settings.json"
 
 # Stopping cuts off whatever T3 Learn is running, so a busy T3 Learn waits for the next run.
+# Not provider_threads: a row can stay 'active' long after its run was cancelled.
 busy=$(count "$target" "SELECT
   (SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status IN ('preparing','starting','running','waiting'))
-+ (SELECT COUNT(*) FROM orchestration_v2_projection_provider_threads WHERE status='active')
 + (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending')")
 if [ "$busy" != 0 ]; then
   say "T3 Learn has $busy item(s) running; nothing added. Run again when it is idle."
