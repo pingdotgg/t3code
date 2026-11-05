@@ -31,6 +31,18 @@ interface Slide {
 
 const slides = new WeakMap<HTMLElement, Slide>();
 
+let dropped = false;
+
+export function notePaneDrop(next: boolean): void {
+  dropped = next;
+}
+
+function takePaneDrop(): boolean {
+  const drop = dropped;
+  dropped = false;
+  return drop;
+}
+
 const translate = (dx: number, dy: number): Keyframe => ({
   transform: `translate(${toDevicePixel(dx)}px, ${toDevicePixel(dy)}px)`,
 });
@@ -391,6 +403,7 @@ export function usePaneMotion(
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure committed pane boxes and start DOM animations before paint.
   useLayoutEffect(() => {
+    const drop = takePaneDrop();
     const stage = stageRef.current;
     if (!stage || key === null) {
       previous.current = null;
@@ -496,7 +509,13 @@ export function usePaneMotion(
     const paneWas = new Map<string, PaneBox>();
     for (const box of previousBoxes.values()) paneWas.set(box.paneId, box);
     const wasOf = (tabId: string, box: PaneBox) =>
-      previousBoxes.get(tabId) ?? paneWas.get(box.paneId);
+      drop ? paneWas.get(box.paneId) : (previousBoxes.get(tabId) ?? paneWas.get(box.paneId));
+    const kept = (from: number, fromSize: number, to: number, toSize: number) =>
+      drop && Math.abs(from + fromSize - to - toSize) < 1;
+    const moved = (was: Box, box: Box) => ({
+      dx: kept(was.x, was.width, box.x, box.width) ? 0 : was.x - box.x,
+      dy: kept(was.y, was.height, box.y, box.height) ? 0 : was.y - box.y,
+    });
     // Where each pane shows now against its new place, before any slide
     // below retargets it: its move plus what a running slide still owes.
     const shows = new Map<string, { dx: number; dy: number }>();
@@ -504,9 +523,10 @@ export function usePaneMotion(
       const was = wasOf(tabId, box);
       const running = slides.get(box.element);
       const owed = running ? running.run.value() : 0;
+      const move = was ? moved(was, box) : { dx: 0, dy: 0 };
       shows.set(tabId, {
-        dx: (was ? was.x - box.x : 0) + (running ? running.dx * owed : 0),
-        dy: (was ? was.y - box.y : 0) + (running ? running.dy * owed : 0),
+        dx: move.dx + (running ? running.dx * owed : 0),
+        dy: move.dy + (running ? running.dy * owed : 0),
       });
     }
     /** Hold the neighbor surface behind its moving edge when panes separate, so resizing or
@@ -565,6 +585,11 @@ export function usePaneMotion(
     };
     for (const [tabId, box] of boxes) {
       const was = wasOf(tabId, box);
+      if (!was && drop) {
+        box.element.style.zIndex = "1";
+        raised.push(box.element);
+        continue;
+      }
       if (!was) {
         if (previousBoxes.size === 0) continue;
         const donor = findDonor(
@@ -607,8 +632,7 @@ export function usePaneMotion(
         box.element.style.zIndex = "1";
         raised.push(box.element);
       }
-      const dx = was.x - box.x;
-      const dy = was.y - box.y;
+      const { dx, dy } = moved(was, box);
       if ((Math.abs(dx) >= 1 || Math.abs(dy) >= 1) && !unseen(box, dx, view)) {
         moving += 1;
         slide(box.element, dx, dy, settle, openingEdge(box));
