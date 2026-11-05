@@ -185,9 +185,10 @@ const make = Effect.gen(function* () {
   let loadedAcceleration: string | undefined;
   let autoCpuModel: string | undefined;
   let loading: Promise<LoadedModel> | undefined;
-  const discoverGpuDevices = yield* Effect.tryPromise(() => listNativeSpeechGpuDevices()).pipe(
-    Effect.cachedWithTTL((exit) => (Exit.isSuccess(exit) ? Duration.infinity : "1 minute")),
-  );
+  const discoverGpuDevices = yield* Effect.tryPromise({
+    try: () => listNativeSpeechGpuDevices(),
+    catch: (cause) => new SpeechOperationError({ operation: "discover GPU devices", cause }),
+  }).pipe(Effect.cachedWithTTL((exit) => (Exit.isSuccess(exit) ? Duration.infinity : "1 minute")));
   let downloading:
     | {
         modelId: string;
@@ -681,7 +682,7 @@ const make = Effect.gen(function* () {
             }
           });
           if (loaded && started) {
-            yield* Effect.tryPromise(() => loaded!.reset()).pipe(
+            yield* attempt("reset stream", () => loaded!.reset()).pipe(
               Effect.timeout("2500 millis"),
               Effect.catch(() => dispose),
             );
