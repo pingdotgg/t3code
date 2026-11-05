@@ -1682,7 +1682,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...storedQueuedRun,
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
+        ...(followsCurrentConversation(queuedMessage)
+          ? {
+              executionModes: {
+                runtimeMode: projection.thread.runtimeMode,
+                interactionMode: projection.thread.interactionMode,
+              },
+            }
+          : {}),
       };
+      const executionThread = { ...projection.thread, ...queuedRun.executionModes };
       // A limited provider would fail and consume every waiting message.
       if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
         return;
@@ -2053,7 +2062,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const checkpointScope =
         storedCheckpointScope ??
         (yield* runtimePolicy
-          .resolve({ thread: projection.thread, modelSelection: queuedRun.modelSelection })
+          .resolve({ thread: executionThread, modelSelection: queuedRun.modelSelection })
           .pipe(
             Effect.flatMap((resolvedRuntimePolicy) =>
               checkpointService.prepareRootRunScope({
@@ -5314,6 +5323,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     const restartedRun: OrchestrationV2Run = {
       ...targetRun,
+      executionModes: {
+        runtimeMode: input.projection.thread.runtimeMode,
+        interactionMode: input.projection.thread.interactionMode,
+      },
       providerInstanceId: input.modelSelection.instanceId,
       modelSelection: input.modelSelection,
       providerThreadId: restartProviderThread.id,
@@ -6133,6 +6146,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId,
         activeAttemptId: attemptId,
         status: "queued",
+        executionModes: {
+          runtimeMode: projection.thread.runtimeMode,
+          interactionMode: projection.thread.interactionMode,
+        },
         ...(worktreeMissingRun !== undefined ||
         (heldRunsToRelease.length === 0 && queueIsHeld && !wakeSkipsHold)
           ? { queueHeld: true }

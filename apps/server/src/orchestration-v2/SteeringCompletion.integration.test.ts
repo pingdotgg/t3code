@@ -1294,6 +1294,137 @@ it.effect("keeps a held commentary draft before the steer when turn end flushes 
   ),
 );
 
+it.effect.each(["user", "legacy", "monitor"] as const)(
+  "starts queued %s messages with their own modes or the current conversation fallback",
+  (source) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          `queued-modes-${source}`,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          const modes = [
+            { runtimeMode: "approval-required", interactionMode: "plan" },
+            { runtimeMode: "full-access", interactionMode: "default" },
+          ] as const;
+          for (const [index, mode] of modes.entries()) {
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make(`runtime:${index}`),
+              threadId,
+              runtimeMode: mode.runtimeMode,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make(`interaction:${index}`),
+              threadId,
+              interactionMode: mode.interactionMode,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`queued:${index}`),
+              threadId,
+              messageId: MessageId.make(`message:queued:${index}`),
+              text: `queued ${index}`,
+              attachments: [],
+              modelSelection: runSelection,
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: source === "monitor" ? "agent" : "user",
+              creationSource: source === "monitor" ? "server" : "web",
+              ...(source === "monitor"
+                ? {
+                    notification: {
+                      source: { kind: "monitor" as const },
+                      outcome: "updated" as const,
+                      summary: `Monitor update ${index}`,
+                    },
+                  }
+                : {}),
+            });
+          }
+          if (source === "legacy") {
+            const sink = yield* EventSink.EventSinkV2;
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            yield* sink.write({
+              events: projection.runs
+                .filter((run) => run.status === "queued")
+                .map((run) => ({
+                  id: EventId.make(`legacy:${run.id}`),
+                  type: "run.updated" as const,
+                  threadId,
+                  runId: run.id,
+                  occurredAt: run.requestedAt,
+                  payload: { ...run, executionModes: undefined },
+                })),
+            });
+          }
+          for (const [index, mode] of modes.entries()) {
+            const current = started[index]!;
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const next = projection.runs.find(
+              (run) => run.userMessageId === MessageId.make(`message:queued:${index}`),
+            )!;
+            const running = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider-turn.updated" &&
+                  event.payload.runAttemptId === next.activeAttemptId &&
+                  event.payload.status === "running",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            const settled = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "run.updated" &&
+                  event.payload.id === current.runId &&
+                  event.payload.status === "waiting",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
+              (turn) => turn.runAttemptId === current.attemptId,
+            )!;
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+            });
+            yield* Queue.offer(events, {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              runOrdinal: current.runOrdinal,
+              status: "completed",
+              failure: null,
+              threadDisposition: "reusable",
+            });
+            yield* Fiber.join(settled);
+            yield* worker.drain();
+            yield* orchestrator.resumeQueuedRuns;
+            yield* worker.drain();
+            yield* Fiber.join(running);
+            assert.equal(started[index + 1]?.message.text, `queued ${index}`);
+            assert.containsSubset(
+              started[index + 1]?.runtimePolicy,
+              source === "user" ? mode : modes[1],
+            );
+          }
+          const { thread } = yield* orchestrator.getThreadProjection(threadId);
+          assert.containsSubset(thread, modes[1]);
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+);
+
 it.effect("steers a promoted queued message with the selection it was queued with", () =>
   Effect.scoped(
     Effect.gen(function* () {

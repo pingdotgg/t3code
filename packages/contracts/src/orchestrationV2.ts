@@ -686,6 +686,12 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  executionModes: Schema.optional(
+    Schema.Struct({
+      runtimeMode: RuntimeMode,
+      interactionMode: ProviderInteractionMode,
+    }),
+  ),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
