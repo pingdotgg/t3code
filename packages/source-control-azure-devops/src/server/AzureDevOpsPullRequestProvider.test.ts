@@ -1,12 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
+import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   LOCATION_CACHE_CAPACITY,
   make,
   MAX_DIFF_SPAWNS,
+  SUMMARY_BATCH_WINDOW,
 } from "./AzureDevOpsPullRequestProvider.ts";
 import {
   byteLength,
@@ -121,6 +126,116 @@ function patchedPaths(patch: string): ReadonlyArray<string> {
     (match) => match.groups?.path ?? "",
   );
 }
+
+describe("getChangeRequestSummary", () => {
+  const mockCli = Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli);
+  const readTogether = (cli: Parameters<typeof mockCli>[0], numbers: ReadonlyArray<number>) =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(Effect.provide(mockCli(cli)));
+      const reads = yield* Effect.forEach(numbers, (number) =>
+        provider.getChangeRequestSummary!({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "dev.azure.com",
+          number,
+        }).pipe(Effect.exit, Effect.forkChild),
+      );
+      yield* TestClock.adjust(SUMMARY_BATCH_WINDOW);
+      return yield* Fiber.joinAll(reads);
+    });
+
+  it.effect("reads the sync's pull requests in one repository from one listing", () =>
+    Effect.gen(function* () {
+      const shown: number[] = [];
+      let listings = 0;
+      const exits = yield* readTogether(
+        {
+          listPullRequests: () =>
+            Effect.sync(() => {
+              listings += 1;
+              return {
+                items: [PULL_REQUEST, { ...PULL_REQUEST, number: 8, title: "Pull request 8" }],
+                truncated: false,
+                cursorAdvance: 2,
+              };
+            }),
+          // 9 was merged since the last read, so only reading it on its own finds it.
+          getPullRequest: (input) =>
+            Effect.sync(() => {
+              shown.push(input.number);
+              return { ...PULL_REQUEST, number: input.number, state: "merged" as const };
+            }),
+        },
+        [7, 8, 9],
+      );
+
+      expect(listings).toBe(1);
+      expect(shown).toEqual([9]);
+      expect(
+        exits.map((exit) => (exit._tag === "Success" ? [exit.value.number, exit.value.state] : [])),
+      ).toEqual([
+        [7, "open"],
+        [8, "open"],
+        [9, "merged"],
+      ]);
+    }),
+  );
+
+  it.effect("fails every read at once when az is rate limited, without reading each", () =>
+    Effect.gen(function* () {
+      const shown: number[] = [];
+      const exits = yield* readTogether(
+        {
+          listPullRequests: () =>
+            Effect.fail(
+              new AzureDevOpsCli.AzureDevOpsCliRateLimitError({
+                operation: "execute",
+                command: "az",
+                cwd: "/w",
+                argumentCount: 12,
+                cause: "throttled",
+              }),
+            ),
+          getPullRequest: (input) =>
+            Effect.sync(() => {
+              shown.push(input.number);
+              return { ...PULL_REQUEST, number: input.number };
+            }),
+        },
+        [7, 8],
+      );
+
+      expect(shown).toEqual([]);
+      expect(
+        exits.map((exit) => (exit._tag === "Failure" ? Cause.squash(exit.cause) : null)),
+      ).toMatchObject([{ reason: "rate-limited" }, { reason: "rate-limited" }]);
+    }),
+  );
+
+  it.effect("reads each pull request on its own when the listing fails for its own reasons", () =>
+    Effect.gen(function* () {
+      const exits = yield* readTogether(
+        {
+          listPullRequests: () =>
+            Effect.fail(
+              new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                command: "az",
+                cwd: "/w",
+                operation: "listPullRequests",
+                cause: "unreadable listing",
+              }),
+            ),
+          getPullRequest: (input) => Effect.succeed({ ...PULL_REQUEST, number: input.number }),
+        },
+        [7, 8],
+      );
+
+      expect(exits.map((exit) => (exit._tag === "Success" ? exit.value.number : null))).toEqual([
+        7, 8,
+      ]);
+    }),
+  );
+});
 
 describe("getChangeRequest", () => {
   it.effect("preserves the newest head when file counting fails", () =>
