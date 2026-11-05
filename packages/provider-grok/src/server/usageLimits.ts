@@ -189,7 +189,10 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   }
   const digest = yield* Digest.Digest;
   const credentialFingerprint = yield* digest
-    .digest(Digest.sha256, new TextEncoder().encode(`grok\0${token}`))
+    .digest(
+      Digest.sha256,
+      new TextEncoder().encode(email ? `grok\0account\0${email}` : `grok\0token\0${token}`),
+    )
     .pipe(Effect.map(Hex.encode), Effect.orDie);
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
