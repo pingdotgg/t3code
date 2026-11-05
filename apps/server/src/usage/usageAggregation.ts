@@ -1,10 +1,12 @@
 // @effect-diagnostics globalDate:off
 import type {
+  ProjectId,
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
   UsageModelFilter,
   UsageModelSelector,
+  UsageProjectTotals,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -62,6 +64,14 @@ interface MutableBucket {
   sessions: Set<string>;
 }
 
+interface MutableProjectTotals {
+  totals: MutableBucket["totals"];
+  costUsd: number;
+  records: number;
+  unpricedRecords: number;
+  sessions: Set<string>;
+}
+
 export interface AggregateOptions {
   readonly timeZone: string;
   readonly sinceDay: string;
@@ -73,6 +83,8 @@ export interface AggregateOptions {
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /** When present, counted records also total per project; null means no T3 project claims it. */
+  readonly attributeProject?: (record: UsageRecord, transcriptPath?: string) => ProjectId | null;
 }
 
 export function resolveModelAliases(
@@ -125,6 +137,7 @@ export function canonicalModelFilter(
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
+  readonly projectTotals?: readonly UsageProjectTotals[];
   readonly duplicatesDropped: number;
   readonly outOfWindow: number;
 }
@@ -132,6 +145,7 @@ export interface AggregateResult {
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
+  readonly #projects = new Map<string, MutableProjectTotals>();
   readonly #seen = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
@@ -163,7 +177,7 @@ export class UsageAggregator {
     }
   }
 
-  add(input: UsageRecord, sourcePath?: string): boolean {
+  add(input: UsageRecord, sourcePath?: string, transcriptPath?: string): boolean {
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
@@ -232,6 +246,30 @@ export class UsageAggregator {
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    if (this.#options.attributeProject !== undefined) {
+      const projectId = this.#options.attributeProject(record, transcriptPath);
+      const key = `${projectId ?? ""}\u0000${record.provider}\u0000${sourcePath ?? ""}`;
+      let project = this.#projects.get(key);
+      if (project === undefined) {
+        project = {
+          totals: { ...EMPTY_TOTALS },
+          costUsd: 0,
+          records: 0,
+          unpricedRecords: 0,
+          sessions: new Set(),
+        };
+        this.#projects.set(key, project);
+      }
+      project.totals.uncachedInputTokens += record.totals.uncachedInputTokens;
+      project.totals.cachedInputTokens += record.totals.cachedInputTokens;
+      project.totals.cacheCreationTokens += record.totals.cacheCreationTokens;
+      project.totals.outputTokens += record.totals.outputTokens;
+      project.totals.reasoningTokens += record.totals.reasoningTokens;
+      project.costUsd += priced.costUsd;
+      project.records += 1;
+      if (priced.costSource === "unpriced") project.unpricedRecords += 1;
+      if (record.sessionId.length > 0) project.sessions.add(record.sessionId);
+    }
     return true;
   }
 
@@ -332,8 +370,26 @@ export class UsageAggregator {
         a.model.localeCompare(b.model),
     );
 
+    const projectTotals =
+      this.#options.attributeProject === undefined
+        ? undefined
+        : [...this.#projects].map(([key, project]): UsageProjectTotals => {
+            const [projectId = "", provider = "", sourcePath = ""] = key.split("\u0000");
+            return {
+              ...(projectId === "" ? {} : { projectId: projectId as ProjectId }),
+              provider: provider as UsageProjectTotals["provider"],
+              ...(sourcePath === "" ? {} : { sourcePath }),
+              totals: { ...project.totals },
+              costUsd: project.costUsd,
+              records: project.records,
+              unpricedRecords: project.unpricedRecords,
+              sessions: project.sessions.size,
+            };
+          });
+
     return {
       buckets,
+      ...(projectTotals === undefined ? {} : { projectTotals }),
       duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };
