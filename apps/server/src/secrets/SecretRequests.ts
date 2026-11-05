@@ -103,7 +103,7 @@ const make = Effect.gen(function* () {
     if (value === undefined || value.trim() === "") {
       return yield* new SecretRequestError({
         reason: "reference_unreadable",
-        provider: reference.provider,
+        provider: yield* resolver.label(reference.provider),
       });
     }
     return value;

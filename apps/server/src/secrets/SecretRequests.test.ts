@@ -236,7 +236,7 @@ it.effect(
             .answer({ threadId, turnItemId, answer: { type: "reference", reference } })
             .pipe(Effect.flip);
           assert.equal(locked.reason, "reference_unreadable");
-          assert.include(locked.message, '"vault"');
+          assert.include(locked.message, '"Vault"');
           assert.deepEqual(dispatched, []);
           assert.deepEqual(valuesOf(stored), []);
 
