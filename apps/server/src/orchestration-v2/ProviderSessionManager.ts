@@ -531,6 +531,16 @@ export const layerWithOptions = (
           ),
         );
 
+      const releaseLiveOutput = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "command_execution" &&
+        !isOrchestrationV2WorkActive(event.turnItem.status)
+          ? commandOutput.finish({
+              threadId: event.turnItem.threadId,
+              itemId: event.turnItem.id,
+            })
+          : Effect.void;
+
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
         entry: LiveSessionEntry,
         detail: string,
@@ -1028,6 +1038,12 @@ export const layerWithOptions = (
                   });
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
+                  }
+                  for (const event of yield* (
+                    entry.runtime.retireBackgroundWork ?? Effect.succeed([])
+                  )) {
+                    yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                    yield* releaseLiveOutput(event);
                   }
                   if (input.gracefulSubscribers === true) {
                     yield* endSubscribers(entry);
@@ -1949,15 +1965,6 @@ export const layerWithOptions = (
             if (event.type === "command_output.delta") {
               return commandOutput.append(event);
             }
-            const releaseLiveOutput =
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "command_execution" &&
-              !isOrchestrationV2WorkActive(event.turnItem.status)
-                ? commandOutput.finish({
-                    threadId: event.turnItem.threadId,
-                    itemId: event.turnItem.id,
-                  })
-                : Effect.void;
             if (
               event.type === "provider_session.updated" &&
               event.providerSession.status === "stopped"
@@ -2032,7 +2039,7 @@ export const layerWithOptions = (
                     return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
-                  yield* releaseLiveOutput;
+                  yield* releaseLiveOutput(event);
                 }),
               ),
             );

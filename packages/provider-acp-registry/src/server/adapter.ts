@@ -6,6 +6,7 @@ import {
 import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
+  extractDevinBackgroundShellId,
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
@@ -245,6 +246,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+          extractBackgroundTaskId: extractDevinBackgroundShellId,
+          // Later meta-only updates drop the background flag; keep the shell id per tool call.
+          isBackgroundCommandTool: (tool) => extractDevinBackgroundShellId(tool) !== undefined,
         }
       : {}),
     ...(copilotRouting === undefined

@@ -1562,12 +1562,13 @@ function acpPostSettleMonitorPromptShouldSuppress(
 }
 
 export function acpCompletedTurnShouldTerminalizeTool(
-  tool: AcpToolCallState,
+  tool: AcpToolCallState & { readonly backgroundCommandTaskId?: string },
   flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundTaskId" | "extractSubagentUpdate">,
 ): boolean {
   const status = toolStatus(tool.status);
   if (status !== "pending" && status !== "running") return false;
-  if (flavor.extractBackgroundTaskId?.(tool) !== undefined) return false;
+  if ((tool.backgroundCommandTaskId ?? flavor.extractBackgroundTaskId?.(tool)) !== undefined)
+    return false;
   return flavor.extractSubagentUpdate?.(tool) === undefined;
 }
 
@@ -2216,6 +2217,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        // Without deferred finalize, background tools outlive their turn; their late
+        // updates still belong to the original turn item, keyed by tool call id.
+        const carriesBackgroundTools =
+          flavor.deferFinalizeForBackgroundWork !== true &&
+          flavor.extractBackgroundTaskId !== undefined;
+        const carryoverBackgroundTools = new Map<
+          string,
+          {
+            readonly context: ActiveAcpTurn;
+            readonly sessionId: string;
+            readonly taskId: string;
+            readonly terminalIds: ReadonlyArray<string>;
+          }
+        >();
+        // Ended carried tools must not reach a later turn through their stale late updates.
+        const endedCarriedToolCallIds = new Set<string>();
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -2256,6 +2273,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return next;
           }).pipe(Effect.andThen(setBackgroundTaskRunning(taskId, false)));
 
+        // Carried tools run in T3-owned client terminals; whoever retires their session kills them.
+        const endCarriedBackgroundTools = Effect.fnUntraced(function* () {
+          if (carryoverBackgroundTools.size === 0) return;
+          const carried = [...carryoverBackgroundTools];
+          carryoverBackgroundTools.clear();
+          yield* Ref.update(runningBackgroundTaskIds, (current) => {
+            const next = new Set(current);
+            for (const [, { taskId }] of carried) next.delete(taskId);
+            return next;
+          });
+          for (const [toolCallId, { context, sessionId, taskId, terminalIds }] of carried) {
+            for (const terminalId of terminalIds) {
+              yield* (clientTerminals?.kill({ sessionId, terminalId }) ?? Effect.void).pipe(
+                Effect.ignore,
+              );
+            }
+            endedCarriedToolCallIds.add(sessionScopedId(sessionId, toolCallId));
+            for (const oldest of endedCarriedToolCallIds) {
+              if (endedCarriedToolCallIds.size <= endedBackgroundTaskIdLimit) break;
+              endedCarriedToolCallIds.delete(oldest);
+            }
+            yield* markBackgroundTaskEnded(taskId);
+            const tool = context.tools.get(toolCallId);
+            if (tool !== undefined) yield* emitTool(context, tool, "interrupted");
+          }
+        });
+
         const applyBackgroundTaskMutationRunning = (mutation: {
           readonly taskId: string;
           readonly status: "running" | "completed" | "failed";
@@ -2280,8 +2324,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           });
 
+        // Release retires background work after its subscribers stop reading the queue.
+        let retiredEvents: Array<ProviderAdapter.ProviderAdapterV2Event> | undefined;
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-          Queue.offer(events, event).pipe(Effect.asVoid);
+          retiredEvents === undefined
+            ? Queue.offer(events, event).pipe(Effect.asVoid)
+            : Effect.sync(() => {
+                retiredEvents?.push(event);
+              });
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
 
@@ -2325,6 +2375,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
+              yield* endCarriedBackgroundTools();
               if (!followsAgentWorkState) return;
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
@@ -5000,6 +5051,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             return;
           }
+          if (
+            update.sessionUpdate === "tool_call_update" &&
+            endedCarriedToolCallIds.has(sessionScopedId(notification.sessionId, update.toolCallId))
+          )
+            return;
+          const carriedBackgroundTool =
+            update.sessionUpdate === "tool_call_update"
+              ? carryoverBackgroundTools.get(update.toolCallId)
+              : undefined;
+          if (carriedBackgroundTool?.sessionId === notification.sessionId) {
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              yield* emitTool(carriedBackgroundTool.context, event.toolCall);
+              const status = toolStatus(
+                carriedBackgroundTool.context.tools.get(event.toolCall.toolCallId)?.status,
+              );
+              if (status !== "completed" && status !== "failed") continue;
+              carryoverBackgroundTools.delete(event.toolCall.toolCallId);
+              yield* markBackgroundTaskEnded(carriedBackgroundTool.taskId);
+            }
+            return;
+          }
           if (yield* followNativeChild(notification, context)) return;
           if (
             followsAgentWorkState &&
@@ -6846,6 +6919,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           resumeSessionId?: string,
         ) {
           if (runtimeScope !== undefined) {
+            yield* endCarriedBackgroundTools();
             yield* Scope.close(runtimeScope, Exit.void);
           }
           runtimeScope = yield* Scope.make();
@@ -6993,6 +7067,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     return yield* lifecycle.error;
                   }
                   yield* quarantineNativeTransportAtGeneration(previousGeneration);
+                  yield* endCarriedBackgroundTools();
                   runtime = replacementExit.value.replacementRuntime;
                   runtimeScope = replacementScope;
                   runtimeMcpBridge = replacementMcpBridge;
@@ -7552,6 +7627,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
         const quarantineStoppedRun = Effect.fnUntraced(function* () {
+          yield* endCarriedBackgroundTools();
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
               yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -7725,6 +7801,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 sessionId,
                 projectsLateTerminals: settledStatus === "completed" || childTurnsContinue,
                 subagents: subagentsRequiringCarryover,
+              });
+            }
+          }
+          // Only completed runs and continuing failures keep their consumer open for late updates.
+          if (
+            carriesBackgroundTools &&
+            (settledStatus === "completed" || childTurnsContinue) &&
+            !directStopQuarantine
+          ) {
+            const sessionId = yield* Ref.get(activeSessionId);
+            for (const tool of context.tools.values()) {
+              const taskId = tool.backgroundCommandTaskId ?? flavor.extractBackgroundTaskId?.(tool);
+              const toolState = toolStatus(tool.status);
+              if (
+                sessionId === null ||
+                taskId === undefined ||
+                (toolState !== "pending" && toolState !== "running")
+              )
+                continue;
+              // Devin's shell id is the T3 client terminal id; the embedded lookup is capped.
+              const terminalIds = embeddedTerminalsByToolCallId.get(
+                sessionScopedId(sessionId, tool.toolCallId),
+              )?.terminalIds ?? [taskId];
+              carryoverBackgroundTools.set(tool.toolCallId, {
+                context,
+                sessionId,
+                taskId,
+                terminalIds,
               });
             }
           }
@@ -8502,6 +8606,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            yield* endCarriedBackgroundTools();
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.set(continuationClosed, true);
@@ -8606,7 +8711,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   return false;
                 }),
               }
-            : {}),
+            : carriesBackgroundTools
+              ? {
+                  hasPendingBackgroundWork: Effect.sync(() => carryoverBackgroundTools.size > 0),
+                  retireBackgroundWork: runtimeCallbackPermit.withPermit(
+                    Effect.suspend(() => {
+                      const retired: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+                      retiredEvents = retired;
+                      return endCarriedBackgroundTools().pipe(
+                        Effect.ensuring(
+                          Effect.sync(() => {
+                            retiredEvents = undefined;
+                          }),
+                        ),
+                        Effect.as(retired),
+                      );
+                    }),
+                  ),
+                }
+              : {}),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               return yield* runtimeTransitionPermit.withPermit(
@@ -8936,6 +9059,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             teardownState: (yield* Ref.get(runtimeTeardownState))._tag,
                           },
                         );
+                        // Stop of a settled run still owns the background tools it left running.
+                        if (turnInput.requestRuntimeRestart === true) {
+                          yield* runtimeCallbackPermit.withPermit(endCarriedBackgroundTools());
+                        }
                         if (containOrphanRuntime) {
                           const teardownBarrier = yield* Deferred.make<
                             void,
