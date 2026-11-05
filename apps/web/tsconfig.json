@@ -30,6 +30,7 @@
     "vite",
     "vite.config.ts",
     "vercel.ts",
+    "gt.config.json",
     "test",
     "scripts/verify-built-boot.ts",
     "scripts/warm-dep-cache.ts",
