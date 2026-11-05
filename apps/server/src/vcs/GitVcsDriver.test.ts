@@ -523,16 +523,16 @@ it.effect.each([false, true])(
       const liveProcess = yield* VcsProcess.VcsProcess;
       const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
         Effect.provideService(VcsProcess.VcsProcess, {
+          // Every git child sees the host environment, as with an inherited process env.
           run: (input) =>
-            liveProcess
-              .run(input)
-              .pipe(
-                Effect.map((result) =>
-                  input.args.includes("--path-format=absolute")
-                    ? { ...result, stdout: `--path-format=absolute\n${result.stdout}` }
-                    : result,
-                ),
+            HostProcess.Environment.pipe(
+              Effect.flatMap((env) => liveProcess.run({ ...input, env: { ...env, ...input.env } })),
+              Effect.map((result) =>
+                input.args.includes("--path-format=absolute")
+                  ? { ...result, stdout: `--path-format=absolute\n${result.stdout}` }
+                  : result,
               ),
+            ),
         }),
       );
       const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-explicit-objects-" });
@@ -541,26 +541,18 @@ it.effect.each([false, true])(
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
       const objects = path.join(sandbox, "objects");
       yield* fs.rename(path.join(cwd, ".git/objects"), objects);
-      yield* Effect.acquireUseRelease(
-        Effect.sync(() => {
-          const previous = process.env.GIT_OBJECT_DIRECTORY;
-          process.env.GIT_OBJECT_DIRECTORY = relative ? "../objects" : objects;
-          return previous;
+      yield* Effect.gen(function* () {
+        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+        assert.strictEqual(
+          (yield* git(["show", `${checkpointRef}:file.txt`])).stdout,
+          "unstaged\n",
+        );
+        yield* git(["fsck", "--full"]);
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          ...(yield* HostProcess.Environment),
+          GIT_OBJECT_DIRECTORY: relative ? "../objects" : objects,
         }),
-        () =>
-          Effect.gen(function* () {
-            yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
-            assert.strictEqual(
-              (yield* git(["show", `${checkpointRef}:file.txt`])).stdout,
-              "unstaged\n",
-            );
-            yield* git(["fsck", "--full"]);
-          }),
-        (previous) =>
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env.GIT_OBJECT_DIRECTORY;
-            else process.env.GIT_OBJECT_DIRECTORY = previous;
-          }),
       );
       assert.isFalse(yield* fs.exists(path.join(cwd, ".git/objects")));
       assert.deepEqual(
