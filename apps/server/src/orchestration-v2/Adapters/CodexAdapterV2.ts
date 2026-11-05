@@ -3831,24 +3831,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
 
         const buildImageViewArtifacts = Effect.fn("CodexAdapterV2.buildImageViewArtifacts")(
-          function* (input: {
-            readonly context: ActiveCodexTurnContext;
-            readonly item: CodexImageViewItem;
-            readonly completed: boolean;
-          }) {
+          function* (context: ActiveCodexTurnContext, item: CodexImageViewItem) {
             const updatedAt = yield* DateTime.now;
-            const completedAt = input.completed ? updatedAt : null;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
               driver: CODEX_PROVIDER,
-              nativeItemId: input.item.id,
+              nativeItemId: item.id,
             });
             const turnItemId = idAllocator.derive.turnItemFromProviderItem({
               driver: CODEX_PROVIDER,
-              nativeItemId: input.item.id,
+              nativeItemId: item.id,
             });
-            const { ordinal, startedAt } = yield* resolveItemPosition(input.context, input.item.id);
-            const status = input.completed ? "completed" : "running";
-            const path = input.item.path.trim();
+            const { ordinal, startedAt } = yield* resolveItemPosition(context, item.id);
+            const path = item.path.trim();
             const viewedImagePath =
               path.length > 0 &&
               path.length <= 4096 &&
@@ -3858,40 +3852,40 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : undefined;
             const node: OrchestrationV2ExecutionNode = {
               id: nodeId,
-              threadId: input.context.projectionThreadId,
-              runId: input.context.projectionRunId,
-              parentNodeId: input.context.itemParentNodeId,
-              rootNodeId: input.context.rootNodeId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
               kind: "tool_call",
-              status,
+              status: "completed",
               countsForRun: false,
-              providerThreadId: input.context.providerThread.id,
-              providerTurnId: input.context.providerTurnId,
-              nativeItemRef: codexNativeItemRef(input.item.id),
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
               runtimeRequestId: null,
               checkpointScopeId: null,
               startedAt,
-              completedAt,
+              completedAt: updatedAt,
             };
             const turnItem: OrchestrationV2TurnItem = {
               id: turnItemId,
-              threadId: input.context.projectionThreadId,
-              runId: input.context.projectionRunId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
               nodeId,
-              providerThreadId: input.context.providerThread.id,
-              providerTurnId: input.context.providerTurnId,
-              nativeItemRef: codexNativeItemRef(input.item.id),
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
               parentItemId: null,
               ordinal,
-              status,
+              status: "completed",
               title: formatReadToolLabel(path),
               startedAt,
-              completedAt,
+              completedAt: updatedAt,
               updatedAt,
               type: "dynamic_tool",
               toolName: "view_image",
               ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
-              input: { path: input.item.path },
+              input: { path: item.path },
             };
             return { node, turnItem };
           },
@@ -5038,22 +5032,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
-            if (payload.item.type !== "webSearch" && payload.item.type !== "imageView") {
+            if (payload.item.type !== "webSearch") {
               return;
             }
 
-            const artifacts =
-              payload.item.type === "imageView"
-                ? yield* buildImageViewArtifacts({
-                    context,
-                    item: payload.item,
-                    completed: false,
-                  })
-                : yield* buildWebSearchArtifacts({
-                    context,
-                    item: payload.item,
-                    completed: false,
-                  });
+            const artifacts = yield* buildWebSearchArtifacts({
+              context,
+              item: payload.item,
+              completed: false,
+            });
             yield* emitProviderEvent({
               type: "node.updated",
               driver: CODEX_PROVIDER,
@@ -5231,11 +5218,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.type === "webSearch" || payload.item.type === "imageView") {
               const artifacts =
                 payload.item.type === "imageView"
-                  ? yield* buildImageViewArtifacts({
-                      context,
-                      item: payload.item,
-                      completed: true,
-                    })
+                  ? yield* buildImageViewArtifacts(context, payload.item)
                   : yield* buildWebSearchArtifacts({
                       context,
                       item: payload.item,
