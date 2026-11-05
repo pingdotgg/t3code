@@ -352,6 +352,29 @@ describe("evaluatePullRequestWatch", () => {
     assert.include(text, `"${"x".repeat(196)}..."`);
   });
 
+  it("quotes a remark's text instead of its leading HTML, and keeps generics in prose", () => {
+    const badge =
+      '<a href="https://app.coderabbit.ai/change-stack/o/r/pull/1?cs_source=review_comment"><picture><source media="(prefers-color-scheme: dark)" srcset="https://coderabbit.ai/badge-dark.svg"><img alt="Review" src="https://coderabbit.ai/badge.svg"></picture></a>';
+    const report = evaluatePullRequestWatch(watch(), detail(), [
+      remark(
+        "coderabbitai",
+        "2026-10-02T12:06:00Z",
+        `${badge}\n\n_⚠️ Potential issue_ | _🟠 Major_\n\n**Guard the empty list.**`,
+      ),
+      remark("reviewer", "2026-10-02T12:07:00Z", "Return Promise<void> here, not Promise<string>."),
+    ]);
+    const { text } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: null,
+      report,
+    });
+    assert.include(text, `"_⚠️ Potential issue_ | _🟠 Major_ **Guard the empty list.**"`);
+    assert.include(text, `"Return Promise<void> here, not Promise<string>."`);
+    assert.notInclude(text, "<picture");
+  });
+
   it("reports a conflict once, until the branch is clean again", () => {
     const conflicting = detail({ mergeability: "conflicting" });
     const first = evaluatePullRequestWatch(watch(), conflicting, noRemarks);
