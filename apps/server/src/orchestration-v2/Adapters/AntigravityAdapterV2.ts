@@ -278,6 +278,7 @@ export function makeAntigravityAcpAdapterFlavor(
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
+    enablePostSettleContinuation: true,
     ...(profileDirectory === undefined
       ? {}
       : {
