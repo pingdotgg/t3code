@@ -1,6 +1,9 @@
 import {
+  accuracyGrade,
   canonicalLanguage,
   compareEngineVersions,
+  BENCHMARK_DICTATION_SECONDS,
+  languageIdentity,
   modelFile,
   type CatalogData,
 } from "@handy-computer/models";
@@ -77,6 +80,21 @@ export function generateSpeechCatalog(
     }
     ids.add(model.repository);
     filenames.add(file.filename);
+    const languages = [...new Set(model.languages.map(canonicalLanguage))];
+    const realtimeFactor = data.results[model.id]?.performance.accelerated;
+    const accuracy = Object.fromEntries(
+      languages.flatMap((language) => {
+        const cell = data.results[model.id]?.accuracy[languageIdentity(language)];
+        return cell
+          ? [
+              [
+                language,
+                { grade: accuracyGrade(cell.error).label, errorPercent: cell.error },
+              ] as const,
+            ]
+          : [];
+      }),
+    );
     return [
       {
         id: model.repository,
@@ -88,7 +106,13 @@ export function generateSpeechCatalog(
         sha256: file.sha256,
         license: model.license,
         // T3 selects base languages; the engine's prompt dictionary accepts their short aliases.
-        languages: [...new Set(model.languages.map(canonicalLanguage))],
+        languages,
+        benchmark: {
+          accuracy,
+          secondsPer30s: realtimeFactor
+            ? Number((BENCHMARK_DICTATION_SECONDS / realtimeFactor).toFixed(2))
+            : null,
+        },
         recommended: RECOMMENDED.has(model.id),
         supportsStreaming: model.capabilities.streaming,
         supportsLanguageDetection: model.capabilities.languageDetection,

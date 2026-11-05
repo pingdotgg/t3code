@@ -136,7 +136,7 @@ export class SpeechService extends Context.Service<
   SpeechService,
   {
     readonly status: Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly models: Effect.Effect<SpeechModels, SpeechError>;
+    readonly models: (includeBenchmarks: boolean) => Effect.Effect<SpeechModels, SpeechError>;
     readonly downloadModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly selectModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly cancelDownload: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
@@ -452,6 +452,7 @@ const make = Effect.gen(function* () {
 
   const listModels = Effect.fn("SpeechService.listModels")(function* (
     settings: SettingsSnapshot,
+    includeBenchmarks: boolean,
   ): Effect.fn.Return<SpeechModels> {
     const selected = selectedModel(settings);
     const models = yield* Effect.forEach(
@@ -468,6 +469,7 @@ const make = Effect.gen(function* () {
               languages: definition.languages,
               accuracy: definition.accuracy,
               speed: definition.speed,
+              ...(includeBenchmarks ? { benchmark: definition.benchmark } : {}),
               recommended: definition.recommended,
               supportsStreaming: definition.supportsStreaming,
               supportsLanguageDetection: definition.supportsLanguageDetection,
@@ -491,7 +493,11 @@ const make = Effect.gen(function* () {
 
   const freshStatus = (operation: string) =>
     readSettings(operation).pipe(Effect.flatMap(currentStatus));
-  const modelsEffect = readSettings("model listing").pipe(Effect.flatMap(listModels));
+  const readModels = (includeBenchmarks: boolean) =>
+    readSettings("model listing").pipe(
+      Effect.flatMap((settings) => listModels(settings, includeBenchmarks)),
+    );
+  const modelsEffect = readModels(false);
 
   const requireSupported = Effect.suspend(() =>
     unsupportedReason
@@ -807,7 +813,7 @@ const make = Effect.gen(function* () {
 
   return SpeechService.of({
     status: freshStatus("status"),
-    models: modelsEffect,
+    models: readModels,
     prepareModel,
     transcribe,
     startStream: Effect.fn("SpeechService.startStream")(function* (options) {

@@ -82,7 +82,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "models",
         Effect.fn("environment.voice.models")(function* (args) {
           yield* guard(args.endpoint.name);
-          return yield* speech.models.pipe(mapSpeechError);
+          return yield* speech.models(args.query.benchmarks === "1").pipe(mapSpeechError);
         }),
       )
       .handle(

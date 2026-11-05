@@ -33,6 +33,21 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
       supportsTranslation: source.capabilities.translate,
     });
   }
+  const parakeet = catalog.models[0]!;
+  const withoutFrenchOrSpeed = generateSpeechCatalog(
+    {
+      ...catalog.data,
+      models: [{ ...parakeet, languages: ["en", "fr"] }],
+      results: { [parakeet.id]: { accuracy: { en: { error: 3.99 } }, performance: {} } },
+    },
+    "0.2.3",
+    "0.4.1",
+  );
+  expect(withoutFrenchOrSpeed.models[0]?.benchmark).toEqual({
+    accuracy: { en: { grade: "A-", errorPercent: 3.99 } },
+    secondsPer30s: null,
+  });
+  expect(generate().models[0]?.benchmark.secondsPer30s).toBeCloseTo(1.19, 2);
 });
 
 it("filters restricted licenses, unsupported roles, engines, architectures and files", () => {

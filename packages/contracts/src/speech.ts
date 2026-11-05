@@ -60,6 +60,15 @@ export const EnvironmentSpeechModel = Schema.Struct({
   languages: Schema.Array(Schema.String),
   accuracy: Schema.Finite,
   speed: Schema.Finite,
+  benchmark: Schema.optionalKey(
+    Schema.Struct({
+      accuracy: Schema.Record(
+        Schema.String,
+        Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
+      ),
+      secondsPer30s: Schema.NullOr(Schema.Finite),
+    }),
+  ),
   recommended: Schema.Boolean,
   supportsStreaming: Schema.Boolean,
   supportsLanguageDetection: Schema.Boolean,
