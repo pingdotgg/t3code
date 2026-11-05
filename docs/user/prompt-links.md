@@ -57,8 +57,7 @@ malicious.
 
 ## Share a thread
 
-**Copy thread** copies a link such as `https://app.t3.codes/threads/<environment>/<thread>`. Paste
-it anywhere, such as Slack, a GitHub comment, or your notes. On a phone with T3 Code installed, it
-opens the thread in the app. Elsewhere, opening it asks where to open it, like a prompt link, then
-opens the thread. Only someone connected to the machine that runs the thread can see it. In T3 Code,
-a thread link in a message opens the thread in the app.
+**Copy thread** copies an in-app link such as `[Thread title](t3-thread://v2/<environment>/<thread>)`.
+Paste it into a composer to attach the thread, or into a message to link it: in OminaX, a thread
+link opens the thread in the app. The link works only inside OminaX, for someone connected to the
+machine that runs the thread.
