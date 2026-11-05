@@ -96,8 +96,7 @@ Claude receives an HTTP MCP server in its query options:
 ```
 
 The allow rule goes in flag settings, not `allowedTools`: the SDK warns on every
-query whose bare `allowedTools` entries skip `canUseTool`. A `--settings` file
-path cannot take extra keys, so then the rule stays in `allowedTools`.
+query whose bare `allowedTools` entries skip `canUseTool`.
 
 The adapter logs only whether MCP configuration exists; it does not log the
 server headers or token.
