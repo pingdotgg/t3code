@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import {
   downloadSpeechModel,
   effectiveSpeechLanguage,
-  isSpeechModelReady,
+  findInstalledSpeechModel,
   SPEECH_MODELS,
 } from "./model.ts";
 
@@ -53,19 +53,25 @@ it("resolves Auto only for models that can detect language", () => {
   expect(effectiveSpeechLanguage(whisper, "fr")).toBe("fr");
 });
 
-it("checks readiness without reading the model contents", async () => {
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-"));
+it("finds an installed model across directories without reading its contents", async () => {
+  const first = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-a-"));
+  const second = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-b-"));
   try {
     const speechModel = SPEECH_MODELS[0]!;
-    const path = NodePath.join(directory, speechModel.filename);
-    expect(await isSpeechModelReady(directory, speechModel)).toBe(false);
-    await NodeFSP.writeFile(path, "");
-    await NodeFSP.truncate(path, speechModel.size);
-    expect(await isSpeechModelReady(directory, speechModel)).toBe(true);
-    await NodeFSP.truncate(path, 1);
-    expect(await isSpeechModelReady(directory, speechModel)).toBe(false);
+    const firstPath = NodePath.join(first, speechModel.filename);
+    const secondPath = NodePath.join(second, speechModel.filename);
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBeUndefined();
+    await NodeFSP.writeFile(secondPath, "");
+    await NodeFSP.truncate(secondPath, speechModel.size);
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(secondPath);
+    await NodeFSP.writeFile(firstPath, "");
+    await NodeFSP.truncate(firstPath, 1);
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(secondPath);
+    await NodeFSP.truncate(firstPath, speechModel.size);
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(firstPath);
   } finally {
-    await NodeFSP.rm(directory, { recursive: true, force: true });
+    await NodeFSP.rm(first, { recursive: true, force: true });
+    await NodeFSP.rm(second, { recursive: true, force: true });
   }
 });
 
