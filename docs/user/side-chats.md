@@ -18,9 +18,9 @@ Open **Settings → Threads → Side chats** to choose the model for new side ch
 
 T3 Learn keeps a per-environment map of topics you have explained back correctly. In a lesson, say `mark X done` and explain the topic in your own words. Review or remove entries in Settings → Threads → What you know. Mobile does not show this map yet.
 
-Say `practise X` (or `practise what I know`) for problems on topics from your map. The agent gives hints rather than the answer, retests what you missed before ending, and practice never adds anything to the map.
-
 The agent grades your explanation against its own full answer and says plainly what is missing; it saves only an explanation that holds. When you start a topic that isn't on the map, it asks one quick question first to find where to begin.
+
+Say `practise X` (or `practise what I know`) for problems on topics from your map. The agent gives hints rather than the answer, retests what you missed before ending, and practice never adds anything to the map.
 
 ## Pictures and animations
 
