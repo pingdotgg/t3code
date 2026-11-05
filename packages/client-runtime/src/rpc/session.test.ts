@@ -21,7 +21,6 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 import * as Socket from "effect/socket/Socket";
 import * as TestClock from "effect/testing/TestClock";
 

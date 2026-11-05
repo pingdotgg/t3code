@@ -188,7 +188,7 @@ import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecr
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
+import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -269,7 +269,6 @@ import {
 import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import {
   sameUsageLimitCommandCoverage,
-  USAGE_LIMITS_COMMAND,
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
@@ -447,19 +446,19 @@ function workspaceSnapshotOrCatalog(
   ];
 }
 
+// Clients with on-demand catalogs read commands and skills from the cwd snapshot they fetch, so
+// a provider that scans a cwd sends command names only: any command the machine catalog gains
+// or loses still changes the config, which makes the client refetch, while the descriptions,
+// inputs, and skills that make up the bulk stay out.
 function withoutWorkspaceSnapshots(
   providers: ReadonlyArray<ServerProvider>,
   catalogsPerCwd: ReadonlySet<string> = new Set(),
 ): ServerProvider[] {
   return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) =>
-    // Antigravity discovers commands from live sessions; clients need those updates to refetch.
-    catalogsPerCwd.has(provider.instanceId) && provider.driver !== "antigravity"
+    catalogsPerCwd.has(provider.instanceId)
       ? {
           ...provider,
-          // Late /usage-limits discovery must still change the config, so clients refetch the cwd.
-          slashCommands: provider.slashCommands.filter(
-            (command) => command.name === USAGE_LIMITS_COMMAND.name,
-          ),
+          slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
           skills: [],
         }
       : provider,
@@ -3537,7 +3536,7 @@ export const layer = Layer.unwrap(
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
-            Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
+            Effect.provideService(RpcServer.Protocol, withOutputWindow(protocol)),
             Effect.provide(
               Layer.merge(
                 RpcAuthorization.layer(session.scopes, (method, payload) => {

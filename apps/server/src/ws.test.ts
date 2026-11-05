@@ -1025,8 +1025,8 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       auth: { status: "authenticated" },
       checkedAt: "2026-10-25T00:00:00.000Z",
       models: [],
-      slashCommands: [{ name: "machine-command" }],
-      skills: [],
+      slashCommands: [{ name: "machine-command", description: "A machine command" }],
+      skills: [{ name: "machine-skill", path: "/skills/machine-skill", enabled: true }],
       workspaceSnapshots: [
         snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
         snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
@@ -1131,8 +1131,8 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
     assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
-    // The cwd snapshot the client fetches replaces the machine catalog, so it is not sent.
-    assert.deepEqual(snapshot.config.providers[0]?.slashCommands, []);
+    // The cwd snapshot the client fetches carries the catalog, so only command names are sent.
+    assert.deepEqual(snapshot.config.providers[0]?.slashCommands, [{ name: "machine-command" }]);
     assert.deepEqual(snapshot.config.providers[0]?.skills, []);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
@@ -1156,31 +1156,12 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
     assert.equal(update.payload.providers[0]?.status, "warning");
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
-    assert.deepEqual(update.payload.providers[0]?.slashCommands, [USAGE_LIMITS_COMMAND]);
-    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
-    const antigravity = {
-      ...provider,
-      driver: ProviderDriverKind.make("antigravity"),
-      status: "warning" as const,
-    };
-    yield* Queue.offer(providerChanges, [antigravity]);
-    yield* Queue.take(pulled);
-    yield* TestClock.adjust("1 second");
-    const liveCatalog = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
-    if (liveCatalog.type !== "providerStatuses")
-      return yield* Effect.die("Expected provider update");
-    assert.deepEqual(liveCatalog.payload.providers[0]?.slashCommands, provider.slashCommands);
-    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
-    yield* Queue.offer(providerChanges, [
-      { ...antigravity, slashCommands: [{ name: "live-command" }] },
+    assert.deepEqual(update.payload.providers[0]?.slashCommands, [
+      { name: "machine-command" },
+      { name: USAGE_LIMITS_COMMAND.name },
     ]);
-    yield* Queue.take(pulled);
-    yield* TestClock.adjust("1 second");
-    const discovered = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
-    if (discovered.type !== "providerStatuses") return yield* Effect.die("Expected live commands");
-    assert.deepEqual(discovered.payload.providers[0]?.slashCommands, [{ name: "live-command" }]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
-    // A replacement that cannot scan a cwd sends its machine catalog again.
+    // A replacement that cannot scan a cwd sends its full machine catalog.
     scansCwd = false;
     yield* Queue.offer(providerChanges, [{ ...provider, status: "warning" }]);
     yield* Queue.take(pulled);
@@ -1188,6 +1169,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     const replaced = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (replaced.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
     assert.deepEqual(replaced.payload.providers[0]?.slashCommands, provider.slashCommands);
+    assert.deepEqual(replaced.payload.providers[0]?.skills, provider.skills);
 
     yield* server.write(0, {
       _tag: "Request",
@@ -1225,7 +1207,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         checkedAt: provider.checkedAt,
         slashCommands: provider.slashCommands,
         slashCommandsPending: true,
-        skills: [],
+        skills: provider.skills,
       },
     ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });

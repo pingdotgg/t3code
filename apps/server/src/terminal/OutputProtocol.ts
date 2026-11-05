@@ -26,7 +26,7 @@ const WINDOWED_STREAMS: ReadonlySet<string> = new Set([
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
 ]);
 
-export function withTerminalOutputWindow(
+export function withOutputWindow(
   protocol: RpcServer.Protocol["Service"],
 ): RpcServer.Protocol["Service"] {
   const windows = new Map<string, number[]>();
