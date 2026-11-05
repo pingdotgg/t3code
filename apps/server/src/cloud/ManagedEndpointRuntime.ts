@@ -3,6 +3,7 @@ import { RotatingFileSink } from "@t3tools/shared/logging";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -218,7 +219,9 @@ export const make = Effect.gen(function* () {
   const notReadyChecksBeforeRestartRef = yield* Ref.make(CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
   // An explicit cloudflared transport in the environment is the user's choice.
   const env = yield* HostProcess.Environment;
-  const transportChosenByUser = env.TUNNEL_TRANSPORT_PROTOCOL !== undefined;
+  const transportChosenByUser = Option.isSome(
+    yield* Config.String("TUNNEL_TRANSPORT_PROTOCOL").pipe(Config.option),
+  );
   const previousFallback = transportChosenByUser
     ? Option.none()
     : yield* secrets.get(HTTP2_FALLBACK_STATE).pipe(

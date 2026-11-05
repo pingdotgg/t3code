@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -81,7 +82,7 @@ const buildCloudManagedEndpointRuntime = (
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
   secretStoreLayer = emptySecretStoreLayer,
-  env: NodeJS.ProcessEnv = {},
+  env: Record<string, string> = {},
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
@@ -92,7 +93,10 @@ const buildCloudManagedEndpointRuntime = (
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
       Effect.provide(context),
     );
-  }).pipe(Effect.provideService(HostProcess.Environment, env));
+  }).pipe(
+    Effect.provideService(HostProcess.Environment, env),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
 
 function makeHandle(input: {
   readonly pid: number;
@@ -399,7 +403,7 @@ describe("CloudManagedEndpointRuntime", () => {
         index,
         lines + "2026-10-16T20:30:00Z INF Registered tunnel connection connIndex=0\n",
       ).pipe(Effect.andThen(Stream.runHead(runtime.tunnelConnected)));
-    const env: NodeJS.ProcessEnv =
+    const env: Record<string, string> =
       options.transport === undefined ? {} : { TUNNEL_TRANSPORT_PROTOCOL: options.transport };
     return { spawner, env, spawned, killed, exits, started, emit, observe };
   });

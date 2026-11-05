@@ -1,6 +1,7 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ByteSize from "effect/ByteSize";
@@ -53,7 +54,6 @@ import {
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   type ChangeRequestTerminology,
@@ -1099,8 +1099,11 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-  const env = yield* HostProcess.Environment;
-  const tempDir = env.TMPDIR ?? env.TEMP ?? env.TMP ?? "/tmp";
+  const tempDir = yield* Config.String("TMPDIR").pipe(
+    Config.orElse(() => Config.String("TEMP")),
+    Config.orElse(() => Config.String("TMP")),
+    Config.withDefault("/tmp"),
+  );
   const canonicalizeExistingPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
   const normalizeStatusCacheKey = canonicalizeExistingPath;

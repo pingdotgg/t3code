@@ -1,6 +1,8 @@
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Clock from "effect/Clock";
@@ -209,7 +211,14 @@ export function matchForgejoLogin(
       : undefined;
 }
 
+const ForgejoKeysConfig = Config.all({
+  dataHome: Config.String("XDG_DATA_HOME").pipe(Config.option),
+  appData: Config.String("APPDATA").pipe(Config.option),
+});
+
 export const make = Effect.gen(function* () {
+  // Optional strings cannot fail to decode.
+  const { dataHome, appData } = yield* Effect.suspend(() => ForgejoKeysConfig).pipe(Effect.orDie);
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
@@ -246,12 +255,11 @@ export const make = Effect.gen(function* () {
       );
 
   const readKeys = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string) {
-    const env = yield* HostProcess.Environment;
     for (const path of forgejoKeysPaths({
       platform: yield* HostProcess.Platform,
       home: yield* HostProcess.HomeDirectory,
-      ...(env.XDG_DATA_HOME ? { dataHome: env.XDG_DATA_HOME } : {}),
-      ...(env.APPDATA ? { appData: env.APPDATA } : {}),
+      ...(Option.isSome(dataHome) ? { dataHome: dataHome.value } : {}),
+      ...(Option.isSome(appData) ? { appData: appData.value } : {}),
     })) {
       const exists = yield* fileSystem.exists(path).pipe(
         Effect.mapError(
