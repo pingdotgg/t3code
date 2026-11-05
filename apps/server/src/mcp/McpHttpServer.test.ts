@@ -692,9 +692,9 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
     Effect.gen(function* () {
       const oversized = {
         ...snapshotResult,
-        title: "t".repeat(70_000),
+        title: `t${"😀".repeat(35_000)}`,
         interactiveElements: [],
-        consoleEntries: [{ level: "log", text: "x".repeat(70_000), timestamp: "t" }],
+        consoleEntries: [{ level: "log", text: `x${"😀".repeat(35_000)}`, timestamp: "t" }],
       };
       yield* serveSnapshots("mcp-bounded-logs-client", oversized);
 
@@ -709,8 +709,10 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
         readonly title: string;
         readonly consoleEntries: ReadonlyArray<{ readonly text: string }>;
       };
-      expect(parsed.title.length).toBe(2_049);
-      expect(parsed.consoleEntries[0]?.text.length).toBe(501);
+      expect(parsed.title.isWellFormed()).toBe(true);
+      expect(parsed.title.length).toBe(2_048);
+      expect(parsed.consoleEntries[0]?.text.isWellFormed()).toBe(true);
+      expect(parsed.consoleEntries[0]?.text.length).toBe(500);
       const notice = snapshot.content[2];
       const noticeText = notice?.type === "text" ? notice.text : "";
       expect(noticeText).toContain("url or title after 2048 characters");
@@ -1317,8 +1319,7 @@ it.effect(
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-              resolve: () => Effect.succeed(undefined),
+              resolve: () => Effect.undefined,
             }),
           ),
           Layer.provide(

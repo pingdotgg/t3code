@@ -13,7 +13,7 @@ import { AppBar } from "../../components/ui/AppBar";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -24,7 +24,6 @@ import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
   KeyboardController,
-  KeyboardEvents,
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
@@ -35,6 +34,7 @@ import {
   ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useSoftKeyboardShowing } from "../keyboard/useSoftKeyboardShowing";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -352,26 +352,6 @@ function readLiveTerminalSessions(
     }));
 }
 
-// `useKeyboardState` only flips on willShow and didHide; the accessory must
-// leave as soon as the keyboard starts hiding, so it follows the will-events.
-let keyboardShowing = KeyboardController.isVisible();
-function subscribeKeyboardShowing(onChange: () => void) {
-  keyboardShowing = KeyboardController.isVisible();
-  const willShow = KeyboardEvents.addListener("keyboardWillShow", () => {
-    keyboardShowing = true;
-    onChange();
-  });
-  const willHide = KeyboardEvents.addListener("keyboardWillHide", () => {
-    keyboardShowing = false;
-    onChange();
-  });
-  return () => {
-    willShow.remove();
-    willHide.remove();
-  };
-}
-const getKeyboardShowing = () => keyboardShowing;
-
 function ThreadTerminal(props: {
   readonly params: ThreadTerminalRouteScreenProps["route"]["params"];
   readonly routeEnvironmentId: EnvironmentId | null;
@@ -589,7 +569,8 @@ function ThreadTerminal(props: {
     height: state.height,
     isVisible: state.isVisible,
   }));
-  const keyboardShowing = useSyncExternalStore(subscribeKeyboardShowing, getKeyboardShowing);
+  // The accessory leaves as soon as the keyboard starts hiding.
+  const keyboardShowing = useSoftKeyboardShowing();
   // The accessory follows the keyboard, except that the dismiss and show
   // buttons flip it ahead of the keyboard animation.
   const [accessory, setAccessory] = useState({ keyboardShowing, dismissed: false });
