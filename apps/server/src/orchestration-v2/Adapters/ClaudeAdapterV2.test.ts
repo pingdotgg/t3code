@@ -4866,6 +4866,40 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
     );
+
+    it.effect("still asks for a T3 MCP tool under a user ask rule", () =>
+      Effect.gen(function* () {
+        const turn = yield* openMcpTurn("approval-required");
+        const decision = yield* Effect.promise(() =>
+          turn.openedOptions.canUseTool!("mcp__t3-code__t3_project_delete", {}, {
+            signal: new AbortController().signal,
+            toolUseID: "tool-t3-project-delete",
+            requestId: "request-t3-project-delete",
+            decisionReason: "Permission rule requires approval",
+            decisionReasonType: "rule",
+          } as Parameters<NonNullable<typeof turn.openedOptions.canUseTool>>[2]),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Queue.take(turn.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
+        );
+        assert.equal(first.type, "request", "a user ask rule on a T3 MCP tool was auto-approved");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
   });
 
   it.effect(

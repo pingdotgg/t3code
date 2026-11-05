@@ -2009,6 +2009,17 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
 // T3 waits can block for an hour; exceed Claude's default 60 s timeout.
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 
+// A user's ask rule or hook outranks allowedTools, so it must still prompt. The SDK passes
+// the CLI's decisionReasonType at runtime but leaves it out of its types.
+function isClaudeUserForcedAsk(callbackOptions: Parameters<CanUseTool>[2]): boolean {
+  const { decisionReasonType } = callbackOptions as { readonly decisionReasonType?: unknown };
+  return (
+    callbackOptions.matchedAskRule !== undefined ||
+    decisionReasonType === "rule" ||
+    decisionReasonType === "hook"
+  );
+}
+
 function isClaudeAutoApprovedT3McpTool(toolName: string, readOnlySandbox: boolean): boolean {
   return readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS.includes(toolName)
@@ -10247,7 +10258,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (
-            callbackOptions.matchedAskRule === undefined &&
+            !isClaudeUserForcedAsk(callbackOptions) &&
             isClaudeAutoApprovedT3McpTool(
               toolName,
               sandboxPolicyKindForClaudeRuntimePolicy(context.input.runtimePolicy) === "readOnly",
