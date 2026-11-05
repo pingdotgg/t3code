@@ -194,6 +194,7 @@ export class VoiceInputController {
   private operationToken = 0;
   private sessionToken: VoiceInputSession | null = null;
   private transcription: PreparedVoiceTranscription | null = null;
+  private liveTranscription: Promise<{ text: string } | { error: unknown }> | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private capturedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
@@ -278,6 +279,21 @@ export class VoiceInputController {
         return;
       }
       this.capturedDraft = capturedDraft;
+      if (this.transcription.start && this.recordingUri) {
+        const start = this.transcription.start;
+        const uri = this.recordingUri;
+        this.liveTranscription = runTranscriptionOperation(() =>
+          start(uri, { signal: abortController.signal }),
+        ).then(
+          (text) => ({ text }),
+          (error: unknown) => {
+            if (this.isCurrent(operationToken) && this.state.phase === "recording") {
+              void this.discardRecording(transcriptionErrorMessage(error));
+            }
+            return { error };
+          },
+        );
+      }
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch {
@@ -341,6 +357,7 @@ export class VoiceInputController {
 
   handleRecorderStatus(status: VoiceRecorderStatus): Promise<void> | void {
     if (this.state.phase !== "recording") return;
+    if (status.url && this.recordingUri && status.url !== this.recordingUri) return;
     if (status.hasError) {
       return this.interruptRecording(
         status.error ?? "Voice recording was interrupted.",
@@ -402,9 +419,15 @@ export class VoiceInputController {
       const capturedDraft = this.capturedDraft;
       let transcript: string;
       try {
-        transcript = await runTranscriptionOperation(() =>
-          transcription.transcribe(recordingUri, { signal }),
-        );
+        if (this.liveTranscription) {
+          const result = await this.liveTranscription;
+          if ("error" in result) throw result.error;
+          transcript = result.text;
+        } else {
+          transcript = await runTranscriptionOperation(() =>
+            transcription.transcribe(recordingUri, { signal }),
+          );
+        }
       } catch (error) {
         if (this.isCurrent(operationToken)) {
           this.setError(transcriptionErrorMessage(error), "retry");
@@ -454,6 +477,7 @@ export class VoiceInputController {
   }
 
   private async releaseResources(): Promise<void> {
+    if (this.liveTranscription) this.transcriptionAbortController?.abort();
     this.rememberRecordingUri(this.recordingUri);
     try {
       this.rememberRecordingUri(this.dependencies.recorder.uri);
@@ -463,6 +487,8 @@ export class VoiceInputController {
         await this.dependencies.recorder.stop();
       } catch {}
     }
+    await this.liveTranscription;
+    this.liveTranscription = null;
     this.recordingUri = null;
     for (const uri of this.ownedRecordingUris) {
       try {

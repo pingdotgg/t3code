@@ -207,8 +207,8 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
-  it.effect("publishes a terminal branch switch without reading remote status", () => {
-    const state = {
+  it.effect("publishes terminal branch switches and validates cached status reads", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: remoteStatusWithPr,
       localStatusCalls: 0,
@@ -220,6 +220,11 @@ describe("VcsStatusBroadcaster", () => {
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       yield* broadcaster.getStatus({ cwd: "/repo" });
+      const branchEvents = yield* broadcaster.streamBranchChanges.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped({ startImmediately: true }),
+      );
       const subscribed = yield* Deferred.make<void>();
       const events = yield* broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
         Stream.tap((event) =>
@@ -243,6 +248,13 @@ describe("VcsStatusBroadcaster", () => {
         { _tag: "localUpdated", local: state.currentLocalStatus },
       ]);
       assert.isNull((yield* broadcaster.getStatus({ cwd: "/repo" })).pr);
+      state.currentLocalStatus = { ...state.currentLocalStatus, hasWorkingTreeChanges: true };
+      yield* broadcaster.refreshLocalStatus("/repo");
+      state.currentLocalStatus = { ...baseLocalStatus, refName: "union" };
+      state.currentRemoteStatus = null;
+      const queried = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(queried.refName, "union");
+      assert.isNull(queried.pr);
       const snapshot = yield* broadcaster
         .streamStatus({ cwd: "/repo", includeRemote: false })
         .pipe(Stream.take(1), Stream.runCollect);
@@ -251,6 +263,10 @@ describe("VcsStatusBroadcaster", () => {
         local: state.currentLocalStatus,
         remote: null,
       });
+      assert.deepStrictEqual(yield* Fiber.join(branchEvents), [
+        { cwd: "/repo", refName: "main" },
+        { cwd: "/repo", refName: "union" },
+      ]);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
