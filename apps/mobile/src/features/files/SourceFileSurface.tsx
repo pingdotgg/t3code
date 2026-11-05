@@ -281,56 +281,57 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   );
 
   // One native text view permits document-wide selection; virtualized rows cannot.
-  const selectableBlock = props.selectable ? (
-    <SourceText
-      selectable
-      selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
-      style={{
-        color: foreground,
-        fontFamily: REVIEW_MONO_FONT_FAMILY,
-        fontSize: codeSurface.fontSize,
-        lineHeight: codeSurface.rowHeight,
-      }}
-    >
-      {selectableTokens
-        ? lines.map(
-            (
-              line,
-              index,
-            ) => /* oxlint-disable react/no-array-index-key -- Source lines and highlight tokens are stateless positions within the loaded file. */ {
-                const lineTokens = selectableTokens[index] ?? null;
-                const body =
-                  lineTokens && lineTokens.length > 0
-                    ? lineTokens.map((token, tokenIndex) => (
-                        <SourceText
-                          key={`${index}:${tokenIndex}`}
-                          style={{
-                            color: token.color ?? foreground,
-                            fontWeight:
-                              token.fontStyle !== null && (token.fontStyle & 2) === 2
-                                ? "700"
-                                : "400",
-                            fontStyle:
-                              token.fontStyle !== null && (token.fontStyle & 1) === 1
-                                ? "italic"
-                                : "normal",
-                          }}
-                        >
-                          {token.content}
-                        </SourceText>
-                      ))
-                    : line;
-                return (
-                  <SourceText key={index}>
-                    {body}
-                    {index < lines.length - 1 ? "\n" : ""}
-                  </SourceText>
-                );
-              } /* oxlint-enable react/no-array-index-key */,
-          )
-        : normalizedContents}
-    </SourceText>
-  ) : null;
+  const selectableBlock =
+    props.selectable && !usesWebSelection ? (
+      <SourceText
+        selectable
+        selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
+        style={{
+          color: foreground,
+          fontFamily: REVIEW_MONO_FONT_FAMILY,
+          fontSize: codeSurface.fontSize,
+          lineHeight: codeSurface.rowHeight,
+        }}
+      >
+        {selectableTokens
+          ? lines.map(
+              (
+                line,
+                index,
+              ) => /* oxlint-disable react/no-array-index-key -- Source lines and highlight tokens are stateless positions within the loaded file. */ {
+                  const lineTokens = selectableTokens[index] ?? null;
+                  const body =
+                    lineTokens && lineTokens.length > 0
+                      ? lineTokens.map((token, tokenIndex) => (
+                          <SourceText
+                            key={`${index}:${tokenIndex}`}
+                            style={{
+                              color: token.color ?? foreground,
+                              fontWeight:
+                                token.fontStyle !== null && (token.fontStyle & 2) === 2
+                                  ? "700"
+                                  : "400",
+                              fontStyle:
+                                token.fontStyle !== null && (token.fontStyle & 1) === 1
+                                  ? "italic"
+                                  : "normal",
+                            }}
+                          >
+                            {token.content}
+                          </SourceText>
+                        ))
+                      : line;
+                  return (
+                    <SourceText key={index}>
+                      {body}
+                      {index < lines.length - 1 ? "\n" : ""}
+                    </SourceText>
+                  );
+                } /* oxlint-enable react/no-array-index-key */,
+            )
+          : normalizedContents}
+      </SourceText>
+    ) : null;
 
   const webSelection = usesWebSelection ? (
     <WebView
