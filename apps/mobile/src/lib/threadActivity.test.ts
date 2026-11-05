@@ -1872,6 +1872,28 @@ describe("streamed feed updates", () => {
     ).toEqual(turn);
   });
 
+  it("folds a resumed subagent into the window's leading partial turn", () => {
+    const presented = present(
+      {
+        items: [
+          shell("s1", 2, runs[0]),
+          reply("a1", 4, runs[0]),
+          resumed,
+          user("u3", 20, runs[2]),
+          shell("s3", 21, runs[2]),
+          reply("a3", 22, runs[2]),
+        ],
+        latestRun: settled,
+      },
+      new Set(),
+    );
+    expect(
+      presented.map((entry) =>
+        String(entry.type === "message" ? entry.message.id : entry.id).replace(/^message-/, ""),
+      ),
+    ).toEqual(["run-fold:run-1", "a1", "u3", "run-fold:run-3", "a3"]);
+  });
+
   it("hides a delegation once its child reaches back into the earlier run", () => {
     const showsDelegation = (step: (typeof steps)[number]) =>
       buildThreadFeed(step.items.map(row)).some(
