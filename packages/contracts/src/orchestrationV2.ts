@@ -3097,6 +3097,13 @@ export const OrchestrationV2Command = Schema.Union([
     url: TrimmedNonEmptyString,
     source: ThreadPullRequestLinkSource,
     repositoryWebUrl: Schema.optional(TrimmedNonEmptyString),
+    /** Move an existing link after a permanent redirect; ignore a stale source URL. */
+    redirectFrom: Schema.optional(
+      Schema.Struct({
+        ...ThreadPullRequestKey.fields,
+        url: TrimmedNonEmptyString,
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.unlink"),

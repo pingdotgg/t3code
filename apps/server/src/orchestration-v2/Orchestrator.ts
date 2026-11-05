@@ -98,7 +98,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
-import { rewriteSewobePullRequestLinks } from "./sewobePullRequestLinks.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -3918,6 +3917,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               existing?.source === "stack-dismissed" &&
               command.source !== "stack" &&
               command.source !== "stack-dismissed";
+            const redirectFrom = command.redirectFrom;
+            const redirected =
+              redirectFrom === undefined
+                ? undefined
+                : links.find(
+                    (link) =>
+                      threadPullRequestKeysEqual(link, redirectFrom) &&
+                      link.url === redirectFrom.url,
+                  );
+            if (command.redirectFrom !== undefined && redirected === undefined) return thread;
+            if (redirected) {
+              const moved = { ...redirected, ...key, url: command.url };
+              const legacy = (value: ThreadLinkedPullRequest | null | undefined) =>
+                value?.url === redirected.url
+                  ? { ...value, repository: key.repository, number: key.number, url: command.url }
+                  : value;
+              return {
+                ...thread,
+                pullRequests: links.flatMap((link) =>
+                  link === redirected
+                    ? existing && existing !== redirected
+                      ? []
+                      : [moved]
+                    : [link],
+                ),
+                linkedPullRequest: legacy(thread.linkedPullRequest),
+                branchPullRequest: legacy(thread.branchPullRequest),
+              };
+            }
             if (existing && !undismisses) return thread;
             const link = existing
               ? {
@@ -13363,7 +13391,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
     OrchestratorV2Error
   > {
-    command = rewriteSewobePullRequestLinks(command);
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
       "orchestration_v2.command_type": command.type,
