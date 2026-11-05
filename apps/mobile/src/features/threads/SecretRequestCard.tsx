@@ -87,14 +87,15 @@ function PendingSecretRequestForm(props: {
     setSubmitting(true);
     setError(null);
     // iOS offers to save a masked field that leaves the screen with text in it as a login
-    // password, so the card is emptied before it closes; a failed save puts the values back.
-    if (reply.type === "save") setValues({});
+    // password, so the card is emptied before it closes; a failed answer puts the values back.
+    const typed = values;
+    setValues({});
     const result = await answer({ environmentId: props.environmentId, input }).finally(() => {
       inFlight.current = false;
       setSubmitting(false);
     });
     if (result._tag === "Success") return;
-    if (reply.type === "save") setValues(reply.values);
+    setValues(typed);
     if (!isAtomCommandInterrupted(result)) {
       pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
     }
