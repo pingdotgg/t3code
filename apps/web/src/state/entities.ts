@@ -365,9 +365,10 @@ export function readEnvironmentSupportsAutoSettleOptOut(environmentId: Environme
 }
 
 export function readEnvironmentSupportsPullRequestSnooze(environmentId: EnvironmentId): boolean {
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
   return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadPullRequestSnooze === true
+    config?.environment.capabilities.threadPullRequestSnooze === true &&
+    config.settings.pullRequestSnoozeEnabled
   );
 }
 

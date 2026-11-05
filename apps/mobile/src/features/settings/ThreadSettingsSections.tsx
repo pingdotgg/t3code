@@ -44,6 +44,13 @@ export function SettingsLabsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <MachineBetaSection
+          title="Snooze until PR update"
+          icon="clock"
+          capability="threadPullRequestSnooze"
+          setting="pullRequestSnoozeEnabled"
+          description="Add Until PR update to the snooze menu of threads with an open pull request. While it is off, threads already snoozed this way still wake."
+        />
+        <MachineBetaSection
           title="Linked environments"
           icon="link"
           capability="peerLinks"
@@ -238,7 +245,10 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+type MachineBetaSetting =
+  | "linkedEnvironmentsEnabled"
+  | "fastWorktreeCheckout"
+  | "pullRequestSnoozeEnabled";
 
 /** One switch per connected machine that offers the beta, since each machine's own setting decides. */
 function MachineBetaSection({
@@ -250,7 +260,7 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout";
+  readonly capability: "peerLinks" | "fastWorktreeCheckout" | "threadPullRequestSnooze";
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
@@ -287,7 +297,9 @@ function MachineBetaSection({
                     patch:
                       setting === "linkedEnvironmentsEnabled"
                         ? { linkedEnvironmentsEnabled: value }
-                        : { fastWorktreeCheckout: value },
+                        : setting === "fastWorktreeCheckout"
+                          ? { fastWorktreeCheckout: value }
+                          : { pullRequestSnoozeEnabled: value },
                   },
                 })
               }

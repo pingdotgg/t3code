@@ -747,6 +747,21 @@ const make = Effect.gen(function* () {
                   });
             }),
           );
+      case "thread.snooze":
+        if (command.wakeOnPullRequest !== true) return Effect.void;
+        return Effect.all([hasReceipt(command.commandId), serverSettings.getSettings]).pipe(
+          Effect.orDie,
+          Effect.flatMap(([replayed, current]) =>
+            replayed || current.pullRequestSnoozeEnabled
+              ? Effect.void
+              : new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause:
+                    "Snooze until PR update is a beta. Turn it on in Settings > Labs for this machine.",
+                }),
+          ),
+        );
       default:
         return Effect.void;
     }

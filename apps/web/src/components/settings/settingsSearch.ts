@@ -491,6 +491,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta share guest invite link teammate watch t3 connect tunnel"],
   },
   {
+    id: "pull-request-snooze",
+    title: "Snooze until PR update",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["beta pull request pr snooze wake checks comments review attention"],
+  },
+  {
     id: "linked-environments-beta",
     title: "Linked environments",
     to: "/settings/labs",

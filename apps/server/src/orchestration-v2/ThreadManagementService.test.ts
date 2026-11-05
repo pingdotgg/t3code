@@ -109,6 +109,36 @@ const layerDispatchChokepointTest =
       Layer.provideMerge(layerReceiptsTest),
     );
 
+it.effect.each([
+  { enabled: false, wakeOnPullRequest: true, dispatches: false },
+  { enabled: false, wakeOnPullRequest: false, dispatches: true },
+  { enabled: true, wakeOnPullRequest: true, dispatches: true },
+])(
+  "the dispatch chokepoint gates pull request snoozes on the beta: $enabled, $wakeOnPullRequest",
+  ({ enabled, wakeOnPullRequest, dispatches }) => {
+    const dispatched: Array<string> = [];
+    const layerTest = layerDispatchChokepointTest(
+      ServerSettings.layerTest({ pullRequestSnoozeEnabled: enabled }),
+    )(dispatched);
+
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const result = yield* threads
+        .dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`command:thread-management:snooze-${enabled}`),
+          threadId: ThreadId.make("thread:thread-management:chokepoint"),
+          snoozedUntil: "2030-01-01T00:00:00.000Z",
+          ...(wakeOnPullRequest ? { wakeOnPullRequest } : {}),
+        })
+        .pipe(Effect.exit);
+
+      expect(result._tag).toBe(dispatches ? "Success" : "Failure");
+      expect(dispatched).toEqual(dispatches ? ["thread.snooze"] : []);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
+
 it.effect(
   "the dispatch chokepoint refuses a continuation message.dispatch on a project-disabled instance before reaching the orchestrator",
   () => {

@@ -19,6 +19,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
+        <PullRequestSnoozeRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -69,6 +70,29 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+function PullRequestSnoozeRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("pull-request-snooze")}
+      settingKeys={["pullRequestSnoozeEnabled"]}
+      description="Add Until PR update to the snooze menu of threads with an open pull request. The thread returns when the pull request needs you. While it is off, threads already snoozed this way still wake."
+      control={
+        <ScopedSwitch
+          settingKeys={["pullRequestSnoozeEnabled"]}
+          checked={settings.pullRequestSnoozeEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ pullRequestSnoozeEnabled: Boolean(checked) })
+          }
+          aria-label="Snooze until PR update"
         />
       }
     />

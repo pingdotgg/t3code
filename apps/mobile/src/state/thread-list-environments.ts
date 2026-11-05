@@ -30,6 +30,7 @@ function selectEnvironment(config: ServerConfig, isConnected: boolean) {
     machineKind: resolveEnvironmentMachineKind(config),
     capabilities: config.environment.capabilities,
     snoozePresets: config.settings.snoozePresets,
+    pullRequestSnoozeEnabled: config.settings.pullRequestSnoozeEnabled,
   };
 }
 
@@ -66,14 +67,16 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
   for (const [
     id,
-    { providers, machineKind, capabilities, isConnected, snoozePresets },
+    { providers, machineKind, capabilities, isConnected, snoozePresets, pullRequestSnoozeEnabled },
   ] of environments) {
     providersByEnvironmentId.set(id, providers);
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
-    if (capabilities.threadPullRequestSnooze === true) pullRequestSnoozeEnvironmentIds.add(id);
+    if (capabilities.threadPullRequestSnooze === true && pullRequestSnoozeEnabled) {
+      pullRequestSnoozeEnvironmentIds.add(id);
+    }
     if (isConnected) reorderableEnvironmentIds.add(id);
   }
   return {
@@ -117,6 +120,7 @@ export function createThreadListEnvironmentsAtom(
         prior.machineKind === selected.machineKind &&
         prior.isConnected === selected.isConnected &&
         prior.snoozePresets === selected.snoozePresets &&
+        prior.pullRequestSnoozeEnabled === selected.pullRequestSnoozeEnabled &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),
         );
