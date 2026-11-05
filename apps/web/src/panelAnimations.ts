@@ -1,12 +1,14 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, use, useEffect, useState } from "react";
 import { type PanelAnimationDurationMs } from "@t3tools/contracts/settings";
 
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useClientSettings } from "./hooks/useSettings";
 
 const PanelAnimationSuppressionContext = createContext(false);
+const ChatPanelAnimationSuppressionContext = createContext<boolean | null>(null);
 
 export const PanelAnimationSuppressionProvider = PanelAnimationSuppressionContext.Provider;
+export const ChatPanelAnimationSuppressionProvider = ChatPanelAnimationSuppressionContext.Provider;
 
 export function usePanelNavigationSuppression(navigationKey: string): boolean {
   const [paintedNavigationKey, setPaintedNavigationKey] = useState<string | null>(null);
@@ -34,7 +36,8 @@ export function usePanelAnimationSettings(): {
 } {
   const durationMs = useClientSettings((settings) => settings.panelAnimationDurationMs);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const suppressed = useContext(PanelAnimationSuppressionContext);
+  const suppressed =
+    use(ChatPanelAnimationSuppressionContext) ?? use(PanelAnimationSuppressionContext);
   return { active: durationMs > 0 && !prefersReducedMotion && !suppressed, durationMs };
 }
 
