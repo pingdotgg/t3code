@@ -13,18 +13,14 @@ export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
-// Review bots open with badge markup. Only lowercase element names match, so Promise<void>
-// and type parameters like Promise<A> survive.
-const HTML_TAG =
-  /<\/?(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>/g;
-const MARKDOWN_CODE = /(```[\s\S]*?```|`[^`]*`)/;
-
-// Split keeps the captured code regions at odd indexes, and those keep their tags.
-const withoutHtmlTags = (text: string) =>
-  text
-    .split(MARKDOWN_CODE)
-    .map((part, index) => (index % 2 === 1 ? part : part.replaceAll(HTML_TAG, " ")))
-    .join("");
+// Remark bodies are untrusted and run to 64 KB, and unclosed openers make the markup pass
+// backtrack, so it only reads far enough to fill an excerpt.
+const SNIPPET_SCAN_LENGTH = 2_000;
+// One left-to-right pass: code spans keep their tags, and backticks inside a tag's attributes are
+// not code. Element names are lowercase, and one-letter ones need attributes, so Promise<A>,
+// Promise<a> and Promise<void> stay.
+const MARKUP =
+  /(?<code>(?<ticks>`+)[\s\S]*?(?<!`)\k<ticks>(?!`)|(?<tildes>~{3,})[\s\S]*?\k<tildes>)|<!--[\s\S]*?(?:-->|$)|<\/(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)\s*>|<(?:blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|img|li|ol|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>|<(?:a|b|i|p)\s(?:[^>"']|"[^"]*"|'[^']*')*>/g;
 
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
@@ -171,7 +167,10 @@ export function evaluatePullRequestWatch(
 }
 
 function snippet(body: string): string {
-  const text = withoutHtmlTags(body.replaceAll(/<!--[\s\S]*?-->/g, " "))
+  const text = body
+    .slice(0, SNIPPET_SCAN_LENGTH)
+    .toWellFormed()
+    .replaceAll(MARKUP, (match, code: string | undefined) => (code === undefined ? " " : match))
     .replaceAll(/\s+/g, " ")
     .trim();
   if (text.length <= SNIPPET_LENGTH) return text;
