@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import type { AcpRegistrySettings } from "../settings.ts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13,7 +14,9 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
@@ -21,6 +24,26 @@ import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./p
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+const MAX_ERROR_MESSAGE_LENGTH = 500;
+
+export const formatFailureDetail = (detail: string, cause?: unknown): string => {
+  const unwrapped = Cause.isCause(cause) ? Cause.squash(cause) : cause;
+  if (isAcpRequestError(unwrapped)) {
+    let message = unwrapped.errorMessage.trim();
+    if (message.length > MAX_ERROR_MESSAGE_LENGTH) {
+      message = `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH).trimEnd()}…`;
+    }
+    if (message.length > 0) {
+      const trimmed = detail.trimEnd();
+      const prefix = trimmed.endsWith(".") ? `${trimmed} ` : `${trimmed}. `;
+      return `${prefix}${message}`;
+    }
+  }
+  return detail;
+};
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -47,7 +70,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const agentKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+    new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail: formatFailureDetail(detail, cause),
+      cause,
+    });
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
     .pipe(
