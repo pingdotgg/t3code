@@ -1,10 +1,6 @@
 import { useMemo } from "react";
 import { Image } from "react-native";
-import type {
-  LinkPillContent,
-  MarkdownDocumentAsset,
-  MarkdownStyle,
-} from "react-native-enriched-markdown";
+import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
@@ -13,7 +9,7 @@ import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIcon } from "../lib/markdownLinkIcons";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
-import { resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
+import { resolveMarkdownFileIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
 import type {
   MarkdownLinkCustomization,
   SelectableMarkdownTextProps,
@@ -94,20 +90,28 @@ function presentation(
 }
 
 export function useEnrichedLinkVariants(
-  assets: ReadonlyArray<MarkdownDocumentAsset>,
+  urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
+  fileHrefs: ReadonlySet<string>,
 ) {
-  const { linkCustomization, skills, textStyle } = props;
+  const { linkCustomization, skills, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
-    for (const asset of assets) {
-      if (asset.kind !== "link" || byUrl.has(asset.url)) continue;
-      const value = presentation(asset.url, { linkCustomization, skills, textStyle });
-      if (value) byUrl.set(asset.url, value);
+    for (const url of urls) {
+      if (byUrl.has(url)) continue;
+      const label = fileHrefs.has(url) ? fileEmbedLabel?.(url, false) : null;
+      const value = label
+        ? {
+            label,
+            color: textStyle.fileTextColor,
+            icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
+          }
+        : presentation(url, { linkCustomization, skills, textStyle });
+      if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [assets, linkCustomization, skills, textStyle]);
+  }, [urls, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

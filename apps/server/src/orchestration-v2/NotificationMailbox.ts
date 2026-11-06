@@ -16,10 +16,7 @@ export function isBufferedProviderNotification(
   );
 }
 
-/**
- * Delivery is at least once: provider acceptance and our receipt cannot commit
- * atomically. Reusing the message ID keeps recovery from duplicating timeline items.
- */
+/** Acceptance and receipts cannot commit atomically; reuse message ids for at-least-once delivery. */
 export function isUndeliveredMailboxSteer(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs" | "providerTurns">,
   messageId: MessageId,

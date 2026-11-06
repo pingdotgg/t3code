@@ -3,14 +3,22 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as References from "effect/References";
@@ -18,6 +26,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -26,6 +35,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { OPENCODE_2_RESPONSES, replayOpenCodeServer } from "./probeResponses.fixture.ts";
 import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -58,7 +68,7 @@ const layer = Layer.mergeAll(
     ProviderEventLoggers.NoOpProviderEventLoggers,
   ),
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) =>
   OpenCodeDriver.create({
@@ -70,6 +80,82 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
+
+it.live("discovers models through a home-relative OpenCode wrapper", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-home with spaces-" });
+    const binaryPath = NodePath.join(home, "opencode");
+    const scriptPath = NodePath.join(home, "opencode.cjs");
+    yield* fs.writeFileString(
+      scriptPath,
+      `if (process.argv.includes('--version')) {
+        console.log('1.18.32');
+      } else {
+        const server = require('node:http').createServer((req, res) => {
+          const route = new URL(req.url, 'http://localhost').pathname;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(route === '/global/health'
+            ? { healthy: true, version: '1.18.32' }
+            : route === '/provider'
+              ? { connected: ['opencode'], default: {}, all: [{
+                  id: 'opencode', name: 'OpenCode', models: {
+                    'big-pickle': { id: 'big-pickle', name: 'Big Pickle' }
+                  }
+                }] }
+              : []));
+        });
+        server.listen(0, '127.0.0.1', () => {
+          console.log('opencode server listening on http://127.0.0.1:' + server.address().port);
+        });
+      }`,
+    );
+    const windows = (yield* HostProcess.Platform) === "win32";
+    const wrapperPath = windows ? `${binaryPath}.cmd` : binaryPath;
+    const node = yield* HostProcess.ExecutablePath;
+    yield* fs.writeFileString(
+      wrapperPath,
+      windows
+        ? `@echo off\r\n"${node}" "${scriptPath}" %*\r\n`
+        : `#!/bin/sh\nexec "${node}" "${scriptPath}" "$@"\n`,
+    );
+    if (!windows) yield* fs.chmod(wrapperPath, 0o755);
+
+    const instance = yield* OpenCodeDriver.create({
+      instanceId: ProviderInstanceId.make("opencode-home"),
+      displayName: undefined,
+      environment: [],
+      enabled: true,
+      config: {
+        ...OpenCodeDriver.defaultConfig(),
+        binaryPath: windows ? "~/opencode.cmd" : "~/opencode",
+      },
+    }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+    const snapshot = yield* instance.snapshot.refresh;
+    assert.strictEqual(snapshot.status, "ready");
+    assert.strictEqual(snapshot.version, "1.18.32");
+    assert.isTrue(snapshot.models.some((model) => model.slug === "opencode/big-pickle"));
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        ProviderLatestVersions.layer,
+        TestProviderHost.layer({ runBackgroundWork: false }),
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+        OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+      ).pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer),
+        ),
+      ),
+    ),
+  ),
+);
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
@@ -264,10 +350,180 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.strictEqual(requested.length, readsAfterRejection);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
+
+  it.effect.each(
+    [
+      { name: "recovers" },
+      { name: "skips without demand", demand: false },
+      { name: "respects a disabled interval", intervalOff: true },
+      { name: "skips disabled instances", enabled: false },
+      { name: "skips unsupported usage", unsupported: true },
+    ].map((scenario) => ({
+      enabled: true,
+      demand: true,
+      intervalOff: false,
+      unsupported: false,
+      ...scenario,
+    })),
+  )("Go usage recovery $name without restarting a ready catalog", (scenario) =>
+    Effect.gen(function* () {
+      const usageStarted = yield* Deferred.make<void>();
+      let usageReads = 0;
+      let serverStarts = 0;
+      let modelReads = 0;
+      const server = HttpClient.make((request) => {
+        if (request.url === "https://opencode.ai/zen/go/v1/usage") {
+          usageReads += 1;
+          assert.strictEqual(request.headers.authorization, "Bearer test-go-key");
+          if (scenario.unsupported)
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 403 })),
+            );
+          if (usageReads === 1)
+            return Deferred.succeed(usageStarted, undefined).pipe(Effect.andThen(Effect.never));
+          const window = { percent: 10, resetsAt: "2026-11-01T00:00:00.000Z" };
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ usage: { rolling: window, weekly: window, monthly: window } }),
+            ),
+          );
+        }
+        const path = new URL(request.url).pathname;
+        if (path === "/api/model") modelReads += 1;
+        const body =
+          path === "/api/info"
+            ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
+            : {
+                location: { directory: "/work" },
+                data:
+                  path === "/api/model"
+                    ? [
+                        {
+                          id: "big-pickle",
+                          modelID: "big-pickle",
+                          providerID: "opencode",
+                          name: "Big Pickle",
+                          package: "@opencode/ai/providers/openai-compatible",
+                          settings: {},
+                          compatibility: {},
+                          capabilities: { tools: true, input: ["text"], output: ["text"] },
+                          variants: [],
+                          time: { released: 1789516800000 },
+                          cost: [],
+                          status: "active",
+                          enabled: true,
+                          limit: { context: 1000000, output: 65536 },
+                        },
+                      ]
+                    : [],
+              };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      });
+      const runtime = {
+        ...openCode2Runtime,
+        startOpenCodeServerProcess: ({
+          verify,
+        }: Parameters<
+          OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]
+        >[0]) =>
+          Effect.gen(function* () {
+            serverStarts += 1;
+            const url = "http://127.0.0.1:4096";
+            const version = verify ? yield* verify(url) : "2.0.18";
+            return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+          }),
+      };
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-usage-recovery"),
+        displayName: undefined,
+        environment: [
+          {
+            name: "OPENCODE_AUTH_CONTENT",
+            sensitive: true,
+            value: JSON.stringify({
+              "opencode-go": { type: "api", key: "test-go-key" },
+            }),
+          },
+        ],
+        enabled: scenario.enabled,
+        config: OpenCodeDriver.defaultConfig(),
+      }).pipe(
+        Effect.provide(
+          TestProviderHost.layer({
+            runBackgroundWork: scenario.demand,
+            settings: scenario.intervalOff
+              ? {
+                  ...DEFAULT_SERVER_SETTINGS,
+                  backgroundActivity: {
+                    ...DEFAULT_SERVER_SETTINGS.backgroundActivity,
+                    profile: "custom",
+                    overrides: { providerHealthRefreshInterval: Duration.zero },
+                  },
+                }
+              : DEFAULT_SERVER_SETTINGS,
+          }),
+        ),
+        Effect.provideService(HttpClient.HttpClient, server),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      );
+      const initial = scenario.enabled
+        ? yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.usageLimits !== undefined),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          )
+        : undefined;
+      if (scenario.enabled && !scenario.unsupported) yield* Deferred.await(usageStarted);
+      yield* TestClock.adjust("5 seconds");
+      const failed = initial
+        ? Array.from(yield* Fiber.join(initial))[0]
+        : yield* instance.snapshot.getSnapshot;
+      if (scenario.enabled) {
+        assert.strictEqual(failed?.status, "ready");
+        assert.strictEqual(failed?.auth.status, "authenticated");
+      }
+      const initialReason =
+        scenario.enabled && !scenario.unsupported ? "probeFailed" : "unsupported";
+      assert.strictEqual(failed?.usageLimits?.unavailable?.reason, initialReason);
+      const catalogReads = modelReads;
+      const starts = serverStarts;
+
+      const shouldRecover =
+        scenario.enabled && scenario.demand && !scenario.intervalOff && !scenario.unsupported;
+      const recovery = shouldRecover
+        ? yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.usageLimits?.windows.length === 3),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          )
+        : undefined;
+      yield* TestClock.adjust("5 minutes");
+      const recovered = yield* instance.snapshot.getSnapshot;
+      const expectedReads = !scenario.enabled ? 0 : shouldRecover ? 2 : 1;
+      assert.strictEqual(usageReads, expectedReads);
+      if (recovery) assert.deepStrictEqual(Array.from(yield* Fiber.join(recovery)), [recovered]);
+      assert.strictEqual(
+        recovered.usageLimits?.unavailable?.reason,
+        shouldRecover ? undefined : initialReason,
+      );
+      assert.deepStrictEqual(
+        recovered.usageLimits?.windows.map((window) => window.kind),
+        shouldRecover ? ["session", "weekly", "monthly"] : [],
+      );
+      assert.strictEqual(modelReads, catalogReads);
+      assert.strictEqual(serverStarts, starts);
+      yield* TestClock.adjust("15 minutes");
+      assert.strictEqual(usageReads, expectedReads);
+      assert.strictEqual(modelReads, catalogReads);
+      assert.strictEqual(serverStarts, starts);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
 });
 
-// npm links `<prefix>/bin/opencode` into the package that installed it:
-// `opencode-ai` for 1.x and `@opencode/cli` (whose bin is `bin/opencode.exe`) for 2.x.
+// npm links into opencode-ai for 1.x and @opencode/cli for 2.x.
 const npmGlobalInstall = (prefix: string, packagePath: ReadonlyArray<string>, bin: string) => {
   const target = NodePath.join(prefix, "lib", "node_modules", ...packagePath, "bin", bin);
   NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
@@ -287,11 +543,11 @@ const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make(() => Effect.die("resolving an update must not spawn")),
     ),
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "updates an npm-global OpenCode 2 install as @opencode/cli and a 1.x one as opencode-ai",
+  "updates npm-global OpenCode by generation and runs upgrade only for its own installer's path",
   () =>
     Effect.gen(function* () {
       const root = NodeFS.realpathSync(
@@ -322,6 +578,21 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.isNull(
         (yield* resolveUpdate("v1", NodePath.join(v2Prefix, "bin", "opencode"))).update,
       );
+      const executable = (...segments: ReadonlyArray<string>) => {
+        const path = NodePath.join(root, ...segments);
+        NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+        NodeFS.writeFileSync(path, "#!/bin/sh\n");
+        NodeFS.chmodSync(path, 0o755);
+        return path;
+      };
+      const launcher = executable("launcher", "opencode");
+      const native = executable(".opencode", "bin", "opencode");
+      for (const generation of ["v1", "v2"] as const) {
+        assert.isNull((yield* resolveUpdate(generation, launcher)).update);
+        assert.deepStrictEqual((yield* resolveUpdate(generation, native)).update?.args, [
+          "upgrade",
+        ]);
+      }
     }),
 );
 
@@ -354,7 +625,7 @@ const layerUpdate = Layer.mergeAll(
     ProviderEventLoggers.NoOpProviderEventLoggers,
   ),
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, changingRuntime),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -386,6 +657,41 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
         const v2 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
         assert.strictEqual(v2.packageName, "@opencode/cli");
         assert.isNull(v2.update);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "opens sessions through OpenCode 2 after the binary is upgraded in place from 1.x",
+    () =>
+      Effect.gen(function* () {
+        versionOutput.current = "1.18.18\n";
+        const instance = yield* create({}, noHttp);
+        // Let the startup status check claim the refresh permit, then wait behind it so it
+        // cannot probe after the upgrade below.
+        yield* Effect.yieldNow;
+        yield* instance.snapshot.refresh;
+        serverStarts.length = 0;
+        const openSession = instance.orchestrationAdapter
+          .openSession({
+            threadId: ThreadId.make("thread-upgraded"),
+            providerSessionId: ProviderSessionId.make("session-upgraded"),
+            modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
+            runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          })
+          .pipe(Effect.scoped, Effect.flip);
+
+        yield* openSession;
+        assert.deepStrictEqual(serverStarts, ["connect"], "1.x opens through the 1.x adapter");
+
+        versionOutput.current = "opencode v2.2.4\n";
+        serverStarts.length = 0;
+        yield* openSession;
+        assert.notInclude(
+          serverStarts,
+          "connect",
+          "after upgrading to 2.x, the next session must not open through the 1.x adapter",
+        );
+        assert.include(serverStarts, "start", "the OpenCode 2 adapter starts its server");
       }).pipe(Effect.scoped),
   );
 });

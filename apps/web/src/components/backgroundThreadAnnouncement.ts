@@ -44,11 +44,8 @@ interface BackgroundThreadMemoryEntry {
 export type BackgroundThreadMemory = ReadonlyMap<string, BackgroundThreadMemoryEntry>;
 
 /**
- * Decides what a screen reader hears when a thread other than the open one
- * asks for something or ends a run. `threads` holds only threads whose
- * environment is live, so a thread is silent the first time it's seen:
- * opening the app or reconnecting takes a baseline instead of reading out
- * every thread.
+ * Only live environments supply threads. First sightings establish a silent baseline
+ * so opening the app or reconnecting does not read out every thread.
  */
 export function nextBackgroundThreadAnnouncement(
   previous: BackgroundThreadMemory,

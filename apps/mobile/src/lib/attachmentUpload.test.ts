@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -93,7 +93,6 @@ import {
   prepareTurnAttachments,
   releasePendingAttachmentUploads,
   withUploadedMobileAttachmentReferences,
-  validateDraftFileAttachments,
 } from "./attachmentUpload";
 import type { DraftComposerAttachment } from "./composerImages";
 
@@ -137,45 +136,6 @@ const documentPickedImage = {
   sizeBytes: 3,
   fileUri: "file:///documents/photo.png",
 } as const satisfies DraftComposerAttachment;
-
-describe("validateDraftFileAttachments", () => {
-  it("blocks files while config is unknown or file uploads are unsupported", () => {
-    expect(validateDraftFileAttachments({ attachments: [file], serverConfig: null })).toBe(
-      "Server attachment support is still loading.",
-    );
-    expect(
-      validateDraftFileAttachments({
-        attachments: [file],
-        serverConfig: { environment: { capabilities: { attachmentUploads: true } } },
-      }),
-    ).toBe("This server does not support file attachments.");
-  });
-
-  it("uses the current clamped limit and allows valid mixed attachments", () => {
-    const lowerLimit = {
-      environment: {
-        capabilities: {
-          attachmentUploads: true,
-          fileAttachments: { maxUploadBytes: 20 },
-        },
-      },
-    };
-    expect(validateDraftFileAttachments({ attachments: [file], serverConfig: lowerLimit })).toBe(
-      "'report.pdf' exceeds the 20 bytes attachment limit.",
-    );
-    const allowed = {
-      environment: {
-        capabilities: {
-          attachmentUploads: true,
-          fileAttachments: { maxUploadBytes: 100 },
-        },
-      },
-    };
-    expect(
-      validateDraftFileAttachments({ attachments: [image, file], serverConfig: allowed }),
-    ).toBeNull();
-  });
-});
 
 function removeCallsFor(attachmentId: string): number {
   return mocks.runAtomCommand.mock.calls.filter(
@@ -408,6 +368,41 @@ describe("prepareTurnAttachments", () => {
       mimeType: "image/png",
       sizeBytes: 3,
     });
+  });
+
+  it("uploads an oversized document-picked image as a file", async () => {
+    const largeImage = {
+      ...documentPickedImage,
+      mimeType: "image/png",
+      sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
+    };
+    const prepared = await prepareTurnAttachments({ environmentId, attachments: [largeImage] });
+
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      mocks.createUploadUrl,
+      expect.objectContaining({
+        input: {
+          type: "file",
+          name: largeImage.name,
+          mimeType: "image/png",
+          sizeBytes: largeImage.sizeBytes,
+        },
+      }),
+      expect.anything(),
+    );
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") return;
+    expect(prepared.attachments).toEqual([
+      {
+        type: "file",
+        id: MINTED_ID,
+        name: largeImage.name,
+        mimeType: "image/png",
+        sizeBytes: largeImage.sizeBytes,
+      },
+    ]);
+    expect(mocks.readBase64).not.toHaveBeenCalled();
   });
 
   it("uploads generic file bytes directly and keeps mixed attachment order", async () => {

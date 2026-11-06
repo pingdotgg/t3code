@@ -28,11 +28,7 @@ function blockSignature(node: ProseMirrorNode, theme: DiffThemeName): string {
   return [theme, String(node.attrs.language ?? ""), node.textContent].join("\u0000");
 }
 
-/**
- * The composer's code blocks, which are always top-level: list items and
- * quotes cannot hold one. Scanning only the top level keeps a keystroke in a
- * long draft from walking every node in it.
- */
+/** Code blocks are always top-level; avoid walking the whole draft per keystroke. */
 function collectCodeBlocks(state: EditorState): Array<{ node: ProseMirrorNode; pos: number }> {
   const blocks: Array<{ node: ProseMirrorNode; pos: number }> = [];
   state.doc.forEach((node, pos) => {
@@ -48,12 +44,10 @@ export function composerCodeBlockHighlight(options: {
     name: "composerCodeBlockHighlight",
 
     addProseMirrorPlugins() {
-      // Every keystroke in a code block mints a new signature, so each scan
-      // drops the signatures the document no longer holds. The cache is then
-      // bounded by the document itself, and no block it holds is ever evicted.
+      // Prune obsolete signatures each scan so the cache is bounded by the document without evicting live
+      // blocks.
       const cache = new Map<string, HighlightedBlock>();
-      // The latest scan's signatures, so a tokenize that resolves after its
-      // block was edited away does not put it back.
+      // Track live signatures so late tokenization cannot restore edited-away blocks.
       let live = new Set<string>();
 
       return [
@@ -88,8 +82,7 @@ export function composerCodeBlockHighlight(options: {
               const theme = options.resolveTheme();
               const themeChanged = theme !== paintedTheme;
               paintedTheme = theme;
-              // A selection change cannot alter what needs tokenizing, and
-              // building a signature means concatenating every block's text.
+              // Selection changes cannot affect tokens; avoid rebuilding every block's text signature.
               if (!themeChanged && view.state.doc === scannedDoc) return;
               clearTimeout(deferredRefresh);
               scannedDoc = view.state.doc;
@@ -125,8 +118,7 @@ export function composerCodeBlockHighlight(options: {
 
               void Promise.allSettled(
                 pending.map(async ({ node }) => {
-                  // The stored info string keeps everything after the language
-                  // (`js title=x`); Shiki wants only the name.
+                  // Stored info includes metadata after the language; Shiki needs only the name.
                   const language =
                     languageOfInfoString(String(node.attrs.language ?? "")) || "text";
                   const signature = blockSignature(node, theme);
