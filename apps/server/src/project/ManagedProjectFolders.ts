@@ -431,9 +431,10 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const workspaceRoot = yield* claimNamedFolder(input.name, input.root);
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
+    // Lesson folders are plain, unless the data dir sits in a work tree they would inherit.
+    const plainFolder = input.root === "lessons" && Option.isSome(yield* scratchRoot);
     const prepared = yield* Effect.all([
-      // Lesson folders stay plain folders, never Git repositories.
-      (input.root === "lessons"
+      (plainFolder
         ? writeScaffoldFiles(workspaceRoot, input.name).pipe(Effect.as(undefined))
         : scaffoldRepository(workspaceRoot, input.name)
       ).pipe(

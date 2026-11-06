@@ -114,6 +114,7 @@ const lessonLayer = (
         ),
         ServerConfig.layerTest(process.cwd(), options?.baseDir ?? process.cwd()).pipe(
           Layer.provide(NodeServices.layer),
+          Layer.orDie,
         ),
         NodeServices.layer,
       ),
@@ -255,7 +256,7 @@ it.effect("cleans up a newly created lesson project when launch fails", () =>
       } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"],
       projects: {
         getById: () => Effect.succeedNone,
-        delete: (input) =>
+        delete: (input: ProjectService.ProjectDeleteInput) =>
           Ref.update(deleted, (items) => [...items, input]).pipe(Effect.as({} as never)),
       } as unknown as ProjectService.ProjectService["Service"],
     });
@@ -318,92 +319,100 @@ it.effect("does not clean up a caller supplied project when launch fails", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("creates its own project when projectId is absent, and reuses it on retry", () =>
-  Effect.gen(function* () {
-    const created = yield* Ref.make(0);
-    const createInputs = yield* Ref.make<
-      ReadonlyArray<{ name: string; root?: "lessons"; projectId?: ProjectId }>
-    >([]);
-    const lookups = yield* Ref.make(0);
-    const launches = yield* Ref.make<ThreadLaunchService.ThreadLaunchInput[]>([]);
-    const commandId = CommandId.make("lesson:retry");
-    const derivedProjectId = ProjectId.make(`lesson-project:${commandId}`);
-    const result = yield* Effect.gen(function* () {
-      const service = yield* LessonModule.LessonService;
-      const input = {
-        commandId,
-        lesson: {
-          topic: "A very useful topic",
-          depth: "working" as const,
-          purpose: "outcome" as const,
-        },
-        modelSelection,
-        runtimeMode: "full-access" as const,
-        interactionMode: "default" as const,
-        createdBy: "user" as const,
-        creationSource: "web" as const,
-      };
-      const first = yield* service.create(input).pipe(Effect.flip);
-      const second = yield* service.create(input);
-      return { first, second };
-    }).pipe(
-      Effect.provide(
-        lessonLayer(
-          () => Effect.die("unused"),
-          (input) =>
-            Effect.gen(function* () {
-              const count = (yield* Ref.get(launches)).length;
-              yield* Ref.update(launches, (items) => [...items, input]);
-              if (count === 0) return yield* failingLaunch(commandId);
-              return {
-                threadId: ThreadId.make(`thread:${(yield* Ref.get(launches)).length}`),
-              } as ThreadLaunchService.ThreadLaunchResult;
-            }),
-          {
-            folders: {
-              createNamedProject: (input: {
-                readonly name: string;
-                readonly root?: "lessons";
-                readonly projectId?: ProjectId;
-              }) =>
-                Ref.update(createInputs, (items) => [...items, input]).pipe(
-                  Effect.andThen(Ref.updateAndGet(created, (count) => count + 1)),
-                  Effect.as({
-                    projectId: input.projectId ?? ProjectId.make("created:fresh"),
-                    workspaceRoot: `/lessons/${input.name}`,
-                  }),
-                ),
-            } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"],
-            projects: {
-              getById: () =>
-                Ref.updateAndGet(lookups, (count) => count + 1).pipe(
-                  Effect.map((count) =>
-                    count === 1
-                      ? Option.none()
-                      : Option.some({
-                          id: derivedProjectId,
-                          deletedAt: "2026-01-01T00:00:00.000Z",
-                        } as never),
-                  ),
-                ),
-              delete: () => Effect.succeed({} as never),
-            } as unknown as ProjectService.ProjectService["Service"],
+it.effect(
+  "creates its own project, replaces it after cleanup, and never cleans up a reused one",
+  () =>
+    Effect.gen(function* () {
+      const created = yield* Ref.make(0);
+      const createInputs = yield* Ref.make<
+        ReadonlyArray<{ name: string; root?: "lessons"; projectId?: ProjectId }>
+      >([]);
+      const lookups = yield* Ref.make(0);
+      const deletes = yield* Ref.make(0);
+      const launches = yield* Ref.make<ThreadLaunchService.ThreadLaunchInput[]>([]);
+      const commandId = CommandId.make("lesson:retry");
+      const derivedProjectId = ProjectId.make(`lesson-project:${commandId}`);
+      const result = yield* Effect.gen(function* () {
+        const service = yield* LessonModule.LessonService;
+        const input = {
+          commandId,
+          lesson: {
+            topic: "A very useful topic",
+            depth: "working" as const,
+            purpose: "outcome" as const,
           },
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        };
+        const first = yield* service.create(input).pipe(Effect.flip);
+        const second = yield* service.create(input);
+        const third = yield* service.create(input).pipe(Effect.flip);
+        return { first, second, third };
+      }).pipe(
+        Effect.provide(
+          lessonLayer(
+            () => Effect.die("unused"),
+            (input) =>
+              Effect.gen(function* () {
+                const count = (yield* Ref.get(launches)).length;
+                yield* Ref.update(launches, (items) => [...items, input]);
+                if (count !== 1) return yield* failingLaunch(commandId);
+                return {
+                  threadId: ThreadId.make(`thread:${(yield* Ref.get(launches)).length}`),
+                } as ThreadLaunchService.ThreadLaunchResult;
+              }),
+            {
+              folders: {
+                createNamedProject: (input: {
+                  readonly name: string;
+                  readonly root?: "lessons";
+                  readonly projectId?: ProjectId;
+                }) =>
+                  Ref.update(createInputs, (items) => [...items, input]).pipe(
+                    Effect.andThen(Ref.updateAndGet(created, (count) => count + 1)),
+                    Effect.as({
+                      projectId: input.projectId ?? ProjectId.make("created:fresh"),
+                      workspaceRoot: `/lessons/${input.name}`,
+                    }),
+                  ),
+              } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"],
+              projects: {
+                getById: () =>
+                  Ref.updateAndGet(lookups, (count) => count + 1).pipe(
+                    Effect.map((count) =>
+                      count === 1
+                        ? Option.none()
+                        : Option.some(
+                            (count === 2
+                              ? { id: derivedProjectId, deletedAt: "2026-01-01T00:00:00.000Z" }
+                              : { id: ProjectId.make("created:fresh"), deletedAt: null }) as never,
+                          ),
+                    ),
+                  ),
+                delete: () =>
+                  Ref.update(deletes, (count) => count + 1).pipe(Effect.as({} as never)),
+              } as unknown as ProjectService.ProjectService["Service"],
+            },
+          ),
         ),
-      ),
-    );
-    assert.instanceOf(result.first, LessonCreateError);
-    assert.equal(result.second.threadId, ThreadId.make("thread:2"));
-    assert.equal(yield* Ref.get(created), 2);
-    assert.deepEqual(yield* Ref.get(createInputs), [
-      { name: "A very useful topic", root: "lessons", projectId: derivedProjectId },
-      { name: "A very useful topic", root: "lessons" },
-    ]);
-    assert.deepEqual(
-      (yield* Ref.get(launches)).map((input) => input.projectId),
-      [derivedProjectId, ProjectId.make("created:fresh")],
-    );
-  }),
+      );
+      assert.instanceOf(result.first, LessonCreateError);
+      assert.equal(result.second.threadId, ThreadId.make("thread:2"));
+      assert.instanceOf(result.third, LessonCreateError);
+      assert.equal(yield* Ref.get(created), 2);
+      assert.equal(yield* Ref.get(deletes), 1);
+      assert.deepEqual(yield* Ref.get(createInputs), [
+        { name: "A very useful topic", root: "lessons", projectId: derivedProjectId },
+        { name: "A very useful topic", root: "lessons" },
+      ]);
+      assert.deepEqual(
+        (yield* Ref.get(launches)).map((input) => input.projectId),
+        [derivedProjectId, ProjectId.make("created:fresh"), ProjectId.make("created:fresh")],
+      );
+    }),
 );
 
 it("asks to follow a course when the topic is a link", () => {
