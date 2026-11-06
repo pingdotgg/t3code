@@ -79,7 +79,15 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     const kind = nativeKind ?? "document";
     const base = { kind, name: params.name, mimeType: params.mimeType };
     if (localAttachment) return { ...base, attachment: localAttachment };
-    if (environmentId) return { ...base, environmentId, resource };
+    if (environmentId) {
+      const actionsSource = {
+        name: params.name,
+        mimeType: params.mimeType,
+        environmentId,
+        resource,
+      };
+      return { ...base, environmentId, resource, actionsSource };
+    }
     return uri ? { ...base, uri } : null;
   })();
   const handleNativeOpenError = (error: unknown) => {

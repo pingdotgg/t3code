@@ -51,7 +51,7 @@ function PdfDocumentPreview(props: {
               accessibilityLabel: `Save or share ${name}`,
               icon: "square.and.arrow.up",
               onPress: media.share,
-              disabled: media.sharing || save?.disabled === true,
+              disabled: save?.disabled,
             },
           ]}
         />
