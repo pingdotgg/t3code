@@ -169,7 +169,11 @@ describe("deriveWorkspacePaneLayout", () => {
             nativeWorkspace: true,
             primarySidebarPreferredVisible,
             auxiliaryPanePreferredVisible: true,
-            nativeInspectorWidth: nativeInspectorColumnWidth(width, 0.4),
+            nativeInspectorWidth: nativeInspectorColumnWidth({
+              viewportWidth: width,
+              horizontalSafeArea: 0,
+              fraction: 0.4,
+            }),
           }),
         ).toMatchObject({
           primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
@@ -177,6 +181,17 @@ describe("deriveWorkspacePaneLayout", () => {
           auxiliaryPaneVisible: true,
         });
       }
+    },
+  );
+
+  it.each([
+    { viewportWidth: 1_376, horizontalSafeArea: 0 },
+    { viewportWidth: 951, horizontalSafeArea: 76 },
+  ])(
+    "never widens the native inspector past the page's minimum ($viewportWidth wide)",
+    ({ viewportWidth, horizontalSafeArea }) => {
+      const width = nativeInspectorColumnWidth({ viewportWidth, horizontalSafeArea, fraction: 1 });
+      expect(viewportWidth - horizontalSafeArea - width).toBeGreaterThanOrEqual(320);
     },
   );
 
