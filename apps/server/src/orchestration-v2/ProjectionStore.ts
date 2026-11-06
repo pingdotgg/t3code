@@ -4318,6 +4318,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const getUnreadableThreadIds = Effect.fn("ProjectionStore.getUnreadableThreadIds")(
       function* () {
+        const existingTables = new Set(
+          (yield* sql<{ readonly name: string }>`
+              SELECT name FROM sqlite_master
+              WHERE type = 'table' AND name LIKE 'orchestration_v2_projection_%'
+            `).map((row) => row.name),
+        );
         const actualThreadIds = new Set<ThreadId>();
         const unreadable = new Set<ThreadId>();
         const forkChildren = new Map<ThreadId, Array<ThreadId>>();
@@ -4413,6 +4419,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ];
         const pageSize = 500;
         for (const table of tables) {
+          if (!existingTables.has(`orchestration_v2_projection_${table.name}`)) continue;
           let afterRowId = 0;
           while (true) {
             const rows = yield* sql<{
