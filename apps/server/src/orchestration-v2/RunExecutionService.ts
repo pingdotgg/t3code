@@ -1554,7 +1554,12 @@ export const layer: Layer.Layer<
         // Ends once the root turn and the children it drives settle. Background commands such
         // as a dev server keep this consumer alive afterwards and must not pin preview focus.
         const endPreviewActivity = yield* previewAgentActivity.begin(input.run.threadId);
-        const providerEventFiber = yield* eventSubscription.events.pipe(
+        // Only an out-of-stream closure observer needs to wake an idle subscription.
+        const providerEvents =
+          input.session.onSessionClosed === undefined
+            ? eventSubscription.events
+            : eventSubscription.events.pipe(Stream.interruptWhen(Deferred.await(sessionClosed)));
+        const providerEventFiber = yield* providerEvents.pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
               if (

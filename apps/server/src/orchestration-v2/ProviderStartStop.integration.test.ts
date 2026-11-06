@@ -57,9 +57,12 @@ it.effect.each([
   "manager-release-interrupt",
   "provider-stopped",
   "stream-ended",
+  "released-before-subscribe",
+  "released-during-subscribe",
 ] as const)("Stop crosses native start: %s", (scenario) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const scope = yield* Effect.scope;
       const cwd = yield* checkpointWorkspace(`start-stop-${scenario}`);
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
       const entered = yield* Deferred.make<void>();
@@ -76,6 +79,12 @@ it.effect.each([
       const releaseTerminal = yield* Deferred.make<void>();
       const ownedWait = yield* Deferred.make<void>();
       const beforeOwnership = yield* Deferred.make<void>();
+      const closeHeld = yield* Deferred.make<void>();
+      const releaseClose = yield* Deferred.make<void>();
+      const lateSubscribed = yield* Deferred.make<void>();
+      const lateSubscriptionClosed = yield* Deferred.make<void>();
+      const lateSubscription =
+        scenario === "released-before-subscribe" || scenario === "released-during-subscribe";
       const driver = ProviderDriverKind.make("codex");
       const instanceId = ProviderInstanceId.make("codex");
       const modelSelection = { instanceId, model: "synthetic" };
@@ -97,6 +106,12 @@ it.effect.each([
         planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
         openSession: (input) =>
           Effect.gen(function* () {
+            if (scenario === "released-during-subscribe")
+              yield* Effect.addFinalizer(() =>
+                Deferred.succeed(closeHeld, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseClose)),
+                ),
+              );
             const now = yield* DateTime.now;
             const startTurn: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] = (
               turn,
@@ -281,6 +296,7 @@ it.effect.each([
         const outbox = yield* EffectOutbox.EffectOutboxV2;
         const execution = yield* RunExecutionService.RunExecutionServiceV2;
         const threads = yield* ThreadManagementService.ThreadManagementService;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         yield* orchestrator.dispatch({
           type: "thread.create",
           commandId: CommandId.make("create"),
@@ -310,6 +326,33 @@ it.effect.each([
         const originalStart = execution.startRootRun;
         let staleInput: RunExecutionService.RunExecutionServiceV2StartRootRunInput | undefined;
         using _beforeOwnership = vi.spyOn(execution, "startRootRun").mockImplementation((input) => {
+          if (lateSubscription)
+            return Effect.gen(function* () {
+              const released = yield* manager
+                .release({ providerSessionId: input.providerSessionId, reason: "manual_shutdown" })
+                .pipe(Effect.orDie, Effect.forkIn(scope));
+              if (scenario === "released-before-subscribe") yield* Fiber.join(released);
+              else yield* Deferred.await(closeHeld);
+              const startup = yield* originalStart({
+                ...input,
+                session: {
+                  ...input.session,
+                  subscribeEvents: input.session.subscribeEvents!.pipe(
+                    Effect.map((subscription) => ({
+                      ...subscription,
+                      close: subscription.close.pipe(
+                        Effect.tap(() => Deferred.succeed(lateSubscriptionClosed, undefined)),
+                      ),
+                    })),
+                    Effect.tap(() => Deferred.succeed(lateSubscribed, undefined)),
+                  ),
+                },
+              }).pipe(Effect.forkIn(scope));
+              yield* Deferred.await(lateSubscribed);
+              yield* Deferred.succeed(releaseClose, undefined);
+              yield* Fiber.join(released);
+              yield* Fiber.join(startup);
+            });
           if (scenario === "unsupported-compact") {
             const session = { ...input.session };
             delete session.compactThread;
@@ -341,7 +384,11 @@ it.effect.each([
         });
         yield* send("first");
         const startup = yield* worker.drain(1).pipe(Effect.forkScoped);
-        if (scenario === "unsupported-compact" || scenario === "prompt-refusal") {
+        if (
+          scenario === "unsupported-compact" ||
+          scenario === "prompt-refusal" ||
+          lateSubscription
+        ) {
           yield* Fiber.join(startup);
           const failed = yield* orchestrator.getThreadProjection(threadId);
           const run = failed.runs[0]!;
@@ -359,6 +406,7 @@ it.effect.each([
           );
           assert.equal(starts, 0);
           assert.deepEqual(interrupts, []);
+          if (lateSubscription) assert.isTrue(yield* Deferred.isDone(lateSubscriptionClosed));
           return;
         }
         if (scenario === "before-ownership") {
