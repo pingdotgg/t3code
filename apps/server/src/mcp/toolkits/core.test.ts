@@ -1096,14 +1096,19 @@ it.effect(
   },
 );
 
+let animationRuntimeMode: OrchestrationV2ThreadShell["runtimeMode"] = "full-access";
+const lessonSideChatId = ThreadId.make("course-lesson-side-chat");
 const liveCallerLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
-  getThreadShell: () =>
+  getThreadShell: (id) =>
     Effect.succeed({
       id: threadId,
+      ...(id === lessonSideChatId ? { sideChat: { lessonThreadId: threadId } } : {}),
       deletedAt: null,
       archivedAt: null,
       activeRunId: RunId.make("mcp-core-run"),
       providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: animationRuntimeMode,
+      interactionMode: "default",
     } as OrchestrationV2ThreadShell),
 });
 const courseServiceLayer = Layer.effect(
@@ -1121,6 +1126,16 @@ const callAs = (name: string, args: Record<string, unknown>) =>
         Effect.provideService(McpSchema.McpServerClient, client),
       );
   });
+const callAsThread = (callerThreadId: ThreadId, name: string, args: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    return yield* (yield* McpServer.McpServer).callTool({ name, arguments: args }).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...scope,
+        thread: { ...scope.thread!, threadId: callerThreadId },
+      }),
+      Effect.provideService(McpSchema.McpServerClient, client),
+    );
+  });
 
 it.effect("animation_render caches a concept clip and replays it without rendering", () => {
   const renders: string[] = [];
@@ -1132,6 +1147,11 @@ it.effect("animation_render caches a concept clip and replays it without renderi
     const course = yield* (yield* CourseService.CourseService).add({
       lessonThreadId: threadId,
       title: "Linear Algebra",
+      units: ["Vectors"],
+    });
+    const foreign = yield* (yield* CourseService.CourseService).add({
+      lessonThreadId: ThreadId.make("other-lesson"),
+      title: "Other Algebra",
       units: ["Vectors"],
     });
     const rendered = yield* callAs("animation_render", {
@@ -1147,7 +1167,6 @@ it.effect("animation_render caches a concept clip and replays it without renderi
       concept: "Eigen Vectors",
       courseId: course.id,
     });
-
     const replayed = yield* callAs("animation_render", {
       concept: "eigen vectors",
       title: "Again",
@@ -1156,6 +1175,31 @@ it.effect("animation_render caches a concept clip and replays it without renderi
     expect(renders).toEqual(["scene"]);
     expect(published).toHaveLength(2);
     expect(published[1]).toContain("base64,AQID");
+    const foreignRendered = yield* callAs("animation_render", {
+      code: "foreign scene",
+      concept: "Foreign",
+      courseId: foreign.id,
+      title: "Foreign",
+    });
+    expect(foreignRendered.isError).not.toBe(true);
+    expect(
+      JSON.parse(yield* fs.readFileString(path.join(stateDir, "visuals", "foreign", "meta.json"))),
+    ).not.toHaveProperty("courseId");
+
+    animationRuntimeMode = "approval-required";
+    const denied = yield* callAs("animation_render", {
+      code: "should not render",
+      concept: "Denied",
+      title: "Denied",
+    });
+    expect(declaredFailure(denied)).toMatchObject({ code: "capability_denied" });
+    expect(renders).toEqual(["scene", "foreign scene"]);
+    const cachedWhileDenied = yield* callAs("animation_render", {
+      concept: "eigen vectors",
+      title: "Cached while denied",
+    });
+    expect(cachedWhileDenied.isError).not.toBe(true);
+    animationRuntimeMode = "full-access";
 
     expect(
       declaredFailure(yield* callAs("animation_render", { concept: "unknown", title: "None" })),
@@ -1214,10 +1258,38 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
     // A plain create_threads request: no subagent relationship, so the lesson is never woken.
     expect(requests).toEqual([
       {
-        threads: [{ title: "Prep: Signals L1–2", prompt: expect.stringContaining(course.id) }],
+        threads: [
+          {
+            title: "Prep: Signals L1–2",
+            prompt: expect.stringContaining(course.id),
+            runtimeMode: "approval-required",
+          },
+        ],
       },
     ]);
     expect((yield* service.get({ id: course.id })).prepThreadIds).toEqual([prepThreadId]);
+    const foreign = yield* service.add({
+      lessonThreadId: ThreadId.make("other-course-lesson"),
+      title: "Other Signals",
+      units: ["One"],
+    });
+    for (const [name, args] of [
+      ["course_read", { courseId: foreign.id }],
+      ["course_update", { courseId: foreign.id, unit: 1, plan: "nope" }],
+      ["course_prepare", { courseId: foreign.id, units: [1] }],
+    ] as const) {
+      const rejected = yield* callAs(name, args);
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected.content)).toContain("That course belongs to another lesson.");
+    }
+    const prepCaller = ThreadId.make("recorded-prep-thread");
+    yield* service.recordPrepThread(course.id, prepCaller);
+    expect(
+      (yield* callAsThread(prepCaller, "course_read", { courseId: course.id })).isError,
+    ).not.toBe(true);
+    expect(
+      (yield* callAsThread(lessonSideChatId, "course_read", { courseId: course.id })).isError,
+    ).not.toBe(true);
     // course_add reads only PDFs attached to the chat, never other host files.
     const outside = yield* callAs("course_add", { source: "/etc/passwd.pdf" });
     expect(outside.isError).toBe(true);

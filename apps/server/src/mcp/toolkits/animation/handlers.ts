@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { HTML_RENDER_COLUMN_WIDTH } from "@t3tools/shared/htmlRender";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
@@ -12,6 +13,7 @@ import * as ManimRender from "../../../animation/ManimRender.ts";
 import * as CourseService from "../../../course/CourseService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { assertFullAccess, loadCaller } from "../../threadAccess.ts";
 import * as ServerConfig from "../../../config.ts";
 import { AnimationToolkit } from "./tools.ts";
 
@@ -48,6 +50,11 @@ const handlers = {
           scope,
           "animation_render",
         );
+        if (input.code)
+          yield* assertFullAccess(
+            yield* loadCaller(),
+            "Rendering runs Python on the server without a sandbox, so it needs a full-access thread in default mode. Show a cached clip with concept and no code instead.",
+          );
         const manim = yield* ManimRender.ManimRender;
         const config = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
@@ -86,9 +93,11 @@ const handlers = {
           })
           .pipe(Effect.mapError(toFailure));
         if (input.code && conceptSlug) {
-          const course = yield* (yield* CourseService.CourseService)
+          const course = (yield* (yield* CourseService.CourseService)
             .get(input.courseId ? { id: input.courseId } : { lessonThreadId: thread.threadId })
-            .pipe(Effect.option);
+            .pipe(Effect.option)).pipe(
+            Option.filter((c) => CourseService.courseBelongsToThread(c, thread.threadId)),
+          );
           const meta = {
             concept: input.concept,
             title: input.title,

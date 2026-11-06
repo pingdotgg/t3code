@@ -2,6 +2,9 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodePath from "node:path";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodeZlib from "node:zlib";
 import * as ProcessRunner from "../processRunner.ts";
 
 import {
@@ -12,6 +15,47 @@ import {
   parseOcwZipEntries,
   transcriptWindow,
 } from "./ingest.ts";
+
+const crc32 = (bytes: Uint8Array) => {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
+const oneEntryZip = (name: string, data: Uint8Array) => {
+  const nameBytes = Buffer.from(name);
+  const compressed = NodeZlib.deflateRawSync(data);
+  const crc = crc32(data);
+  const local = Buffer.alloc(30 + nameBytes.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(8, 8);
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(compressed.length, 18);
+  local.writeUInt32LE(data.length, 22);
+  local.writeUInt16LE(nameBytes.length, 26);
+  nameBytes.copy(local, 30);
+  const central = Buffer.alloc(46 + nameBytes.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(8, 10);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(compressed.length, 20);
+  central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(nameBytes.length, 28);
+  nameBytes.copy(central, 46);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(local.length + compressed.length, 16);
+  return Buffer.concat([local, compressed, central, end]);
+};
 
 describe("course ingestion parsers", () => {
   it("turns VTT and SRT cues into 30-second lines and removes rolling captions", () => {
@@ -105,6 +149,28 @@ describe("course ingestion parsers", () => {
         "https://ocw.mit.edu/courses/tiny/",
       );
       expect(course.units[0]?.text).toBe("[00:00] Tiny caption");
+    }),
+  );
+
+  it.effect("skips an OCW entry over the uncompressed member limit", () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ocw-")),
+      );
+      const zipPath = NodePath.join(directory, "bomb.zip");
+      const data = Buffer.from(
+        JSON.stringify({
+          resourcetype: "Video",
+          title: "Bomb",
+          padding: "x".repeat(20 * 1024 * 1024),
+        }),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(zipPath, oneEntryZip("resources/a/data.json", data)),
+      );
+      const course = yield* parseOcwZip(zipPath, "https://ocw.mit.edu/courses/bomb/");
+      expect(course.units).toEqual([]);
+      yield* Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true }));
     }),
   );
 
