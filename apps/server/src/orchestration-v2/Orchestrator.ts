@@ -3714,14 +3714,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      // Approvals still need a decision. A question the turn is waiting on is
-      // dismissed unanswered and its turn stopped, so Settle works mid-question.
+      // Approvals still need a decision. A live question the turn is waiting on is
+      // dismissed unanswered and its turn stopped (with its delegated tasks, as
+      // Stop does), so Settle works mid-question.
       const blockingRequestExists = pendingRequests.some(
-        (request) => request.kind !== "user_input",
+        (request) =>
+          request.kind !== "user_input" || request.responseCapability.type === "not_resumable",
       );
-      const stopsForQuestion = pendingRequests.some(
-        (request) => request.kind === "user_input" && request.responseCapability.type !== "message",
-      );
+      const stopsForQuestion =
+        runningRunExists &&
+        pendingRequests.some(
+          (request) => request.kind === "user_input" && request.responseCapability.type === "live",
+        );
       const blocker = blockingRequestExists
         ? "is waiting on an approval. Answer it before settling."
         : runningRunExists && !stopsForQuestion
@@ -3738,8 +3742,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       for (const request of pendingRequests) {
-        // A question that can't be answered any more is left to Stop below.
-        if (request.responseCapability.type === "not_resumable") continue;
+        // Stop withdraws a live question itself. Delivering the cancel too would
+        // reach Claude as an empty answer it could act on before the stop lands.
+        const deliveryEffects =
+          stopsForQuestion && request.responseCapability.type === "live"
+            ? yield* Ref.make<Array<PendingOrchestrationEffectV2>>([])
+            : effects;
         yield* dispatchRuntimeRequestRespond(
           {
             type: "runtime-request.respond",
@@ -3749,10 +3757,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             decision: "cancel",
           },
           events,
-          effects,
+          deliveryEffects,
         );
       }
-      if (stopsForQuestion && runningRunExists) {
+      if (stopsForQuestion) {
         yield* dispatchThreadStop(
           {
             type: "thread.stop",

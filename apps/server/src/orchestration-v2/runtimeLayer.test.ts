@@ -2043,148 +2043,183 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
-  it.effect("settles mid-question by dismissing the question and stopping the turn", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const threadId = ThreadId.make("runtime-settle-live-question");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-settle-live-question-create"),
-        threadId,
-        projectId: ProjectId.make("runtime-settle-live-question-project"),
-        title: "Live question",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
+  const seedLiveQuestion = Effect.fn("runtimeLayerTest.seedLiveQuestion")(function* (
+    name: string,
+    options: { readonly approval?: boolean; readonly queuedMessage?: boolean } = {},
+  ) {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const threadId = ThreadId.make(`${name}-thread`);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${name}-create`),
+      threadId,
+      projectId: ProjectId.make(`${name}-project`),
+      title: "Live question",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: process.cwd(),
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${name}-first`),
+      threadId,
+      messageId: MessageId.make(`${name}-first`),
+      text: "Ask me something.",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+    });
+    const initial = yield* orchestrator.getThreadProjection(threadId);
+    const run = initial.runs[0]!;
+    const providerThread = initial.providerThreads[0]!;
+    const now = yield* DateTime.now;
+    const providerSession = {
+      id: providerThread.providerSessionId!,
+      driver,
+      providerInstanceId: modelSelection.instanceId,
+      status: "running" as const,
+      cwd: process.cwd(),
+      model: modelSelection.model,
+      capabilities: CodexProviderCapabilitiesV2,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    const providerTurn = {
+      id: ProviderTurnId.make(`${name}-turn`),
+      providerThreadId: providerThread.id,
+      nodeId: run.rootNodeId!,
+      runAttemptId: run.activeAttemptId,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "running" as const,
+      startedAt: now,
+      completedAt: null,
+    };
+    const requestId = RuntimeRequestId.make(`${name}-request`);
+    const approvalId = RuntimeRequestId.make(`${name}-approval`);
+    const nodeId = NodeId.make(`${name}-node`);
+    const request = {
+      id: requestId,
+      nodeId,
+      providerTurnId: providerTurn.id,
+      nativeRequestRef: null,
+      kind: "user_input" as const,
+      status: "pending" as const,
+      responseCapability: { type: "live" as const, providerSessionId: providerSession.id },
+      createdAt: now,
+      resolvedAt: null,
+    };
+    yield* eventSink.write({
+      commandId: CommandId.make(`${name}-seed`),
+      events: [
+        {
+          id: EventId.make(`${name}-run-event`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "running", startedAt: now },
+        },
+        {
+          id: EventId.make(`${name}-session-event`),
+          type: "provider-session.attached",
+          threadId,
+          occurredAt: now,
+          payload: providerSession,
+        },
+        {
+          id: EventId.make(`${name}-turn-event`),
+          type: "provider-turn.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: providerTurn,
+        },
+        {
+          id: EventId.make(`${name}-node-event`),
+          type: "node.updated",
+          threadId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: nodeId,
+            threadId,
+            runId: run.id,
+            parentNodeId: run.rootNodeId,
+            rootNodeId: run.rootNodeId!,
+            kind: "user_input_request",
+            status: "waiting",
+            countsForRun: false,
+            providerThreadId: providerThread.id,
+            providerTurnId: providerTurn.id,
+            nativeItemRef: null,
+            runtimeRequestId: requestId,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+        {
+          id: EventId.make(`${name}-request-event`),
+          type: "runtime-request.updated",
+          threadId,
+          nodeId,
+          occurredAt: now,
+          payload: request,
+        },
+        ...(options.approval === true
+          ? [
+              {
+                id: EventId.make(`${name}-approval-event`),
+                type: "runtime-request.updated" as const,
+                threadId,
+                nodeId,
+                occurredAt: now,
+                payload: { ...request, id: approvalId, kind: "command" as const },
+              },
+            ]
+          : []),
+      ],
+    });
+    const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
+      Effect.succeedSome({
+        providerSession,
+      } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+    if (options.queuedMessage === true) {
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("runtime-settle-live-question-first"),
+        commandId: CommandId.make(`${name}-queued`),
         threadId,
-        messageId: MessageId.make("runtime-settle-live-question-first"),
-        text: "Ask me something.",
+        messageId: MessageId.make(`${name}-queued`),
+        text: "Do this next.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: { type: "queue_after_active" },
       });
-      const initial = yield* orchestrator.getThreadProjection(threadId);
-      const run = initial.runs[0]!;
-      const providerThread = initial.providerThreads[0]!;
-      const now = yield* DateTime.now;
-      const providerSession = {
-        id: providerThread.providerSessionId!,
-        driver,
-        providerInstanceId: modelSelection.instanceId,
-        status: "running" as const,
-        cwd: process.cwd(),
-        model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      };
-      const providerTurn = {
-        id: ProviderTurnId.make("runtime-settle-live-question-turn"),
-        providerThreadId: providerThread.id,
-        nodeId: run.rootNodeId!,
-        runAttemptId: run.activeAttemptId,
-        nativeTurnRef: null,
-        ordinal: 1,
-        status: "running" as const,
-        startedAt: now,
-        completedAt: null,
-      };
-      const requestId = RuntimeRequestId.make("runtime-settle-live-question-request");
-      const nodeId = NodeId.make("runtime-settle-live-question-node");
-      yield* eventSink.write({
-        commandId: CommandId.make("runtime-settle-live-question-seed"),
-        events: [
-          {
-            id: EventId.make("runtime-settle-live-question-run-event"),
-            type: "run.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...run, status: "running", startedAt: now },
-          },
-          {
-            id: EventId.make("runtime-settle-live-question-session-event"),
-            type: "provider-session.attached",
-            threadId,
-            occurredAt: now,
-            payload: providerSession,
-          },
-          {
-            id: EventId.make("runtime-settle-live-question-turn-event"),
-            type: "provider-turn.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: providerTurn,
-          },
-          {
-            id: EventId.make("runtime-settle-live-question-node-event"),
-            type: "node.updated",
-            threadId,
-            nodeId,
-            occurredAt: now,
-            payload: {
-              id: nodeId,
-              threadId,
-              runId: run.id,
-              parentNodeId: run.rootNodeId,
-              rootNodeId: run.rootNodeId!,
-              kind: "user_input_request",
-              status: "waiting",
-              countsForRun: false,
-              providerThreadId: providerThread.id,
-              providerTurnId: providerTurn.id,
-              nativeItemRef: null,
-              runtimeRequestId: requestId,
-              checkpointScopeId: null,
-              startedAt: now,
-              completedAt: null,
-            },
-          },
-          {
-            id: EventId.make("runtime-settle-live-question-request-event"),
-            type: "runtime-request.updated",
-            threadId,
-            nodeId,
-            occurredAt: now,
-            payload: {
-              id: requestId,
-              nodeId,
-              providerTurnId: providerTurn.id,
-              nativeRequestRef: null,
-              kind: "user_input",
-              status: "pending",
-              responseCapability: { type: "live", providerSessionId: providerSession.id },
-              createdAt: now,
-              resolvedAt: null,
-            },
-          },
-        ],
-      });
-      const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
-        Effect.succeedSome({
-          providerSession,
-        } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+    }
+    return { threadId, run, requestId };
+  });
 
-      yield* orchestrator.dispatch({
-        type: "thread.settle",
-        commandId: CommandId.make("runtime-settle-live-question-settle"),
-        threadId,
-      });
+  it.effect("settles mid-question by withdrawing the question and stopping the turn", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const { threadId, run, requestId } = yield* seedLiveQuestion("runtime-settle-live-question");
+      const settleCommandId = CommandId.make("runtime-settle-live-question-settle");
+      yield* orchestrator.dispatch({ type: "thread.settle", commandId: settleCommandId, threadId });
+
       const settled = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(settled.thread.settledOverride, "settled");
       const request = settled.runtimeRequests.find((candidate) => candidate.id === requestId);
@@ -2195,6 +2230,59 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           (item) => item.type === "run_interrupt_request" && item.runId === run.id,
         ),
       );
+      // Stop withdraws the question; a delivered cancel would reach Claude as an empty answer.
+      const effectTypes = (yield* outbox.listByCommandId(settleCommandId)).map(
+        (effect) => effect.request.type,
+      );
+      assert.include(effectTypes, "provider-turn.interrupt");
+      assert.notInclude(effectTypes, "runtime-request.respond");
+
+      // The stopped run ending afterwards leaves the thread settled.
+      const now = yield* DateTime.now;
+      const stopped = settled.runs.find((candidate) => candidate.id === run.id)!;
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-settle-live-question-ended"),
+        events: [
+          {
+            id: EventId.make("runtime-settle-live-question-ended-event"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...stopped, status: "interrupted", completedAt: now },
+          },
+        ],
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.settledOverride,
+        "settled",
+      );
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("keeps Settle blocked by an approval or a queued message beside a question", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const cases = [
+        { name: "runtime-settle-question-approval", approval: true, blocker: /approval/ },
+        { name: "runtime-settle-question-queued", queuedMessage: true, blocker: /queued message/ },
+      ];
+      for (const { name, blocker, ...options } of cases) {
+        const { threadId, requestId } = yield* seedLiveQuestion(name, options);
+        const settleCommandId = CommandId.make(`${name}-settle`);
+        const error = yield* orchestrator
+          .dispatch({ type: "thread.settle", commandId: settleCommandId, threadId })
+          .pipe(Effect.flip);
+        assert.match(String(error.cause), blocker);
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.notEqual(projection.thread.settledOverride, "settled");
+        assert.equal(
+          projection.runtimeRequests.find((candidate) => candidate.id === requestId)?.status,
+          "pending",
+        );
+        assert.deepEqual(yield* outbox.listByCommandId(settleCommandId), []);
+      }
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
