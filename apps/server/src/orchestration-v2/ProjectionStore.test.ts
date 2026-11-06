@@ -6608,7 +6608,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const liveRunLookups = plan.filter((row) =>
           row.detail.startsWith("SEARCH r USING INDEX orchestration_v2_projection_runs_"),
         );
-        assert.isAbove(liveRunLookups.length, 0);
+        assert.lengthOf(liveRunLookups, 4);
+        assert.isFalse(plan.some((row) => /^SCAN (?:r|candidate)\b/.test(row.detail)));
         for (const lookup of liveRunLookups) {
           assert.include(
             lookup.detail,
