@@ -128,11 +128,17 @@ export function createProjectFaviconCache(input: {
   let hydration: Promise<void> | undefined;
   let clearing: Promise<void> | undefined;
   const pending = new Set<Promise<void>>();
+  const storageTasks = new Map<string, Promise<void>>();
 
-  const persist = (operation: () => Promise<void>) => {
-    const task: Promise<void> = operation()
+  const persist = (key: string, operation: () => Promise<void>) => {
+    const task: Promise<void> = (storageTasks.get(key) ?? Promise.resolve())
+      .then(operation)
       .catch(() => {})
-      .finally(() => pending.delete(task));
+      .finally(() => {
+        pending.delete(task);
+        if (storageTasks.get(key) === task) storageTasks.delete(key);
+      });
+    storageTasks.set(key, task);
     pending.add(task);
   };
 
@@ -140,7 +146,7 @@ export function createProjectFaviconCache(input: {
     const entry = entries.get(key);
     if (!entry) return;
     entries.delete(key);
-    persist(() => input.storage.remove(key, entry));
+    persist(key, () => input.storage.remove(key, entry));
   };
 
   const trim = () => {
@@ -214,7 +220,7 @@ export function createProjectFaviconCache(input: {
           dataUrl,
         };
         entries.set(key, entry);
-        persist(() => input.storage.put(key, entry));
+        persist(key, () => input.storage.put(key, entry));
         trim();
         return dataUrl;
       }

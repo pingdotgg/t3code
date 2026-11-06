@@ -91,27 +91,44 @@ describe("persistent project favicon cache", () => {
     },
   );
 
-  it.each([
-    { nextUrl: url.replace("vabc-", "vdef-"), expected: replacement },
-    { nextUrl: "https://remote.test/api/assets/project-favicon-missing", expected: null },
-  ])("does not restore an old icon after resolving $nextUrl", async ({ nextUrl, expected }) => {
-    const { cache, load, records } = fixture();
-    const oldDownload = deferred<string>();
-    const started = deferred<void>();
-    load.mockImplementationOnce(() => {
-      started.resolve();
-      return oldDownload.promise;
-    });
-    const pending = cache.resolve(target, url, signal());
-    await started.promise;
-    load.mockResolvedValueOnce(replacement);
-    expect(await cache.resolve(target, nextUrl, signal())).toBe(expected);
-    oldDownload.resolve(image);
-    expect(await pending).toBe(expected);
-    await cache.flush();
-    expect(cache.peek(target)).toBe(expected);
-    expect([...records.values()].map((entry) => entry.dataUrl)).toEqual(expected ? [expected] : []);
-  });
+  it.each(
+    [
+      { nextUrl: url.replace("vabc-", "vdef-"), expected: replacement },
+      { nextUrl: "https://remote.test/api/assets/project-favicon-missing", expected: null },
+    ].flatMap((row) => ["download", "storage"].map((phase) => ({ ...row, phase }))),
+  )(
+    "does not restore an old icon after resolving $nextUrl during $phase",
+    async ({ nextUrl, expected, phase }) => {
+      const { cache, load, records, storage } = fixture();
+      const blocked = deferred<string>();
+      const started = deferred<void>();
+      if (phase === "download") {
+        load.mockImplementationOnce(() => {
+          started.resolve();
+          return blocked.promise;
+        });
+      } else {
+        const put = storage.put;
+        vi.spyOn(storage, "put").mockImplementationOnce(async (key, entry) => {
+          started.resolve();
+          await blocked.promise;
+          await put(key, entry);
+        });
+      }
+      const pending = cache.resolve(target, url, signal());
+      await started.promise;
+      load.mockResolvedValueOnce(replacement);
+      expect(await cache.resolve(target, nextUrl, signal())).toBe(expected);
+      blocked.resolve(image);
+      if (phase === "download") expect(await pending).toBe(expected);
+      else await pending;
+      await cache.flush();
+      expect(cache.peek(target)).toBe(expected);
+      expect([...records.values()].map((entry) => entry.dataUrl)).toEqual(
+        expected ? [expected] : [],
+      );
+    },
+  );
 
   it("bounds individual images, total bytes, and entry count in storage", async () => {
     const { cache, load, records } = fixture();
