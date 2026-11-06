@@ -6,7 +6,9 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import workletUrl from "../../speech/pcmWorklet.ts?worker&url";
 import { VoiceInputErrorPill } from "../chat/VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "../chat/VoiceInputPill";
+import { MediaScrubber } from "../media/MediaTransport";
 import { Button } from "../ui/button";
+import { Text } from "../ui/text";
 
 const LOOPBACK_SECONDS = 10;
 const formatTime = (seconds: number) =>
@@ -224,12 +226,9 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
         <>
           <VoiceWaveform level={level} />
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
-          <span
-            className="shrink-0 text-xs tabular-nums text-muted-foreground"
-            aria-label="Recording time"
-          >
+          <Text variant="meta" tone="muted" numeric aria-label="Recording time">
             {formatTime(elapsed)} / {formatTime(LOOPBACK_SECONDS)}
-          </span>
+          </Text>
           <meter
             aria-label="Microphone input level"
             min={0}
@@ -239,8 +238,10 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
           />
         </>
       ) : (
-        <span role="status" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          Opening microphone…
+        <span className="flex min-w-0 flex-1">
+          <Text variant="meta" tone="muted" truncate role="status">
+            Opening microphone…
+          </Text>
         </span>
       )}
       <Button
@@ -273,7 +274,6 @@ function MicrophonePlayback({
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [failed, setFailed] = useState(false);
-  const progress = duration > 0 ? Math.min(position / duration, 1) * 100 : 0;
 
   const togglePlayback = async () => {
     const player = audio.current;
@@ -312,27 +312,24 @@ function MicrophonePlayback({
         >
           {playing ? <PauseIcon /> : <PlayIcon />}
         </Button>
-        <input
-          type="range"
-          aria-label="Recording playback position"
-          min={0}
-          max={duration}
-          step={0.01}
-          value={Math.min(position, duration)}
-          style={{
-            background: `linear-gradient(to right, var(--primary) ${progress}%, var(--muted) ${progress}%)`,
+        <MediaScrubber
+          state={{
+            paused: !playing,
+            currentTime: Math.min(position, duration),
+            duration,
+            muted: false,
           }}
-          disabled={duration <= 0}
-          onChange={(event) => {
-            const next = Number(event.target.value);
+          label="Recording playback position"
+          trackClassName="bg-muted"
+          playedClassName="bg-primary"
+          onSeek={(next) => {
             if (audio.current) audio.current.currentTime = next;
             setPosition(next);
           }}
-          className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-muted accent-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&::-webkit-slider-thumb]:size-2.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-moz-range-thumb]:size-2.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-primary"
         />
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+        <Text variant="meta" tone="muted" numeric>
           {formatTime(position)}
-        </span>
+        </Text>
         <Button size="icon-sm-pill" variant="ghost" aria-label="Record again" onClick={onRetry}>
           <RotateCcwIcon />
         </Button>
@@ -341,9 +338,9 @@ function MicrophonePlayback({
         </Button>
       </VoiceInputPill>
       {failed ? (
-        <p role="alert" className="text-xs text-destructive">
+        <Text variant="meta" tone="destructive" render={<p role="alert" />}>
           Could not play this recording. Try recording again.
-        </p>
+        </Text>
       ) : null}
     </div>
   );
