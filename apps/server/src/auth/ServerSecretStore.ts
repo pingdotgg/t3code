@@ -1,5 +1,5 @@
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -150,9 +150,9 @@ export class ServerSecretStore extends Context.Service<
   }
 >()("t3/auth/ServerSecretStore") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -188,7 +188,7 @@ export const make = Effect.gen(function* () {
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return crypto.randomUUIDv4().pipe(
+    return crypto.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new SecretStoreTemporaryPathError({
@@ -227,7 +227,7 @@ export const make = Effect.gen(function* () {
   // AlreadyExists, so a concurrent reader never observes a partially written secret.
   const create: ServerSecretStore["Service"]["create"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return crypto.randomUUIDv4().pipe(
+    return crypto.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new SecretStoreTemporaryPathError({

@@ -1,9 +1,10 @@
 import { AuthOrchestrationOperateScope, EnvironmentId, type EditorId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { act, render as renderUi } from "../../../test/render";
+import { act, fakeTimers, render as renderUi } from "../../../test/render";
 import type { RemoteOpenState } from "../../remoteOpen";
 
 const state = vi.hoisted(() => ({
@@ -65,7 +66,10 @@ vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
 }));
 
 import { OpenInPicker } from "./OpenInPicker";
-import { useOpenFavoriteEditorShortcut } from "./OpenInPickerShortcut";
+import {
+  registerOpenFavoriteEditorCommand,
+  useOpenFavoriteEditorShortcut,
+} from "./OpenInPickerShortcut";
 
 const primary = EnvironmentId.make("primary");
 const selected = EnvironmentId.make("selected");
@@ -87,6 +91,9 @@ async function setup() {
   stack.use(_platform);
   const _storage = { [Symbol.dispose]: () => window.localStorage.clear() };
   stack.use(_storage);
+  // The app registers this command at startup (appInit).
+  const _openFavorite = { [Symbol.dispose]: registerOpenFavoriteEditorCommand() };
+  stack.use(_openFavorite);
   const screen = stack.use(await renderUi(null));
   async function renderPicker(
     availableEditors: readonly EditorId[] = editors,
@@ -166,18 +173,64 @@ describe("host editor access", () => {
     const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
     state.allowed.add(selected);
     await renderPicker();
-    // Revoke without rerendering: the mounted button and shortcut must re-check the grant.
+    // Revoke without rerendering to exercise execution-time grant checks.
     state.allowed.delete(selected);
     state.allowed.add(primary);
     await click(primaryButton());
-    const event = await pressOpenFavorite();
+    // The shortcut is consumed and opens nothing once the grant is gone.
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.run).not.toHaveBeenCalled();
     expect(state.setPreferred).not.toHaveBeenCalled();
-    expect(event.defaultPrevented).toBe(false);
 
     await renderPicker();
     expect(primaryButton().disabled).toBe(true);
     expect(byLabel("Choose editor").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+  });
+});
+
+describe("remote editor links", () => {
+  it("opens the link from the fallback when the picker is not mounted", async () => {
+    await using fixture = await setup();
+    const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
+    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } };
+    await act(async () => screen.rerender(<FavoriteEditorFallback />));
+
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
+    expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
+    expect(state.run).not.toHaveBeenCalled();
+  });
+});
+
+describe("open in editor announcement", () => {
+  it("speaks only after the shortcut opened the editor, from the picker or the fallback", async () => {
+    await using fixture = await setup();
+    const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
+    state.allowed.add(selected);
+    await renderPicker();
+    using _timers = fakeTimers();
+    const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
+    const spoken = async () => {
+      await act(async () => vi.runAllTimers());
+      return regions()
+        .map((region) => region.textContent)
+        .join("");
+    };
+    const refuse = () =>
+      state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No editor"))));
+
+    refuse();
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("");
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("Opened in VS Code");
+
+    for (const region of regions()) region.textContent = "";
+    await act(async () => screen.rerender(<FavoriteEditorFallback />));
+    refuse();
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("");
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("Opened in VS Code");
   });
 });

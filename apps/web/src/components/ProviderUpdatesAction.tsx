@@ -1,9 +1,10 @@
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
 
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
+import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   canOneClickUpdateProviderCandidate,
@@ -17,13 +18,17 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export function useProviderUpdates() {
   const { environments } = useEnvironments();
+  const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
   const providersByEnvironment = useEnvironmentProviders();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
   const machines = environments.flatMap((environment) => {
     const providers = providersByEnvironment.get(environment.environmentId) ?? [];
-    if (environment.connection.phase !== "connected") {
+    if (
+      environment.connection.phase !== "connected" ||
+      !manageableIds.has(environment.environmentId)
+    ) {
       return [];
     }
     const candidates = collectProviderUpdateCandidates(providers).filter((candidate) =>

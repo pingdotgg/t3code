@@ -2,8 +2,7 @@
 import { getImage, Image } from "astro:assets";
 import appIcon from "../assets/icon.webp";
 import socialCard from "../assets/social-card.webp";
-import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
-import "../styles/fonts.css";
+import "@fontsource-variable/inter";
 import {
   ANDROID_PLAY_STORE_URL,
   GITHUB_REPOSITORY_URL,
@@ -23,9 +22,7 @@ const {
   pageClass,
 } = Astro.props;
 
-// Social preview card, shared by og:image and twitter:image. Link unfurlers
-// (Instagram, iMessage, X, Slack) want a 1200x630 jpg or png at an absolute URL.
-// The source is a 2x export so the downscale stays sharp.
+// Link unfurlers require a 1200x630 JPG/PNG at an absolute URL.
 const socialImage = await getImage({
   src: socialCard,
   width: 1200,
@@ -60,13 +57,6 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImageUrl} />
     <meta name="twitter:image:alt" content={socialImageAlt} />
-    <link
-      rel="preload"
-      href={dmSansLatinUrl}
-      as="font"
-      type="font/woff2"
-      crossorigin="anonymous"
-    />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
     <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16" />
@@ -155,22 +145,21 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
 
 <style is:global>
   :root {
-    --bg: #09090b;
-    --bg-elev: #0c0c0e;
-    --bg-card: #111113;
-    --fg: #fafafa;
-    --fg-muted: #a1a1aa;
-    --fg-dim: #71717a;
-    --fg-faint: #52525b;
+    --bg: #000;
+    --bg-elev: #0a0a0a;
+    --bg-card: #0d0d0d;
+    --fg: #f5f5f5;
+    --fg-muted: #a3a3a3;
+    --fg-dim: #737373;
+    --fg-faint: #525252;
     --border: rgba(255, 255, 255, 0.08);
     --border-strong: rgba(255, 255, 255, 0.14);
-    --accent-h: 250;
+    --accent-h: 264;
     --accent: oklch(0.68 0.17 var(--accent-h));
-    --accent-dim: oklch(0.68 0.17 var(--accent-h) / 0.15);
     --ok: oklch(0.72 0.16 150);
     --warn: oklch(0.76 0.15 75);
-    --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
     --radius: 12px;
     --radius-sm: 8px;
     --radius-lg: 16px;
@@ -191,7 +180,6 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font-sans);
-    font-feature-settings: "ss01", "ss02";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     min-height: 100vh;
@@ -199,17 +187,6 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     line-height: 1.5;
   }
 
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0.035;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-repeat: repeat;
-    background-size: 256px 256px;
-    z-index: 9999;
-  }
 
   a {
     color: inherit;
@@ -240,8 +217,8 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
   }
 
   .display {
-    font-weight: 500;
-    letter-spacing: -0.035em;
+    font-weight: 600;
+    letter-spacing: -0.03em;
     line-height: 1.05;
   }
 
@@ -267,14 +244,14 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
   }
 
   .btn-primary {
-    background: var(--fg);
-    color: #09090b;
+    background: oklch(0.571 0.21 264);
+    color: #fff;
     font-weight: 600;
   }
 
   .btn-primary:hover {
     transform: translateY(-1px);
-    background: #fff;
+    background: oklch(0.62 0.2 264);
   }
 
   .btn-primary:active {
@@ -303,7 +280,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     position: relative;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0));
+    background: var(--bg-card);
     overflow: hidden;
   }
 
@@ -421,21 +398,16 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     align-items: center;
     gap: 7px;
     height: 36px;
-    padding: 0 14px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.02);
+    padding: 0 10px;
     color: var(--fg-muted);
     font-size: 13px;
     letter-spacing: -0.01em;
     white-space: nowrap;
-    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    transition: color 0.18s ease;
   }
 
   .nav-stars:hover {
     color: var(--fg);
-    border-color: var(--border-strong);
-    background: rgba(255, 255, 255, 0.04);
   }
 
   .nav-stars strong {
@@ -494,7 +466,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
 
   .footer-links a {
     font-size: 13px;
-    color: var(--fg-dim);
+    color: var(--fg-muted);
     transition: color 0.2s ease;
   }
 

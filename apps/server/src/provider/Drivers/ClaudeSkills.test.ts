@@ -209,6 +209,71 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("resolves each install record's project repository once per discovery", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Real path: macOS temp dirs sit behind a /var -> /private/var symlink.
+      const tempDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" }),
+      );
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const otherProject = path.join(tempDir, "other", "packages", "app");
+      const sameRepoProject = path.join(workspace, "packages", "app");
+      yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+      yield* fs.makeDirectory(path.join(tempDir, "other", ".git"), { recursive: true });
+      yield* fs.makeDirectory(otherProject, { recursive: true });
+      yield* fs.makeDirectory(sameRepoProject, { recursive: true });
+      const elsewhereInstall = path.join(configDir, "plugins", "elsewhere");
+      const sameRepoInstall = path.join(configDir, "plugins", "same-repo");
+      yield* writeSkill(path.join(elsewhereInstall, "skills"), "elsewhere", "# Elsewhere");
+      yield* writeSkill(path.join(sameRepoInstall, "skills"), "same-repo", "# Same repo");
+      const records = Array.from({ length: 4 }, () => ({
+        scope: "project",
+        projectPath: otherProject,
+        installPath: elsewhereInstall,
+      }));
+      const plugins = ["a@shop", "b@shop", "c@shop"];
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          plugins: {
+            ...Object.fromEntries(plugins.map((key) => [key, records])),
+            "d@shop": [
+              { scope: "project", projectPath: sameRepoProject, installPath: sameRepoInstall },
+            ],
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        JSON.stringify({
+          enabledPlugins: Object.fromEntries([...plugins, "d@shop"].map((key) => [key, true])),
+        }),
+      );
+
+      const probed: Array<string> = [];
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          exists: (target) => {
+            probed.push(target);
+            return fs.exists(target);
+          },
+        }),
+      );
+      assert.strictEqual(
+        probed.filter((target) => target === path.join(otherProject, ".git")).length,
+        1,
+      );
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["d:same-repo"],
+      );
+    }),
+  );
+
   it.effect("publishes and dispatches canonical plugin folder names regardless of aliases", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -235,7 +300,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         {
           leadingText: undefined,
           commandText: "/plugin:alias focus on auth",
-          skillName: "plugin:alias",
         },
       );
       assert.deepEqual(
@@ -359,6 +423,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         '--add-dir "extra skills"',
         '--add-dir="extra skills"',
         `--add-dir missing --add-dir "${extraDir}"`,
+        `--add-dir "${extraDir}" --add-dir missing`,
+        `--add-dir missing "${extraDir}"`,
       ]) {
         const settings = { homePath: configDir, launchArgs };
         const skills = yield* discoverClaudeSkills(settings, workspace);
@@ -382,7 +448,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         {
           leadingText: undefined,
           commandText: "/demo",
-          skillName: "demo",
         },
       );
       yield* writeSkill(
@@ -504,9 +569,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
 
-      // A skill with no frontmatter falls back to its directory name; a skill
-      // whose frontmatter fails to parse is skipped entirely (Claude Code
-      // won't load it either).
+      // Claude falls back to directory names without frontmatter, but skips malformed frontmatter.
       assert.deepEqual(
         skills.map((skill) => skill.name),
         ["no-frontmatter"],
@@ -561,8 +624,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const workspace = path.join(tempDir, "workspace");
       yield* fs.makeDirectory(workspace, { recursive: true });
 
-      // The spawned CLI resolves a relative CLAUDE_CONFIG_DIR against its own
-      // cwd (the workspace), so discovery must do the same.
+      // The CLI resolves relative CLAUDE_CONFIG_DIR against workspace cwd.
       yield* writeSkill(
         path.join(workspace, "relative-config", "skills"),
         "relative-skill",
@@ -684,8 +746,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["---", `name: ${name}`, "---", "", "# Body"].join("\n"),
         );
       }
-      // Verified against the CLI: with an unknown string or a boolean in the
-      // map, the valid "off" sibling is ignored too and every skill runs.
+      // Claude ignores the entire override map when any value is an unknown string or boolean.
       yield* fs.writeFileString(
         path.join(configDir, "settings.json"),
         '{ "skillOverrides": { "unknown-mode": "some-future-mode", "boolean-false": false, "sibling-off": "off" } }',

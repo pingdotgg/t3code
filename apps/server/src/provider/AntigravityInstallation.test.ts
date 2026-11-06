@@ -1,7 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -16,6 +18,8 @@ import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
@@ -43,10 +47,7 @@ const zipFixtures = {
     "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIuZXhlS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABkAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWwuZXhly8lPTsxRyEgsykstLuYCAFBLAQIUAxQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAAAAAAAAAAADtgQAAAABhZ3lfYWNwX3NlcnZlci5leGVQSwECFAMUAAAACAAAACJdX3IDKRAAAAAOAAAAGQAAAAAAAAAAAAAA7YFEAAAAbG9jYWxoYXJuZXNzX2V4dGVybmFsLmV4ZVBLBQYAAAAAAgACAIcAAACLAAAAAAA=",
 };
 
-// The installation checks POSIX exec bits off the real filesystem unless the
-// platform is win32, so a linux platform mock cannot pass on NTFS. Default to
-// the host and let the fixture names follow; the suite is about install
-// mechanics, which are the same on every platform.
+// Linux platform mocks cannot enforce POSIX exec bits on NTFS; use the host platform.
 const hostPlatform: NodeJS.Platform =
   HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
 const completeArchive = Buffer.from(
@@ -61,11 +62,11 @@ const releaseAsset = Effect.fn("test.antigravityReleaseAsset")(function* (
   archive: Uint8Array = completeArchive,
   platform: NodeJS.Platform = hostPlatform,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   return {
     version: "fixture-new",
     url: "https://dl.google.com/antigravity-test.zip",
-    sha256: Hex.encode(yield* crypto.digest("SHA-256", archive).pipe(Effect.orDie)),
+    sha256: Hex.encode(yield* digest.digest(Digest.sha256, archive).pipe(Effect.orDie)),
     archiveBytes: archive.byteLength,
     executable: {
       name: platform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par",
@@ -122,6 +123,7 @@ interface HarnessOptions {
   readonly path?: string;
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
 }
@@ -176,6 +178,9 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
             ),
         }),
   }).pipe(
+    options.spawner
+      ? Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner)
+      : (effect) => effect,
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
@@ -236,7 +241,7 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
   expect((yield* installation.state).installedVersion).toBe(previousVersion);
 });
 
-it.layer(NodeServices.layer)("Antigravity installation", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity installation", (it) => {
   it.effect("reports missing Node before downloading the standalone provider runtime", () =>
     Effect.gen(function* () {
       const { installation, requests, validations } = yield* makeHarness();
@@ -300,8 +305,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
 
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
     Effect.gen(function* () {
-      // dl.google.com gzips the archive and reports the encoded size. The decoded
-      // stream is still checked byte for byte and by hash.
+      // dl.google.com reports the gzip-encoded size; byte and hash checks use the decoded stream.
       const { installation, validations } = yield* makeHarness({
         contentLength: completeArchive.byteLength - 1_000,
         contentEncoding: "gzip",
@@ -573,8 +577,59 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       }),
   );
 
-  // Real posix executables in a real temp dir, resolved by a linux-mocked
-  // PATH walk; a Windows temp path cannot be split on `:`.
+  it.effect("re-signs the Intel Mac runtime ad hoc and records the signed sizes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const signed: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command))
+            return yield* Effect.die("Unexpected spawn.");
+          const args = command.args.map(String);
+          signed.push([String(command.command), ...args]);
+          // codesign rewrites the signature, which changes each file's size.
+          for (const file of args.slice(3)) {
+            yield* fs.writeFileString(file, "signature", { flag: "a" });
+          }
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(900_000_301),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }).pipe(Effect.orDie),
+      );
+      const { installation, validations } = yield* makeHarness({
+        platform: "darwin",
+        arch: "x64",
+        spawner,
+      });
+      yield* installation.start;
+      expect((yield* terminalState(installation)).phase).toBe("succeeded");
+      const validated = validations[0]?.executable;
+      expect(signed).toEqual([
+        [
+          "/usr/bin/codesign",
+          "--force",
+          "--sign",
+          "-",
+          validated?.executablePath,
+          validated?.harnessPath,
+        ],
+      ]);
+      const selected = yield* installation.resolve();
+      expect(yield* fs.readFileString(selected.executablePath)).toBe(`${serverContents}signature`);
+    }),
+  );
+
+  // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
     () =>

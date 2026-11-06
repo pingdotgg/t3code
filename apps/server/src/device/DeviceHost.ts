@@ -84,6 +84,17 @@ export interface DeviceOpenContext {
 
 export type AgentDaemonEndpoint = Pick<AgentDeviceEndpoint, "baseUrl" | "token">;
 
+export interface AgentDeviceBinding extends AgentDaemonEndpoint {
+  /** Null when the session alone picks the device and selector flags would be refused. */
+  readonly agentDeviceId: string | null;
+  /** The one session the device is leased to, shared by every thread. */
+  readonly session?: string;
+  /** agent-device state holding that session's connection. */
+  readonly stateDir?: string;
+  /** agent-device accepts installs into the session only from the directory that opened it. */
+  readonly installDirectory?: string;
+}
+
 /** Where the proxy sends a device hub request, for hosts that serve several upstreams. */
 export interface HubUpstream {
   readonly url: string;
@@ -124,10 +135,7 @@ export interface DeviceOperations {
    */
   readonly agentEndpoint?: (
     deviceId: string,
-  ) => Effect.Effect<
-    AgentDaemonEndpoint & { readonly agentDeviceId: string },
-    DeviceHostUnavailableError
-  >;
+  ) => Effect.Effect<AgentDeviceBinding, DeviceHostUnavailableError>;
   /**
    * Set by hosts that end devices on their own (EAS stops sessions at their
    * limits), so a session on a device the host stops listing is dropped.
@@ -137,6 +145,16 @@ export interface DeviceOperations {
 
 export interface DeviceHostReady {
   readonly nodePath: string;
+  /**
+   * Ends an agent-device session on the daemon that serves `deviceId`. Hosts
+   * with a shared daemon provide it only while that daemon runs; hosts with a
+   * daemon per device succeed when the device's daemon is gone. Cleanup never
+   * starts a daemon or a device.
+   */
+  readonly releaseAgentSession?: (
+    session: string,
+    deviceId: string,
+  ) => Effect.Effect<void, DeviceOperationError>;
   readonly hub: DeviceHubEndpoint;
   readonly devices: DeviceOperations;
   readonly run: (

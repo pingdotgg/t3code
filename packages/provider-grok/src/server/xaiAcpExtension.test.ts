@@ -341,9 +341,7 @@ describe("XAiAcpExtension", () => {
   });
 
   it("keeps Monitor ticks running while Grok reports them in progress", () => {
-    // Recorded from Grok 1.0.41: every tick is an in_progress update whose
-    // Bash-shaped rawOutput already carries exit_code 0. The monitor ends only
-    // through `_x.ai/task_completed`, never through a completed status.
+    // Grok 1.0.41 ticks report in_progress with exit_code 0; only _x.ai/task_completed ends the monitor.
     const command = "for i in 1 2 3; do sleep 8; echo tick $i; done";
     const started = parseRecordedToolCallUpdate({
       sessionUpdate: "tool_call_update",
@@ -552,11 +550,6 @@ describe("XAiAcpExtension", () => {
   });
 
   it("hydrates monitor completion from a standalone TaskOutput frame without rawInput", () => {
-    // Post-settle shape observed live (2026-07-12): the final
-    // get_command_or_subagent_output update carries only rawOutput; the frame
-    // is parsed in isolation (no in-turn merge), and this completion is the
-    // ONLY end signal when the agent consumed the output itself (no "Monitor
-    // ended" reminder follows).
     expect(
       extractXAiBackgroundTaskCompletion({
         toolCallId: "call-c29e64dd-ce5d-4eac-a6ca-c20513fefac3-1",
@@ -682,7 +675,7 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
-  // Oracle: #15888 reports KillTask replies with killed and already_exited outcomes.
+  // KillTask replies can report killed and already_exited outcomes.
   it.each([
     { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask" } },
     { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask", outcome: "killed" } },
@@ -1257,8 +1250,6 @@ describe("XAiAcpExtension", () => {
   );
 
   it("maps subagent_finished to a notice only for statuses Grok defines", () => {
-    // Recorded from Grok 1.0.41 (ids normalized); statuses per grok-build
-    // xai-grok-tools/.../task/types.rs `status()`.
     const finished = (update: Record<string, unknown>) =>
       xAiSubagentFinishedNotice({
         sessionId: "root-session",
