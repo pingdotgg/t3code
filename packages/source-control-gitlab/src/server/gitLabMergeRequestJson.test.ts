@@ -380,6 +380,7 @@ describe("decodePipelineStageChecksJson", () => {
         status: "failure",
         description: "failed",
         url: "https://gitlab.com/fork/web/-/pipelines/9#test",
+        required: true,
       },
     ]);
   });

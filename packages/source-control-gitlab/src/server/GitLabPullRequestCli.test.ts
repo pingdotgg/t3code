@@ -2586,18 +2586,21 @@ layer("GitLabPullRequestCli.layer", (it) => {
             status: "success",
             description: "passed",
             url: "https://gitlab.com/acme/web/-/pipelines/9",
+            required: true,
           },
           {
             name: "test / unit",
             status: "failure",
             description: null,
             url: "https://gitlab.com/acme/web/-/jobs/3",
+            required: true,
           },
           {
             name: "deploy / child-pipeline",
             status: "failure",
             description: "Downstream pipeline",
             url: "https://gitlab.com/acme/child/-/pipelines/10",
+            required: false,
           },
         ]);
       }),

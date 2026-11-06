@@ -453,6 +453,7 @@ export function decodePipelineStageChecksJson(
         name,
         status: toPipelineStatus(stage.status),
         description: trimmed(stage.detailedStatus?.label),
+        required: true,
         url: link(trimmed(stage.detailedStatus?.detailsPath) ?? trimmed(pipeline?.path)),
       });
       continue;
@@ -468,6 +469,8 @@ export function decodePipelineStageChecksJson(
         status: status === "failure" && job.allowFailure === true ? "neutral" : status,
         description: downstream ? "Downstream pipeline" : trimmed(job.detailedStatus?.label),
         url: link(trimmed(downstream ? downstream.path : job.webPath)),
+        // A trigger job that already passed lacks `strategy: depend`, so its child cannot gate.
+        required: !downstream || toPipelineStatus(job.status) !== "success",
       });
     }
   }
