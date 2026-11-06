@@ -1174,7 +1174,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /** The driver when this provider runs `/goal` natively, else undefined. */
   const goalDriverFor = Effect.fn("Orchestrator.goalDriverFor")(function* (
-    command: OrchestrationV2ServerCommand,
+    command: Pick<OrchestrationV2ServerCommand, "commandId" | "type">,
     providerInstanceId: ProviderInstanceId,
   ) {
     const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
@@ -1189,7 +1189,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   /** Claude Code reads `/goal pause` and `/goal resume` as new goals named "pause" and "resume". */
   const ensureGoalCommandSupported = Effect.fn("Orchestrator.ensureGoalCommandSupported")(
     function* (
-      command: OrchestrationV2ServerCommand,
+      command: Pick<OrchestrationV2ServerCommand, "commandId" | "type">,
       message: { readonly text: string; readonly attachments: ReadonlyArray<ChatAttachment> },
       providerInstanceId: ProviderInstanceId,
     ) {
@@ -1205,7 +1205,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   const mapDispatchError =
-    (command: OrchestrationV2ServerCommand) =>
+    (command: Pick<OrchestrationV2ServerCommand, "commandId" | "type">) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, OrchestratorDispatchError, R> =>
       effect.pipe(
         Effect.mapError(
@@ -2032,6 +2032,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Queued run ${queuedRun.id} is missing projection state.`,
         });
       }
+      // A scheduled delivery starts on the thread's current pick, so /goal must suit that provider.
+      yield* ensureGoalCommandSupported(
+        { commandId, type: "message.dispatch" },
+        queuedMessage,
+        queuedRun.providerInstanceId,
+      );
 
       const now = yield* DateTime.now;
       const targetAdapter = yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(

@@ -1849,6 +1849,65 @@ it.effect("checks an edited scheduled /goal against the thread's current provide
   ),
 );
 
+it.effect("checks a queued scheduled /goal against the thread's current provider at start", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
+        "start-scheduled-goal",
+        "/goal pause",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const { threadId, queuedRun } = yield* queueAndSwitch;
+        const first = started[0]!;
+        const settled = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === first.runId &&
+              event.payload.status === "waiting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: first.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const failure = projection.turnItems.find(
+          (item) => item.type === "error" && item.runId === queuedRun.id,
+        );
+        assert.equal(started.length, 1);
+        assert.equal(projection.runs.find((run) => run.id === queuedRun.id)?.status, "failed");
+        assert.equal(
+          failure?.type === "error" ? failure.failure.code : null,
+          "queued_start_failed",
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("marks the model switch on a promoted message that restarts the turn", () =>
   Effect.scoped(
     Effect.gen(function* () {
