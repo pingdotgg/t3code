@@ -9,7 +9,7 @@ strip. Workspaces stack the strips vertically.
   were on, each with its letter key. `mod+n` starts a thread right away. The `+` in a
   chat's notch offers the same; right-click it for a terminal, browser, files or diff
   beside the chat.
-- **Split:** `mod+d` opens a new tab in a pane to the right, `mod+shift+d` one below.
+- **Split:** `mod+d` opens a new tab in a pane to the right, `mod+alt+shift+d` one below.
   Or drag a tab onto a side of any pane, or onto the window's left or right edge for a
   new column. Inside a terminal, the same keys split the terminal.
 - **Terminal and surfaces:** a diff, files, a browser, a terminal or a pull request is a

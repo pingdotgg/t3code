@@ -1,3 +1,4 @@
+import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off - real HTTP streaming boundary test.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -6,6 +7,8 @@ import { expect, vi } from "vite-plus/test";
 import {
   AuthSessionId,
   AuthOrchestrationOperateScope,
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+  SPEECH_MAX_OPTIONS_BYTES,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -23,13 +26,11 @@ import * as SpeechService from "./SpeechService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
 
 const dependencies = Layer.mergeAll(
-  ManagedPolicy.layerTest(),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -41,8 +42,8 @@ const dependencies = Layer.mergeAll(
       generatePrContent: () => Effect.die("not used"),
       generateBranchName: () => Effect.die("not used"),
       generateThreadTitle: () => Effect.die("not used"),
-      generateTranscriptionPostProcessing: () => Effect.die("not used"),
       generateReviewGuide: () => Effect.die("not used"),
+      generateTranscriptionPostProcessing: () => Effect.die("not used"),
     }),
   ),
 );
@@ -69,24 +70,16 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
         Layer.succeed(SpeechService.SpeechService, {
           status: Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
-          postProcess: ({ transcript }) => Effect.succeed(transcript),
-          models: Effect.succeed({ models: [] }),
-          downloadModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          selectModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          cancelDownload: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          updateCustomWords: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          updateModelDirectories: () =>
-            Effect.succeed({ supported: false as const, reason: "test" }),
-          updateFillerWordRemoval: () =>
-            Effect.succeed({ supported: false as const, reason: "test" }),
+          models: () => Effect.succeed({ models: [] }),
+          downloadModel: () => Effect.succeed({ models: [] }),
+          selectModel: () => Effect.succeed({ models: [] }),
+          cancelDownload: () => Effect.succeed({ models: [] }),
           updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
           updateModelUnloadTimeout: () =>
             Effect.succeed({ supported: false as const, reason: "test" }),
-          updateLanguage: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          updateTranslation: () => Effect.succeed({ supported: false as const, reason: "test" }),
           transcribe,
           startStream: () => Effect.die("not used"),
-          removeModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          removeModel: () => Effect.succeed({ models: [] }),
         }),
       ),
     );
@@ -96,28 +89,32 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       const address = server.address as NetAddress.InetAddress;
       const host = address._tag === "InetAddressV6" ? "[::1]" : "127.0.0.1";
       const url = `http://${host}:${address.port}/api/voice/transcribe`;
-      // The server either answers 413 or resets the socket mid-upload; both reject the audio.
-      const outcome = yield* Effect.promise(() =>
-        fetch(url, {
+      const select = yield* Effect.promise(() =>
+        fetch(new URL("models/select", url), {
           method: "POST",
-          headers: { "content-type": "application/octet-stream" },
-          body: new ReadableStream({
-            start(controller) {
-              controller.enqueue(new Uint8Array(SpeechService.MAX_SPEECH_BYTES));
-              controller.enqueue(new Uint8Array(4));
-              controller.close();
-            },
-          }),
-          duplex: "half",
-        }).then(
-          (response) => response.status,
-          (error: unknown) =>
-            error instanceof Error && error.cause instanceof Error && "code" in error.cause
-              ? error.cause.code
-              : error,
-        ),
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ modelId: "test" }),
+        }),
       );
-      expect([413, "UND_ERR_SOCKET"]).toContain(outcome);
+      expect(select.status).toBe(403);
+      yield* Effect.promise(() =>
+        expect(
+          fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/octet-stream" },
+            body: new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new Uint8Array(SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4),
+                );
+                controller.enqueue(new Uint8Array(4));
+                controller.close();
+              },
+            }),
+            duplex: "half",
+          }),
+        ).resolves.toMatchObject({ status: 413 }),
+      );
       expect(transcribe).not.toHaveBeenCalled();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, dependencies)));
   }),
@@ -134,6 +131,11 @@ effectIt.effect.each([
       architecture: "arm64",
     }),
     reason: "speech_unavailable",
+  },
+  {
+    malformedOptions: true,
+    error: new SpeechService.SpeechInvalidAudioError({ byteLength: 3, message: "invalid PCM" }),
+    reason: "invalid_audio",
   },
   {
     oversized: true,
@@ -159,22 +161,17 @@ effectIt.effect.each([
           }),
         ),
       );
+      const transcribe = vi.fn(() => Effect.fail(error));
       const service = Layer.succeed(SpeechService.SpeechService, {
         status: Effect.succeed({ supported: false as const, reason: "test" }),
         prepareModel: Effect.void,
-        postProcess: ({ transcript }) => Effect.succeed(transcript),
-        models: Effect.succeed({ models: [] }),
+        models: () => Effect.succeed({ models: [] }),
         downloadModel: () => Effect.fail(error),
         selectModel: () => Effect.fail(error),
         cancelDownload: () => Effect.fail(error),
-        updateCustomWords: () => Effect.fail(error),
-        updateModelDirectories: () => Effect.fail(error),
-        updateFillerWordRemoval: () => Effect.fail(error),
         updateAcceleration: () => Effect.fail(error),
         updateModelUnloadTimeout: () => Effect.fail(error),
-        updateLanguage: () => Effect.fail(error),
-        updateTranslation: () => Effect.fail(error),
-        transcribe: () => Effect.fail(error),
+        transcribe,
         startStream: () => Effect.fail(error),
         removeModel: () => Effect.fail(error),
       });
@@ -185,6 +182,8 @@ effectIt.effect.each([
           Layer.provide(auth),
           Layer.provide(service),
           Layer.provide(HttpServer.layerServices),
+          Layer.provide(dependencies),
+          Layer.provide(NodeServices.layer),
         ),
         { disableLogger: true },
       );
@@ -192,14 +191,28 @@ effectIt.effect.each([
       const request = new Request("http://localhost/api/voice/transcribe", {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
-        body: new Uint8Array(3),
+        body:
+          "malformedOptions" in options
+            ? new Uint8Array([255, 255, 255, 255])
+            : encodeSpeechPcmRequest(new Uint8Array(3), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
       });
       const decode = vi.spyOn(request, "arrayBuffer");
       if ("oversized" in options)
-        request.headers.set("content-length", String(SpeechService.MAX_SPEECH_BYTES + 1));
+        request.headers.set(
+          "content-length",
+          String(SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 5),
+        );
       const context = yield* Layer.build(Layer.mergeAll(dependencies, NodeServices.layer));
       const response = yield* Effect.promise(() => handler(request, context));
       if ("oversized" in options) expect(decode).not.toHaveBeenCalled();
+      if ("malformedOptions" in options || "oversized" in options) {
+        expect(transcribe).not.toHaveBeenCalled();
+      } else {
+        expect(transcribe).toHaveBeenCalledWith(
+          new Uint8Array(3),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        );
+      }
       expect(response.status).toBe(400);
       expect(yield* Effect.promise(() => response.json())).toMatchObject({
         code: "invalid_request",

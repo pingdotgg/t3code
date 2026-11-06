@@ -47,14 +47,8 @@ function PaneScreenContent(props: {
   return (
     <InspectorCloseContext value={props.onClose}>
       <PaneContext value="inspector">
-        {props.pane.nativeStack ? (
-          content
-        ) : (
-          <>
-            <PaneHeader store={store} />
-            <NativeColumnContent>{content}</NativeColumnContent>
-          </>
-        )}
+        <PaneHeader store={store} />
+        <NativeColumnContent>{content}</NativeColumnContent>
       </PaneContext>
     </InspectorCloseContext>
   );

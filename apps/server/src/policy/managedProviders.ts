@@ -206,7 +206,8 @@ const sameVariable = (
   left === right ||
   (left !== undefined &&
     right !== undefined &&
-    left.value === right.value &&
+    // A secret reference is an object, and a decoded copy is never the stored one.
+    sameValue(left.value, right.value) &&
     left.sensitive === right.sensitive);
 
 const pinnedFields = (pin: ManagedProviderInstance): ReadonlyArray<PinnedConfigField> =>
