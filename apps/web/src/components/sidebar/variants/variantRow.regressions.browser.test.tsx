@@ -92,7 +92,7 @@ it("hides the time under Settle while Settle has keyboard focus", async () => {
       {row({
         statusSlot: (content: ReactNode) => (
           <span data-status-slot>
-            <span data-testid="time" style={{ transition: "none" }}>
+            <span data-testid="time" data-yields-to-action="" style={{ transition: "none" }}>
               {content}
             </span>
             <button type="button" aria-label="Settle thread" />

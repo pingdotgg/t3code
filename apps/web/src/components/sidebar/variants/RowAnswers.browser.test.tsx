@@ -4,6 +4,7 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -216,4 +217,86 @@ it("keeps answers on line 2 when they fit", async () => {
   expect(settle.getBoundingClientRect().left).toBeGreaterThanOrEqual(answers.right);
   const chip = screen.container.querySelector("[data-worker-fold]")!.getBoundingClientRect();
   expect(Math.abs(chip.top + chip.height / 2 - (answers.top + answers.height / 2))).toBeLessThan(2);
+});
+
+const slimRow = (extra: Partial<Parameters<typeof resolveVariantRow>[0]>) => (
+  <div className="sidebar-row-look">
+    {
+      resolveVariantRow({
+        style: "folder-slim",
+        threadKey: "environment-a:thread-a",
+        thread: { ...thread, title: "A thread", hasPendingUserInput: true },
+        status: "ready",
+        statusWord: { label: "Input", className: "text-indigo-600" },
+        wokePill: null,
+        time: "1m",
+        isUnread: false,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+        hasDraftSurface: false,
+        nested: false,
+        lastNested: false,
+        inFolder: false,
+        repo: null,
+        mark: null,
+        title: <span>Title</span>,
+        draft: null,
+        pin: null,
+        where: null,
+        lineExtras: null,
+        remote: null,
+        terminal: null,
+        jumpHint: null,
+        workerCount: null,
+        workerSummary: null,
+        workersOpen: null,
+        onToggleWorkers: () => {},
+        answersOpen: false,
+        onAnswersOpenChange: () => {},
+        onOpenThread: () => {},
+        statusSlot: (content, keepsLabel) => (
+          <span data-status-slot>
+            <span
+              data-testid="label"
+              data-yields-to-action={keepsLabel ? undefined : ""}
+              style={{ transition: "none" }}
+            >
+              {content}
+            </span>
+            {keepsLabel ? null : <button type="button" aria-label="Settle thread" />}
+          </span>
+        ),
+        ...extra,
+      }).body
+    }
+  </div>
+);
+
+it("keeps Slim's answer button visible while it has keyboard focus", async () => {
+  setup({ userInputs: [question()] });
+  await using screen = await render(slimRow({}));
+  const answer = screen.getByRole("button", { name: /answer without opening/ }).element();
+  // why: script focus only counts as focus-visible after keyboard input.
+  await userEvent.keyboard("{Shift}");
+  (answer as HTMLElement).focus();
+  expect(answer.matches(":focus-visible")).toBe(true);
+  expect(getComputedStyle(screen.getByTestId("label").element()).opacity).toBe("1");
+});
+
+it("hides the time only while the action beside it has keyboard focus", async () => {
+  setup({});
+  await using screen = await render(
+    slimRow({
+      thread: { ...thread, title: "A thread" },
+      statusWord: null,
+      wokePill: <button type="button">Woke</button>,
+    }),
+  );
+  const label = screen.getByTestId("label").element();
+  await userEvent.keyboard("{Shift}");
+  (screen.getByRole("button", { name: "Woke" }).element() as HTMLElement).focus();
+  expect(getComputedStyle(label).opacity).toBe("1");
+  (screen.getByRole("button", { name: "Settle thread" }).element() as HTMLElement).focus();
+  expect(getComputedStyle(label).opacity).toBe("0");
 });

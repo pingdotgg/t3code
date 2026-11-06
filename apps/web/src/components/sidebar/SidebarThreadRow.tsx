@@ -1267,6 +1267,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             )}
           >
             <span
+              data-yields-to-action={!isWoke && !keepsLabel ? "" : undefined}
               className={cn(
                 "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
                 !isWoke && !keepsLabel && "group-any-hover/sidebar-row:opacity-0",

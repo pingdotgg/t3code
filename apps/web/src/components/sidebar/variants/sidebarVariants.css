@@ -251,8 +251,8 @@
     pointer-events: none;
   }
 
-  /* Hover and pointer rows hide the time for Settle, and keyboard focus has to as well. */
-  & [data-status-slot]:has(:focus-visible) > span:first-child {
+  /* Hover hides the time for Settle, so keyboard focus on that action has to as well. */
+  & [data-status-slot]:has(> button:focus-visible) > [data-yields-to-action] {
     opacity: 0;
   }
 
