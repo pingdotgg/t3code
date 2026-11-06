@@ -11323,6 +11323,113 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("shows the end of a Bash output that Claude persisted to a file", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const toolResultsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-tool-results-",
+        });
+        const persistedOutputPath = NodePath.join(toolResultsDir, "bfm1v36ll.txt");
+        const fullOutput = Array.from(
+          { length: 10_000 },
+          (_, index) => `build log line ${index + 1}`,
+        ).join("\n");
+        yield* fileSystem.writeFileString(persistedOutputPath, fullOutput);
+        const bashToolUseId = "toolu_01BashPersistedOutput";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-bash-persisted-output"),
+            text: "Build it.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_bash_persisted_output",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: bashToolUseId,
+                  name: "Bash",
+                  input: { command: "seq 1 10000 | sed 's/^/build log line /'" },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-0000000007a0",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: bashToolUseId,
+                  content: `<persisted-output>\nOutput too large. Full output saved to: ${persistedOutputPath}\n</persisted-output>`,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-0000000007a1",
+            session_id: WAKE_NATIVE_SESSION,
+            // Claude keeps only the first 30,000 characters in `stdout` once it persists the output.
+            tool_use_result: {
+              stdout: fullOutput.slice(0, 30_000),
+              stderr: "",
+              interrupted: false,
+              isImage: false,
+              noOutputExpected: false,
+              persistedOutputPath,
+              persistedOutputSize: Buffer.byteLength(fullOutput),
+            },
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-0000000007a2", result: "Built." }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const bash = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === bashToolUseId,
+        );
+        const output =
+          bash?.type === "turn_item.updated" && bash.turnItem.type === "command_execution"
+            ? bash.turnItem.output
+            : undefined;
+        assert.equal(output?.trimEnd().split("\n").at(-1), "build log line 10000");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       case: "an Edit",
