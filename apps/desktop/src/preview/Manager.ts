@@ -2883,6 +2883,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           height: 800,
           title: "Browser",
           autoHideMenuBar: true,
+          // The toolbar row (40px) doubles as the title bar; the lights sit centered in it.
+          ...(hostPlatform === "darwin" && {
+            titleBarStyle: "hidden" as const,
+            trafficLightPosition: { x: 14, y: 13 },
+          }),
           webPreferences: {
             preload: path.join(path.dirname(pictureInPicturePreloadPath), "preload.cjs"),
             contextIsolation: true,

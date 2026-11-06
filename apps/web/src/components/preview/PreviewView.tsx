@@ -86,7 +86,7 @@ import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
@@ -940,6 +940,7 @@ export function PreviewView({
               : undefined
         }
         pictureInPictureLabel={isPopoutWindow ? "Bring back to chat" : undefined}
+        windowTitleBar={isPopoutWindow && isMacPlatform(navigator.platform)}
         pictureInPicture={!isPopoutWindow && miniPlayerTabId === tabId}
         pictureInPictureDisabled={
           !isPopoutWindow &&
