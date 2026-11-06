@@ -609,12 +609,17 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
     env.WSL_DISTRO_NAME !== undefined
   ) {
     if (yield* isCommandAvailable(WSL_POWERSHELL_COMMAND, { env })) {
-      const explorerTarget = yield* resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME);
       // WSL names may contain quotes that Explorer's /select cannot encode.
       // Open the parent through the shell so replacement managers still apply.
       const path = yield* Path.Path;
       // .NET path parsing rejects characters that are legal in WSL filenames.
-      const parent = yield* resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME);
+      const [explorerTarget, parent] = yield* Effect.all(
+        [
+          resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME),
+          resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME),
+        ],
+        { concurrency: "unbounded" },
+      );
       const source = explorerTarget.includes('"')
         ? `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)}`
         : buildFileManagerRevealPowerShellSource(explorerTarget, parent);

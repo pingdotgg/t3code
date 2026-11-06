@@ -277,7 +277,11 @@ const wslpathSpawner = (translate: (target: string) => string | undefined) =>
 it.effect.each([
   // wslpath is mount-aware, so its translation wins verbatim.
   { target: "/mnt/c", wslpath: "C:\\", expected: "C:\\" },
-  { target: "/mnt/d/projects/my-app", wslpath: "D:\\projects\\my-app", expected: "D:\\projects\\my-app" },
+  {
+    target: "/mnt/d/projects/my-app",
+    wslpath: "D:\\projects\\my-app",
+    expected: "D:\\projects\\my-app",
+  },
   // A drive remapped in /etc/wsl.conf resolves to its real letter, not the path's.
   { target: "/mnt/d/project", wslpath: "E:\\project", expected: "E:\\project" },
   {
@@ -286,7 +290,11 @@ it.effect.each([
     expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo",
   },
   // wslpath missing or failing falls back to the hand-built UNC path.
-  { target: "/home/user/repo", wslpath: undefined, expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo" },
+  {
+    target: "/home/user/repo",
+    wslpath: undefined,
+    expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo",
+  },
   { target: "/", wslpath: undefined, expected: "\\\\wsl.localhost\\Ubuntu-24.04" },
 ])("resolveWslFileManagerPath resolves $target to $expected", ({ target, wslpath, expected }) =>
   Effect.gen(function* () {
