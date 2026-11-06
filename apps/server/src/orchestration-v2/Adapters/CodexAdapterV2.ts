@@ -26,6 +26,7 @@ import {
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
   codexMessageResetAt,
+  codexTimeZone,
   codexUsageLimitResetAt,
   type CodexRateLimitSnapshot,
 } from "../../provider/codexUsageLimits.ts";
@@ -1170,12 +1171,15 @@ function withCodexManagedFailure(
 function failureResetAt(
   failure: OrchestrationV2ProviderFailure,
   snapshot: CodexRateLimitSnapshot | undefined,
-  now: DateTime.Utc,
+  /** Read the failure text against when Codex reported it; omit to use the snapshot only. */
+  text?: { readonly failedAt: DateTime.Utc; readonly zone: DateTime.TimeZone },
 ) {
   // Sharing caps have no reset timestamp in the ordinary Codex allowance snapshot.
-  return classifyCodexManagedError(failure.code)?.usageLimit
-    ? null
-    : (codexUsageLimitResetAt(snapshot) ?? codexMessageResetAt(failure.message, now));
+  if (classifyCodexManagedError(failure.code)?.usageLimit) return null;
+  return (
+    codexUsageLimitResetAt(snapshot) ??
+    (text === undefined ? null : codexMessageResetAt(failure.message, text.failedAt, text.zone))
+  );
 }
 
 interface ActiveCodexTurnContext {
@@ -1756,6 +1760,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
+        const codexZone = codexTimeZone(resolvedRuntime?.environment ?? adapterOptions.environment);
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -4500,7 +4505,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             );
             const snapshot = yield* Ref.get(rateLimitSnapshot);
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
-              const resetAt = failureResetAt(item.failure, snapshot, yield* DateTime.now);
+              const resetAt = failureResetAt(item.failure, snapshot);
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
                 ...item,
@@ -5797,6 +5802,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           function* (input: {
             readonly context: ActiveCodexTurnContext;
             readonly status: OrchestrationV2ProviderTurn["status"];
+            readonly completedAt: DateTime.Utc;
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
@@ -5845,11 +5851,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: failureResetAt(
-                          failure,
-                          yield* Ref.get(rateLimitSnapshot),
-                          yield* DateTime.now,
-                        ),
+                        resetAt: failureResetAt(failure, yield* Ref.get(rateLimitSnapshot), {
+                          failedAt: input.completedAt,
+                          zone: codexZone,
+                        }),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -5889,11 +5894,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...event.failure,
                     resetAt:
                       event.failure.resetAt ??
-                      failureResetAt(
-                        event.failure,
-                        yield* Ref.get(rateLimitSnapshot),
-                        yield* DateTime.now,
-                      ),
+                      failureResetAt(event.failure, yield* Ref.get(rateLimitSnapshot)),
                   },
                 }
               : event;
@@ -5938,6 +5939,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly context: ActiveCodexTurnContext;
             readonly nativeTurnId: string;
             readonly status: OrchestrationV2ProviderTurn["status"];
+            readonly completedAt: DateTime.Utc;
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
