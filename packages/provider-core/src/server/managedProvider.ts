@@ -54,6 +54,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
+  readonly getUsageRefreshKey?: Effect.Effect<string | undefined>;
   readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
@@ -138,7 +139,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean },
+    options?: { readonly forceRefresh?: boolean; readonly usageRefreshKey?: string | undefined },
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
@@ -162,10 +163,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const accountReset = yield* UsageAccountReset;
+    const current = (yield* Ref.get(snapshotStateRef)).snapshot;
+    const accountReset =
+      (yield* UsageAccountReset) ||
+      (options?.usageRefreshKey !== undefined &&
+        options.usageRefreshKey !== current.auth.usageRefreshKey);
     if (accountReset) usageRefreshAfter = 0;
     const now = yield* Clock.currentTimeMillis;
-    const current = (yield* Ref.get(snapshotStateRef)).snapshot;
     const pollingUsage =
       (yield* UsagePolling) &&
       ((yield* UsageAfterReset) ||
@@ -177,7 +181,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       current.installed &&
       current.status === "ready" &&
       current.auth.status === "authenticated"
-        ? withUsageLimits(current, yield* input.checkUsageLimits)
+        ? withUsageLimits(
+            options?.usageRefreshKey === undefined
+              ? current
+              : { ...current, auth: { ...current.auth, usageRefreshKey: options.usageRefreshKey } },
+            yield* input.checkUsageLimits,
+          )
         : yield* input.checkProvider.pipe(Effect.provideService(UsagePolling, pollingUsage));
     if (probedSnapshot.usageLimits?.externalUsage) {
       usageRefreshAfter = 0;
@@ -293,7 +302,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                 const settings = yield* input.getSettings;
                 const current = (yield* Ref.get(snapshotStateRef)).snapshot;
                 if (!current.enabled || current.usageLimits?.externalUsage) return;
+                const usageRefreshKey = yield* input.getUsageRefreshKey ?? Effect.undefined;
                 if (
+                  (usageRefreshKey === undefined ||
+                    usageRefreshKey === current.auth.usageRefreshKey) &&
                   (yield* Clock.currentTimeMillis) < usageRefreshAfter &&
                   current.usageLimits?.unavailable?.reason !== "unsupported" &&
                   !(yield* UsageAfterReset) &&
@@ -303,7 +315,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                   return;
                 }
                 yield* input.invalidateUsageCache ?? Effect.void;
-                yield* applySnapshotBase(settings, { forceRefresh: true }).pipe(
+                yield* applySnapshotBase(settings, { forceRefresh: true, usageRefreshKey }).pipe(
                   Effect.provideService(UsagePolling, true),
                 );
               }),

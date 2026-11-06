@@ -360,12 +360,18 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       { name: "skips disabled instances", enabled: false },
       { name: "skips unsupported usage", unsupported: true },
       { name: "invalidates replaced Go credentials", switchCredentials: true },
+      {
+        name: "invalidates credentials without health",
+        switchCredentials: true,
+        withoutHealth: true,
+      },
     ].map((scenario) => ({
       enabled: true,
       demand: true,
       intervalOff: false,
       unsupported: false,
       switchCredentials: false,
+      withoutHealth: false,
       ...scenario,
     })),
   )(
@@ -536,6 +542,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.strictEqual(usageReads, scenario.enabled ? 1 : 0);
         if (shouldRecover) yield* instance.snapshot.refreshUsage!;
         const recovered = yield* instance.snapshot.getSnapshot;
+        if (shouldRecover) yield* instance.snapshot.refreshUsage!;
         const expectedReads = !scenario.enabled ? 0 : shouldRecover ? 2 : 1;
         assert.strictEqual(usageReads, expectedReads);
         assert.strictEqual(
@@ -554,22 +561,29 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           yield* TestClock.adjust("1 minute");
           currentKey = "replacement-go-key";
           replaceCredential(currentKey);
-          replacingCredential = true;
-          const health = yield* instance.snapshot.refresh.pipe(
-            Effect.forkChild({ startImmediately: true }),
-          );
-          yield* Deferred.await(replacementHealthStarted);
-          yield* TestClock.adjust("5 seconds");
-          yield* Fiber.join(health);
-          const changed = yield* instance.snapshot.getSnapshot;
-          assert.strictEqual(usageReads, expectedReads, "health discovery must not read quota");
-          assert.notStrictEqual(changed.auth.usageRefreshKey, previousAuth.usageRefreshKey);
-          assert.deepStrictEqual(changed.usageLimits?.windows, []);
-          assert.strictEqual(changed.usageLimits?.refreshAfter, undefined);
+          if (!scenario.withoutHealth) {
+            replacingCredential = true;
+            const health = yield* instance.snapshot.refresh.pipe(
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* Deferred.await(replacementHealthStarted);
+            yield* TestClock.adjust("5 seconds");
+            yield* Fiber.join(health);
+            const changed = yield* instance.snapshot.getSnapshot;
+            assert.strictEqual(usageReads, expectedReads, "health discovery must not read quota");
+            assert.notStrictEqual(changed.auth.usageRefreshKey, previousAuth.usageRefreshKey);
+            assert.deepStrictEqual(changed.usageLimits?.windows, []);
+            assert.strictEqual(changed.usageLimits?.refreshAfter, undefined);
+          }
           yield* instance.snapshot.refreshUsage!;
           const fresh = yield* instance.snapshot.getSnapshot;
           assert.strictEqual(usageReads, expectedReads + 1);
           assert.strictEqual(fresh.usageLimits?.windows[0]?.usedPercent, 80);
+          assert.notStrictEqual(fresh.auth.usageRefreshKey, previousAuth.usageRefreshKey);
+          if (scenario.withoutHealth) {
+            assert.strictEqual(modelReads, catalogReads);
+            assert.strictEqual(serverStarts, starts);
+          }
           assert.notStrictEqual(
             fresh.usageLimits?.credentialFingerprint,
             recovered.usageLimits?.credentialFingerprint,

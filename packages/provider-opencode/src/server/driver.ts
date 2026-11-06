@@ -366,6 +366,14 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(Digest.Digest, digest),
     );
+    const getUsageRefreshKey =
+      effectiveConfig.enabled && !effectiveConfig.serverUrl.trim()
+        ? readOpenCodeGoCredentialFingerprint(processEnv).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+            Effect.provideService(Digest.Digest, digest),
+          )
+        : Effect.undefined;
     const checkProvider = Effect.all(
       {
         provider: checkOpenCodeProviderStatus(
@@ -377,14 +385,7 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
-        credentialFingerprint:
-          effectiveConfig.enabled && !effectiveConfig.serverUrl.trim()
-            ? readOpenCodeGoCredentialFingerprint(processEnv).pipe(
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.provideService(Path.Path, pathService),
-                Effect.provideService(Digest.Digest, digest),
-              )
-            : Effect.undefined,
+        credentialFingerprint: getUsageRefreshKey,
         usageLimits: Effect.flatMap(UsagePolling, (enabled) =>
           enabled ? checkUsageLimits : Effect.succeed(null),
         ),
@@ -490,6 +491,7 @@ export const OpenCodeDriver: ProviderDriver<
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       checkUsageLimits,
+      getUsageRefreshKey,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
