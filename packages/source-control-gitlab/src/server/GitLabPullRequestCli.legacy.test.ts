@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError } from "@t3tools/contracts";
@@ -14,6 +15,7 @@ const layer = it.layer(
   GitLabPullRequestCli.layer.pipe(
     Layer.provide(GitLabCli.layer),
     Layer.provide(TestSourceControlHost.layer({ process: { run } })),
+    Layer.provide(FileSystem.layerNoop({})),
   ),
 );
 const input = { cwd: "/repo", repository: "acme/nested/web", number: 7 };

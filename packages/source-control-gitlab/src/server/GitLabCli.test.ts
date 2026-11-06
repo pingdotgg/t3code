@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,7 +17,10 @@ import * as GitLabCli from "./GitLabCli.ts";
 
 const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 const layer = it.layer(
-  GitLabCli.layer.pipe(Layer.provide(TestSourceControlHost.layer({ process: { run: mockedRun } }))),
+  GitLabCli.layer.pipe(
+    Layer.provide(TestSourceControlHost.layer({ process: { run: mockedRun } })),
+    Layer.provide(NodeServices.layer),
+  ),
 );
 
 function processOutput(stdout: string): SourceControlHost.SourceControlProcessOutput {
@@ -128,6 +132,25 @@ layer("GitLabCli.layer", (it) => {
       expect(call?.args).toContain("description=@-");
       assert.strictEqual(call?.stdin, "## Summary\n\nFixes the thing.\n");
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("fails with a typed error and skips glab when the description cannot be read", () =>
+    Effect.gen(function* () {
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .createMergeRequest({
+          cwd: "/repo",
+          baseBranch: "main",
+          headSelector: "feature/mr",
+          title: "Add MR",
+          bodyFile: NodePath.join(NodeOS.tmpdir(), "t3-gitlab-missing", "t3code-pr-body.md"),
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabMergeRequestBodyReadError");
+      assert.strictEqual(error.detail, "The merge request description could not be read.");
+      expect(mockedRun).not.toHaveBeenCalled();
+    }),
   );
 
   it.effect("skips invalid entries when parsing MR lists", () =>

@@ -7,6 +7,7 @@ import type { GitCommandError } from "@t3tools/contracts";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -59,6 +60,7 @@ it.effect("lists a nested-group fork's merge requests by source branch and names
               },
             }),
           ),
+          Layer.provide(FileSystem.layerNoop({})),
         ),
       ),
     );
