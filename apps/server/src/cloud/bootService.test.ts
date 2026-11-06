@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { CliError } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -690,7 +691,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
       commands.length = 0;
       expect(yield* other.restart).toBe("skipped");
-      expect((yield* other.install().pipe(Effect.flip))._tag).toBe("BootServiceOtherBaseDirError");
+      const refused = yield* other.install().pipe(Effect.flip);
+      expect(refused._tag).toBe("BootServiceOtherBaseDirError");
+      // The CLI prints a user message without a stack trace.
+      expect(CliError.getUserMessage(refused)).toBe(refused.message);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);

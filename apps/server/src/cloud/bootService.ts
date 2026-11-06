@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { CliError } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
@@ -526,6 +527,11 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
 ) {
   override get message(): string {
     return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
+  }
+
+  // A refusal the user fixes by rerunning, so the CLI prints the message, not a stack trace.
+  override get [CliError.userMessage]() {
+    return this.message;
   }
 }
 
