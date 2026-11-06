@@ -1,70 +1,65 @@
 import {
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
-  isProviderAvailable,
-  isProviderTextGenerationCapable,
-  type ServerSettings,
+  type EnvironmentSpeechPostProcessingRequest,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/TranscriptionPostProcessing.ts";
 import { applySpeechAliases } from "./customWords.ts";
+import { SpeechOperationError } from "./SpeechService.ts";
 
-const quoteCorrectionWord = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+export class SpeechPostProcessing extends Context.Service<
+  SpeechPostProcessing,
+  {
+    readonly process: (
+      input: EnvironmentSpeechPostProcessingRequest,
+    ) => Effect.Effect<{ readonly text: string }, SpeechOperationError>;
+  }
+>()("t3/speech/postProcessing/SpeechPostProcessing") {}
 
-export const postProcessTranscript = Effect.fn("speech.postProcessTranscript")(function* (input: {
-  readonly transcript: string;
-  readonly draft?: {
-    readonly text: string;
-    readonly selection: { readonly start: number; readonly end: number };
-  };
-  readonly cwd: string;
-  readonly settings: ServerSettings;
-}) {
-  if (!input.settings.speechPostProcessingEnabled || input.transcript.trim().length === 0) {
-    return input.transcript;
-  }
-  const { mode, customInstructions } = input.settings.speechPostProcessingPrompt;
-  const instructions =
-    (mode === "custom" ? customInstructions.trim() : "") || DEFAULT_SPEECH_POST_PROCESSING_PROMPT;
-  const registry = yield* ProviderRegistry.ProviderRegistry;
-  const providers = (yield* registry.getProviders).filter(
-    (provider) =>
-      provider.enabled &&
-      provider.installed &&
-      provider.status === "ready" &&
-      provider.auth.status !== "unauthenticated" &&
-      isProviderAvailable(provider) &&
-      isProviderTextGenerationCapable(provider),
-  );
-  const policy = yield* ManagedPolicy.ManagedPolicy;
-  const modelSelection = resolveSpeechPostProcessingModelSelection(
-    input.settings,
-    providers,
-    policy.providers.isDriverAllowed,
-  );
-  if (modelSelection === null) {
-    return input.transcript;
-  }
+const make = Effect.gen(function* () {
+  const settingsService = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const textGeneration = yield* TextGeneration.TextGeneration;
-  const { prompt } = buildTranscriptionPostProcessingPrompt(
-    input.settings.speechCorrectionWord.trim()
-      ? `${instructions}\n\nCorrection cue: ${quoteCorrectionWord(input.settings.speechCorrectionWord.trim())}. Only when this cue clearly marks a spoken self-correction, apply the correction the speaker made and omit the cue from the result. The correction may revise, add to, or retract earlier speech. Preserve everything else. If the cue is an intended part of the sentence, keep it. Use the surrounding context to decide; do not assume every occurrence is a correction.`
-      : instructions,
-    input.transcript,
-    input.draft,
-  );
-  const generated = yield* textGeneration.generateTranscriptionPostProcessing({
-    cwd: input.cwd,
-    prompt,
-    modelSelection,
+  return SpeechPostProcessing.of({
+    process: Effect.fn("SpeechPostProcessing.process")(
+      function* (input) {
+        if (input.transcript.trim().length === 0) return { text: input.transcript };
+        const settings = yield* settingsService.getSettings;
+        const { mode, customInstructions } = input.options.speechPostProcessingPrompt;
+        const instructions =
+          (mode === "custom" ? customInstructions.trim() : "") ||
+          DEFAULT_SPEECH_POST_PROCESSING_PROMPT;
+        // Providers run in a working directory; cleanup must not read a checkout.
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-voice-cleanup-" });
+        const generated = yield* textGeneration.generateTranscriptionPostProcessing({
+          cwd,
+          prompt: buildTranscriptionPostProcessingPrompt(
+            instructions,
+            input.transcript,
+            input.draft,
+            input.options.speechCorrectionWord,
+          ),
+          modelSelection: resolveSpeechPostProcessingModelSelection(settings),
+        });
+        const text = generated.transcription.trim();
+        return {
+          text:
+            text.length > 0
+              ? applySpeechAliases(text, input.options.speechCustomWords)
+              : input.transcript,
+        };
+      },
+      Effect.scoped,
+      Effect.mapError((cause) => new SpeechOperationError({ operation: "post-processing", cause })),
+    ),
   });
-  const text = generated.transcription.trim();
-  return text.length > 0
-    ? applySpeechAliases(text, input.settings.speechCustomWords)
-    : input.transcript;
 });
+
+export const layer = Layer.effect(SpeechPostProcessing, make);
