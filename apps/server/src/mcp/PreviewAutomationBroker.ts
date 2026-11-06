@@ -705,7 +705,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           });
           return input.updateCurrentTab === false
             ? Effect.fail(implicitError)
-            : rememberCurrentTab(null).pipe(Effect.andThen(Effect.fail(implicitError)));
+            : rememberCurrentTab(null, error.tabId).pipe(
+                Effect.andThen(Effect.fail(implicitError)),
+              );
         },
       }),
     );

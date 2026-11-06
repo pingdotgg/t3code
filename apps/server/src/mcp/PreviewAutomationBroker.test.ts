@@ -1190,3 +1190,72 @@ it.effect("closing another tab keeps the current tab", () =>
     }),
   ),
 );
+
+it.effect("a late tab-not-found reply keeps a tab another call made current", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const tabA = PreviewTabId.make("tab-a");
+      const tabB = PreviewTabId.make("tab-b");
+      const connected = yield* Deferred.make<void>();
+      const explicitSeen = yield* Deferred.make<void>();
+      const implicitSeen = yield* Deferred.make<void>();
+      const releaseExplicit = yield* Deferred.make<void>();
+      const releaseImplicit = yield* Deferred.make<void>();
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        const request = event.request;
+        const reply = {
+          clientId: "client-1",
+          connectionId: event.connectionId,
+          requestId: request.requestId,
+        };
+        const marker = (request.input as { marker?: string }).marker;
+        return Effect.gen(function* () {
+          if (marker === "explicit") {
+            yield* Deferred.succeed(explicitSeen, undefined);
+            yield* Deferred.await(releaseExplicit);
+            yield* broker.respond({ ...reply, ok: true, result: { url: "tab-b" } });
+          } else if (marker === "implicit") {
+            yield* Deferred.succeed(implicitSeen, undefined);
+            yield* Deferred.await(releaseImplicit);
+            yield* broker.respond({
+              ...reply,
+              ok: false,
+              error: { _tag: "PreviewAutomationTabNotFoundError", message: "Tab A closed." },
+            });
+          } else {
+            yield* broker.respond({
+              ...reply,
+              ok: true,
+              result: { url: request.tabId ?? "host-default" },
+            });
+          }
+        }).pipe(Effect.forkScoped, Effect.asVoid);
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {}, tabId: tabA });
+      const explicit = yield* broker
+        .invoke({ scope, operation: "snapshot", input: { marker: "explicit" }, tabId: tabB })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(explicitSeen);
+      const implicit = yield* broker
+        .invoke({ scope, operation: "snapshot", input: { marker: "implicit" } })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(implicitSeen);
+      yield* Deferred.succeed(releaseExplicit, undefined);
+      yield* Fiber.join(explicit);
+      yield* Deferred.succeed(releaseImplicit, undefined);
+      yield* Fiber.join(implicit);
+
+      const result = yield* broker.invoke<{ url: string }>({
+        scope,
+        operation: "snapshot",
+        input: {},
+      });
+
+      expect(result.url).toBe("tab-b");
+    }),
+  ),
+);
