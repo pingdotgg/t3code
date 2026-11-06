@@ -3394,16 +3394,19 @@ describe("OrchestratorMcpService thread lookup", () => {
         ),
       ),
     );
-  const failuresFor = (shells: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+  const failuresFor = (
+    shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+    scope: McpInvocationScope = client,
+  ) =>
     Effect.gen(function* () {
       const sent = yield* Ref.make(0);
       return yield* Effect.gen(function* () {
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const read = yield* mcp.readThread(client, { threadId: bareId }).pipe(Effect.flip);
+        const read = yield* mcp.readThread(scope, { threadId: bareId }).pipe(Effect.flip);
         const send = yield* mcp
-          .sendToThread(client, { threadId: bareId, message: "hello" })
+          .sendToThread(scope, { threadId: bareId, message: "hello" })
           .pipe(Effect.flip);
-        const wait = yield* mcp.waitForThread(client, { threadId: bareId }).pipe(Effect.flip);
+        const wait = yield* mcp.waitForThread(scope, { threadId: bareId }).pipe(Effect.flip);
         return { read, send, wait, sends: yield* Ref.get(sent) };
       }).pipe(Effect.provide(service(shells, sent)));
     });
@@ -3419,18 +3422,29 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
-  it.effect("points an unknown thread id at linked environment lookup", () =>
-    Effect.gen(function* () {
-      const { read, send, wait, sends } = yield* failuresFor([]);
-      for (const error of [read, send, wait]) {
-        assert.equal(error.code, "thread_not_found");
-        assert.include(error.message, "only checked this environment");
-        assert.include(error.message, "t3_environment_links");
-        assert.include(error.message, "environmentId");
-        assert.notInclude(error.message, "Did you mean");
-      }
-      assert.equal(sends, 0);
-    }),
+  it.effect.each([true, false, undefined])(
+    "gives an available recovery path for a missing thread with linking %s",
+    (linkedEnvironments) =>
+      Effect.gen(function* () {
+        const scope = linkedEnvironments === undefined ? client : { ...client, linkedEnvironments };
+        const { read, send, wait, sends } = yield* failuresFor([], scope);
+        for (const error of [read, send, wait]) {
+          assert.equal(error.code, "thread_not_found");
+          assert.include(error.message, "only checked this environment");
+          if (linkedEnvironments === false) {
+            assert.include(error.message, "ask the user");
+            assert.include(error.message, "Linked environments");
+            assert.include(error.message, "Settings → Labs");
+            assert.notInclude(error.message, "t3_environment_links");
+          } else {
+            assert.include(error.message, "t3_environment_links");
+            assert.include(error.message, "environmentId");
+            assert.notInclude(error.message, "Settings → Labs");
+          }
+          assert.notInclude(error.message, "Did you mean");
+        }
+        assert.equal(sends, 0);
+      }),
   );
 
   it.effect("does not name an mcp: thread that was deleted", () =>
