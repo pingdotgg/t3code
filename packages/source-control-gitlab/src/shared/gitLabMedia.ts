@@ -41,14 +41,13 @@ function upload(origin: string, project: string, secret: string, file: string) {
   } satisfies SourceControlMediaUrl;
 }
 
-/** The hosts `recognizeRemote` reads as GitLab, the only ones a GitLab account can be signed in to. */
-export function isGitLabHostname(hostname: string): boolean {
-  return hostname === "gitlab.com" || hostname.split(".").includes("gitlab");
-}
-
+/**
+ * Any host may run GitLab, so the path alone claims an upload. The server fetches it only from a
+ * host `glab` is logged in to, and that check is what keeps a token on hosts the user trusts.
+ */
 export function gitLabMediaUrl(url: URL): SourceControlMediaUrl | null {
   // A token is only ever sent over TLS.
-  if (url.protocol !== "https:" || !isGitLabHostname(url.hostname.toLowerCase())) return null;
+  if (url.protocol !== "https:") return null;
   const api = API_UPLOAD.exec(url.pathname);
   if (api) return upload(url.origin, api[1]!, api[2]!, api[3]!);
   const byId = PROJECT_ID_UPLOAD.exec(url.pathname);

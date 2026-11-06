@@ -143,9 +143,14 @@ describe("GitLab uploads", () => {
     ).toBe(`https://gitlab.example.com/api/v4/projects/42/uploads/${SECRET}/shot.png`);
   });
 
-  it("claims no other host, route, or plain-HTTP link", () => {
+  it("claims uploads on a self-hosted GitLab whose hostname does not say gitlab", () => {
+    expect(media(`https://code.acme.com/team/app/uploads/${SECRET}/shot.png`)?.fetchUrl).toBe(
+      `https://code.acme.com/api/v4/projects/team%2Fapp/uploads/${SECRET}/shot.png`,
+    );
+  });
+
+  it("claims no other route or plain-HTTP link", () => {
     for (const url of [
-      `https://example.com/group/project/uploads/${SECRET}/shot.png`,
       `http://gitlab.com/group/project/uploads/${SECRET}/shot.png`,
       `https://gitlab.com/group/project/-/blob/main/uploads/${SECRET}/shot.png`,
       `https://gitlab.com/project/uploads/${SECRET}/shot.png`,
