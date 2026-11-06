@@ -117,7 +117,7 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
-// A same-driver account switch resumes the native conversation, so nothing else tells the agent.
+// Same-driver account switches resume the native conversation, so nothing else tells the agent.
 type NamedInstance = { readonly id: string; readonly displayName?: string | undefined };
 export const providerSwitchNote = (from: NamedInstance, to: NamedInstance): string => {
   const name = ({ id, displayName }: NamedInstance) =>
@@ -885,28 +885,23 @@ export const layer: Layer.Layer<
         run,
         attempts: projection.attempts,
       });
-      // A restart of the active run moves that run to the new account, so compare attempts.
-      // Commands go verbatim, so the note waits for the next prompted turn.
-      const promptedRuns = new Map(
-        projection.runs
-          .filter((source) => !commandMessageIds.has(source.userMessageId))
-          .map((source) => [source.id, source.ordinal]),
-      );
-      // Only a provider turn proves the prompt arrived; a refused prompt keeps the note pending.
+      const restartNote =
+        restartCancelledWork.length === 0
+          ? ""
+          : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      // Attempts, not runs: restarting the active run moves it to the new account. Only a provider
+      // turn proves a prompt arrived, so a refused one keeps the note pending.
       const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
-      const previousAttempt = projection.attempts
+      const previousAttempt = projection.runs
         .filter(
-          (source) =>
-            source.id !== attempt.id &&
-            acceptedAttemptIds.has(source.id) &&
-            (promptedRuns.get(source.runId) ?? Infinity) <= run.ordinal,
+          (source) => source.ordinal <= run.ordinal && !commandMessageIds.has(source.userMessageId),
         )
-        .toSorted(
-          (a, b) =>
-            promptedRuns.get(a.runId)! - promptedRuns.get(b.runId)! ||
-            a.attemptOrdinal - b.attemptOrdinal,
+        .flatMap((source) =>
+          projection.attempts.filter((candidate) => candidate.runId === source.id),
         )
-        .at(-1);
+        .findLast(
+          (candidate) => candidate.id !== attempt.id && acceptedAttemptIds.has(candidate.id),
+        );
       const instances = yield* serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.providerInstances),
         Effect.orElseSucceed(() => undefined),
@@ -921,14 +916,7 @@ export const layer: Layer.Layer<
               named(previousAttempt.providerInstanceId),
               named(run.providerInstanceId),
             );
-      const turnNote = [
-        restartCancelledWork.length === 0
-          ? ""
-          : restartCancelledBackgroundWorkNote(restartCancelledWork),
-        switchNote,
-      ]
-        .filter((note) => note !== "")
-        .join("\n\n");
+      const turnNote = [restartNote, switchNote].filter((note) => note !== "").join("\n\n");
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );

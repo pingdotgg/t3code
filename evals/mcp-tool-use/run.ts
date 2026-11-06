@@ -1030,12 +1030,11 @@ export const buildMessages = (sample: Sample) => {
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const providerSwitch = testCase.setup.providerSwitch;
-  const prompt = withInlineContext(
-    [sideChatContext, providerSwitch && providerSwitchNote(providerSwitch.from, providerSwitch.to)]
-      .filter((part) => part !== undefined)
-      .join("\n\n"),
-    userText,
-  );
+  const inlineContext =
+    sideChatContext ??
+    (providerSwitch && providerSwitchNote(providerSwitch.from, providerSwitch.to));
+  const prompt =
+    inlineContext === undefined ? userText : withInlineContext(inlineContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
