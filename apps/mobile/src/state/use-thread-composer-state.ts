@@ -197,7 +197,11 @@ export function updateThreadDraftModelSelection(
 
 export function useThreadComposerState(input: {
   /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
-  readonly startSideChat: (source: ScopedThreadRef, prompt: string) => Promise<boolean>;
+  readonly startSideChat: (
+    source: ScopedThreadRef,
+    prompt: string,
+    modelSelection: ModelSelection,
+  ) => Promise<boolean>;
 }) {
   const {
     selectedThread: selectedThreadShell,
@@ -582,6 +586,7 @@ export function useThreadComposerState(input: {
           .startSideChat(
             { environmentId: thread.environmentId, threadId: thread.id },
             sideChatCommand.prompt,
+            draft.modelSelection ?? thread.modelSelection,
           )
           .finally(() => {
             startingSideChatRef.current = false;

@@ -345,7 +345,8 @@ describe("mobile task permissions", () => {
       ...state.serverConfig,
       environment: { capabilities: { sideChats: true } },
     } as ServerConfig;
-    state.draft = { ...state.draft, text: "/side why does this fail?" };
+    const picked = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    state.draft = { ...state.draft, text: "/side why does this fail?", modelSelection: picked };
     const startSideChat = vi.fn(async () => true);
     const composer = useThreadComposerState({ startSideChat });
     expect(composer.sideChatUnavailableReason).toBeNull();
@@ -353,6 +354,7 @@ describe("mobile task permissions", () => {
     expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
       { environmentId: "secondary", threadId: "thread" },
       "why does this fail?",
+      picked,
     );
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).toHaveBeenCalled();

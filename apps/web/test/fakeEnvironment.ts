@@ -26,6 +26,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
+  type ServerConfigStreamEvent,
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
@@ -321,6 +322,7 @@ const json = (body: unknown, status = 200) =>
 // Keyed by thread id: a live thread subscription's queue, for pushing events to it.
 const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStreamItem>>();
 let shellSubscriber: Queue.Queue<OrchestrationV2ShellStreamItem> | null = null;
+let serverConfigSubscriber: Queue.Queue<ServerConfigStreamEvent> | null = null;
 let sideChats = false;
 const dispatched: OrchestrationV2Command[] = [];
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
@@ -421,8 +423,7 @@ const handlers: Record<string, (input: never) => unknown> = {
         if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
       };
     }),
-  [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+  [WS_METHODS.subscribeServerConfig]: () => subscribeServerConfig(),
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
@@ -434,6 +435,21 @@ const client = new Proxy(handlers, {
       return rpc && RpcSchema.isStreamSchema(rpc.successSchema) ? Stream.never : Effect.never;
     }),
 });
+
+const serverConfigSnapshot = (): ServerConfigStreamEvent => ({
+  version: 1,
+  type: "snapshot",
+  config: currentServerConfig(),
+});
+
+// The app keeps its connection across tests, so a later install reaches it through this.
+const subscribeServerConfig = () =>
+  subscribe([serverConfigSnapshot()], (queue) => {
+    serverConfigSubscriber = queue;
+    return () => {
+      if (serverConfigSubscriber === queue) serverConfigSubscriber = null;
+    };
+  });
 
 const currentServerConfig = (): ServerConfig =>
   sideChats
@@ -449,8 +465,7 @@ const currentServerConfig = (): ServerConfig =>
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(currentServerConfig),
-  subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+  subscribeServerConfig,
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -490,6 +505,7 @@ export function installFakeEnvironment(
 ): Disposable {
   threads = fixtures;
   sideChats = options.sideChats ?? false;
+  if (serverConfigSubscriber) Queue.offerUnsafe(serverConfigSubscriber, serverConfigSnapshot());
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);

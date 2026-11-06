@@ -245,7 +245,9 @@ interface ComposerSendInput {
   readonly acknowledgeActiveThreadWoke: () => void;
   readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   /** Resolves true once the side chat started and got the prompt. */
-  readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
+  readonly onSideChat?:
+    | ((prompt: string, modelSelection: ModelSelection) => Promise<boolean>)
+    | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -524,7 +526,7 @@ export function useComposerSend(input: ComposerSendInput) {
         );
         return;
       }
-      const started = await onSideChat(sideChatCommand.prompt);
+      const started = await onSideChat(sideChatCommand.prompt, sendCtx.selectedModelSelection);
       // Clear only what was sent; the user may have edited the draft or left meanwhile.
       if (
         started &&
