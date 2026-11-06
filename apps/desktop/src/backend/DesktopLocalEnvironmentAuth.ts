@@ -5,6 +5,7 @@ import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapTo
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -67,6 +68,7 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
+  const mac = yield* Mac.Mac;
   const tokenRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
 
@@ -93,7 +95,9 @@ export const make = Effect.gen(function* () {
         const credential =
           secret === undefined
             ? config.bootstrap.desktopBootstrapToken
-            : currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+            : yield* currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis).pipe(
+                Effect.provideService(Mac.Mac, mac),
+              );
         if (!credential) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
