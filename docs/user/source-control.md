@@ -316,8 +316,8 @@ it yourself, use the row menu in the **Linked pull requests** panel. In the thre
 watched pull request shows an eye; click it to stop watching.
 
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
-not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
-returns to your inbox.
+not auto-settle. T3 Code runs the watch until one of the endings above, and the thread then returns
+to your inbox. Stop watching to return it sooner.
 
 **Agent merge** starts a watch and has the agent fix what it finds, without asking. Start it from the
 bot button in the thread details card, or from a row's menu in the **Linked pull requests** panel; on

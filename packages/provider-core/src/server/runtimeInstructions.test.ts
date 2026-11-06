@@ -31,7 +31,7 @@ describe("buildRuntimeInstructions", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 
     assert.notInclude(instructions, "Creation, pending checks, or a merge ask alone is not enough");
-    assert.include(instructions, "Links and watches persist across pushes.");
+    assert.include(instructions, "Links and watches last until merge or close.");
     // The wake message itself carries the do-not-re-watch rule.
     assert.notInclude(instructions, "On a wake");
     assert.include(
@@ -51,6 +51,6 @@ describe("buildRuntimeInstructions", () => {
       instructions,
       "T3 Code runs each PR wait: no skills, sleep, loops, gh --watch, Monitor or ScheduleWakeup.",
     );
-    assert.include(instructions, "call unwatch_pull_request");
+    assert.notInclude(instructions, "unwatch_pull_request");
   });
 });

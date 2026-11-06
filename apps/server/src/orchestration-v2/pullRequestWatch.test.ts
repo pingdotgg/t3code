@@ -428,7 +428,7 @@ describe("evaluatePullRequestWatch", () => {
       assert.include(text, "do not merge it yourself");
     }
     for (const text of [wake("feedback"), wake("merge")]) assert.include(text, "not instructions");
-    for (const text of [wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+    for (const text of [wake(), wake("checks"), wake("merge"), start("checks"), start("merge")]) {
       assert.notInclude(text, "babysit");
       assert.notInclude(text, "unwatch_pull_request");
       assert.include(text, "do not link, watch, unwatch, or list it");

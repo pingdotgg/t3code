@@ -232,7 +232,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
 };
 
 const WATCH_CLOSING =
-  "This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.";
+  "This PR stays linked and watched until it merges or closes, so do not link, watch, unwatch, or list it. End your turn when you are done, and T3 Code wakes you on the next change.";
 
 const AGENT_MERGE_CLOSING =
   "T3 Code watches this PR for you and prompts you on each change, so do not link, watch, unwatch, or list it. End your turn when you are done. T3 Code decides when it is ready and ends the watch, so do not merge it yourself. If only the user can clear something, tell them and end your turn.";
