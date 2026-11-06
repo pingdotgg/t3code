@@ -796,22 +796,22 @@ jobs:
         with:
           install-args: --filter=@t3tools/scripts...
 
-      # The fetch holds an exclusive lock on its log until it exits.
-      - name: Start nightly Android APK download
+      # Overlaps the artifact downloads. The wait below ends it before any
+      # workspace script runs, so the Play key lives only in this process.
+      # `exec` lets the runner's stop signals reach node directly.
+      - id: android_apk
+        name: Download nightly Android APK
         if: needs.preflight.outputs.release_channel == 'nightly'
+        background: true
         continue-on-error: true
+        timeout-minutes: 5
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           PACKAGE_NAME: com.t3tools.t3code
           APK_OUTPUT_DIR: ${{ runner.temp }}/android-apk
         run: |
           if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            exec 9> "$RUNNER_TEMP/android-apk.log"
-            flock -n 9
-            (
-              timeout --kill-after=5s 5m node .github/scripts/mirror-play-apk.cjs &&
-                touch "$RUNNER_TEMP/android-apk.ok"
-            ) < /dev/null >&9 2>&1 &
+            exec node .github/scripts/mirror-play-apk.cjs
           fi
 
       - name: Download all desktop artifacts
@@ -843,6 +843,10 @@ jobs:
           fi
           sha256sum "${archives[@]}" > SHA256SUMS
           cat SHA256SUMS
+
+      # Always runs, even after a failed step, and keeps that failure.
+      - name: Wait for nightly Android APK
+        wait: android_apk
 
       # The desktop build omits the publish config for preview versions, so
       # electron-builder emits no updater manifests for them. Refuse to publish
@@ -891,25 +895,6 @@ jobs:
             fi
           done
 
-      - name: Add nightly Android APK
-        if: needs.preflight.outputs.release_channel == 'nightly'
-        continue-on-error: true
-        timeout-minutes: 6
-        shell: bash
-        run: |
-          log="$RUNNER_TEMP/android-apk.log"
-          [[ -f "$log" ]] || exit 0
-          flock "$log" cat "$log"
-          if [[ ! -f "$RUNNER_TEMP/android-apk.ok" ]]; then
-            echo "::warning::Skipping the APK because the Play download failed or timed out."
-            exit 0
-          fi
-          shopt -s nullglob
-          apks=("$RUNNER_TEMP"/android-apk/*.apk)
-          if [[ ${#apks[@]} -gt 0 ]]; then
-            mv "${apks[@]}" release-assets/
-          fi
-
       # Updater manifests and blockmaps are what electron-updater consumes.
       # They are only listed for channels an updater is meant to follow.
       - id: release_files
@@ -928,10 +913,13 @@ jobs:
               echo 'release-assets/*.yml'
             fi
             echo 'release-assets/*.tar.gz'
-            # Only list APKs when Play has a processed internal build available.
-            for apk in release-assets/*.apk; do
-              [[ -f "$apk" ]] && echo "$apk"
-            done
+            # A failed or timed-out fetch can leave partial bytes, so list the APK
+            # only when this attempt's fetch succeeded and Play had one ready.
+            if [[ "${{ steps.android_apk.outcome }}" == "success" ]]; then
+              for apk in "$RUNNER_TEMP"/android-apk/*.apk; do
+                [[ -f "$apk" ]] && echo "$apk"
+              done
+            fi
             echo 'release-assets/SHA256SUMS'
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
