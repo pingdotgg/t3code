@@ -1,5 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 
@@ -94,12 +98,33 @@ describe("resolveVibeModelId", () => {
 });
 
 describe("vibeWorktreeInputForCwd", () => {
-  it("adopts the thread's existing checkout as the session worktree", () => {
-    expect(vibeWorktreeInputForCwd("/repo/.t3/worktrees/thread-1")).toEqual({
-      kind: "existing",
-      cwd: "/repo/.t3/worktrees/thread-1",
-    });
-  });
+  it.effect("adopts a linked worktree checkout (`.git` file) as the session worktree", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "vibe-worktree-" });
+      yield* fs.writeFileString(path.join(cwd, ".git"), "gitdir: /repo/.git/worktrees/thread-1\n");
+      expect(yield* vibeWorktreeInputForCwd(cwd)).toEqual({ kind: "existing", cwd });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("runs in place in the main checkout (`.git` directory)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "vibe-main-checkout-" });
+      yield* fs.makeDirectory(path.join(cwd, ".git"));
+      expect(yield* vibeWorktreeInputForCwd(cwd)).toBeNull();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("runs in place outside any git repository (No-project scratch dirs)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "vibe-no-project-" });
+      expect(yield* vibeWorktreeInputForCwd(cwd)).toBeNull();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("applyVibeHistoryPatch", () => {
