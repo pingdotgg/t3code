@@ -10,6 +10,7 @@ import {
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
@@ -480,6 +481,10 @@ function ThreadDetailBody(
     threadId: props.selectedThread.id,
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const toolCallVisibility = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.toolCallVisibility ?? "showAll")
+    : "showAll";
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
@@ -1474,6 +1479,7 @@ function ThreadDetailBody(
           >
             <WorkspaceMutationIdProvider threadRef={props.selectedThreadDetailRef}>
               <ThreadFeed
+                toolCallVisibility={toolCallVisibility}
                 environmentId={props.environmentId}
                 threadId={props.selectedThread.id}
                 detailRef={props.selectedThreadDetailRef}
