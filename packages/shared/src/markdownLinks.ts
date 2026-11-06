@@ -33,6 +33,8 @@ const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
+// Agents shorten long paths with a `...` or `…` segment, which no file chip can open.
+const ELIDED_PATH_SEGMENT_PATTERN = /(?:^|[\\/])(?:\.{3,}|…)(?:[\\/]|$)/;
 
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
@@ -178,6 +180,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
+  if (ELIDED_PATH_SEGMENT_PATTERN.test(candidate.replace(POSITION_SUFFIX_PATTERN, ""))) return null;
 
   const hasExplicitPathShape =
     RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
