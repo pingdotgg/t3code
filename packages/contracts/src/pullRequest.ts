@@ -251,6 +251,11 @@ export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Typ
 export const PullRequestReviewerCapabilities = Schema.Struct({
   request: Schema.Boolean,
   listCandidates: Schema.Boolean,
+  /**
+   * Reviewer candidates take a `query` the host matches past the first page. Absent, as from a
+   * server that predates it, means the client narrows the loaded page itself.
+   */
+  searchCandidates: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
@@ -410,6 +415,13 @@ export const PullRequestRef = Schema.Struct({
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+/** `query` asks the host for matches past the first page of candidates. */
+export const PullRequestReviewerCandidatesInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestReviewerCandidatesInput = typeof PullRequestReviewerCandidatesInput.Type;
 
 export const PullRequestRoutingIdentityInput = Schema.Struct({
   host: TrimmedNonEmptyString,

@@ -605,6 +605,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly host: string;
       readonly number: number;
+      readonly query?: string | undefined;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitHubPullRequestApiError>;
 
     readonly setReviewerRequest: (input: {
@@ -2325,10 +2326,10 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         const operation = "listReviewerCandidates";
         return client
-          .ReviewerCandidates({ owner, name, number: input.number })
+          .ReviewerCandidates({ owner, name, number: input.number, query: input.query ?? null })
           .pipe(
             graphql({ ...input, operation, allowReserve: true }),
-            Effect.map(toReviewerCandidates),
+            Effect.map((result) => toReviewerCandidates(result, input.query)),
             Effect.flatMap(found({ ...input, operation })),
           );
       },

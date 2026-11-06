@@ -1462,6 +1462,7 @@ export interface GitHubBaseComparison {
 /** assignableUsers avoids push/read:org requirements. Keep requested outsiders/apps removable. */
 export function toReviewerCandidates(
   result: ReviewerCandidates.Result,
+  query?: string,
 ): PullRequestReviewerCandidateList | null {
   const repository = result.repository;
   if (repository == null) return null;
@@ -1485,8 +1486,10 @@ export function toReviewerCandidates(
       isRequested: true,
     });
   }
+  const hostMatches = new Set<string>();
   for (const node of nodesOf(repository.assignableUsers)) {
     const login = trimmed(node.login);
+    if (login !== null) hostMatches.add(login);
     if (login === null || login === author || candidates.has(`user ${login}`)) continue;
     candidates.set(`user ${login}`, {
       id: login,
@@ -1498,7 +1501,9 @@ export function toReviewerCandidates(
     });
   }
   return {
-    candidates: [...candidates.values()],
+    candidates: [...candidates.values()].filter(
+      (candidate) => !query?.trim() || (candidate.kind === "user" && hostMatches.has(candidate.id)),
+    ),
     truncated: repository.assignableUsers.pageInfo.hasNextPage,
   };
 }

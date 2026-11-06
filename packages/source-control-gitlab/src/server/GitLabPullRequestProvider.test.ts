@@ -189,6 +189,7 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   it.effect.each(["getChangeRequestPreview", "getChangeRequestSummary"] as const)(
@@ -344,6 +345,7 @@ describe("merge request reads", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   const countingProvider = Effect.gen(function* () {
@@ -537,6 +539,7 @@ describe("optional activity reads", () => {
         checks: [],
         viewerCanMerge: true,
         reviewerIds: [],
+        reviewerUsers: [],
         diffRefs: currentRefs,
       }),
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
@@ -869,6 +872,7 @@ describe("review decisions", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
   const providerWith = (
     getListStates: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getListStates"],
