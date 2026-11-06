@@ -429,9 +429,10 @@ jobs:
           extra_args=()
           if [[ "${{ inputs.platform }}" == "mac" ]]; then
             if [[ -n "${APPLE_API_KEY:-}" ]]; then
-              key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
-              printf '%s' "$APPLE_API_KEY" > "$key_path"
-              trap 'rm -f "$key_path"' EXIT
+              key_dir="$(mktemp -d "$RUNNER_TEMP/t3-cli-notary.XXXXXXXX")"
+              trap 'rm -rf "$key_dir"' EXIT
+              key_path="$key_dir/AuthKey.p8"
+              (umask 077 && printf '%s' "$APPLE_API_KEY" > "$key_path")
               export APPLE_API_KEY="$key_path"
             fi
             # Older release refs lack deferred notarization and still wait here.
@@ -645,9 +646,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "${APPLE_API_KEY:-}" ]]; then
-            key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
-            printf '%s' "$APPLE_API_KEY" > "$key_path"
-            trap 'rm -f "$key_path"' EXIT
+            key_dir="$(mktemp -d "$RUNNER_TEMP/t3-cli-notary.XXXXXXXX")"
+            trap 'rm -rf "$key_dir"' EXIT
+            key_path="$key_dir/AuthKey.p8"
+            (umask 077 && printf '%s' "$APPLE_API_KEY" > "$key_path")
             export APPLE_API_KEY="$key_path"
           fi
           node scripts/build-cli-archive.ts await-notarization \
