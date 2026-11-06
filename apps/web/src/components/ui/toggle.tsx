@@ -35,6 +35,9 @@ const toggleVariants = cva(
         // An item of the segmented control: muted until pressed, then raised.
         segmented:
           "border-transparent text-muted-foreground transition-colors hover:text-foreground data-pressed:surface-raised data-pressed:text-foreground",
+        // A segmented item whose pressed pill is a sibling the group slides under it.
+        "segmented-slide":
+          "border-transparent text-muted-foreground transition-colors hover:text-foreground data-pressed:text-foreground",
       },
     },
   },
