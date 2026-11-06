@@ -884,7 +884,9 @@ export function createEnvironmentRpcQueryAtomFamily<
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
-      EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
+      | EnvironmentSupervisor.EnvironmentSupervisor
+      | EnvironmentRegistry.EnvironmentRegistry
+      | AtomRegistry.AtomRegistry
     >;
     readonly persistence?: QueryPersistence<EnvironmentRpcSuccess<TTag>>;
     readonly staleTimeMs?: number;

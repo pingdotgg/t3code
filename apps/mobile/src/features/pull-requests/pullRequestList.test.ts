@@ -123,6 +123,9 @@ describe("mobile PR list pagination", () => {
     expect(
       mergePullRequestListEntries([entry(1)], [entry(2, { host: "enterprise.test" }), entry(2)]),
     ).toHaveLength(3);
+    // A detail read dated the held row past the read that listed it.
+    const dated = entry(2, { updatedAt: "2026-10-05T00:00:00Z" });
+    expect(mergePullRequestListEntries([dated], [entry(2)])).toEqual([dated]);
   });
   it("patches a row that only the list head supplies, and keeps it while that head is current", () => {
     const head = page([entry(2), entry(1)], { repo: "first" });

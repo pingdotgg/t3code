@@ -1302,6 +1302,87 @@ it.effect("keeps an action's reply when a refresh started before the action answ
   ),
 );
 
+it.effect("keeps a detail read's date when a cached listing answers after it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const reads: string[] = [];
+      const listAnswers: unknown[] = [];
+      const cached = { ...actionReply, state: "open", updatedAt: "2026-10-27T09:00:00Z" };
+      let listed: object = { ...cached, observedAt: 100 };
+      const detailRead = { ...cached, state: "closed", updatedAt: "2026-10-27T11:00:00Z" };
+      const started = { all: yield* Deferred.make<void>(), open: yield* Deferred.make<void>() };
+      const release = yield* Deferred.make<void>();
+      let holding = false;
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () => Effect.succeed({ ...detailRead, observedAt: 300 }),
+        [WS_METHODS.pullRequestsList]: (input: { readonly state: "all" | "open" }) =>
+          Effect.gen(function* () {
+            reads.push(`list:${input.state}`);
+            const entries = [listed];
+            if (holding) {
+              yield* Deferred.succeed(started[input.state], undefined);
+              yield* Deferred.await(release);
+            }
+            return {
+              entries,
+              viewers: {},
+              providers: [],
+              errors: [],
+              truncated: false,
+              nextCursors: {},
+            };
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+        list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
+      });
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const all = atoms.list({ environmentId: target.environmentId, input: { state: "all" } });
+      const open = atoms.list({ environmentId: target.environmentId, input: { state: "open" } });
+      const settle = <A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
+        AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+      for (const atom of [all, open]) {
+        registry.mount(atom);
+        yield* settle(atom);
+      }
+
+      // Both listings re-read from the server's cache and answer only after the detail read.
+      holding = true;
+      registry.refresh(all);
+      registry.refresh(open);
+      yield* Deferred.await(started.all);
+      yield* Deferred.await(started.open);
+      const detail = atoms.detail(target);
+      registry.mount(detail);
+      yield* settle(detail);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
+        { state: "closed", updatedAt: detailRead.updatedAt, observedAt: 100 },
+      ]);
+      listAnswers.length = 0;
+      yield* Deferred.succeed(release, undefined);
+      holding = false;
+      const shown = [{ state: "closed", updatedAt: detailRead.updatedAt, observedAt: 100 }];
+      expect((yield* settle(all)).entries).toMatchObject(shown);
+      expect((yield* settle(open)).entries).toEqual([]);
+      // Snapshot writers see the answer as shown, not the cached row.
+      expect(listAnswers).toMatchObject([shown, []]);
+
+      // A read sent after the detail read can hit the same cached row.
+      registry.refresh(all);
+      expect((yield* settle(all)).entries).toMatchObject(shown);
+
+      // A listing that read the pull request since then replaces the detail read's fields.
+      listed = { ...cached, updatedAt: "2026-10-27T12:00:00Z", observedAt: 400 };
+      registry.refresh(all);
+      registry.refresh(open);
+      const reopened = [{ state: "open", updatedAt: "2026-10-27T12:00:00Z", observedAt: 400 }];
+      expect((yield* settle(all)).entries).toMatchObject(reopened);
+      expect((yield* settle(open)).entries).toMatchObject(reopened);
+      expect(reads.filter((read) => read.startsWith("list:"))).toHaveLength(7);
+    }),
+  ),
+);
+
 it.effect("keeps a list read the server's refresh started before the action replied", () =>
   Effect.scoped(
     Effect.gen(function* () {

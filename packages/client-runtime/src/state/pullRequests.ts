@@ -43,6 +43,7 @@ import {
   type QueryAnswerHandler,
 } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
+import { request } from "../rpc/client.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -221,6 +222,18 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
   return changed
     ? patched.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     : entries;
+}
+
+// Rows carry no account scope, so a reply read through another account leaves them alone.
+function listConcerns(input: PullRequestListInput, reference: PullRequestRef) {
+  return (
+    reference.expectedAccountId === undefined &&
+    (input.projectId === undefined || input.projectId === reference.projectId) &&
+    (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
+    (input.host === undefined ||
+      reference.host === undefined ||
+      input.host.toLowerCase() === reference.host.toLowerCase())
+  );
 }
 
 function patchListWithReply(
@@ -709,6 +722,43 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     });
   const readsInFlight = (registry: AtomRegistry.AtomRegistry): ReadonlySet<object> =>
     new Set(actionReplyReaders(registry).flatMap((reader) => reader.pendingRead(registry) ?? []));
+  // The server's listing cache can answer with rows older than a detail read or an action's reply,
+  // so each list answer shows what these said until it holds newer.
+  const shownSummaryAtoms = Atom.family((_environmentId: string) =>
+    Atom.make<ReadonlyMap<string, readonly [PullRequestRef, PullRequestSummary]>>(new Map()).pipe(
+      Atom.setIdleTTL(5 * 60_000),
+    ),
+  );
+  const retainSummary = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    reference: PullRequestRef,
+    summary: PullRequestSummary,
+  ) => {
+    if (reference.expectedAccountId !== undefined) return;
+    const { projectId, host, repository, number } = reference;
+    const key = JSON.stringify([projectId, host?.toLowerCase(), repository.toLowerCase(), number]);
+    registry.update(shownSummaryAtoms(environmentId), (shown) => {
+      const held = shown.get(key);
+      return held !== undefined && isStalePullRequestReply(held[1], summary)
+        ? shown
+        : new Map(shown).set(key, [reference, summary]);
+    });
+  };
+  const withShownSummaries = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    input: PullRequestListInput,
+    value: PullRequestListResult,
+  ) => {
+    let shown = value;
+    for (const [reference, summary] of registry.get(shownSummaryAtoms(environmentId)).values()) {
+      if (!listConcerns(input, reference)) continue;
+      const patched = patchListWithReply(input, shown, reference, summary);
+      if (patched !== "refresh") shown = patched;
+    }
+    return shown;
+  };
   const applyActionReply = Effect.fn("PullRequests.applyActionReply")(function* (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
@@ -716,6 +766,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     reply: PullRequestSummary | undefined,
     readsBeforeSend: ReadonlySet<object>,
   ) {
+    if (reply !== undefined) retainSummary(registry, environmentId, reference, reply);
     for (const reader of actionReplyReaders(registry)) {
       yield* reader.apply(registry, environmentId, reference, reply, readsBeforeSend);
     }
@@ -732,6 +783,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     value: PullRequestDetail,
   ) {
     if (target.input.expectedAccountId !== undefined) return;
+    retainSummary(registry, target.environmentId, target.input, value);
     for (const reader of actionReplyReaders(registry)) {
       yield* reader.observe?.(registry, target.environmentId, target.input, value) ?? Effect.void;
     }
@@ -763,6 +815,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         label: listLabel,
         persistence: listPersistence,
         tag: WS_METHODS.pullRequestsList,
+        execute: Effect.fn("PullRequests.list")(function* (input: PullRequestListInput) {
+          const value = yield* request(WS_METHODS.pullRequestsList, input);
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const registry = yield* AtomRegistry.AtomRegistry;
+          return withShownSummaries(registry, supervisor.target.environmentId, input, value);
+        }),
         staleTimeMs: 30_000,
         refreshTrigger: ({ environmentId, input }) =>
           input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
@@ -772,14 +830,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         label: listLabel,
         persistence: listPersistence,
         onAnswer: onAnswer.list,
-        // Rows carry no account scope, so a reply read through another account leaves them alone.
-        concerns: (input, reference) =>
-          reference.expectedAccountId === undefined &&
-          (input.projectId === undefined || input.projectId === reference.projectId) &&
-          (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
-          (input.host === undefined ||
-            reference.host === undefined ||
-            input.host.toLowerCase() === reference.host.toLowerCase()),
+        concerns: listConcerns,
         refreshedByServer: (input) => input.cursors === undefined,
         observesDetail: true,
         patch: patchListWithReply,

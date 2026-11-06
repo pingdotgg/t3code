@@ -1,5 +1,6 @@
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import { isStalePullRequestReply } from "@t3tools/client-runtime/pull-request-reply";
 import {
   ProjectId,
   resolvePullRequestAuthorFilter,
@@ -241,7 +242,8 @@ export function mergePullRequestListEntries(
   for (const entry of incoming) {
     const key = pullRequestListKey(entry);
     const held = entries.get(key);
-    if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
+    // A held row can carry a newer date than its own read, from a detail read or an action.
+    if (!held || !isStalePullRequestReply(held, entry)) entries.set(key, entry);
   }
   return [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
