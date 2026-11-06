@@ -13,7 +13,9 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import { Tool, Toolkit } from "effect/ai";
 import type { OtlpTracer } from "effect/observability";
 
 import {
@@ -433,6 +435,76 @@ describe("observability", () => {
           }
           assert.include(written, "wsTicket=<redacted>&dpop=<redacted>&clientSurface=web");
           assert.include(exported.join("\n"), "effect.cause");
+        }),
+      ),
+    );
+
+    it.effect("keeps tool argument values out of the trace file and the exporter", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-tool-args-" });
+          const tracePath = path.join(tempDir, "server.trace.ndjson");
+          const delegates: Array<Tracer.Span> = [];
+          const base = Tracer.make({
+            span: (options) => {
+              const span = new Tracer.NativeSpan(options);
+              delegates.push(span);
+              return span;
+            },
+          });
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+          const tracer = yield* makeLocalFileTracer({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            sink,
+            delegate: base,
+          });
+
+          const SecretToolkit = Toolkit.make(
+            Tool.make("request_secret", {
+              parameters: Schema.Struct({ label: Schema.String, value: Schema.String }),
+              success: Schema.Struct({}),
+              failureMode: "return",
+            }),
+          );
+          const built = yield* SecretToolkit.pipe(
+            Effect.provide(SecretToolkit.toLayer({ request_secret: () => Effect.succeed({}) })),
+          );
+          const handle = (parameters: unknown) =>
+            built
+              .handle("request_secret", parameters as never)
+              .pipe(
+                Stream.unwrap,
+                Stream.runDrain,
+                Effect.exit,
+                Effect.withSpan("tools/call"),
+                Effect.provideService(Tracer.Tracer, tracer),
+              );
+          yield* handle({ label: "Deploy key", value: "pasted-secret" });
+          // A value the schema rejects must not reach the span through its error.
+          yield* handle({ label: "Deploy key", value: ["malformed-secret"] });
+          yield* sink.close();
+
+          const written = yield* fileSystem.readFileString(tracePath);
+          const exported = JSON.stringify(
+            delegates.map((span) => Object.fromEntries(span.attributes)),
+          );
+          for (const text of [written, exported]) {
+            assert.notInclude(text, "pasted-secret");
+            assert.notInclude(text, "malformed-secret");
+            assert.notInclude(text, "Deploy key");
+            assert.include(text, '"parameters":["label","value"]');
+            assert.include(text, '"tool":"request_secret"');
+          }
         }),
       ),
     );
