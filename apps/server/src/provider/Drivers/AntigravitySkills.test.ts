@@ -273,6 +273,26 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }),
   );
 
+  it.effect("does not spend the scan budget on skill bodies", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const root = path.join(input.userHome, ".gemini", "config", "skills");
+      const expected = [];
+      for (let index = 0; index < 9; index += 1) {
+        const name = `large-${index}`;
+        const description = `Large skill ${index}. ${"y".repeat(2_000)}`;
+        const skillPath = yield* writeSkill(
+          path.join(root, name),
+          `---\nname: ${name}\ndescription: ${description}\n---\n${"x".repeat(950_000)}`,
+        );
+        expected.push({ name, description, path: skillPath, scope: "user", enabled: true });
+      }
+
+      assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
+    }),
+  );
+
   it.effect("rejects an oversized skill instead of returning an incomplete catalog", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
