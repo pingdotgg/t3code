@@ -221,10 +221,14 @@ export function codexMessageResetAt(
   const [, month, day, year, hour, minute, meridiem] = match;
   const monthIndex = month ? MONTHS.indexOf(month.toLowerCase()) : 0;
   if (monthIndex < 0) return null;
-  const timeZone = Option.getOrElse(
-    DateTime.zoneFromString(codexTimeZone?.replace(/^:/, "") ?? ""),
-    DateTime.zoneMakeLocal,
-  );
+  const timeZone =
+    codexTimeZone === undefined
+      ? DateTime.zoneMakeLocal()
+      : // An empty TZ means UTC on Unix.
+        Option.getOrElse(
+          DateTime.zoneFromString(codexTimeZone.replace(/^:/, "") || "UTC"),
+          DateTime.zoneMakeLocal,
+        );
   const { weekDay: _, ...today } = DateTime.toParts(DateTime.makeZonedUnsafe(now, { timeZone }));
   const reset = DateTime.makeZonedUnsafe(
     {

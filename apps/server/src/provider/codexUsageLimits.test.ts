@@ -309,6 +309,7 @@ describe("codexMessageResetAt", () => {
       "2026-11-01T06:31:00.000Z",
     );
     expect(codexMessageResetAt(message, fallBack, ":UTC")).toBeNull();
+    expect(codexMessageResetAt(message, fallBack, "")).toBeNull();
   });
 
   it("ignores messages without a future reset", () => {
