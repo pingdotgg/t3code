@@ -428,6 +428,8 @@ export function SourceControlSettingsPanel() {
                 credentials={credentials}
                 auth={item.auth}
                 onSaved={handleScan}
+                onRescan={handleScan}
+                rescanning={discovery.isPending}
               />
             ) : null}
           </div>
