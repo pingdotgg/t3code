@@ -144,15 +144,19 @@ describe("workspace root navigation", () => {
     expect(workspaceTabsReducer(state, { type: "select", tab: "pullRequests" })).toBe(state);
   });
 
-  it("keeps an empty search closed after iOS closes it with only a blur", () => {
+  it("keeps an empty search closed after returning from a thread", () => {
     const opened = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
     const closed = workspaceTabsReducer(opened, { type: "expand" });
     const filtered = workspaceTabsReducer(closed, { type: "query", query: "skia" });
+    const typing = workspaceTabsReducer(opened, { type: "query", query: "skia" });
 
+    // Still `active`: opening a thread often freezes Home before blur can expand.
+    expect(shouldRestoreNativeSearch(opened.tabs.threads, false)).toBe(false);
+    // iOS 27's X only blurs, leaving empty `expanded`.
     expect(shouldRestoreNativeSearch(closed.tabs.threads, false)).toBe(false);
     expect(shouldRestoreNativeSearch(closed.tabs.threads, true)).toBe(true);
     expect(shouldRestoreNativeSearch(filtered.tabs.threads, false)).toBe(true);
-    expect(shouldRestoreNativeSearch(opened.tabs.threads, false)).toBe(true);
+    expect(shouldRestoreNativeSearch(typing.tabs.threads, false)).toBe(true);
     expect(shouldRestoreNativeSearch(initialWorkspaceTabsState().tabs.threads, true)).toBe(false);
   });
 

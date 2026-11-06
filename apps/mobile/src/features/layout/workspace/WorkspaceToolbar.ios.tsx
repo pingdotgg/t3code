@@ -152,7 +152,8 @@ export function WorkspaceToolbar(props: {
             searchVisible
               ? {
                   ref: searchRef,
-                  autoFocus: tab.searchMode === "active",
+                  autoFocus:
+                    tab.searchMode === "active" && shouldRestoreNativeSearch(tab, duoSearch),
                   autoCapitalize: "none",
                   hideNavigationBar: false,
                   hideWhenScrolling: false,
