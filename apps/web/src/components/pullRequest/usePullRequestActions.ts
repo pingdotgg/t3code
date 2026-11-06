@@ -11,6 +11,7 @@ import type {
   PullRequestDetail,
   PullRequestMergeMethod,
   PullRequestRef,
+  PullRequestSummary,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
@@ -30,7 +31,7 @@ import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
-import { composerTargetKey, type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -40,10 +41,8 @@ import { toastManager } from "../ui/toast";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import {
   checkoutFailureDescription,
-  handoffPrompt,
-  handoffReviewComments,
+  appendHandoff,
   readableFailure,
-  stripPullRequestHandoffReferences,
 } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
@@ -135,7 +134,7 @@ export function usePullRequestActionRunner({
   environmentId: EnvironmentId;
   reference: PullRequestRef | null;
   terminology: ChangeRequestTerminology;
-  onSuccess?: (action: PullRequestAction) => void;
+  onSuccess?: (action: PullRequestAction, reply: PullRequestSummary | undefined) => void;
   /** Resolve repository settings on click to avoid per-row reads. */
   resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
 }) {
@@ -181,13 +180,15 @@ export function usePullRequestActionRunner({
       return;
     }
     toastManager.add({ type: "success", title: actionSuccessLabels(terminology.singular)[action] });
-    onSuccess?.(action);
+    onSuccess?.(action, result.value);
   };
 
   return { actionPending, perform };
 }
 
-export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullRequestEntry) => void) {
+export function usePullRequestCloseBatch(
+  onClosed: (entry: EnvironmentPullRequestEntry, reply: PullRequestSummary | undefined) => void,
+) {
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const pending = useRef(new Set<string>());
   const [closingKeys, setClosingKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -221,7 +222,7 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
           );
           return;
         }
-        onClosed(entry);
+        onClosed(entry, result.value);
         return true;
       }),
     );
@@ -243,53 +244,24 @@ export interface PullRequestThreadTask {
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
 }
 
-export type PullRequestHandoffDetail = Pick<
-  PullRequestDetail,
-  "projectId" | "workspaceRoot" | "url"
->;
-
-// Persist handoffs across unmounts; replace only unchanged contributions to preserve user edits.
-const lastHandoffPromptByDraft = new Map<string, string>();
-
-export function writePullRequestTaskToComposer(
+export function writeHandoffToComposer(
   target: ScopedThreadRef | DraftId,
   task: PullRequestThreadTask,
 ) {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(target);
-  const key = composerTargetKey(target);
-  const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
-  const repeatedCommentIds = new Set(
-    (task.reviewComments ?? [])
-      .filter((comment) => previousCommentIds.has(comment.id))
-      .map((comment) => comment.id),
+  const next = appendHandoff(
+    { prompt: draft?.prompt ?? "", reviewComments: draft?.reviewComments ?? [] },
+    task,
   );
-  const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
-    draft?.prompt ?? "",
-    draft?.reviewComments ?? [],
-    repeatedCommentIds,
-  );
-  const prompt = handoffPrompt(
-    {
-      prompt: promptWithoutPreviousHandoff,
-      lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
-    },
-    task.prompt,
-  );
-  lastHandoffPromptByDraft.set(key, task.prompt);
-  store.setPrompt(target, prompt);
-  store.setReviewComments(
-    target,
-    handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
-  );
-  for (const comment of task.reviewComments ?? []) {
-    if (!repeatedCommentIds.has(comment.id)) continue;
-    store.addReviewComment(target, comment, {
-      allowDuplicateReference: true,
-      insertAtCaret: false,
-    });
-  }
+  store.setPrompt(target, next.prompt);
+  store.setReviewComments(target, next.reviewComments);
 }
+
+export type PullRequestHandoffDetail = Pick<
+  PullRequestDetail,
+  "projectId" | "workspaceRoot" | "url"
+>;
 
 export function usePullRequestHandoffs({
   environmentId,
@@ -327,7 +299,7 @@ export function usePullRequestHandoffs({
       ));
     if (session === null) return null;
     if (task === null) return session;
-    writePullRequestTaskToComposer(session.draftId, task);
+    writeHandoffToComposer(session.draftId, task);
     return session;
   };
 
@@ -362,7 +334,7 @@ export function usePullRequestHandoffs({
   ) => {
     if (!detail || handoff !== null || composerDraftTarget === null) return;
     if (composerDraftTarget !== undefined && task !== null) {
-      writePullRequestTaskToComposer(composerDraftTarget, task);
+      writeHandoffToComposer(composerDraftTarget, task);
       toastManager.add({
         type: "success",
         title: "Added to the composer",
