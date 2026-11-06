@@ -140,6 +140,23 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
+  it.effect("keeps an emoji whole where a long output line is cut", () =>
+    Effect.gen(function* () {
+      const { outputLines, emit } = yield* setup();
+      yield* emit({ ...event, type: "output", data: `x${"🙂".repeat(250)}\r\n` });
+      expect(yield* Queue.takeAll(outputLines)).toEqual([`x${"🙂".repeat(199)}`]);
+    }),
+  );
+
+  it.effect("keeps an emoji whole where newline-free output is bounded", () =>
+    Effect.gen(function* () {
+      const { outputLines, emit } = yield* setup();
+      yield* emit({ ...event, type: "output", data: `${"🙂".repeat(2_100)}x` });
+      yield* emit({ ...event, type: "output", data: "\r\n" });
+      expect(yield* Queue.takeAll(outputLines)).toEqual(["🙂".repeat(200)]);
+    }),
+  );
+
   it.effect("types into a quiet shell that has no line editor", () =>
     Effect.gen(function* () {
       const { writes } = yield* setup();
