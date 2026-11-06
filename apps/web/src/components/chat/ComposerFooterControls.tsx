@@ -8,7 +8,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { BotIcon, PencilRulerIcon } from "lucide-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
-import type { ContextWindowSnapshot } from "../../lib/contextWindow";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuGroup, MenuGroupLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -246,6 +246,7 @@ export function ComposerPermissionsSection(props: {
 }
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  children?: React.ReactNode;
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
@@ -267,6 +268,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   showPlanFollowUpPrompt: boolean;
   onImplementPlanInNewThread?: () => void;
   promptHasText: boolean;
+  voiceInputActive?: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isEnvironmentUnavailable: boolean;
@@ -298,6 +300,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.children}
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}
@@ -310,6 +313,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
+        voiceInputActive={props.voiceInputActive ?? false}
         isSendBusy={props.isSendBusy}
         sendDisabledReason={props.sendDisabledReason}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
