@@ -123,6 +123,11 @@
     will-change: var(--visible-animation-will-change, auto);
   }
 
+  /* A collapsed sidebar's rows skip rendering, so their visibility observer never reports them. */
+  [data-slot="sidebar"][data-state="collapsed"] &::before {
+    animation: none;
+  }
+
   @media (prefers-reduced-motion: reduce), (forced-colors: active) {
     display: none;
   }
@@ -130,6 +135,10 @@
 
 @utility sidebar-status-dot {
   background-color: color-mix(in srgb, currentColor 30%, var(--foreground));
+
+  [data-slot="sidebar"][data-state="collapsed"] & {
+    animation: none;
+  }
 
   @media (forced-colors: active) {
     background-color: CanvasText;
