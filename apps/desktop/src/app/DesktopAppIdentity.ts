@@ -11,7 +11,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
-import { T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_LINK_SCHEMES, T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
@@ -103,6 +103,12 @@ export const make = Effect.gen(function* () {
 
     if (environment.platform === "win32") {
       yield* electronApp.setAppUserModelId(environment.appUserModelId);
+      // NSIS writes no protocol keys, so the app registers its links itself; installer.nsh removes them.
+      if (environment.isPackaged) {
+        for (const scheme of T3_LEARN_LINK_SCHEMES) {
+          yield* electronApp.setAsDefaultProtocolClient(scheme);
+        }
+      }
     }
 
     // Packaged bundles carry their icon in Info.plist; setting it again overwrites the user's custom icon.
