@@ -16,6 +16,7 @@ const deps = (input: {
   readonly now?: number;
   readonly failThread?: string;
   readonly pushExitCode?: number;
+  readonly liveThread?: string;
   readonly existing?: ReadonlyArray<string>;
 }): DrainDependencies & {
   readonly written: Array<{ threadId: string; body: string }>;
@@ -33,7 +34,10 @@ const deps = (input: {
     source: {
       shell: () =>
         Effect.succeed({
-          threads: input.threads.map((threadId) => ({ threadId })),
+          threads: input.threads.map((threadId) => ({
+            threadId,
+            live: input.liveThread === threadId,
+          })),
           projects: (input.projects ?? []).map((workspaceRoot) => ({ workspaceRoot })),
         }),
       threadHistory: ({ threadId }) =>
@@ -105,6 +109,17 @@ describe("fleet drain", () => {
 
       expect(outcome.state).toBe("failed");
       expect(outcome.threads).toEqual({ total: 2, acked: 1, failed: 1 });
+    }),
+  );
+
+  it.effect("refuses to drain a worker whose child is still working", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({ threads: ["thread:a"], liveThread: "thread:a" });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("failed");
+      expect(outcome.threads.failed).toBe(1);
+      expect(dependencies.written).toHaveLength(0);
     }),
   );
 

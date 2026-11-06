@@ -7,7 +7,8 @@ import * as OpenShellFleetService from "../../../environment/OpenShellFleetServi
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
-import { loadCaller, readCaller } from "../../threadAccess.ts";
+import { assertNotLinked } from "../../linkOrigin.ts";
+import { assertFullAccess, loadCaller, readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -45,6 +46,11 @@ const handlers = {
       // linked environment. Its retirement is the fleet's own: the deadline
       // reaps it drain-first, so nothing is deleted under a running child.
       const caller = yield* loadCaller();
+      // Provisioning infrastructure is an environment setting, not thread work:
+      // the same full-access/linked checks as t3_environment_spawn apply here,
+      // and they run before anything is created.
+      yield* assertFullAccess(caller, "provision a fleet worker");
+      yield* assertNotLinked(caller, "provision a fleet worker");
       const fleet = yield* OpenShellFleetService.OpenShellFleetService;
       const spawned = yield* fleet
         .spawnWorker({

@@ -1,9 +1,19 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import { isLiveSubagentShell, type EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+
+/** The parts of a worker's thread shell that decide whether it is still working. */
+interface DrainShellThread {
+  readonly id?: string;
+  readonly threadId?: string;
+  readonly status?: string;
+  readonly activityRunStatus?: string | null;
+  readonly pendingRuntimeRequest?: unknown;
+  readonly pendingBackgroundTasks?: ReadonlyArray<unknown> | null;
+}
 
 import {
   FleetDrainStepError,
@@ -33,11 +43,11 @@ export const fileDrainSink = (input: {
         readonly threadId: string;
         readonly body: string;
       }) {
+        const target = fileFor(input.environmentId, input.drainId, input.threadId);
         yield* fs.makeDirectory(dirFor(input.environmentId, input.drainId), { recursive: true });
-        yield* fs.writeFileString(
-          fileFor(input.environmentId, input.drainId, input.threadId),
-          input.body,
-        );
+        // Write then rename: a retry must never accept a half-written copy as done.
+        yield* fs.writeFileString(`${target}.partial`, input.body);
+        yield* fs.rename(`${target}.partial`, target);
         return { bytes: new TextEncoder().encode(input.body).byteLength };
       })(input).pipe(
         Effect.mapError(
@@ -102,19 +112,30 @@ export const linkDrainSource = (input: {
       getJson(environmentId, "/api/orchestration/shell").pipe(
         Effect.map((snapshot) => {
           const shell = snapshot as {
-            readonly threads?: ReadonlyArray<{
-              readonly id?: string;
-              readonly threadId?: string;
-            }>;
+            readonly threads?: ReadonlyArray<DrainShellThread>;
+            readonly archivedThreads?: ReadonlyArray<DrainShellThread>;
             readonly projects?: ReadonlyArray<{
               readonly workspaceRoot?: string;
               readonly path?: string;
             }>;
           };
+          const shellThreads = [...(shell.threads ?? []), ...(shell.archivedThreads ?? [])];
           return {
-            threads: (shell.threads ?? []).flatMap((thread) => {
+            threads: shellThreads.flatMap((thread) => {
               const threadId = thread.threadId ?? thread.id;
-              return threadId === undefined ? [] : [{ threadId }];
+              if (threadId === undefined) return [];
+              // Liveness comes from the shell's own status, and an unreadable one
+              // counts as live: removing a worker that is still writing loses work.
+              const live =
+                thread.status === undefined && thread.activityRunStatus === undefined
+                  ? true
+                  : isLiveSubagentShell({
+                      status: thread.status ?? "idle",
+                      activityRunStatus: thread.activityRunStatus ?? null,
+                      pendingRuntimeRequest: thread.pendingRuntimeRequest ?? null,
+                      pendingBackgroundTasks: thread.pendingBackgroundTasks ?? null,
+                    } as never);
+              return [{ threadId, live }];
             }),
             projects: (shell.projects ?? []).flatMap((project) => {
               const workspaceRoot = project.workspaceRoot ?? project.path;
@@ -128,17 +149,25 @@ export const linkDrainSource = (input: {
       readonly threadId: string;
     }) {
       const encoded = encode(request.threadId);
-      const [snapshot, history] = yield* Effect.all(
-        [
-          getJson(request.environmentId, `/api/orchestration/threads/${encoded}/bounded`),
-          getJson(
-            request.environmentId,
-            `/api/orchestration/threads/${encoded}/history?limit=100000`,
-          ),
-        ],
-        { concurrency: 2 },
-      );
-      const body = yield* toJsonBody({ threadId: request.threadId, snapshot, history }).pipe(
+      const snapshot = (yield* getJson(
+        request.environmentId,
+        `/api/orchestration/threads/${encoded}/bounded`,
+      )) as { readonly historyCursor?: string | null; readonly hasMoreHistory?: boolean };
+      // The page endpoint needs the worker's own cursor: a page size is rejected,
+      // and a truncated history is not a drain (spec section 7.2).
+      const pages: unknown[] = [];
+      let cursor = snapshot.historyCursor ?? null;
+      let hasMore = snapshot.hasMoreHistory === true;
+      while (hasMore && cursor !== null) {
+        const page = (yield* getJson(
+          request.environmentId,
+          `/api/orchestration/threads/${encoded}/history?cursor=${encode(cursor)}`,
+        )) as { readonly nextCursor?: string | null; readonly hasMoreHistory?: boolean };
+        pages.push(page);
+        hasMore = page.hasMoreHistory === true;
+        cursor = page.nextCursor ?? null;
+      }
+      const body = yield* toJsonBody({ threadId: request.threadId, snapshot, pages }).pipe(
         Effect.mapError(
           (cause) => new FleetDrainStepError({ step: "history", message: String(cause) }),
         ),
@@ -159,5 +188,15 @@ export const execDrainGitPush = (input: {
   >;
 }): DrainGitPush => ({
   push: ({ sandboxName, workspaceRoot }) =>
-    input.exec(sandboxName, ["git", "-C", workspaceRoot, "push", "--all", "--force-with-lease"]),
+    // Branches alone are not the work: checkpoints under refs/t3 hold uncommitted
+    // state, so both namespaces are pushed explicitly.
+    input.exec(sandboxName, [
+      "git",
+      "-C",
+      workspaceRoot,
+      "push",
+      "origin",
+      "refs/heads/*:refs/heads/*",
+      "refs/t3/*:refs/t3/*",
+    ]),
 });

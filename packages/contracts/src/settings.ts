@@ -22,7 +22,7 @@ import {
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
-import { OpenShellGatewaySettings } from "./openshellGateway.ts";
+import { OpenShellGatewaySettings, OpenShellGatewaySettingsPatch } from "./openshellGateway.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
@@ -1755,7 +1755,7 @@ export const ServerSettingsPatch = Schema.Struct({
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   openshellEnabled: Schema.optionalKey(Schema.Boolean),
-  openshell: Schema.optionalKey(OpenShellGatewaySettings),
+  openshell: Schema.optionalKey(OpenShellGatewaySettingsPatch),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

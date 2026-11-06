@@ -104,6 +104,21 @@ export const OpenShellGatewaySettings = Schema.Struct({
 });
 export type OpenShellGatewaySettings = typeof OpenShellGatewaySettings.Type;
 
+/**
+ * Patch shape for the same block: no decoding defaults, so a patch that only
+ * changes one field cannot silently turn a managing instance into a follower.
+ */
+export const OpenShellGatewaySettingsPatch = Schema.Struct({
+  driver: Schema.optionalKey(OpenShellDriverId),
+  gatewayUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  credential: Schema.optionalKey(Schema.NullOr(SecretReference)),
+  defaultSandboxTemplate: Schema.optionalKey(TrimmedNonEmptyString),
+  managingInstance: Schema.optionalKey(Schema.Boolean),
+  workerDefaults: Schema.optionalKey(OpenShellWorkerDefaults),
+  sharedCache: Schema.optionalKey(OpenShellSharedCacheSettings),
+});
+export type OpenShellGatewaySettingsPatch = typeof OpenShellGatewaySettingsPatch.Type;
+
 /** A gateway sandbox template summary for pickers and preflight checks. */
 export const OpenShellSandboxTemplate = Schema.Struct({
   name: TrimmedNonEmptyString,

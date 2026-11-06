@@ -75,6 +75,7 @@ export type ThreadLaunchWorkspaceStrategy =
   | {
       readonly type: "sandbox";
       readonly workerClass?: "ephemeral" | "persistent" | undefined;
+      readonly branch?: string | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -316,6 +317,19 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    // A sandbox workspace belongs to a fleet worker, which is created by a
+    // delegation. Launching it here would quietly run in the project root.
+    if (input.workspaceStrategy.type === "sandbox") {
+      return yield* new ThreadLaunchError({
+        operation: "provision-worktree",
+        commandId: input.commandId,
+        projectId: input.projectId,
+        ...(threadId === undefined ? {} : { threadId }),
+        cause: new Error(
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of launching it here.",
+        ),
+      });
+    }
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
@@ -336,10 +350,7 @@ const make = Effect.gen(function* () {
     } else if (reused !== undefined) {
       yield* setupTracker.begin({
         threadId,
-        branch:
-          input.workspaceStrategy.type === "sandbox"
-            ? null
-            : (input.workspaceStrategy.branch ?? null),
+        branch: input.workspaceStrategy.branch ?? null,
         baseRef: reused.baseRef,
         stages: ["setup-script", "agent"],
         fiber: yield* Effect.fiber,
@@ -383,8 +394,7 @@ const make = Effect.gen(function* () {
         },
       );
 
-      const requestedBranch =
-        input.workspaceStrategy.type === "sandbox" ? undefined : input.workspaceStrategy.branch;
+      const requestedBranch = input.workspaceStrategy.branch;
       let branch: string | null;
       if (input.workspaceStrategy.type === "worktree" && requestedBranch === undefined) {
         const uuid = yield* randomUuidV4;
@@ -932,8 +942,7 @@ const make = Effect.gen(function* () {
                 },
               )
             : input.workspaceStrategy;
-        const initialBranch =
-          workspaceStrategy.type === "sandbox" ? null : (workspaceStrategy.branch ?? null);
+        const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
         const claimDispatch =

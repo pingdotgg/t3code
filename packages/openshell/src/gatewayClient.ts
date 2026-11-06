@@ -248,13 +248,24 @@ export const connectOpenShellGateway = async (
           ? undefined
           : { request_id: requestOptions.requestId },
       );
-      const normalized = result.toLowerCase();
+      // SDK 0.1.7 answers with an object ({ outcome }); older shapes answered with
+      // the string alone. Both are read, so a successful delete never throws.
+      const raw =
+        typeof result === "string"
+          ? result
+          : ((result as { outcome?: unknown }).outcome ?? (result as { status?: unknown }).status);
+      if (typeof raw !== "string") {
+        throw new Error(
+          `The gateway returned an unreadable deletion outcome: ${JSON.stringify(result)}`,
+        );
+      }
+      const normalized = raw.toLowerCase();
       if (
         normalized !== "completed" &&
         normalized !== "accepted" &&
         normalized !== "already_absent"
       ) {
-        throw new Error(`The gateway returned an unknown deletion outcome: ${result}`);
+        throw new Error(`The gateway returned an unknown deletion outcome: ${raw}`);
       }
       return normalized;
     },

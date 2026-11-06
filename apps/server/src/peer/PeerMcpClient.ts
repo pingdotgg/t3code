@@ -89,6 +89,19 @@ const fromRegistryError = (error: PeerEnvironmentRegistry.PeerEnvironmentRegistr
     message: error.message,
   });
 
+/**
+ * A worker's credential comes from pairing, not from the user's links, so the
+ * recovery differs: a link is re-linked in Settings, a worker is re-paired.
+ */
+const rejected = (from: "link" | "registry") =>
+  new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message:
+      from === "registry"
+        ? "This fleet worker no longer accepts its delegation session. It may have been removed or re-paired; spawn a replacement, or re-pair it with a fresh bootstrap credential."
+        : "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
+  });
+
 /** Not final, so a task already running there resumes once the beta is on there again. */
 const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
   code: "orchestration_error",
@@ -129,6 +142,7 @@ const make = Effect.gen(function* () {
     );
 
   const openSession = Effect.fn("PeerMcpClient.openSession")(function* (
+    from: "link" | "registry",
     url: string,
     token: string,
     limitHeader: Record<string, string>,
@@ -151,13 +165,12 @@ const make = Effect.gen(function* () {
     const sessionId = initialized.headers["mcp-session-id"];
     if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
     if (initialized.status !== 200 || sessionId === undefined) {
-      return yield* new OrchestratorMcpFailure({
-        code: initialized.status === 401 ? "capability_denied" : "orchestration_error",
-        message:
-          initialized.status === 401
-            ? "The linked environment no longer accepts this link. It may have been revoked there; link it again."
-            : `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
-      });
+      return yield* initialized.status === 401
+        ? rejected(from)
+        : new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
+          });
     }
     yield* post(
       url,
@@ -174,21 +187,24 @@ const make = Effect.gen(function* () {
    * the peer's `/mcp`, so the bridge, forwarding and delegation work the same
    * for linked environments and registered workers.
    */
-  const resolvePeer = (environmentId: EnvironmentId) =>
-    links.resolve(environmentId).pipe(
-      Effect.map((resolved) => ({ url: resolved.url, token: resolved.token })),
-      Effect.result,
-      Effect.flatMap((fromLink) => {
-        if (Result.isSuccess(fromLink)) return Effect.succeed(fromLink.success);
-        if (Option.isNone(registry) || fromLink.failure.reason !== "unknown_link") {
-          return Effect.fail(fromLinkError(fromLink.failure));
-        }
-        return registry.value.resolveSession(environmentId).pipe(
-          Effect.map(({ url, token }) => ({ url, token })),
-          Effect.mapError(fromRegistryError),
-        );
-      }),
-    );
+  const resolvePeer = Effect.fn("PeerMcpClient.resolvePeer")(function* (
+    environmentId: EnvironmentId,
+  ): Effect.fn.Return<
+    { readonly url: string; readonly token: string; readonly from: "link" | "registry" },
+    OrchestratorMcpFailure
+  > {
+    const fromLink = yield* Effect.result(links.resolve(environmentId));
+    if (Result.isSuccess(fromLink)) {
+      return { url: fromLink.success.url, token: fromLink.success.token, from: "link" };
+    }
+    if (Option.isNone(registry) || fromLink.failure.reason !== "unknown_link") {
+      return yield* fromLinkError(fromLink.failure);
+    }
+    const session = yield* registry.value
+      .resolveSession(environmentId)
+      .pipe(Effect.mapError(fromRegistryError));
+    return { url: session.url, token: session.token, from: "registry" };
+  });
 
   const call: PeerMcpClient["Service"]["call"] = Effect.fn("PeerMcpClient.call")(
     function* (input) {
@@ -210,24 +226,24 @@ const make = Effect.gen(function* () {
           { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
         );
       const existing = (yield* Ref.get(sessions)).get(sessionKey);
-      const sessionId = existing ?? (yield* openSession(resolved.url, resolved.token, limitHeader));
+      const sessionId =
+        existing ?? (yield* openSession(resolved.from, resolved.url, resolved.token, limitHeader));
       // The initialized session outlives a tool request, including a long wait or cancellation.
       if (existing === undefined) {
         yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, sessionId));
       }
       let response = yield* callOnce(sessionId);
       if (response.status === 404) {
-        const renewed = yield* openSession(resolved.url, resolved.token, limitHeader);
+        const renewed = yield* openSession(
+          resolved.from,
+          resolved.url,
+          resolved.token,
+          limitHeader,
+        );
         yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed));
         response = yield* callOnce(renewed);
       }
-      if (response.status === 401) {
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message:
-            "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
-        });
-      }
+      if (response.status === 401) return yield* rejected(resolved.from);
       if (response.status === 403) return yield* linkedEnvironmentsOffThere;
       if (response.status !== 200) {
         return yield* new OrchestratorMcpFailure({
