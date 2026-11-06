@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -106,6 +107,8 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Lifetime of sessions redeemed from pairing links; unset keeps the session store default. */
+    readonly pairingSessionTtl?: Duration.Duration | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

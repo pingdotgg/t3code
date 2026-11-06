@@ -107,6 +107,16 @@ created in Settings can only be copied from the client that created them while
 its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
 
+A device stays signed in for 30 days after it pairs, however often you use it;
+then pair it again with a fresh link. To change that lifetime, set
+`T3CODE_PAIRING_SESSION_TTL` in the T3 server's environment, such as `180d` or
+`26w` (at most `3650d`), and restart the server. For a background service, add
+it to `service.env` (see [Configure the service environment](./background-service.md#configure-the-service-environment)).
+On a desktop host, export it in your shell profile (for example `~/.zshrc`) on
+macOS and Linux, or set it as a user environment variable on Windows, then
+restart the app. It applies to devices that pair after the restart; T3 Connect
+sign-ins keep renewing on their own.
+
 ### Reach one machine several ways
 
 A machine can have more than one route: LAN, Tailscale, another VPN, a public
