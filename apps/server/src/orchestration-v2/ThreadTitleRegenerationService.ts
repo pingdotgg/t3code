@@ -1,4 +1,5 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
   type ChatAttachment,
@@ -12,6 +13,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -49,6 +51,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const complete = (input: {
     readonly threadId: ThreadId;
@@ -90,15 +93,15 @@ const make = Effect.gen(function* () {
     thread: OrchestrationV2AppThread,
   ) {
     let title: string | undefined;
-    let history: Array<OrchestrationV2ConversationMessage> = [];
+    const history: Array<ReadonlyArray<OrchestrationV2ConversationMessage>> = [];
     let forkedFrom = thread.forkedFrom;
     while (forkedFrom?.type === "run") {
       const source = yield* messagesThroughRun(forkedFrom.threadId, forkedFrom.runId);
-      history = [...source.messages, ...history];
+      history.push(source.messages);
       title ??= source.thread.title;
       forkedFrom = source.thread.forkedFrom;
     }
-    const context = formatThreadTitleContext(history);
+    const context = formatThreadTitleContext(history.reverse().flat());
     return title === undefined || context.message.length === 0
       ? undefined
       : { title, history: context.message };
@@ -138,7 +141,10 @@ const make = Effect.gen(function* () {
         context =
           message === undefined
             ? { message: "", attachments: [] }
-            : { message: message.text, attachments: message.attachments };
+            : {
+                message: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
+                attachments: message.attachments,
+              };
       } else {
         context = formatThreadTitleContext(
           projection.messages.filter((message) => !message.streaming),
@@ -156,8 +162,13 @@ const make = Effect.gen(function* () {
         yield* serverSettings.getSettings,
         projection.thread.projectId,
       ).settings;
+      // Storage cleanup removes worktrees but keeps the path; CLIs cannot spawn in a missing cwd.
+      const worktreePath = projection.thread.worktreePath;
+      const worktreeExists =
+        worktreePath !== null &&
+        (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
       const result = yield* textGeneration.generateThreadTitle({
-        cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
+        cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
         message: context.message,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),

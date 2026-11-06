@@ -120,8 +120,12 @@ const boundedBody = (compact: boolean) => ({
 });
 const BoundedJson = Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot);
 const idTableBody = () => {
-  const snapshot = Schema.decodeSync(BoundedJson)(boundedBody(true));
-  return Schema.encodeSync(BoundedJson)({ ...snapshot, idTable: true });
+  const decodeBoundedJson = Schema.decodeSync(BoundedJson);
+
+  const snapshot = decodeBoundedJson(boundedBody(true));
+  const encodeBoundedJson = Schema.encodeSync(BoundedJson);
+
+  return encodeBoundedJson({ ...snapshot, idTable: true });
 };
 
 describe("boundedThreadSnapshotLoader", () => {
@@ -161,43 +165,6 @@ describe("boundedThreadSnapshotLoader", () => {
     );
   });
 
-  it.effect("falls back to full HTTP snapshot when bounded returns a plain route 404", () => {
-    const fetchFn = ((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes(`/api/orchestration/threads/${THREAD_ID}/bounded`)) {
-        return Promise.resolve(
-          new Response("Not Found", {
-            status: 404,
-            headers: { "content-type": "text/plain" },
-          }),
-        );
-      }
-      expect(url).toContain(`/api/orchestration/threads/${THREAD_ID}`);
-      expect(url.includes("/bounded")).toBe(false);
-      return Promise.resolve(
-        new Response(JSON.stringify(FULL_SNAPSHOT_BODY), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    }) satisfies typeof fetch;
-
-    return Effect.gen(function* () {
-      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
-      const result = yield* loader.load(PREPARED, THREAD_ID);
-      expect(result._tag).toBe("present");
-      if (result._tag === "present") {
-        expect(result.snapshot.snapshotSequence).toBe(9);
-        expect(result.snapshot.projection.thread.title).toBe("Full fallback thread");
-        expect(result.history).toBeUndefined();
-      }
-    }).pipe(
-      Effect.provide(
-        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
-      ),
-    );
-  });
-
   it.effect("treats structured EnvironmentResourceNotFoundError from bounded as missing", () => {
     const fetchFn = ((input: RequestInfo | URL) => {
       const url = String(input);
@@ -229,26 +196,15 @@ describe("boundedThreadSnapshotLoader", () => {
   it.effect(
     "uses socket fallback directly when the bounded endpoint has a transient failure",
     () => {
-      let fullCalls = 0;
       const fetchFn = ((input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes("/bounded")) {
-          return Promise.resolve(new Response("Service Unavailable", { status: 503 }));
-        }
-        fullCalls += 1;
-        return Promise.resolve(
-          new Response(JSON.stringify(FULL_SNAPSHOT_BODY), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
+        expect(String(input)).toContain("/bounded");
+        return Promise.resolve(new Response("Service Unavailable", { status: 503 }));
       }) satisfies typeof fetch;
 
       return Effect.gen(function* () {
         const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
         const result = yield* loader.load(PREPARED, THREAD_ID);
         expect(result).toEqual({ _tag: "unavailable" });
-        expect(fullCalls).toBe(0);
       }).pipe(
         Effect.provide(
           Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),

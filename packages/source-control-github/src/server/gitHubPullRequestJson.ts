@@ -1,3 +1,4 @@
+import { trimOptionalString as trimmed } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -6,6 +7,7 @@ import { GraphQL } from "effect/graphql";
 import type {
   PullRequestStackMembership,
   PullRequestActor,
+  PullRequestReferenceCandidate,
   PullRequestPreview,
   PullRequestCheck,
   PullRequestCheckStatus,
@@ -36,6 +38,7 @@ import type {
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import type { ProviderChangeRequestSummary } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 import type * as GitHubSchema from "../../schema/github.graphql.ts";
 import type {
@@ -48,8 +51,8 @@ import {
   PullRequestRow,
   PullRequestSearch,
 } from "./pullRequestListings.graphql.ts";
+import type { PullRequestActionSummary } from "./pullRequestMutations.graphql.ts";
 import type {
-  ActorAvatars,
   CheckContext,
   LabelCandidates,
   PullRequestActivity,
@@ -63,6 +66,8 @@ import type {
   PullRequestSubject,
   RepositoryAuthors,
   RepositoryLabels,
+  RepositoryReferences,
+  ReferenceCandidate,
   ReviewerCandidates,
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
@@ -85,7 +90,7 @@ interface ListItemFields {
   readonly number: number;
   readonly title: string;
   readonly url: string;
-  readonly author?: (ActorFields & { readonly id?: string | null | undefined }) | null | undefined;
+  readonly author?: ActorFields | null | undefined;
   readonly headRefName: string;
   readonly baseRefName: string;
   readonly state?: string | null | undefined;
@@ -220,17 +225,6 @@ const RawPullRequestFileSchema = Schema.Struct({
   deletions: Schema.optional(Schema.NullOr(Schema.Int)),
 });
 
-export function toActorAvatars(result: ActorAvatars.Result): ReadonlyMap<string, string> {
-  const avatarsByLogin = new Map<string, string>();
-  for (const node of result.nodes) {
-    if (node === null || !("login" in node)) continue;
-    const login = trimmed(node.login);
-    const avatarUrl = trimmed(node.avatarUrl);
-    if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
-  }
-  return avatarsByLogin;
-}
-
 export function toPullRequestPreview(
   result: PullRequestPreviewQuery.Result,
 ): Omit<PullRequestPreview, "projectId" | "repository"> | null {
@@ -335,7 +329,6 @@ export function buildReviewSubmission(input: {
 
 export interface GitHubPullRequestListItem {
   readonly stack?: PullRequestStackMembership;
-  readonly authorId: string | null;
   readonly number: number;
   readonly title: string;
   readonly url: string;
@@ -387,11 +380,6 @@ export interface GitHubPullRequestActivity {
   readonly author: PullRequestActor | null;
   readonly comments: ReadonlyArray<PullRequestComment>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
-}
-
-function trimmed(value: string | null | undefined): string | null {
-  const text = value?.trim() ?? "";
-  return text.length > 0 ? text : null;
 }
 
 /** GitHub returns endCursor even on the last page; hasNextPage is authoritative. */
@@ -494,6 +482,29 @@ function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod
     default:
       return undefined;
   }
+}
+
+export function toPullRequestActionSummary(
+  raw: PullRequestActionSummary | null | undefined,
+): ProviderChangeRequestSummary | undefined {
+  if (raw == null) return undefined;
+  const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  return {
+    number: raw.number,
+    title: raw.title,
+    url: raw.url,
+    headBranch: raw.headRefName,
+    baseBranch: raw.baseRefName,
+    state: toState(raw),
+    isDraft: raw.isDraft,
+    updatedAt: raw.updatedAt,
+    mergedAt: trimmed(raw.mergedAt),
+    closedAt: trimmed(raw.closedAt),
+    author: toActor(raw.author),
+    headSha: raw.headRefOid,
+    autoMergeEnabled: raw.autoMergeRequest !== null,
+    ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
+  };
 }
 
 /** GitHub's reviewDecision ignores reviews outside branch rules, including app approvals. */
@@ -718,7 +729,6 @@ function toCommits(
 
 function toListItem(raw: ListItemFields): GitHubPullRequestListItem {
   return {
-    authorId: trimmed(raw.author?.id),
     number: raw.number,
     title: raw.title,
     url: raw.url,
@@ -775,18 +785,6 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
 }
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
-const decodeDetail = decodeJsonResult(
-  Schema.Struct({
-    number: Schema.Int,
-    title: Schema.String,
-    url: Schema.String,
-    headRefName: Schema.String,
-    baseRefName: Schema.String,
-    state: Schema.optional(Schema.String),
-    createdAt: Schema.String,
-    updatedAt: Schema.String,
-  }),
-);
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
@@ -1008,6 +1006,8 @@ export function toPullRequestWatchFingerprint(
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly maintainerCanModify: boolean;
+  readonly canEditMaintainerEdits: boolean;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
@@ -1031,8 +1031,6 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
     ),
     ...toDetail({
       ...pr,
-      author:
-        pr.author === null ? null : { ...pr.author, id: "id" in pr.author ? pr.author.id : null },
       latestReviews: [],
       reviewRequests: nodesOf(pr.reviewRequests).flatMap(
         ({ requestedReviewer }: NonNullable<CoreRequestedReviewer>) =>
@@ -1055,6 +1053,14 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       statusCheckRollup: toCheckContexts(nodesOf(contexts)),
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
+    maintainerCanModify: pr.maintainerCanModify,
+    canEditMaintainerEdits:
+      pr.state === "OPEN" &&
+      pr.isCrossRepository &&
+      pr.viewerDidAuthor &&
+      pr.headRepositoryOwner?.__typename === "User" &&
+      pr.headRepository !== null &&
+      pr.headRef !== null,
     viewerAccess: {
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
@@ -1077,15 +1083,6 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
   };
-}
-
-export function decodePullRequestDetailJson(
-  raw: string,
-): Result.Result<GitHubPullRequestDetail, DecodeFailure> {
-  const decoded = decodeDetail(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(toDetail(decoded.success))
-    : Result.fail(decoded.failure);
 }
 
 export interface GitHubWorkflowRunPage {
@@ -1465,6 +1462,7 @@ export interface GitHubBaseComparison {
 /** assignableUsers avoids push/read:org requirements. Keep requested outsiders/apps removable. */
 export function toReviewerCandidates(
   result: ReviewerCandidates.Result,
+  query?: string,
 ): PullRequestReviewerCandidateList | null {
   const repository = result.repository;
   if (repository == null) return null;
@@ -1488,8 +1486,10 @@ export function toReviewerCandidates(
       isRequested: true,
     });
   }
+  const hostMatches = new Set<string>();
   for (const node of nodesOf(repository.assignableUsers)) {
     const login = trimmed(node.login);
+    if (login !== null) hostMatches.add(login);
     if (login === null || login === author || candidates.has(`user ${login}`)) continue;
     candidates.set(`user ${login}`, {
       id: login,
@@ -1501,7 +1501,9 @@ export function toReviewerCandidates(
     });
   }
   return {
-    candidates: [...candidates.values()],
+    candidates: [...candidates.values()].filter(
+      (candidate) => !query?.trim() || (candidate.kind === "user" && hostMatches.has(candidate.id)),
+    ),
     truncated: repository.assignableUsers.pageInfo.hasNextPage,
   };
 }
@@ -1579,6 +1581,64 @@ export function toRepositoryAuthors(
         : [{ login, name: trimmed(node.name), avatarUrl: trimmed(node.avatarUrl) }];
     }),
     truncated: repository.mentionableUsers.pageInfo.hasNextPage,
+  };
+}
+
+/** The `search` string for {@link toRepositoryReferences}; a numeric query searches recent items. */
+export function referenceSearchQuery(repository: string, query: string | undefined): string {
+  const text = query?.trim() ?? "";
+  const titled = text.length === 0 || /^\d+$/.test(text) ? [] : [`in:title ${searchPhrase(text)}`];
+  return [`repo:${repository}`, ...titled, "sort:updated-desc"].join(" ");
+}
+
+/** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
+export function searchPhrase(query: string): string {
+  return `"${query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+type ReferenceNode =
+  | ReferenceCandidate
+  | NonNullable<NonNullable<RepositoryReferences.Result["search"]["nodes"]>[number]>;
+
+function toReferenceCandidate(node: ReferenceNode): PullRequestReferenceCandidate | null {
+  if (node.__typename === "Issue") {
+    return {
+      reference: `#${node.number}`,
+      kind: "issue",
+      number: node.number,
+      title: node.title,
+      state: node.issueState === "OPEN" ? "open" : "closed",
+    };
+  }
+  if (node.__typename === "PullRequest") {
+    return {
+      reference: `#${node.number}`,
+      kind: "change-request",
+      number: node.number,
+      title: node.title,
+      state:
+        node.pullRequestState === "OPEN"
+          ? "open"
+          : node.pullRequestState === "MERGED"
+            ? "merged"
+            : "closed",
+    };
+  }
+  return null;
+}
+
+export function toRepositoryReferences(result: RepositoryReferences.Result): {
+  readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+  readonly truncated: boolean;
+} {
+  const exact = result.repository?.issueOrPullRequest;
+  const nodes = [...(exact == null ? [] : [exact]), ...nodesOf(result.search)];
+  return {
+    items: nodes.flatMap((node) => {
+      const candidate = toReferenceCandidate(node);
+      return candidate === null ? [] : [candidate];
+    }),
+    truncated: result.search.pageInfo.hasNextPage,
   };
 }
 
@@ -1670,6 +1730,8 @@ function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPa
       ...(status === "removed" ? ["deleted file mode 100644"] : []),
       ...(status === "renamed"
         ? [
+            // The files API has no similarity score; Pierre needs this header to keep the rename.
+            `similarity index ${hunks.length > 0 || (value.additions ?? 0) + (value.deletions ?? 0) > 0 ? 0 : 100}%`,
             `rename from ${quoteGitPatchPath(oldPath)}`,
             `rename to ${quoteGitPatchPath(value.filename)}`,
           ]

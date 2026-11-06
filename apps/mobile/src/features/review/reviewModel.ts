@@ -1,6 +1,9 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import {
+  checkpointFileTotals,
+  type ThreadCheckpointSummary,
+} from "@t3tools/client-runtime/state/thread-checkpoints";
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
@@ -107,7 +110,7 @@ function checkpointTitle(checkpoint: ThreadCheckpointSummary): string {
 }
 
 function checkpointSubtitle(checkpoint: ThreadCheckpointSummary): string {
-  const fileCount = checkpoint.files.length;
+  const fileCount = checkpointFileTotals(checkpoint).count;
   if (checkpoint.status !== "ready") {
     return `Diff ${checkpoint.status}`;
   }
@@ -499,11 +502,22 @@ export function getReadyReviewCheckpoints(
   );
 }
 
+export function reviewTurnDiffsBySectionId(
+  checkpoints: ReadonlyArray<Pick<ThreadCheckpointSummary, "checkpointTurnCount">>,
+  diffByTurnCount: Readonly<Record<number, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  return Object.fromEntries(
+    checkpoints.map((checkpoint) => [
+      getReviewSectionIdForCheckpoint(checkpoint),
+      diffByTurnCount[checkpoint.checkpointTurnCount],
+    ]),
+  );
+}
+
 export function buildReviewSectionItems(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
-  readonly loadingTurnIds: Readonly<Record<string, boolean | undefined>>;
   readonly loadingGitSections: boolean;
 }): ReadonlyArray<ReviewSectionItem> {
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
@@ -515,22 +529,27 @@ export function buildReviewSectionItems(input: {
         title: checkpointTitle(checkpoint),
         subtitle: checkpointSubtitle(checkpoint),
         diff: input.turnDiffById[id] ?? null,
-        isLoading: input.loadingTurnIds[id] === true,
+        isLoading: false,
       };
     },
   );
 
-  const gitItems = input.gitSections.map<ReviewSectionItem>((section) => ({
-    id: `git:${section.kind}`,
-    kind: section.kind,
-    title: section.title,
-    subtitle: gitSubtitle(section),
-    diff: section.diff,
-    source: section,
-    ...(section.files ? { files: section.files } : {}),
-    truncated: section.truncated,
-    isLoading: false,
-  }));
+  const gitItems = input.gitSections
+    .filter(
+      (section): section is typeof section & { kind: ReviewSectionKind } =>
+        section.kind !== "commit",
+    )
+    .map<ReviewSectionItem>((section) => ({
+      id: `git:${section.kind}`,
+      kind: section.kind,
+      title: section.title,
+      subtitle: gitSubtitle(section),
+      diff: section.diff,
+      source: section,
+      ...(section.files ? { files: section.files } : {}),
+      truncated: section.truncated,
+      isLoading: false,
+    }));
   const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem
@@ -554,6 +573,20 @@ export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
   return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
+}
+
+/**
+ * The store holds only the user's pick. While that section is missing (still loading, or the
+ * working tree went clean) the default shows, and the pick returns once the section does: the
+ * thread-feed entry relies on this, as it selects a section before the sections have loaded.
+ */
+export function resolveReviewSelectedSectionId(
+  sections: ReadonlyArray<ReviewSectionItem>,
+  storedSectionId: string | null,
+): string | null {
+  return storedSectionId !== null && sections.some((section) => section.id === storedSectionId)
+    ? storedSectionId
+    : getDefaultReviewSectionId(sections);
 }
 
 export function buildReviewParsedDiff(
