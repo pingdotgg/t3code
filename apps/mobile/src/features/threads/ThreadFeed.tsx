@@ -144,12 +144,12 @@ import { FilePreviewModal, type FilePreviewSource } from "../../components/FileP
 import { inlineFilePreviewKind, isPdfFile } from "../../lib/filePreview";
 import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
+import { getMobileReplyTypography, getMobileUserTypography } from "../../lib/typography";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInDown, type SharedValue } from "react-native-reanimated";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
+import { useUniwindTheme, useThemeFontFamilies } from "../../lib/useUniwindTheme";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -1296,8 +1296,19 @@ function MarkdownDetailsFold(props: {
 }
 
 function useMarkdownStyles(): MarkdownStyleSets {
-  const { appearance } = useAppearancePreferences();
-  const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
+  const { appearance, themeId } = useAppearancePreferences();
+  const replyTypography = useMemo(
+    () => getMobileReplyTypography(themeId, appearance.baseFontSize),
+    [themeId, appearance.baseFontSize],
+  );
+  const userTypography = useMemo(
+    () => getMobileUserTypography(themeId, appearance.baseFontSize),
+    [themeId, appearance.baseFontSize],
+  );
+  const nativeMarkdownTypography = useMemo(
+    () => resolveNativeMarkdownTypography(appearance.baseFontSize),
+    [appearance.baseFontSize],
+  );
   const theme = useUniwindTheme();
   const markdownBodyColor = theme["--color-md-body"];
   const markdownStrongColor = theme["--color-md-strong"];
@@ -1317,55 +1328,85 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownUserCodeText = theme["--color-md-user-code-text"];
   const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
   const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const {
+    regular: regularFontFamily,
+    bold: boldFontFamily,
+    code: codeFontFamily,
+  } = useThemeFontFamilies();
 
-  return {
-    user: {
-      nativeTextStyle: {
-        color: markdownUserBodyColor,
-        strongColor: markdownUserBodyColor,
-        mutedColor: markdownUserBodyColor,
-        linkColor: markdownUserBodyColor,
-        inlineCodeColor: markdownUserInlineCodeText,
-        codeColor: markdownUserCodeText,
-        codeBackgroundColor: markdownUserCodeBg,
-        codeBlockBackgroundColor: markdownUserFenceBg,
-        fileTextColor: markdownUserBodyColor,
-        quoteMarkerColor: markdownUserBodyColor,
-        dividerColor: markdownUserBodyColor,
-        contextChipBorderColor,
-        fontSize: nativeMarkdownTypography.fontSize,
-        lineHeight: nativeMarkdownTypography.lineHeight,
-        headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-        fontFamily: regularFontFamily,
-        headingFontFamily: boldFontFamily,
-        boldFontFamily,
+  return useMemo(() => {
+    return {
+      user: {
+        nativeTextStyle: {
+          color: markdownUserBodyColor,
+          strongColor: markdownUserBodyColor,
+          mutedColor: markdownUserBodyColor,
+          linkColor: markdownUserBodyColor,
+          inlineCodeColor: markdownUserInlineCodeText,
+          codeColor: markdownUserCodeText,
+          codeBackgroundColor: markdownUserCodeBg,
+          codeBlockBackgroundColor: markdownUserFenceBg,
+          fileTextColor: markdownUserBodyColor,
+          quoteMarkerColor: markdownUserBodyColor,
+          dividerColor: markdownUserBodyColor,
+          contextChipBorderColor,
+          fontSize: nativeMarkdownTypography.fontSize,
+          lineHeight: nativeMarkdownTypography.lineHeight,
+          headingFontSizes: nativeMarkdownTypography.headingFontSizes,
+          fontFamily: regularFontFamily,
+          headingFontFamily: boldFontFamily,
+          boldFontFamily,
+          codeFontFamily,
+          ...userTypography,
+        },
       },
-    },
-    assistant: {
-      nativeTextStyle: {
-        color: markdownBodyColor,
-        strongColor: markdownStrongColor,
-        mutedColor: markdownBodyColor,
-        linkColor: markdownLinkColor,
-        inlineCodeColor: markdownInlineCodeText,
-        codeColor: markdownCodeText,
-        codeBackgroundColor: markdownCodeBg,
-        codeBlockBackgroundColor: markdownCodeBg,
-        fileTextColor: markdownCodeText,
-        quoteMarkerColor: markdownBlockquoteBorder,
-        dividerColor: markdownHrColor,
-        contextChipBorderColor,
-        fontSize: nativeMarkdownTypography.fontSize,
-        lineHeight: nativeMarkdownTypography.lineHeight,
-        headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-        fontFamily: regularFontFamily,
-        headingFontFamily: boldFontFamily,
-        boldFontFamily,
+      assistant: {
+        nativeTextStyle: {
+          color: markdownBodyColor,
+          strongColor: markdownStrongColor,
+          mutedColor: markdownBodyColor,
+          linkColor: markdownLinkColor,
+          inlineCodeColor: markdownInlineCodeText,
+          codeColor: markdownCodeText,
+          codeBackgroundColor: markdownCodeBg,
+          codeBlockBackgroundColor: markdownCodeBg,
+          fileTextColor: markdownCodeText,
+          quoteMarkerColor: markdownBlockquoteBorder,
+          dividerColor: markdownHrColor,
+          contextChipBorderColor,
+          fontSize: nativeMarkdownTypography.fontSize,
+          lineHeight: nativeMarkdownTypography.lineHeight,
+          headingFontSizes: nativeMarkdownTypography.headingFontSizes,
+          fontFamily: regularFontFamily,
+          headingFontFamily: boldFontFamily,
+          boldFontFamily,
+          codeFontFamily,
+          ...replyTypography,
+        },
       },
-    },
-  };
+    };
+  }, [
+    boldFontFamily,
+    codeFontFamily,
+    contextChipBorderColor,
+    markdownBlockquoteBorder,
+    markdownBodyColor,
+    markdownCodeBg,
+    markdownCodeText,
+    markdownHrColor,
+    markdownInlineCodeText,
+    markdownLinkColor,
+    markdownStrongColor,
+    markdownUserBodyColor,
+    markdownUserCodeBg,
+    markdownUserCodeText,
+    markdownUserFenceBg,
+    markdownUserInlineCodeText,
+    nativeMarkdownTypography,
+    regularFontFamily,
+    replyTypography,
+    userTypography,
+  ]);
 }
 
 /** Messages from other agents fold to one line so the user's own messages stay easy to find. */

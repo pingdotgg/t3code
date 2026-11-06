@@ -677,6 +677,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
+      fontFamilyReply: DEFAULT_UNIFIED_SETTINGS.fontFamilyReply,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
       fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,

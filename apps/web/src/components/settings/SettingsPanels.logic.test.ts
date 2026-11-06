@@ -4,8 +4,22 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   backgroundActivitySharedPolicySettings,
   getChangedBrowserSettingLabels,
+  getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
 } from "./SettingsPanels.logic";
+
+describe("typography settings restore", () => {
+  it("detects a reply font override and clears the restore notice at the default", () => {
+    const settings = { ...DEFAULT_UNIFIED_SETTINGS, fontFamilyReply: "Georgia" };
+    expect(getChangedTypographySettingLabels(settings)).toEqual(["Reply font"]);
+    expect(
+      getChangedTypographySettingLabels({
+        ...settings,
+        fontFamilyReply: DEFAULT_UNIFIED_SETTINGS.fontFamilyReply,
+      }),
+    ).toEqual([]);
+  });
+});
 
 describe("background activity settings restore", () => {
   it("detects legacy interval values even when the structured setting is at its default", () => {
