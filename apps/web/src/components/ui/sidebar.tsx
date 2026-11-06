@@ -229,12 +229,20 @@ function cancelSidebarSlide(elements: Iterable<Element | null>) {
   }
 }
 
+let sidebarSlidePending = false;
+
 function slideSidebar(commit: () => void) {
+  if (sidebarSlidePending) {
+    commit();
+    return;
+  }
   const targets = sidebarSlideTargets();
   commit();
   const first = targets[0];
   if (!first) return;
+  sidebarSlidePending = true;
   window.requestAnimationFrame(() => {
+    sidebarSlidePending = false;
     const insets = targets.filter(({ inset }) => inset).map(({ element }) => element);
     const anchors = sidebarSlideAnchors(insets);
     cancelSidebarSlide([
