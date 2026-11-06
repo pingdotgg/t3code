@@ -419,10 +419,15 @@ it.effect(
     }).pipe(Effect.provide(Layer.fresh(layerTest)), Effect.scoped),
 );
 
-it.effect.each(["none", "duplicate", "after-write"] as const)(
-  "shares the writer across independent consumers with failure=%s",
-  (failure) => {
+it.effect.each(
+  (["none", "duplicate", "after-write"] as const).flatMap((failure) =>
+    [1, 10].map((streams) => ({ failure, streams })),
+  ),
+)(
+  "shares the writer and isolates failure=$failure across $streams independent consumers",
+  ({ failure, streams }) => {
     const rollback = failure !== "none";
+    const failedIndex = streams - 1;
     const jobError = { _tag: "InvalidUpdate" } as const;
     const writes: number[] = [];
     const tracer = Tracer.make({
@@ -442,7 +447,7 @@ it.effect.each(["none", "duplicate", "after-write"] as const)(
       const sink = yield* EventSink.EventSinkV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
-      const threads = Array.from({ length: 10 }, (_, index) =>
+      const threads = Array.from({ length: streams }, (_, index) =>
         makeThread(ThreadId.make(`shared:${index}`), now),
       );
       yield* sink.write({
@@ -467,7 +472,7 @@ it.effect.each(["none", "duplicate", "after-write"] as const)(
           .consumeProviderEvents(
             Stream.fromQueue(input).pipe(
               Stream.tap(() =>
-                ++arrivals === 10 ? Deferred.succeed(pulled, undefined) : Effect.void,
+                ++arrivals === streams ? Deferred.succeed(pulled, undefined) : Effect.void,
               ),
             ),
             (raw) =>
@@ -477,8 +482,8 @@ it.effect.each(["none", "duplicate", "after-write"] as const)(
                       events: [
                         {
                           id: EventId.make(
-                            failure === "duplicate" && index === 9
-                              ? "shared-event:0"
+                            failure === "duplicate" && index === failedIndex
+                              ? "created:0"
                               : `shared-event:${index}`,
                           ),
                           threadId: raw.message.threadId,
@@ -490,7 +495,7 @@ it.effect.each(["none", "duplicate", "after-write"] as const)(
                     })
                     .pipe(
                       Effect.andThen(
-                        failure === "after-write" && index === 9
+                        failure === "after-write" && index === failedIndex
                           ? Effect.fail(jobError)
                           : Effect.void,
                       ),
@@ -525,24 +530,24 @@ it.effect.each(["none", "duplicate", "after-write"] as const)(
       yield* TestClock.adjust(0);
       yield* sink.write({ events: [] });
       if (rollback) {
-        const exit = yield* Fiber.join(consumers[9]!);
+        const exit = yield* Fiber.join(consumers[failedIndex]!);
         assert.isTrue(Exit.isFailure(exit));
         if (failure === "after-write" && Exit.isFailure(exit))
           assert.strictEqual(Cause.squash(exit.cause), jobError);
       }
       yield* TestClock.adjust(0);
+      const replay = yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect);
       assert.deepEqual(
-        yield* Queue.takeAll(publications),
-        (yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect)).map(
-          (stored) => stored.event.id,
-        ),
+        replay.length === 0 ? [] : yield* Queue.takeN(publications, replay.length),
+        replay.map((stored) => stored.event.id),
       );
-      assert.deepEqual(writes, [rollback ? 9 : 10]);
-      assert.equal(yield* sink.latestSequence(), highWater + (rollback ? 9 : 10));
+      assert.equal(yield* Queue.size(publications), 0);
+      assert.deepEqual(writes, rollback && streams === 1 ? [] : [streams - (rollback ? 1 : 0)]);
+      assert.equal(yield* sink.latestSequence(), highWater + streams - (rollback ? 1 : 0));
       for (let index = 0; index < threads.length; index++) {
         assert.lengthOf(
           (yield* projections.getThreadRecords(threads[index]!.id, ["messages"])).messages,
-          rollback && index === 9 ? 0 : 1,
+          rollback && index === failedIndex ? 0 : 1,
         );
       }
     }).pipe(
@@ -552,7 +557,7 @@ it.effect.each(["none", "duplicate", "after-write"] as const)(
       Effect.withTracerEnabled(true),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
-        ConfigProvider.fromUnknown({ T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS: "10" }),
+        ConfigProvider.fromUnknown({ T3CODE_PROVIDER_COMMIT_BATCHING: true }),
       ),
     );
   },

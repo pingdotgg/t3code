@@ -1,5 +1,4 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Tracer from "effect/Tracer";
 import * as Effect from "effect/Effect";
 
@@ -18,17 +17,7 @@ describe("Codex replay fixtures", () => {
       harness: CodexOrchestratorReplayHarness,
       materializeWorkspace: (transcript, workspace) =>
         Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
-    }).pipe(
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromUnknown({
-          T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS:
-            input.fixtureName.includes("subagent") || input.fixtureName === "multi_turn"
-              ? "10"
-              : "0",
-        }),
-      ),
-    ),
+    }),
   );
 });
 
@@ -59,14 +48,7 @@ it.effect(
         harness: CodexOrchestratorReplayHarness,
         materializeWorkspace: (transcript, workspace) =>
           Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
-      }).pipe(
-        Effect.withTracer(tracer),
-        Effect.withTracerEnabled(true),
-        Effect.provideService(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromUnknown({ T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS: "10" }),
-        ),
-      );
+      }).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true));
       assert.deepEqual(writes, [3, 3]);
     }),
 );

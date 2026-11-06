@@ -961,9 +961,13 @@ const layerBase: Layer.Layer<
     const coordinator = yield* ProviderCommitBatch.make(
       (work) =>
         withProviderBatch(work).pipe(
-          Effect.mapError((cause) => new ProviderCommitBatch.CommitBatchError({ cause })),
+          Effect.mapError((cause) =>
+            ProviderCommitBatch.isCommitBatchError(cause)
+              ? cause
+              : new ProviderCommitBatch.CommitBatchError({ cause }),
+          ),
         ),
-      yield* ProviderCommitBatch.windowMs,
+      yield* ProviderCommitBatch.enabled,
       // Each snapshot owns a savepoint and its deferred publications within the shared commit.
       Effect.fnUntraced(function* (
         work: Effect.Effect<void, ProviderCommitBatch.CommitBatchError>,
