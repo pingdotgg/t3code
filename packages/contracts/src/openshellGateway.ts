@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import type { RuntimeMode } from "./providerPolicy.ts";
 import { SecretReference } from "./secretReference.ts";
 
 /**
@@ -163,6 +164,12 @@ export interface GatewayDriverSpawnSpec {
   /** Seed the checkout or deps from this ref or seed store (spec section 10). */
   seedFrom?: string;
   resources?: OpenShellSandboxResources;
+  /**
+   * Runtime mode the worker's threads run under; translated into a sandbox
+   * policy at spawn (spec section 5.2), conservative default when absent.
+   * OPEN-QUESTION (spec section 5.2): inherit the delegating mode instead?
+   */
+  runtimeMode?: RuntimeMode;
 }
 
 export interface GatewayDriverSpawnOptions {
