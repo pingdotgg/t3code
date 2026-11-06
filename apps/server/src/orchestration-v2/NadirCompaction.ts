@@ -57,17 +57,19 @@ export const findNadirCompactionScript = Effect.fn("NadirCompaction.findScript")
     const userSettings = yield* readJson(fileSystem, path.join(claudeHome, "settings.json"));
     if (runsNadirCompaction(userSettings)) return undefined;
   }
-  const installed = yield* readJson(
-    fileSystem,
-    path.join(claudeHome, "plugins", "installed_plugins.json"),
-  );
-  const entries = field(field(installed, "plugins"), PLUGIN_ID);
-  const pluginPath = Array.isArray(entries) ? field(entries[0], "installPath") : undefined;
-  const candidates = [
-    path.join(claudeHome, "nadir", SCRIPT),
-    path.join(input.hostHome, ".claude", "nadir", SCRIPT),
-    ...(typeof pluginPath === "string" ? [path.join(pluginPath, "scripts", SCRIPT)] : []),
-  ];
+  const homes = [claudeHome, path.join(input.hostHome, ".claude")];
+  const pluginScripts: string[] = [];
+  for (const home of homes) {
+    const installed = yield* readJson(
+      fileSystem,
+      path.join(home, "plugins", "installed_plugins.json"),
+    );
+    const entries = field(field(installed, "plugins"), PLUGIN_ID);
+    const pluginPath = Array.isArray(entries) ? field(entries[0], "installPath") : undefined;
+    if (typeof pluginPath === "string")
+      pluginScripts.push(path.join(pluginPath, "scripts", SCRIPT));
+  }
+  const candidates = [...homes.map((home) => path.join(home, "nadir", SCRIPT)), ...pluginScripts];
   for (const script of candidates) {
     if (yield* fileSystem.exists(script).pipe(Effect.orElseSucceed(() => false))) return script;
   }

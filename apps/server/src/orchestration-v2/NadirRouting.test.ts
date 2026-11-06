@@ -1,4 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -9,7 +12,9 @@ import {
 
 import {
   baselineFor,
-  forgetChoices,
+  layerCeilingsAt,
+  layerCeilingsMemory,
+  NadirCeilings,
   nadirRequestBody,
   pickModel,
   rememberChoice,
@@ -74,23 +79,44 @@ describe("baselineFor", () => {
   const opus: ModelSelection = { instanceId, model: "claude-opus-4-6", options: [] };
   const haiku: ModelSelection = { instanceId, model: "claude-haiku-4-5" };
 
-  it("keeps the user's pick as the ceiling after Nadir routes down", () => {
-    forgetChoices();
-    rememberChoice("thread-1", opus, haiku);
-    // The picker now shows Haiku; sending again must not make Haiku the ceiling.
-    expect(baselineFor("thread-1", haiku)).toBe(opus);
-  });
+  it.effect("keeps the user's pick as the ceiling after Nadir routes down", () =>
+    Effect.gen(function* () {
+      const ceilings = yield* NadirCeilings;
+      yield* rememberChoice(ceilings, "thread-1", opus, haiku);
+      // The picker now shows Haiku; sending again must not make Haiku the ceiling.
+      expect(yield* baselineFor(ceilings, "thread-1", haiku)).toEqual(opus);
+      // Kept only while the thread runs below its ceiling.
+      yield* rememberChoice(ceilings, "thread-1", opus, opus);
+      expect(yield* ceilings.has("thread-1")).toBe(false);
+    }).pipe(Effect.provide(layerCeilingsMemory)),
+  );
 
-  it("treats a model the user picks by hand as the new ceiling", () => {
-    forgetChoices();
-    rememberChoice("thread-1", opus, haiku);
-    const sonnet: ModelSelection = { instanceId, model: "claude-sonnet-4-6" };
-    expect(baselineFor("thread-1", sonnet)).toBe(sonnet);
-    expect(baselineFor("thread-2", haiku)).toBe(haiku);
-    // Changing only the effort of the model Nadir chose is a pick too.
-    const haikuHigh: ModelSelection = { ...haiku, options: [{ id: "effort", value: "high" }] };
-    expect(baselineFor("thread-1", haikuHigh)).toBe(haikuHigh);
-  });
+  it.effect("keeps the ceiling across a server restart", () =>
+    Effect.gen(function* () {
+      const directory = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+      yield* Effect.gen(function* () {
+        yield* rememberChoice(yield* NadirCeilings, "thread-1", opus, haiku);
+      }).pipe(Effect.provide(layerCeilingsAt(directory)));
+      // A fresh store on the same directory is what the next server process opens.
+      const restarted = yield* Effect.gen(function* () {
+        return yield* baselineFor(yield* NadirCeilings, "thread-1", haiku);
+      }).pipe(Effect.provide(layerCeilingsAt(directory)));
+      expect(restarted).toEqual(opus);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("treats a model the user picks by hand as the new ceiling", () =>
+    Effect.gen(function* () {
+      const ceilings = yield* NadirCeilings;
+      yield* rememberChoice(ceilings, "thread-1", opus, haiku);
+      const sonnet: ModelSelection = { instanceId, model: "claude-sonnet-4-6" };
+      expect(yield* baselineFor(ceilings, "thread-1", sonnet)).toBe(sonnet);
+      expect(yield* baselineFor(ceilings, "thread-2", haiku)).toBe(haiku);
+      // Changing only the effort of the model Nadir chose is a pick too.
+      const haikuHigh: ModelSelection = { ...haiku, options: [{ id: "effort", value: "high" }] };
+      expect(yield* baselineFor(ceilings, "thread-1", haikuHigh)).toBe(haikuHigh);
+    }).pipe(Effect.provide(layerCeilingsMemory)),
+  );
 });
 
 describe("routedSelection", () => {

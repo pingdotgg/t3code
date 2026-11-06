@@ -55,6 +55,24 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         // A separate T3 Claude home skips user settings, so T3 must add the hooks itself.
         expect(yield* find(false)).toBe(labsScript);
 
+        // A plugin installed only under the host's own Claude home is found from a separate one.
+        const separateHome = yield* fileSystem.makeTempDirectoryScoped();
+        const hostPluginPath = path.join(hostHome, ".claude", "plugins", "cache", "nadir-route");
+        const hostPluginScript = path.join(hostPluginPath, "scripts", "context_session.py");
+        yield* touch(hostPluginScript);
+        yield* writeJson(path.join(hostHome, ".claude", "plugins", "installed_plugins.json"), {
+          plugins: { "nadir-route@nadir": [{ scope: "user", installPath: hostPluginPath }] },
+        });
+        expect(
+          yield* findNadirCompactionScript({
+            fileSystem,
+            path,
+            claudeHome: separateHome,
+            hostHome,
+            userSettingsLoaded: false,
+          }),
+        ).toBe(hostPluginScript);
+
         yield* writeJson(path.join(claudeHome, "settings.json"), {
           enabledPlugins: { "nadir-route@nadir": true },
         });

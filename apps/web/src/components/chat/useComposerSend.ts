@@ -72,6 +72,7 @@ import {
   markPromotedDraftThreadByRef,
   restoreFailedDraftThread,
   composerDraftHasUserContent,
+  draftModelPick,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -860,6 +861,9 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const threadIdForSend = activeThread.id;
+    const modelPickAtSend = draftModelPick(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+    );
     const sendSnapshot = snapshotComposerSend({
       prompt: promptForSend,
       images: composerImages,
@@ -1417,7 +1421,9 @@ export function useComposerSend(input: ComposerSendInput) {
       } else {
         turnStartSucceeded = true;
         // Nadir may run the turn on another model; the picker then shows the one that ran.
-        if (nadirRouting) releaseModelPick(scopeThreadRef(environmentId, threadIdForSend));
+        if (nadirRouting) {
+          releaseModelPick(scopeThreadRef(environmentId, threadIdForSend), modelPickAtSend);
+        }
         setKeepFullHistory(routeThreadKey, false);
         if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
         clearUsageLimitsFor(routeThreadKey);

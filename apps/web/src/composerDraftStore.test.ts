@@ -1560,6 +1560,20 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
+  it("releases the pick a send used but keeps one changed while it was in flight", () => {
+    const store = useComposerDraftStore.getState();
+    const sent = modelSelection(CODEX_DRIVER, "gpt-5.5");
+    const next = modelSelection(CODEX_DRIVER, "gpt-5.4");
+    store.setModelSelection(threadRef, sent, { explicit: true });
+    store.setModelSelection(threadRef, next, { explicit: true });
+    store.releaseModelPick(threadRef, sent);
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[next.instanceId],
+    ).toEqual(next);
+    store.releaseModelPick(threadRef, next);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
   it("releases an inactive thread pick only after its queued model becomes durable", () => {
     const store = useComposerDraftStore.getState();
     const pick = modelSelection(CODEX_DRIVER, "gpt-5.5", { fastMode: false });

@@ -6,6 +6,7 @@ import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+import * as NadirRouting from "./orchestration-v2/NadirRouting.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
@@ -1202,6 +1203,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
+      Layer.provideMerge(NadirRouting.layerCeilings),
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),

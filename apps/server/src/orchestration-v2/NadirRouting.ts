@@ -1,4 +1,4 @@
-import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
+import { ModelSelection, type ServerProvider } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   buildProviderOptionSelectionsFromDescriptors,
@@ -7,9 +7,16 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import * as Schema from "effect/Schema";
+
+import * as ServerConfig from "../config.ts";
 
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -25,35 +32,71 @@ const MAX_PROMPT_CHARS = 40_000;
 // A short follow-up ("yes", "do it") depends on context Nadir does not see.
 const MIN_PROMPT_WORDS = 4;
 
-// ponytail: per-process memory. A restart forgets the ceiling and treats the thread's current
-// model as the user's pick; persist it on the thread if that ever matters.
-const MAX_TRACKED_THREADS = 1_000;
-const ceilings = new Map<string, { baseline: ModelSelection; chosen: ModelSelection }>();
+const Ceiling = Schema.Struct({ baseline: ModelSelection, chosen: ModelSelection });
+
+/**
+ * A thread's routed turn: the user's pick (the ceiling) and the model Nadir ran instead. It
+ * lives on disk so a restart cannot turn a routed-down model into the thread's ceiling.
+ */
+export class NadirCeilings extends Context.Service<
+  NadirCeilings,
+  KeyValueStore.SchemaStore<typeof Ceiling>
+>()("t3/orchestration-v2/NadirRouting/NadirCeilings") {}
+
+const layerFromStore = Layer.effect(
+  NadirCeilings,
+  Effect.gen(function* () {
+    return KeyValueStore.toSchemaStore(yield* KeyValueStore.KeyValueStore, Ceiling);
+  }),
+);
+
+export const layerCeilingsMemory = layerFromStore.pipe(Layer.provide(KeyValueStore.layerMemory));
+
+export const layerCeilingsAt = (directory: string) =>
+  layerFromStore.pipe(Layer.provide(KeyValueStore.layerFileSystem(directory)));
+
+// ponytail: one small file per thread while it runs below its ceiling; a thread deleted in that
+// state leaves its file. Prune with thread deletion if the directory ever grows.
+export const layerCeilings = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    return layerCeilingsAt(path.join(config.stateDir, "nadir-ceilings")).pipe(
+      Layer.catch(() =>
+        Layer.effectDiscard(
+          Effect.logWarning("Nadir ceiling directory unavailable; ceilings reset on restart"),
+        ).pipe(Layer.provideMerge(layerCeilingsMemory)),
+      ),
+    );
+  }),
+);
 
 /** The user's pick: the incoming selection, unless it is what Nadir chose last turn. */
-export function baselineFor(threadId: string, incoming: ModelSelection): ModelSelection {
-  const prior = ceilings.get(threadId);
-  return prior !== undefined && draftModelPickMatchesThread(incoming, prior.chosen)
-    ? prior.baseline
-    : incoming;
-}
+export const baselineFor = (
+  ceilings: NadirCeilings["Service"],
+  threadId: string,
+  incoming: ModelSelection,
+) =>
+  ceilings.get(threadId).pipe(
+    Effect.map((prior) =>
+      Option.isSome(prior) && draftModelPickMatchesThread(incoming, prior.value.chosen)
+        ? prior.value.baseline
+        : incoming,
+    ),
+    Effect.orElseSucceed(() => incoming),
+  );
 
-export function rememberChoice(
+/** Keeps the ceiling only while the thread runs below it. */
+export const rememberChoice = (
+  ceilings: NadirCeilings["Service"],
   threadId: string,
   baseline: ModelSelection,
   chosen: ModelSelection,
-): void {
-  ceilings.delete(threadId);
-  ceilings.set(threadId, { baseline, chosen });
-  if (ceilings.size > MAX_TRACKED_THREADS) {
-    const oldest = ceilings.keys().next().value;
-    if (oldest !== undefined) ceilings.delete(oldest);
-  }
-}
-
-export function forgetChoices(): void {
-  ceilings.clear();
-}
+) =>
+  (baseline === chosen
+    ? ceilings.remove(threadId)
+    : ceilings.set(threadId, { baseline, chosen })
+  ).pipe(Effect.catch((cause) => Effect.logWarning("Nadir ceiling not saved", { cause })));
 
 /** Models the user can pick for this instance, the menu Nadir chooses from. */
 function modelMenu(provider: ServerProvider | undefined): ReadonlyArray<string> {
@@ -207,10 +250,16 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
     // Optional so callers outside the client intake (MCP tools, tests) need not provide them.
     const client = yield* Effect.serviceOption(HttpClient.HttpClient);
     const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-    if (Option.isNone(client) || Option.isNone(registry) || !(yield* isEnabled)) {
+    const ceilings = yield* Effect.serviceOption(NadirCeilings);
+    if (
+      Option.isNone(client) ||
+      Option.isNone(registry) ||
+      Option.isNone(ceilings) ||
+      !(yield* isEnabled)
+    ) {
       return input.selection;
     }
-    const baseline = baselineFor(input.threadId, input.selection);
+    const baseline = yield* baselineFor(ceilings.value, input.threadId, input.selection);
     const text = input.text.trim();
     const judgeable =
       text.length <= MAX_PROMPT_CHARS &&
@@ -220,7 +269,7 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
     const provider = providers.find((candidate) => candidate.instanceId === baseline.instanceId);
     const menu = modelMenu(provider);
     if (!judgeable || !menu.includes(baseline.model)) {
-      rememberChoice(input.threadId, baseline, baseline);
+      yield* rememberChoice(ceilings.value, input.threadId, baseline, baseline);
       return baseline;
     }
     const current = input.cache?.model ?? input.selection.model;
@@ -240,7 +289,7 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
     );
     const model = pickModel(answer, { baseline: baseline.model, current, menu });
     const chosen = model === baseline.model ? baseline : routedSelection(baseline, model, provider);
-    rememberChoice(input.threadId, baseline, chosen);
+    yield* rememberChoice(ceilings.value, input.threadId, baseline, chosen);
     if (model !== baseline.model) {
       yield* Effect.logInfo("Nadir routed turn", { from: baseline.model, to: model });
     }

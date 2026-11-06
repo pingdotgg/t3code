@@ -626,8 +626,11 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => Promise<void>;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
-  /** Drops the draft's model pick so the picker follows the thread's model again. */
-  releaseModelPick: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Drops the draft's model pick so the picker follows the thread's model again, unless the
+   * pick changed from `sentPick` while the send was in flight.
+   */
+  releaseModelPick: (threadRef: ComposerThreadTarget, sentPick: ModelSelection | undefined) => void;
   /** Clears text and attachments, preserving terminal/element contexts, preview annotations, and review comments. */
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
   /** Keeps attachments over destination limits, other environments' uploads, terminal/element contexts, annotations, and review comments in source. */
@@ -1393,6 +1396,16 @@ function normalizeComposerTarget(
     return draftId.length > 0 ? DraftId.make(draftId) : null;
   }
   return target;
+}
+
+/** The model the draft's picker holds for its active provider, if the user picked one. */
+export function draftModelPick(
+  draft:
+    | Pick<ComposerThreadDraftState, "activeProvider" | "modelSelectionByProvider">
+    | null
+    | undefined,
+): ModelSelection | undefined {
+  return draft?.activeProvider ? draft.modelSelectionByProvider[draft.activeProvider] : undefined;
 }
 
 export function resolveComposerDraftKey(
@@ -4037,11 +4050,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           await Promise.resolve();
           verifyPersistedAttachments(threadKey, attachments, set);
         },
-        releaseModelPick: (threadRef) => {
+        releaseModelPick: (threadRef, sentPick) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           set((state) => {
             const current = state.draftsByThreadKey[threadKey];
-            if (!current || current.activeProvider === null) return state;
+            const pick = draftModelPick(current);
+            if (!current || pick === undefined || sentPick === undefined) return state;
+            if (!draftModelPickMatchesThread(pick, sentPick)) return state;
             const { modelSelectionExplicit: _explicit, ...retained } = current;
             const draft = { ...retained, activeProvider: null, modelSelectionByProvider: {} };
             const drafts = { ...state.draftsByThreadKey };
