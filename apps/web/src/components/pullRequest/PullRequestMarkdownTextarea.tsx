@@ -89,7 +89,9 @@ export function PullRequestMarkdownTextarea({
   const [highlight, setHighlight] = useState({ query: "", index: 0 });
 
   const trigger =
-    mentionScope === null || caret === null ? null : detectPullRequestMention(value, caret);
+    mentionScope === null || caret === null || props.readOnly
+      ? null
+      : detectPullRequestMention(value, caret);
   const open = trigger !== null && trigger.rangeStart !== dismissedAt;
   const { candidates, isPending, failed } = useMentionCandidates(
     mentionScope,
