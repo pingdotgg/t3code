@@ -9,8 +9,15 @@ import * as GitLabMediaFetch from "./gitLabMediaFetch.ts";
 
 const UPLOAD = "/api/v4/projects/acme%2Fweb/uploads/871cca6041e4d445daf391a8a17d8fb2/clip.mp4";
 
-/** `glab` with the given tokens per host, each read handing out the next one. */
-const glab = (tokens: Record<string, Array<string>>, calls: Array<string>) =>
+/**
+ * `glab` with the given tokens per host, each read handing out the next one, logged in to
+ * `loggedIn`. Older `glab` reads GITLAB_TOKEN out for any host, logged in or not.
+ */
+const glab = (
+  tokens: Record<string, Array<string>>,
+  calls: Array<string>,
+  loggedIn = Object.keys(tokens),
+) =>
   Layer.mock(GitLabCli.GitLabCli)({
     execute: (input) =>
       Effect.sync(() => {
@@ -19,7 +26,10 @@ const glab = (tokens: Record<string, Array<string>>, calls: Array<string>) =>
         return {
           exitCode: ChildProcessSpawner.ExitCode(0),
           stdout: input.args[0] === "config" ? (tokens[host]?.shift() ?? "") : "{}",
-          stderr: "",
+          stderr:
+            input.args[0] === "auth" && loggedIn.includes(host)
+              ? `${host}\n  ✓ Logged in to ${host} as someone\n`
+              : "",
           stdoutTruncated: false,
           stderrTruncated: false,
         };
@@ -48,7 +58,7 @@ describe("GitLabMediaFetch", () => {
       ).toBeNull();
       expect(requests).toEqual([]);
     }).pipe(
-      Effect.provide(glab({}, [])),
+      Effect.provide(glab({ "gitlab.evil.test": ["env-token"] }, [], [])),
       Effect.provideService(
         HttpClient.HttpClient,
         respondWith(({ url }) => {
@@ -69,8 +79,10 @@ describe("GitLabMediaFetch", () => {
       expect(response?.status).toBe(200);
       expect(authorizations).toEqual(["Bearer expired", "Bearer fresh"]);
       expect(calls).toEqual([
+        "auth status --hostname gitlab.com",
         "config get token --host gitlab.com",
         "api user",
+        "auth status --hostname gitlab.com",
         "config get token --host gitlab.com",
       ]);
     }).pipe(

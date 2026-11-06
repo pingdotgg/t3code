@@ -13,6 +13,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as GitLabCli from "./GitLabCli.ts";
+import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TOKEN_TTL = Duration.seconds(10);
@@ -28,12 +29,19 @@ export const make = Effect.gen(function* () {
   const cwd = yield* HostProcess.WorkingDirectory;
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
 
-  // `glab` resolves GITLAB_TOKEN and its own config here, and prints nothing for a host it has
-  // no account on.
+  // Older `glab` hands GITLAB_TOKEN out for any host, so the host must be one it has a login for.
   const tokens = yield* Cache.makeWith(
     (host: string) =>
-      cli.execute({ cwd, args: ["config", "get", "token", "--host", host] }).pipe(
-        Effect.map((output) => output.stdout.trim() || null),
+      cli.execute({ cwd, args: ["auth", "status", "--hostname", host] }).pipe(
+        Effect.flatMap((status) =>
+          parseGitLabAuthStatusHosts(`${status.stdout}\n${status.stderr}`).some(
+            (entry) => entry.host === host.toLowerCase(),
+          )
+            ? cli
+                .execute({ cwd, args: ["config", "get", "token", "--host", host] })
+                .pipe(Effect.map((output) => output.stdout.trim() || null))
+            : Effect.succeed(null),
+        ),
         Effect.orElseSucceed(() => null),
       ),
     {
