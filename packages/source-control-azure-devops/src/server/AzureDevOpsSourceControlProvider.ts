@@ -1,7 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
+import * as AzureDevOpsChangeRequestTemplate from "./azureDevOpsChangeRequestTemplate.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -73,9 +76,29 @@ function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): Chang
 
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const { git } = yield* SourceControlHost.SourceControlHost;
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
+    readChangeRequestTemplate: Effect.fn(
+      "AzureDevOpsSourceControlProvider.readChangeRequestTemplate",
+    )(
+      function* ({ cwd }) {
+        // Azure uses the repository default branch even when the PR targets another branch.
+        const remoteName = yield* git.resolvePrimaryRemoteName(cwd);
+        const defaultRef = yield* git.execute({
+          operation: "AzureDevOpsSourceControlProvider.resolveDefaultBranch",
+          cwd,
+          args: ["symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
+        });
+        return yield* AzureDevOpsChangeRequestTemplate.detect(
+          cwd,
+          defaultRef.stdout.trim(),
+          git.execute,
+        );
+      },
+      Effect.orElseSucceed(() => Option.none()),
+    ),
     listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
