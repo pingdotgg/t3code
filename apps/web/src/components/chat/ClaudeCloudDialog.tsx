@@ -42,9 +42,13 @@ export function ClaudeCloudDialog({
   const config = decodeClaudeSettings(
     settings.providerInstances[provider.instanceId]?.config ?? {},
   );
-  const binaryPath = Option.isSome(config) ? config.value.binaryPath : "claude";
+  const binaryPath = Option.isSome(config) ? config.value.binaryPath : null;
   const submit = async () => {
     if (busy) return;
+    if (binaryPath === null) {
+      setError("Invalid Claude instance settings. Check the provider configuration.");
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
