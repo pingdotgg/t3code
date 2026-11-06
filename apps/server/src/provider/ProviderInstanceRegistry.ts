@@ -130,6 +130,39 @@ const readInstanceSecrets = Effect.fn("ProviderInstanceRegistry.readInstanceSecr
   return { secrets, unreadable };
 });
 
+// Replaces only the checked reference's value in the secrets a live instance already holds, so
+// another reference whose read failed earlier is not read again and does not park the instance.
+const carryCheckedSecret = <R>(
+  driver: AnyProviderDriver<R> | undefined,
+  entry: ProviderInstanceConfig,
+  current: InstanceSecrets,
+  checked: SecretReference,
+  value: string | undefined,
+): InstanceSecrets => {
+  if (value === undefined || value.trim() === "") return current;
+  const matches = (reference: SecretReference) =>
+    reference.provider === checked.provider && reference.reference === checked.reference;
+  // A live instance resolved every variable in order, so slots line up with the entry's variables
+  // by position; names may repeat.
+  const variables = entry.environment ?? [];
+  const replacedFields = new Set(
+    configSecretReferences(driver, entry).flatMap(({ field, reference }) =>
+      matches(reference) ? [field] : [],
+    ),
+  );
+  return {
+    environment: current.environment.map((variable, index) => {
+      const source = variables[index]?.value;
+      return source !== undefined && typeof source !== "string" && matches(source)
+        ? { ...variable, value }
+        : variable;
+    }),
+    config: current.config.map((slot) =>
+      replacedFields.has(slot.field) ? { ...slot, value } : slot,
+    ),
+  };
+};
+
 /** Conflicting saved flags must preserve any explicit disable. */
 const resolveEntryEnabled = (entry: ProviderInstanceConfig, typedConfig: unknown): boolean => {
   const rawConfigEnabled = providerInstanceConfigEnabledFlag(entry.config);
@@ -161,6 +194,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   readonly rawInstanceId: string;
   readonly entry: ProviderInstanceConfig;
   readonly deferSecrets: boolean;
+  readonly carriedSecrets?: InstanceSecrets | undefined;
 }): Effect.fn.Return<
   | { readonly kind: "live"; readonly live: LiveEntry }
   | {
@@ -171,7 +205,15 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   never,
   R | SecretResolver.SecretResolver
 > {
-  const { driversById, parentScope, instanceId, rawInstanceId, entry, deferSecrets } = input;
+  const {
+    driversById,
+    parentScope,
+    instanceId,
+    rawInstanceId,
+    entry,
+    deferSecrets,
+    carriedSecrets,
+  } = input;
   const blocked = input.blockedReason(entry.driver);
   if (blocked !== undefined) {
     return {
@@ -235,12 +277,14 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       }),
     };
   }
-  const { secrets, unreadable } = enabled
-    ? yield* readInstanceSecrets(driver, entry)
-    : {
-        secrets: { environment: withoutSecretReferences(entry.environment ?? []), config: [] },
-        unreadable: [],
-      };
+  const { secrets, unreadable } = carriedSecrets
+    ? { secrets: carriedSecrets, unreadable: [] }
+    : enabled
+      ? yield* readInstanceSecrets(driver, entry)
+      : {
+          secrets: { environment: withoutSecretReferences(entry.environment ?? []), config: [] },
+          unreadable: [],
+        };
   // Starting with a blank credential would fail later with a less useful error, or fall back to
   // whatever the server inherited.
   if (unreadable.length > 0) {
@@ -311,9 +355,10 @@ const makeReconcile = <R>(input: {
   configMap: ProviderInstanceConfigMap,
   rebuild?: ReadonlySet<ProviderInstanceId>,
   deferSecrets?: boolean,
+  carried?: ReadonlyMap<ProviderInstanceId, InstanceSecrets>,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
   const { state, driversById, blockedReason, parentScope } = input;
-  return (configMap, rebuild = new Set(), deferSecrets = false) =>
+  return (configMap, rebuild = new Set(), deferSecrets = false, carried = new Map()) =>
     Effect.gen(function* () {
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
@@ -365,6 +410,7 @@ const makeReconcile = <R>(input: {
           const instanceId = ProviderInstanceId.make(rawInstanceId);
           const kept = previousEntries.has(instanceId) && !replacedIds.has(instanceId);
           return kept ||
+            carried.has(instanceId) ||
             parkedSnapshot(instanceId, entry) !== undefined ||
             !(yield* isEntryEnabled(driversById, entry))
             ? []
@@ -406,6 +452,7 @@ const makeReconcile = <R>(input: {
           rawInstanceId,
           entry,
           deferSecrets,
+          carriedSecrets: carried.get(instanceId),
         });
         if (result.kind === "live") {
           builtEntries.set(instanceId, result.live);
@@ -503,12 +550,12 @@ export const makeProviderInstanceRegistry = Effect.fn(
       );
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does
-  // not restart providers whose credentials are the same. `fresh` drops the cached values first;
-  // without it the values a caller just read are used as they are.
+  // not restart providers whose credentials are the same. a missing `checked` reference drops
+  // the cached values first; with one, only that value is replaced and the rest are carried over.
   const reloadWhere = Effect.fn("ProviderInstanceRegistry.reloadWhere")(
     function* (
       select: (rawInstanceId: string, entry: ProviderInstanceConfig) => boolean,
-      fresh: boolean,
+      checked?: SecretReference,
     ) {
       const configMap = yield* Ref.get(configMapRef);
       const targets = yield* Effect.filter(Object.entries(configMap), ([rawInstanceId, entry]) =>
@@ -519,14 +566,29 @@ export const makeProviderInstanceRegistry = Effect.fn(
       if (targets.length === 0) return [];
       const resolver = yield* SecretResolver.SecretResolver;
       const references = targets.flatMap(([, entry]) => secretReferencesOf(driversById, entry));
-      if (fresh) yield* resolver.invalidate(references);
-      yield* resolver.read(references);
+      if (checked === undefined) yield* resolver.invalidate(references);
+      const [checkedValue] = yield* resolver.read(checked === undefined ? references : [checked]);
       const live = yield* Ref.get(entries);
       const rebuild = new Set<ProviderInstanceId>();
+      const carried = new Map<ProviderInstanceId, InstanceSecrets>();
       for (const [rawInstanceId, entry] of targets) {
         const current = live.get(ProviderInstanceId.make(rawInstanceId));
         if (current === undefined) {
           rebuild.add(ProviderInstanceId.make(rawInstanceId));
+          continue;
+        }
+        if (checked !== undefined) {
+          const secrets = carryCheckedSecret(
+            driversById.get(entry.driver),
+            current.entry,
+            current.secrets,
+            checked,
+            checkedValue,
+          );
+          if (!Equal.equals(secrets, current.secrets)) {
+            rebuild.add(current.instance.instanceId);
+            carried.set(current.instance.instanceId, secrets);
+          }
           continue;
         }
         const { secrets, unreadable } = yield* readInstanceSecrets(
@@ -538,7 +600,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
           rebuild.add(current.instance.instanceId);
         }
       }
-      yield* reconcileWithR(configMap, rebuild);
+      yield* reconcileWithR(configMap, rebuild, false, carried);
       return targets.map(([rawInstanceId]) => ProviderInstanceId.make(rawInstanceId));
     },
     (effect) => semaphore.withPermits(1)(effect),
@@ -548,7 +610,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
     (instanceId) =>
       reloadWhere(
         (rawInstanceId) => instanceId === undefined || rawInstanceId === instanceId,
-        true,
+        undefined,
       ).pipe(Effect.asVoid);
   const applySecret: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["applySecret"] =
     (reference) =>
@@ -559,7 +621,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
               candidate.provider === reference.provider &&
               candidate.reference === reference.reference,
           ),
-        false,
+        reference,
       );
 
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.

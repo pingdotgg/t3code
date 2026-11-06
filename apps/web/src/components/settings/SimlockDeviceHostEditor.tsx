@@ -301,6 +301,7 @@ function SimlockTokenField(props: {
           key={inputKey}
           id={id}
           aria-label="Agent token"
+          environmentId={props.environmentId}
           className="min-w-0 flex-1"
           configured={props.token.kind === "saved" && typeof props.saved === "string"}
           value={
@@ -311,7 +312,6 @@ function SimlockTokenField(props: {
                 : ""
           }
           sources={sources}
-          environmentId={props.environmentId}
           onValidityChange={props.onValidityChange}
           onSecretChange={(secret) =>
             props.onChange(

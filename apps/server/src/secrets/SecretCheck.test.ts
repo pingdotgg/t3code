@@ -166,7 +166,8 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
     ),
   );
   const secretCheck = yield* SecretCheck.SecretCheck.pipe(Effect.provide(services));
-  return { secretCheck, registry, reads, created, refreshed };
+  const resolver = yield* SecretResolver.SecretResolver.pipe(Effect.provide(resolverContext));
+  return { secretCheck, registry, mutator, resolver, reads, created, refreshed };
 });
 
 const layerTest = Layer.mergeAll(
@@ -235,10 +236,10 @@ it.layer(layerTest)("SecretCheck", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("a failed check keeps the value an instance already reads", () =>
+  it.effect("a failed check keeps the value the server already holds", () =>
     Effect.gen(function* () {
       const vault = new Map<string, Array<string | undefined>>([
-        [wanted.reference, ["wanted-old"]],
+        [wanted.reference, ["wanted-key"]],
         [locked.reference, ["locked-key", undefined]],
         [other.reference, ["other-key"]],
       ]);
@@ -246,14 +247,31 @@ it.layer(layerTest)("SecretCheck", (it) => {
       const readsBefore = server.reads.length;
 
       assert.strictEqual((yield* server.secretCheck.check(locked))._tag, "Failed");
+
+      assert.deepStrictEqual(yield* server.resolver.read([locked]), ["locked-key"]);
+      assert.deepStrictEqual(server.reads.slice(readsBefore), [locked.reference]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a check applies to an instance whose other secret failed a later refresh", () =>
+    Effect.gen(function* () {
+      const vault = new Map<string, Array<string | undefined>>([
+        [wanted.reference, ["wanted-old"]],
+        [locked.reference, ["locked-key", undefined]],
+        [other.reference, ["other-key"]],
+      ]);
+      const server = yield* setup(vault, [wanted, locked]);
+      // A Settings refresh while the vault is locked keeps the live instance and caches the failure.
+      yield* server.mutator.reloadSecrets(dependent);
       vault.set(wanted.reference, ["wanted-new"]);
+
       assert.deepStrictEqual(yield* server.secretCheck.check(wanted), { _tag: "Resolved" });
 
-      assert.deepStrictEqual(server.reads.slice(readsBefore), [locked.reference, wanted.reference]);
       assert.deepStrictEqual(server.created.at(-1), {
         instanceId: dependent,
         secrets: ["wanted-new", "locked-key"],
       });
+      assert.deepStrictEqual(yield* server.registry.listUnavailable, []);
     }).pipe(Effect.scoped),
   );
 });
