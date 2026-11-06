@@ -4,7 +4,10 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { Textarea } from "~/components/ui/textarea";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "~/components/pullRequest/PullRequestMarkdownTextarea";
 import {
   SpeechTextField,
   TextFieldSpeechControls,
@@ -40,6 +43,8 @@ interface DiffCommentAnnotationProps {
   pending?: boolean;
   secondaryAction?: DiffCommentSecondaryAction;
   focusOnMount?: boolean;
+  /** Set only for pull request comments, where `@` completes the repository's users. */
+  completionScope?: PullRequestCompletionScope | null;
   /** When a saved comment was written, shown beside the author as a relative time. */
   createdAt?: string | undefined;
   /** Where the comment lives now, such as "In composer", as a chip at the end of the head. */
@@ -112,6 +117,7 @@ export function DiffCommentAnnotation({
   pending = false,
   secondaryAction,
   focusOnMount = true,
+  completionScope = null,
   createdAt,
   stateLabel,
 }: DiffCommentAnnotationProps) {
@@ -188,8 +194,9 @@ export function DiffCommentAnnotation({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <CommentCardHead meta={rangeLabel} stateLabel={stateLabel} />
-      <Textarea
+      <PullRequestMarkdownTextarea
         ref={textareaRef}
+        completionScope={completionScope}
         readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"
@@ -197,7 +204,7 @@ export function DiffCommentAnnotation({
         dir={textDirection(displayedText)}
         placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}
-        onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}
+        onValueChange={onTextChange ?? setLocalDraftText}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
           event.currentTarget.setSelectionRange(end, end);
