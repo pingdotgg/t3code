@@ -13,8 +13,9 @@ import { useState, type ReactNode } from "react";
 import { MorphIcon } from "~/components/MorphIcon";
 import { T3AppIcon } from "~/components/T3AppIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { formatShortTimestamp } from "../../timestampFormat";
 import { serverEnvironment } from "../../state/server";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -32,9 +33,6 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
   return error instanceof Error ? error.message : String(error);
 };
-
-const expiryTime = (expiresAt: number) =>
-  new Date(expiresAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
 function ExternalLink(props: { readonly href: string; readonly children: ReactNode }) {
   return (
@@ -100,6 +98,7 @@ export function SourceControlAppSignInSettings({
   const { signIns, tokens } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),
   );
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const signedIn = (signIns[host] ?? "").length > 0;
   const token = tokens[host];
   // A token read from a secret provider overrides the sign-in like a saved one.
@@ -250,7 +249,8 @@ export function SourceControlAppSignInSettings({
             </Button>
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span aria-hidden className="size-1.5 rounded-full bg-warning" />
-              Waiting for approval · code expires at {expiryTime(waiting.expiresAt)}
+              Waiting for approval · code expires at{" "}
+              {formatShortTimestamp(new Date(waiting.expiresAt).toISOString(), timestampFormat)}
             </p>
           </div>
         </div>
