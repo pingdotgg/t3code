@@ -21,9 +21,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  isAnySideChatThread,
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   orchestrationV2WorktreePending,
+  supportsSideChats,
   type EnvironmentId,
   type ModelSelection,
   type ProviderInteractionMode,
@@ -804,7 +806,7 @@ export function useThreadComposerState(input: {
   // Side chats do not nest or start from subagents, and need a server that forks them.
   const sideChatUnavailableReason = (() => {
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
-    if (selectedThreadShell?.lineage.sideChat === true)
+    if (selectedThreadShell && isAnySideChatThread(selectedThreadShell))
       return "Side chats cannot start side chats.";
     if (selectedThreadShell?.lineage.relationshipToParent === "subagent") {
       return "Subagent threads cannot start side chats.";
@@ -812,7 +814,7 @@ export function useThreadComposerState(input: {
     if (!selectedThreadShell || !serverConfig) {
       return "Side chats are not ready yet. Try again in a moment.";
     }
-    if (serverConfig.environment.capabilities.sideChats !== true) {
+    if (!supportsSideChats(serverConfig.environment)) {
       return "Update this environment's T3 Code server to use side chats.";
     }
     if (selectedThreadCreation !== null) return "Side chats start after the first message.";

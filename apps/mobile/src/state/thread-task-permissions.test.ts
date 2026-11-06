@@ -341,9 +341,15 @@ describe("mobile task permissions", () => {
 
   it("starts a side chat for /side instead of sending to the thread", async () => {
     state.grantedEnvironments.add("secondary");
+    // Released T3 Learn servers sent sideChats for their own side chats and would fork a listed thread.
     state.serverConfig = {
       ...state.serverConfig,
-      environment: { capabilities: { sideChats: true } },
+      environment: { capabilities: { sideChats: true }, serverVersion: "0.1.4-learn.3" },
+    } as ServerConfig;
+    expect(useThreadComposerState(NO_SIDE_CHATS).sideChatUnavailableReason).not.toBeNull();
+    state.serverConfig = {
+      ...state.serverConfig,
+      environment: { capabilities: { sideChats: true }, serverVersion: "0.1.7" },
     } as ServerConfig;
     state.draft = { ...state.draft, text: "/side why does this fail?" };
     const startSideChat = vi.fn(async () => true);
