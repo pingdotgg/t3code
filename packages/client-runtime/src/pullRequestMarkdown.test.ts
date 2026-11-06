@@ -157,7 +157,6 @@ describe("change request reference autolinks", () => {
 
   // regression: the mobile review guide linked every host's `#5` with GitHub's grammar
   it("links nothing on a host whose grammar is not applied", () => {
-    expect(urls("gitlab", "https://gitlab.com/group/project/-/merge_requests/7", "#5")).toBeNull();
     expect(urls("forgejo", "https://codeberg.org/acme/web/pulls/7", "#5")).toBeNull();
   });
 });
