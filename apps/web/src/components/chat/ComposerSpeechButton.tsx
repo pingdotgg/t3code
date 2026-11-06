@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
-import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { Text } from "../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type SpeechPresentation = {
@@ -96,12 +96,12 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
     <>
       <VoiceWaveform level={props.level} />
       <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
-      <span className="shrink-0 text-secondary-label text-xs tabular-nums">
+      <Text variant="meta" tone="muted" numeric>
         {formatElapsed(elapsedSeconds)}
         {props.recordingLimitSeconds !== undefined
           ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
           : ""}
-      </span>
+      </Text>
     </>
   );
 }
@@ -128,13 +128,8 @@ function ComposerSpeechStatus(props: {
       {isRecording ? (
         <RecordingStatus level={props.level} recordingLimitSeconds={props.recordingLimitSeconds} />
       ) : (
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-right text-sm text-secondary-label",
-            isError && "text-destructive",
-          )}
-        >
-          {presentation.status}
+        <span className="min-w-0 flex-1 truncate text-right">
+          <Text tone={isError ? "destructive" : "muted"}>{presentation.status}</Text>
         </span>
       )}
     </div>
@@ -204,7 +199,7 @@ export function ComposerSpeechButton(props: {
             }}
             className="relative shrink-0"
           >
-            <MicIcon />
+            <MicIcon className="text-composer-icon" />
           </Button>
         }
       />
