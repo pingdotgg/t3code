@@ -1,11 +1,15 @@
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import { managedCapabilityDenial } from "@t3tools/contracts";
+import { ToolCallVisibility } from "@t3tools/contracts/settings";
+import * as Schema from "effect/Schema";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT } from "~/hooks/useI18n";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { RichMessage, SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -52,6 +56,7 @@ export function LabsSettingsPanel() {
       <SettingsSection id="beta" title={t("settings.system.labs.beta")}>
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
+        <ToolCallVisibilityRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -102,6 +107,55 @@ function BoringSidebarMultilineRow() {
           }
           aria-label={t("settings.system.labs.boringMultiline.title")}
         />
+      }
+    />
+  );
+}
+
+const TOOL_CALL_VISIBILITY_LABELS: Record<ToolCallVisibility, MessageKey> = {
+  showAll: "settings.system.labs.toolCalls.showAll",
+  hideSuccessful: "settings.system.labs.toolCalls.hideSuccessful",
+  hideAll: "settings.system.labs.toolCalls.hideAll",
+  zen: "settings.system.labs.toolCalls.zen",
+};
+
+const isToolCallVisibility = Schema.is(ToolCallVisibility);
+
+function ToolCallVisibilityRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const t = useT();
+  return (
+    <SettingsRow
+      {...searchableSetting("tool-call-visibility")}
+      description={t("settings.system.labs.toolCalls.description")}
+      control={
+        <div className="w-full sm:w-40">
+          <Select
+            value={settings.toolCallVisibility}
+            onValueChange={(value) => {
+              if (isToolCallVisibility(value)) updateSettings({ toolCallVisibility: value });
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-full min-w-0"
+              aria-label={t("settings.system.labs.toolCalls.aria")}
+            >
+              <SelectValue>
+                {t(TOOL_CALL_VISIBILITY_LABELS[settings.toolCallVisibility])}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="showAll">{t("settings.system.labs.toolCalls.showAll")}</SelectItem>
+              <SelectItem value="hideSuccessful">
+                {t("settings.system.labs.toolCalls.hideSuccessful")}
+              </SelectItem>
+              <SelectItem value="hideAll">{t("settings.system.labs.toolCalls.hideAll")}</SelectItem>
+              <SelectItem value="zen">{t("settings.system.labs.toolCalls.zen")}</SelectItem>
+            </SelectPopup>
+          </Select>
+        </div>
       }
     />
   );

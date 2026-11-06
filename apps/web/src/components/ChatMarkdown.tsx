@@ -720,7 +720,7 @@ function useChatMarkdownState({
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
           Cause.fail(
             new BrowserPreviewUnavailableError({
-              message: "Preview access is unavailable for this client.",
+              message: t("app.voiceExtra.markdown.previewUnavailable"),
             }),
           ),
         ),
@@ -750,7 +750,7 @@ function useChatMarkdownState({
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
           Cause.fail(
             new BrowserPreviewUnavailableError({
-              message: "Environment is not connected.",
+              message: t("app.voiceExtra.markdown.environmentDisconnected"),
             }),
           ),
         ),

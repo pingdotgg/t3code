@@ -24,6 +24,7 @@ import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime/relay";
 import { executeConnectedEnvironmentHttpRequest } from "@t3tools/client-runtime/state/environmentHttpAuth";
 
+import { translateNow } from "~/components/media/translateNow";
 import { resolveCloudPublicConfig } from "./publicConfig";
 import {
   finishRelayClientInstall,
@@ -73,7 +74,7 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
     });
     if (!confirmed) {
       return yield* new CloudEnvironmentLinkError({
-        message: "Relay client installation was cancelled.",
+        message: translateNow("app.voiceExtra.link.installCancelled"),
       });
     }
 
@@ -91,7 +92,7 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
       );
     if (Option.isNone(installed) || installed.value.type !== "complete") {
       return yield* new CloudEnvironmentLinkError({
-        message: "The relay client install completed without a final status.",
+        message: translateNow("app.voiceExtra.link.installIncomplete"),
       });
     }
     const installedStatus = installed.value.status;
@@ -168,12 +169,12 @@ function ensureLinkedEnvironmentMatches(input: {
 }): Effect.Effect<void, CloudEnvironmentLinkError> {
   if (input.link.environmentId !== input.expectedEnvironmentId) {
     return new CloudEnvironmentLinkError({
-      message: "Relay returned credentials for a different environment.",
+      message: translateNow("app.voiceExtra.link.wrongEnvironment"),
     });
   }
   if (input.link.endpoint.providerKind !== input.expectedProviderKind) {
     return new CloudEnvironmentLinkError({
-      message: "Relay returned credentials for a different endpoint provider.",
+      message: translateNow("app.voiceExtra.link.wrongProvider"),
     });
   }
   return Effect.void;
@@ -223,7 +224,9 @@ const preparedEndpoint = (target: CloudLinkTarget) =>
       Option.match({
         onNone: () =>
           Effect.fail(
-            new CloudEnvironmentLinkError({ message: "The environment is not connected." }),
+            new CloudEnvironmentLinkError({
+              message: translateNow("app.voiceExtra.link.notConnected"),
+            }),
           ),
         onSome: ({ httpBaseUrl, target }) =>
           Effect.succeed({
@@ -338,7 +341,7 @@ export const linkEnvironmentToCloud: (input: {
   const configuredRelayUrl = relayUrl();
   if (!configuredRelayUrl) {
     return yield* new CloudEnvironmentLinkError({
-      message: "T3CODE_RELAY_URL is not configured.",
+      message: translateNow("app.voiceExtra.link.relayUrlMissing"),
     });
   }
   const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";

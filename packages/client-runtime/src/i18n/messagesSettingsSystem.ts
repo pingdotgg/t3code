@@ -10,7 +10,7 @@ export const enMessages = {
   "settings.system.dbNotice.title": "Database",
   "settings.system.dbNotice.reclaim.title": "Reclaim freed database space",
   "settings.system.dbNotice.reclaim.description":
-    "Old history is cleaned up automatically, but these databases still hold the freed space. Run the command on each machine to return it to disk; it pauses and restarts the background service. Quit the desktop app first if it hosts the environment.",
+    "These databases still hold space freed by history cleanup. Run the command on each machine to reclaim it. It restarts the background service. Quit the desktop app first if it hosts the environment.",
   "settings.system.dbNotice.row.title": "{size} GiB on {label}",
   "settings.system.dbNotice.copyCommand": "Copy command",
   "settings.system.dbNotice.dismiss": "Dismiss",
@@ -74,13 +74,20 @@ export const enMessages = {
     "In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent.",
   "settings.system.labs.guestLinks.title": "Guest links",
   "settings.system.labs.guestLinks.signInDescription":
-    "Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
+    "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
   "settings.system.labs.signIn": "Sign in",
   "settings.system.labs.guestLinks.description":
-    "Share a thread with a guest who watches it live in their browser and sends messages you approve. Needs T3 Connect: sign in and link this machine in <link>Sharing & access</link>. While it is off, every guest link stops working.",
+    "Share a thread with a guest who watches it live in a browser and sends messages you approve. Needs T3 Connect: sign in and link this machine in <link>Sharing & access</link>. Turning it off stops every guest link.",
   "settings.system.labs.linkedEnvs.title": "Linked environments",
   "settings.system.labs.linkedEnvs.description":
-    "Let agents here work on your other machines, and theirs here. Turn it on for each machine, then link them in <link>Connections</link>. While it is off, nothing new starts over a link; tasks already running finish.",
+    "Let agents here work on your other machines, and theirs here. Turn it on for each machine, then link them in <link>Connections</link>. While off, nothing new starts over a link; running tasks finish.",
+  "settings.system.labs.toolCalls.aria": "Tool calls in chat",
+  "settings.system.labs.toolCalls.description":
+    "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "settings.system.labs.toolCalls.showAll": "Show all",
+  "settings.system.labs.toolCalls.hideSuccessful": "Hide successful",
+  "settings.system.labs.toolCalls.hideAll": "Hide all",
+  "settings.system.labs.toolCalls.zen": "Zen",
   "settings.system.labs.simlock.title": "Simlock device hosts (alpha)",
   "settings.system.labs.simlock.description":
     "Let the Device panel lease simulators and emulators from your own <simlock>Simlock</simlock> pool, added in <link>Devices</link>. An alpha that may change or break. T3 Code never installs Simlock.",
@@ -1345,7 +1352,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.system.dbNotice.title": "数据库",
   "settings.system.dbNotice.reclaim.title": "回收已释放的数据库空间",
   "settings.system.dbNotice.reclaim.description":
-    "旧历史会自动清理，但这些数据库仍占用着已释放的空间。在每台机器上运行该命令即可归还磁盘空间；它会暂停并重启后台服务。如果桌面应用承载着该环境，请先退出桌面应用。",
+    "历史清理后，这些数据库仍占用已释放的空间。在每台机器上运行该命令即可回收空间。此操作会重启后台服务。如果桌面应用正在托管该环境，请先退出应用。",
   "settings.system.dbNotice.row.title": "{label} 上的 {size} GiB",
   "settings.system.dbNotice.copyCommand": "复制命令",
   "settings.system.dbNotice.dismiss": "忽略",
@@ -1414,6 +1421,13 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.system.labs.linkedEnvs.title": "已链接的环境",
   "settings.system.labs.linkedEnvs.description":
     "让这里的智能体在你的其他机器上工作，也让它们的智能体在这里工作。请在每台机器上开启，然后在<link>连接</link>中把它们链接起来。关闭后，不会再通过链接启动新任务；正在运行的任务会跑完。",
+  "settings.system.labs.toolCalls.aria": "会话中的工具调用",
+  "settings.system.labs.toolCalls.description":
+    "隐藏智能体执行的命令、编辑和搜索。隐藏成功项会保留失败项。禅模式只显示最终回答。审批、提问和错误始终显示。",
+  "settings.system.labs.toolCalls.showAll": "全部显示",
+  "settings.system.labs.toolCalls.hideSuccessful": "隐藏成功项",
+  "settings.system.labs.toolCalls.hideAll": "全部隐藏",
+  "settings.system.labs.toolCalls.zen": "禅模式",
   "settings.system.labs.simlock.title": "Simlock 设备主机（Alpha）",
   "settings.system.labs.simlock.description":
     "让设备面板从你自己的 <simlock>Simlock</simlock> 池中租用模拟器，该池在<link>设备</link>中添加。这是 Alpha 功能，可能会变化或出问题。T3 Code 不会安装 Simlock。",

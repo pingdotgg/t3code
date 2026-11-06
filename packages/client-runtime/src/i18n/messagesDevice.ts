@@ -4,6 +4,7 @@
  */
 export const enMessages = {
   "device.controls": "Device controls",
+  "device.error.dismiss": "Dismiss device error",
   "device.home": "Home",
   "device.back": "Back",
   "device.recents": "Recents",
@@ -76,6 +77,7 @@ export const enMessages = {
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
   "device.controls": "设备控制",
+  "device.error.dismiss": "关闭设备错误提示",
   "device.home": "主屏幕",
   "device.back": "返回",
   "device.recents": "最近使用",

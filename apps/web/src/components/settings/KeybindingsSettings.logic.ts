@@ -490,6 +490,8 @@ export function commandLabel(command: KeybindingCommand, t: TranslateFn = DEFAUL
     return t("settings.providers.keybindings.command.sendBackground");
   if (command === "composer.sendAndNewThread")
     return t("settings.providers.keybindings.command.sendAndNew");
+  if (command === "composer.dictation")
+    return t("settings.providers.keybindings.command.dictation");
   if (command === "thread.steerQueuedMessage")
     return t("settings.providers.keybindings.command.steerQueued");
   if (command === "thread.editQueuedMessage")

@@ -526,6 +526,7 @@ export const enMessages = {
   "settings.code.simlockEditor.gatewayUrl": "Gateway URL",
   "settings.code.simlockEditor.agentTokenFor": "Agent token · {name}",
   "settings.code.simlockEditor.agentToken": "Agent token",
+  "settings.code.simlockEditor.invalidSecretReference": "Enter a valid secret reference.",
   "settings.code.simlockEditor.hintMany":
     "Leases, drives, and streams devices. Create one per environment with {cmd}, or leave it blank to add it later. A blank token uses the machine's {tokenVar} when its {urlVar} is this gateway.",
   "settings.code.simlockEditor.hintOne":
@@ -551,7 +552,9 @@ export const enMessages = {
   "settings.code.mobileApp.storeLink": "{store} link",
   "settings.code.mobileApp.openStore": "Open {store}",
   "settings.code.deviceSources.loading": "Loading",
-  "settings.code.deviceSources.androidIncomplete": "Android list may be incomplete",
+  "settings.code.deviceSources.incomplete.device": "Device list may be incomplete",
+  "settings.code.deviceSources.incomplete.ios": "iOS list may be incomplete",
+  "settings.code.deviceSources.incomplete.android": "Android list may be incomplete",
   "settings.code.deviceSources.starting": "Starting",
   "settings.code.deviceSources.failed": "Failed",
   "settings.code.deviceSources.cannotChange": "This connection cannot change settings on {names}.",
@@ -1438,6 +1441,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.simlockEditor.gatewayUrl": "网关 URL",
   "settings.code.simlockEditor.agentTokenFor": "智能体令牌 · {name}",
   "settings.code.simlockEditor.agentToken": "智能体令牌",
+  "settings.code.simlockEditor.invalidSecretReference": "请输入有效的密钥引用。",
   "settings.code.simlockEditor.hintMany":
     "用于租用、操作和串流设备。为每个环境用 {cmd} 各创建一个，或留空稍后再添加。令牌留空时，会使用设备的 {tokenVar}（前提是其 {urlVar} 指向此网关）。",
   "settings.code.simlockEditor.hintOne":
@@ -1461,7 +1465,9 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.mobileApp.storeLink": "{store} 链接",
   "settings.code.mobileApp.openStore": "打开 {store}",
   "settings.code.deviceSources.loading": "加载中",
-  "settings.code.deviceSources.androidIncomplete": "Android 列表可能不完整",
+  "settings.code.deviceSources.incomplete.device": "设备列表可能不完整",
+  "settings.code.deviceSources.incomplete.ios": "iOS 列表可能不完整",
+  "settings.code.deviceSources.incomplete.android": "Android 列表可能不完整",
   "settings.code.deviceSources.starting": "启动中",
   "settings.code.deviceSources.failed": "失败",
   "settings.code.deviceSources.cannotChange": "此连接无法修改 {names} 上的设置。",

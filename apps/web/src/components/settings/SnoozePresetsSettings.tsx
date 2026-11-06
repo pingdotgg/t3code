@@ -348,7 +348,7 @@ function SnoozePresetFields(props: {
   // misclick on "When" can be undone without retyping it.
   const [memory, setMemory] = useState<KindMemory>({ minutes: 60, time: "09:00" });
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <Select
         value={when}
         items={Object.fromEntries(WHEN_VALUES.map((value) => [value, t(WHEN_LABELS[value])]))}
@@ -386,7 +386,7 @@ function SnoozePresetFields(props: {
           onChange={(minutes) => onChange({ ...preset, minutes })}
         />
       ) : (
-        <>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">
             {t("settings.threads.snoozeEditor.at")}
           </span>
@@ -403,7 +403,7 @@ function SnoozePresetFields(props: {
               }
             }}
           />
-        </>
+        </div>
       )}
     </div>
   );
@@ -427,7 +427,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
   }
   const unitLabels = amount === 1 ? SINGULAR_UNIT_LABELS : UNIT_LABELS;
   return (
-    <>
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <NumberField
         size="sm"
         className="w-32"
@@ -488,6 +488,6 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
           ))}
         </SelectPopup>
       </Select>
-    </>
+    </div>
   );
 }

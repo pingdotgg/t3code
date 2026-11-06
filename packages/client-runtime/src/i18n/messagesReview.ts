@@ -174,6 +174,7 @@ export const enMessages = {
   "review.pr.nFailing": "{count} of {total} failing",
   "review.pr.nPassing": "{count} of {total} passing",
   "review.pr.nRunning": "{count} of {total} running",
+  "review.pr.noMatchingReviewer": "Nobody with access matches that.",
   "review.pr.notFound": "{term} #{number} not found",
   "review.pr.notFoundHint":
     "It may be an issue rather than a {term}, or this account can't see it.",
@@ -213,6 +214,14 @@ export const enMessages = {
   "review.pr.termLink": "{term} link",
   "review.pr.termMerged": "{term} merged",
   "review.pr.termReopened": "{term} reopened",
+  "review.pr.truncated.searchFailed":
+    "Only the people already listed are matched: the host search failed. {error}",
+  "review.pr.truncated.searchable":
+    "This repository has more people with access than are listed here. Search to find them.",
+  "review.pr.truncated.searchTruncated":
+    "More people match than the host returned. Keep typing to narrow it down.",
+  "review.pr.truncated.unsearchable":
+    "This repository has more people with access than are listed here. Ask for the rest on the host.",
   "review.pr.viewCommit": "View commit {id}",
   "review.pr.viewedIn": "viewed in {app}",
   "review.pr.workflowsAndChecksAwaiting":
@@ -953,6 +962,7 @@ export const enMessages = {
   "review.extra.search.files": "Search files",
   "review.extra.copy.mention": "Copy mention",
   "review.extra.add.to.chat": "Add to chat",
+  "review.extra.added.to.composer": "Added to the composer",
   "review.extra.mention.copied": "Mention copied",
   "review.extra.failed.to.copy.mention": "Failed to copy mention",
   "review.extra.unable.to.add.to.chat": "Unable to add to chat",
@@ -1289,6 +1299,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "review.pr.nFailing": "{count}/{total} 未通过",
   "review.pr.nPassing": "{count}/{total} 已通过",
   "review.pr.nRunning": "{count}/{total} 正在运行",
+  "review.pr.noMatchingReviewer": "没有符合条件的可访问人员。",
   "review.pr.notFound": "未找到 {term} #{number}",
   "review.pr.notFoundHint": "它可能是 Issue 而不是 {term}，或者此账号看不到它。",
   "review.pr.openChecks": "打开检查：{summary}",
@@ -1326,6 +1337,11 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "review.pr.termLink": "{term} 链接",
   "review.pr.termMerged": "{term} 已合并",
   "review.pr.termReopened": "{term} 已重新打开",
+  "review.pr.truncated.searchFailed": "仅匹配已列出的人员：托管平台搜索失败。{error}",
+  "review.pr.truncated.searchable": "此仓库有访问权限的人多于此处列出的数量。请搜索查找。",
+  "review.pr.truncated.searchTruncated": "匹配人数多于托管平台返回的数量。继续输入以缩小范围。",
+  "review.pr.truncated.unsearchable":
+    "此仓库有访问权限的人多于此处列出的数量。请在托管平台上查询其余人员。",
   "review.pr.viewCommit": "查看提交 {id}",
   "review.pr.viewedIn": "已在 {app} 中查看",
   "review.pr.workflowsAndChecksAwaiting":
@@ -2114,6 +2130,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "review.extra.search.files": "\u641c\u7d22\u6587\u4ef6",
   "review.extra.copy.mention": "\u590d\u5236\u5f15\u7528",
   "review.extra.add.to.chat": "\u6dfb\u52a0\u5230\u804a\u5929",
+  "review.extra.added.to.composer": "已添加到输入框",
   "review.extra.mention.copied": "\u5f15\u7528\u5df2\u590d\u5236",
   "review.extra.failed.to.copy.mention": "\u590d\u5236\u5f15\u7528\u5931\u8d25",
   "review.extra.unable.to.add.to.chat": "\u65e0\u6cd5\u6dfb\u52a0\u5230\u804a\u5929",
