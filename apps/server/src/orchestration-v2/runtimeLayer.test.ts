@@ -7557,6 +7557,19 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       assert.isNotNull(visited.thread.lastVisitedAt);
       assert.equal(DateTime.formatIso(visited.thread.lastVisitedAt!), visitedAt);
       assert.deepEqual(visited.thread.updatedAt, createdUpdatedAt);
+      const sql = yield* SqlClient.SqlClient;
+      // The event carries the read state only, not a copy of the thread.
+      const visitEvents = yield* sql<{
+        readonly event_type: string;
+        readonly payload_json: string;
+      }>`
+        SELECT event_type, payload_json FROM orchestration_events
+        WHERE command_id = ${"runtime-layer-visited-thread-visit"}
+      `;
+      assert.deepEqual(
+        visitEvents.map((row) => [row.event_type, JSON.parse(row.payload_json)]),
+        [["thread.visit-recorded", { lastVisitedAt: visitedAt }]],
+      );
 
       yield* orchestrator.dispatch({
         type: "thread.visit",
@@ -7582,7 +7595,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
         .pipe(Effect.flip);
       assert.instanceOf(markUnread, Orchestrator.OrchestratorDispatchError);
 
-      const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO orchestration_v2_projection_turn_items (
         turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json
       ) VALUES (
@@ -7789,6 +7801,23 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread opens", (it) 
           { query: "uploadthing docs", at: start + 60_000 },
           { query: "upl", at: start },
         ]);
+
+        const sql = yield* SqlClient.SqlClient;
+        const [lastOpen] = yield* sql<{
+          readonly event_type: string;
+          readonly payload_json: string;
+        }>`
+          SELECT event_type, payload_json FROM orchestration_events
+          WHERE command_id = ${`runtime-layer-opened-visit-${visits}`}
+        `;
+        assert.equal(lastOpen?.event_type, "thread.visit-recorded");
+        assert.sameMembers(Object.keys(JSON.parse(lastOpen!.payload_json)), [
+          "lastVisitedAt",
+          "opens",
+        ]);
+        const replay = yield* ProjectionReplay.ProjectionReplay;
+        assert.isTrue((yield* replay.rebuild).valid);
+        assert.deepEqual(yield* opens, later);
       }),
   );
 });

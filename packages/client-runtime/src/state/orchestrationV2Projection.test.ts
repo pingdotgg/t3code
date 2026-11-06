@@ -134,6 +134,33 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.thread.pullRequests?.[0]).toBe(links[0]);
   });
 
+  it("applies a visit's read state without replacing the rest of the thread", () => {
+    const lastVisitedAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
+    const opens = { openedAt: 1, score: 1, picks: [] };
+    const projection = {
+      ...emptyProjection,
+      thread: { ...emptyProjection.thread, title: "Kept", opens },
+    };
+    const visit = (payload: { lastVisitedAt: DateTime.Utc; opens?: typeof opens }) =>
+      applyOrchestrationV2ProjectionEvent(projection, {
+        id: "visit" as OrchestrationV2DomainEvent["id"],
+        type: "thread.visit-recorded",
+        threadId,
+        occurredAt: lastVisitedAt,
+        payload,
+      });
+    // Opens stay unless the visit was an open.
+    expect(visit({ lastVisitedAt })?.thread).toEqual({ ...projection.thread, lastVisitedAt });
+    const reopened = { ...opens, score: 2 };
+    expect(visit({ lastVisitedAt, opens: reopened })?.thread).toEqual({
+      ...projection.thread,
+      lastVisitedAt,
+      opens: reopened,
+    });
+    // Read state is not activity.
+    expect(visit({ lastVisitedAt })?.updatedAt).toEqual(projection.updatedAt);
+  });
+
   it("keeps live token usage when the terminal provider turn omits it", () => {
     const providerTurnId = ProviderTurnId.make("provider-turn-reducer");
     const running = {
