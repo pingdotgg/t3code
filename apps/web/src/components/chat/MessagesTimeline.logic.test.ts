@@ -2981,7 +2981,7 @@ describe("v2 run and attempt history", () => {
       "failed",
       "final",
     ]);
-    expect(rows([user, failed, final], "hideAll")).toEqual(["user", "final"]);
+    expect(rows([user, failed, final], "hideAll")).toEqual(["user", "turn-fold:turn-1", "final"]);
     expect(rows(turn, "zen")).toEqual(["user", "final"]);
     const [steer, answer] = [
       message("steer", "user", 4, "steer"),
