@@ -48,6 +48,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: false,
   reactions: true,
+  mentions: true,
+  referenceSigils: [],
   labels: true,
   // Forgejo's public API has no thread replies/resolution or draft conversion endpoint.
   review: {
