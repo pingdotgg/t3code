@@ -378,13 +378,15 @@ export function useThreadComposerState(input: {
           item.status === "cancelled"),
     );
   })();
-  // The server holds a steer sent during setup until the turn starts.
-  const setupRunning = [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
-    (status) => status === "preparing" || status === "starting",
-  );
+  // The server holds a steer sent before the provider turn runs until one does.
+  const turnPending =
+    queueWorkflow?.awaitsProviderTurn === true ||
+    [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
+      (status) => status === "preparing" || status === "starting",
+    );
   // A compacting turn cannot take steering input, so follow-ups queue meanwhile.
   const canSteerActiveTurn =
-    (queueWorkflow?.canPromoteToSteer === true || setupRunning) && !isCompacting;
+    (queueWorkflow?.canPromoteToSteer === true || turnPending) && !isCompacting;
   // A stop or a restart holds the queue, completion wakes included, until it
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;
@@ -719,7 +721,7 @@ export function useThreadComposerState(input: {
     // An approval redirect must steer the waiting turn instead of queueing behind it.
     const activeTurnDefault = beforeDispatch !== undefined ? "steer" : followUpBehavior;
     const followUpAction = resolveComposerDispatchMode({
-      running: setupRunning || (activeThreadBusy && canSteerActiveTurn),
+      running: turnPending || (activeThreadBusy && canSteerActiveTurn),
       alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
       activeTurnDefault,
       canSteer: !isCompacting,

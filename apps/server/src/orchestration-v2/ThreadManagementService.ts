@@ -861,6 +861,7 @@ const make = Effect.gen(function* () {
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
+      ...(mode === "auto" && steerableRun === undefined ? { deliveryIntent: "auto" as const } : {}),
       dispatchMode,
       createdBy: input.createdBy,
       creationSource: input.creationSource,

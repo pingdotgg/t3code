@@ -1595,7 +1595,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       }),
   );
 
-  it.effect("steers a message sent before the active provider turn starts once it does", () =>
+  it.effect("steers a follow-up sent before a wake-up's provider turn starts into that turn", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -1629,20 +1629,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           dispatchMode: { type: "start_immediately" },
           deliveryIntent: "steer",
         });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-startup-steer-first"),
-        threadId,
-        messageId: MessageId.make("runtime-startup-steer-first"),
-        text: "Start work.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-      });
+      const dispatchWake = (id: string) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make(`runtime-startup-steer-${id}`),
+          threadId,
+          messageId: MessageId.make(`runtime-startup-steer-${id}`),
+          text: "Update on pull request #7.",
+          notification: { source: { kind: "monitor" }, outcome: "updated", summary: "#7" },
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+      yield* dispatchWake("wake");
+      yield* dispatchWake("queued-wake");
       yield* dispatchFollowUp("other-model", "Use another model for this.", "other-model");
       yield* dispatchFollowUp("rejected", "This promotion was already rejected.");
-      const rejectedRun = (yield* orchestrator.getThreadProjection(threadId)).runs[2]!;
+      const rejectedRun = (yield* orchestrator.getThreadProjection(threadId)).runs[3]!;
       yield* orchestrator
         .dispatch({
           type: "queued-message.promote-to-steer",
@@ -1657,7 +1661,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         type: "queued-run.edit",
         commandId: CommandId.make("runtime-startup-steer-goal-edit"),
         threadId,
-        runId: (yield* orchestrator.getThreadProjection(threadId)).runs[3]!.id,
+        runId: (yield* orchestrator.getThreadProjection(threadId)).runs[4]!.id,
         text: "/goal finish the work",
       });
       yield* dispatchFollowUp("steer", "Also do this.");
@@ -1739,7 +1743,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         (yield* orchestrator.getThreadProjection(threadId)).runs.map(
           (candidate) => candidate.status,
         ),
-        ["running", "queued", "queued", "queued", "cancelled"],
+        ["running", "queued", "queued", "queued", "queued", "cancelled"],
       );
     }),
   );

@@ -14,7 +14,8 @@ In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
 inserts a new line. This applies to the web and desktop composer at desktop widths.
 
-**Follow-up behavior** chooses Queue or Steer while the agent runs. Use
+**Follow-up behavior** chooses Queue or Steer while the agent runs. A steer sent
+while a turn is still starting joins that turn once it begins. Use
 `mod+Enter` to do the opposite for one message, even when the send shortcut
 requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
 background, and opens a fresh new-thread composer. In a new thread, `mod+Enter`

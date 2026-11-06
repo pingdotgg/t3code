@@ -134,6 +134,7 @@ describe("thread workflows", () => {
     ]);
     expect(state.activeRun?.id).toBe("active");
     expect(state.canPromoteToSteer).toBe(true);
+    expect(state.awaitsProviderTurn).toBe(false);
     expect(state.canSendNow).toBe(false);
   });
 
@@ -159,7 +160,7 @@ describe("thread workflows", () => {
   );
 
   it.each(["preparing", "starting", "running", "waiting"])(
-    "does not offer send now while a turn is %s",
+    "does not offer send now while a turn is %s, and steers follow-ups once a turn runs",
     (status) => {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: null },
@@ -171,6 +172,7 @@ describe("thread workflows", () => {
       } as never);
 
       expect(state.canSendNow).toBe(false);
+      expect(state.awaitsProviderTurn).toBe(true);
     },
   );
 

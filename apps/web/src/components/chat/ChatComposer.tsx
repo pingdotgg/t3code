@@ -2219,7 +2219,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         keybindings,
         isSoftwareKeyboardOpen,
         isDraftThread: routeKind === "draft",
-        isRunning: phase === "running",
+        isRunning: turnActive,
         sendShortcut: settings.sendShortcut,
         prompt: promptRef.current,
       });
@@ -2229,7 +2229,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer(
         undefined,
         resolveComposerDispatchMode({
-          running: phase === "running",
+          running: turnActive,
           alternateModifier: intent === "alternate",
           canSteer: !isCompacting,
           activeTurnDefault: followUpBehavior,
