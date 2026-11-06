@@ -11,13 +11,16 @@ import type {
   EnvironmentId,
   ProjectId,
   ScheduledTask,
+  ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
+  scheduledTaskThreadMode,
 } from "@t3tools/contracts";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import type { MenuAction } from "@react-native-menu/menu";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import {
@@ -61,14 +64,10 @@ import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
-import {
-  useSettingsEnvironmentMenu,
-  SettingsEnvironmentFilterHeader,
-} from "./components/SettingsEnvironmentFilterHeader";
+import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
@@ -108,6 +107,12 @@ const DAYS = [
   { index: 6, label: "Sat" },
   { index: 0, label: "Sun" },
 ] as const;
+
+const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
+  new_thread: "New thread each run",
+  continue: "One thread, same conversation",
+  fresh_session: "One thread, fresh session",
+};
 
 function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "webhook") return "On webhook";
@@ -407,79 +412,61 @@ export function SettingsScheduledTasksRouteScreen() {
   };
 
   return (
-    <>
-      <SettingsEnvironmentFilterHeader
-        trailingItems={[
-          withNativeGlassHeaderItem({
-            type: "button",
-            label: "",
-            accessibilityLabel: "New task",
-            icon: { type: "sfSymbol", name: "plus" } as const,
-            disabled: visibleEnvironments.length === 0,
-            onPress: newTask,
-          }),
-        ]}
-      />
-      <SettingsScreen
-        title="Scheduled tasks"
-        actions={
-          Platform.OS === "android"
-            ? [
-                {
-                  accessibilityLabel: "New task",
-                  icon: "plus",
-                  disabled: visibleEnvironments.length === 0,
-                  onPress: newTask,
-                },
-              ]
-            : undefined
-        }
-        menus={[environmentMenu]}
+    <SettingsScreen
+      title="Scheduled tasks"
+      actions={[
+        {
+          accessibilityLabel: "New task",
+          icon: "plus",
+          disabled: visibleEnvironments.length === 0,
+          onPress: newTask,
+        },
+      ]}
+      menus={[environmentMenu]}
+    >
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        contentContainerClassName="gap-5 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          contentInsetAdjustmentBehavior="automatic"
-          showsVerticalScrollIndicator={false}
-          className="flex-1"
-          contentContainerClassName="gap-5 px-5 pt-4"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        >
-          {visibleEnvironments.length > 0 ? (
-            visibleEnvironments.map((environment) => (
-              <EnvironmentTasks
-                key={environment.environmentId}
-                environment={environment}
-                now={now}
-                projectIds={
-                  selectedProjectKey === null
-                    ? null
-                    : (selectedGroup?.members
-                        .filter(
-                          (member) => member.project.environmentId === environment.environmentId,
-                        )
-                        .map((member) => member.project.id) ?? [])
-                }
-                onEdit={(task) => {
-                  startEditor({
-                    environmentId: environment.environmentId,
-                    environmentLabel: environment.label,
-                    draft: editDraft(task),
-                  });
-                  navigation.navigate("SettingsScheduledTaskEdit");
-                }}
-              />
-            ))
-          ) : (
-            <Text className="px-2 text-base text-foreground-muted">
-              {availableTargets.length === 0
-                ? "Connect an environment to view and create scheduled tasks."
-                : "No environments match these filters. Change the filter above."}
-            </Text>
-          )}
-        </ScrollView>
-      </SettingsScreen>
-    </>
+        {visibleEnvironments.length > 0 ? (
+          visibleEnvironments.map((environment) => (
+            <EnvironmentTasks
+              key={environment.environmentId}
+              environment={environment}
+              now={now}
+              projectIds={
+                selectedProjectKey === null
+                  ? null
+                  : (selectedGroup?.members
+                      .filter(
+                        (member) => member.project.environmentId === environment.environmentId,
+                      )
+                      .map((member) => member.project.id) ?? [])
+              }
+              onEdit={(task) => {
+                startEditor({
+                  environmentId: environment.environmentId,
+                  environmentLabel: environment.label,
+                  draft: editDraft(task),
+                });
+                navigation.navigate("SettingsScheduledTaskEdit");
+              }}
+            />
+          ))
+        ) : (
+          <Text className="px-2 text-base text-foreground-muted">
+            {availableTargets.length === 0
+              ? "Connect an environment to view and create scheduled tasks."
+              : "No environments match these filters. Change the filter above."}
+          </Text>
+        )}
+      </ScrollView>
+    </SettingsScreen>
   );
 }
 
@@ -567,23 +554,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     <SettingsScreen
       title={title}
       // Native Back pops before removal guards; a bar action lets the guard run first.
-      options={
-        Platform.OS === "ios"
-          ? {
-              headerBackVisible: false,
-              gestureEnabled: !preventRemove,
-              unstable_headerLeftItems: () => [
-                withNativeGlassHeaderItem({
-                  type: "button",
-                  label: "",
-                  accessibilityLabel: "Back",
-                  icon: { type: "sfSymbol", name: "chevron.backward" },
-                  onPress: () => navigation.goBack(),
-                }),
-              ],
-            }
-          : undefined
-      }
+      guardBack={preventRemove}
     >
       <ScrollView
         keyboardShouldPersistTaps="handled"
@@ -722,6 +693,7 @@ function TaskForm({
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
+  const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
   const save = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -795,6 +767,7 @@ function TaskForm({
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
+      ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -931,6 +904,37 @@ function TaskForm({
             disabled={saving || dictationPending || environmentUnavailable}
           />
         </SettingsSection>
+
+        {offersThreadModes ? (
+          <SettingsSection
+            title="Destination"
+            footer={
+              draft.threadMode === "new_thread"
+                ? "Each run starts a new thread."
+                : `${
+                    draft.threadMode === "continue"
+                      ? "Runs continue one conversation."
+                      : "Runs share one thread, each in a fresh session without earlier runs' context."
+                  } The first run starts the thread. Deleting it also deletes this task.`
+            }
+          >
+            <SelectRow
+              label="Runs go to"
+              value={THREAD_MODE_LABELS[draft.threadMode]}
+              actions={(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map(
+                (mode) => ({
+                  id: mode,
+                  title: THREAD_MODE_LABELS[mode],
+                  state: draft.threadMode === mode ? "on" : undefined,
+                }),
+              )}
+              onSelect={(id) => {
+                if (id === "new_thread" || id === "continue" || id === "fresh_session")
+                  setDraft({ ...draft, threadMode: id });
+              }}
+            />
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title="Workspace">
           <SelectRow
@@ -1410,6 +1414,7 @@ function EnvironmentTasks({
     label: "scheduled task delete",
     reportFailure: false,
   });
+  const selectDetail = useSelectWorkspaceDetail();
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       Dialog.alert(title, String(squashAtomCommandFailure(result)));
@@ -1491,6 +1496,9 @@ function EnvironmentTasks({
             <Menu
               actions={[
                 { id: "edit", title: "Edit" },
+                ...(task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread"
+                  ? [{ id: "thread", title: "Open thread" }]
+                  : []),
                 {
                   id: "toggle",
                   title: task.enabled ? "Pause" : "Resume",
@@ -1509,6 +1517,14 @@ function EnvironmentTasks({
                 const action = nativeEvent.event;
                 if (action === "edit") {
                   onEdit(task);
+                } else if (action === "thread" && task.threadId !== null) {
+                  selectDetail({
+                    name: "Thread",
+                    params: {
+                      environmentId: String(environmentId),
+                      threadId: String(task.threadId),
+                    },
+                  });
                 } else if (action === "delete") {
                   Dialog.alert("Delete task?", task.title, [
                     { text: "Cancel", style: "cancel" },

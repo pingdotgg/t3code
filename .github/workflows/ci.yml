@@ -192,6 +192,41 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
+      # Browser tests run source modules; this boots the production chunk graph. The
+      # desktop build above already produced apps/web/dist, and the client waits about
+      # 15s for a session that never comes, so this runs here instead of in Test Web,
+      # which gates the whole run. Chromium comes from the cache Test Web shares.
+      - name: Resolve Playwright version
+        id: playwright_version
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for the built web client boot check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' && steps.chromium_cache.outputs.cache-hit != 'true' }}
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
+      - name: Boot the built web client
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        timeout-minutes: 3
+        run: node apps/web/scripts/verify-built-boot.ts
+
       - name: Typecheck
         if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
         timeout-minutes: 5
@@ -339,12 +374,6 @@ jobs:
 
       - name: Test
         run: vp run --filter @t3tools/web test
-
-      # Browser tests run source modules; this boots the production chunk graph.
-      - name: Boot the built web client
-        run: |
-          vp run --filter @t3tools/web build
-          node apps/web/scripts/verify-built-boot.ts
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
