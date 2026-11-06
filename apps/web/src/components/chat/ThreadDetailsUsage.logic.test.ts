@@ -130,6 +130,20 @@ describe("resolveThreadDetailsLimits", () => {
     expect(resolveThreadDetailsLimits(instanceId, [unread], [readableHub], now)).toBeNull();
   });
 
+  it("keeps a direct login's failed reading instead of an unrelated hub", () => {
+    const failed: ServerProviderUsageLimits = {
+      checkedAt,
+      windows: [],
+      unavailable: { reason: "probeFailed" },
+    };
+    const direct = { ...claudeInstance(failed), auth: { status: "authenticated" as const } };
+    const readableHub = hub("Hub", [{ id: "a.json", limits: limitsAt(20) }]);
+    expect(resolveThreadDetailsLimits(instanceId, [direct], [readableHub], now)).toEqual({
+      kind: "instance",
+      limits: failed,
+    });
+  });
+
   it("keeps an instance's own readable limits over any hub", () => {
     const own = limitsAt(40);
     expect(shown(own, [hub("Hub", [{ id: "a.json", limits: limitsAt(90) }])])).toEqual({

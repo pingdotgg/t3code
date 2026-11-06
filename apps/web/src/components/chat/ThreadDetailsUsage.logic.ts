@@ -36,7 +36,9 @@ export function resolveThreadDetailsLimits(
     report?.accounts.find((entry) => entry.instanceId === provider.instanceId)?.limits ??
     provider.usageLimits;
   if (!own) return null;
-  if (limitsNotice(own) === null) return { kind: "instance", limits: own };
+  const proxied =
+    provider.auth.type === "customEndpoint" || own.unavailable?.reason === "unsupported";
+  if (limitsNotice(own) === null || !proxied) return { kind: "instance", limits: own };
   // A proxied instance reads no limits of its own; its hub pools the accounts it spends.
   return driverPool(provider.driver, providers, sources, now) ?? { kind: "instance", limits: own };
 }
