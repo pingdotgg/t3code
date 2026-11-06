@@ -832,16 +832,18 @@ function nextQueuedRun(
   return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }
 
+// Scheduled deliveries never choose a model, so a queued one runs on the thread's current pick.
 function followsCurrentConversation(
   message:
     | Pick<
         OrchestrationV2ConversationMessage,
-        "createdBy" | "creationSource" | "notification" | "delegatedCompletion"
+        "createdBy" | "creationSource" | "notification" | "delegatedCompletion" | "scheduledTaskId"
       >
     | undefined,
 ): boolean {
   return (
     message?.delegatedCompletion !== undefined ||
+    message?.scheduledTaskId !== undefined ||
     (message?.notification?.source.kind === "monitor" && !isBufferedProviderNotification(message))
   );
 }
