@@ -29,7 +29,7 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
-import { PASSKEY_BRIDGE_ARGUMENT } from "../preview/GuestProtocol.ts";
+import { hardenPreviewWebviewPreferences } from "../preview/WebviewPreferences.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -530,17 +530,7 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
-      webPreferences.sandbox = true;
-      webPreferences.nodeIntegration = false;
-      webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
-      webPreferences.disableHtmlFullscreenWindowResize = true;
-      if (previewPasskeys.bridgeEnabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PASSKEY_BRIDGE_ARGUMENT,
-        ];
-      }
+      hardenPreviewWebviewPreferences(webPreferences, previewPasskeys.bridgeEnabled);
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();

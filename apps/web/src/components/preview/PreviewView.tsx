@@ -42,6 +42,7 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { usePreviewWebviewConfig } from "~/browser/previewWebviewConfigState";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -230,6 +231,11 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
+  // Same lookup as ElectronBrowserHost so the pop-out joins the webview's partition.
+  const webviewPartition = usePreviewWebviewConfig(
+    threadRef.environmentId,
+    snapshot?.profileId,
+  )?.partition;
   // IPC interprets undefined profile ids as all profiles.
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
@@ -454,7 +460,9 @@ export function PreviewView({
         ...(nativeServerTab && previewBridge
           ? {
               openDevTools: desktopCall(previewBridge.openDevTools),
-              toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+              ...(webviewPartition
+                ? { toggleTabWindow: () => handleTabWindow(webviewPartition) }
+                : {}),
             }
           : {}),
       }
@@ -477,19 +485,20 @@ export function PreviewView({
               ?.clearCache(threadRef.environmentId, activeProfileId)
               .catch(() => undefined),
           openDevTools: desktopCall(previewBridge.openDevTools),
-          toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+          ...(webviewPartition ? { toggleTabWindow: () => handleTabWindow(webviewPartition) } : {}),
         }
       : null;
 
-  const handleNativePictureInPicture = () => {
+  const isPopoutWindow = window.location.hash.startsWith("#/browser-window/");
+  const handleTabWindow = (partition: string) => {
     if (!previewBridge || !runtimeTabId) return;
-    const operation = desktopOverlay?.pictureInPicture
-      ? previewBridge.pictureInPicture.close
-      : previewBridge.pictureInPicture.open;
-    void operation(runtimeTabId).catch((error) => {
+    const request = desktopOverlay?.detached
+      ? previewBridge.tabWindow.close(runtimeTabId)
+      : previewBridge.tabWindow.open(runtimeTabId, partition);
+    void request.catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
+        title: "Unable to update browser window",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
@@ -921,9 +930,14 @@ export function PreviewView({
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
         onPictureInPicture={
-          tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
+          isPopoutWindow && webviewPartition
+            ? () => handleTabWindow(webviewPartition)
+            : tabId && (isServerTab || previewBridge)
+              ? handlePictureInPicture
+              : undefined
         }
-        pictureInPicture={miniPlayerTabId === tabId}
+        pictureInPictureLabel={isPopoutWindow ? "Bring back to chat" : undefined}
+        pictureInPicture={!isPopoutWindow && miniPlayerTabId === tabId}
         pictureInPictureDisabled={
           isUnreachable || (!isServerTab && !desktopOverlay?.hasWebContents)
         }
@@ -965,7 +979,7 @@ export function PreviewView({
               }
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
-              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              tabWindow={desktopOverlay?.detached ?? false}
             />
           ) : null
         }

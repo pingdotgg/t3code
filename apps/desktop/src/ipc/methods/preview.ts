@@ -6,6 +6,7 @@ import {
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
+  DesktopPreviewOpenTabWindowInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
@@ -245,6 +246,20 @@ const openPictureInPicture = tabMethod(
   "desktop.ipc.preview.openPictureInPicture",
   (manager, tabId) => manager.openPictureInPicture(tabId),
 );
+const openTabWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_TAB_WINDOW_OPEN_CHANNEL,
+  payload: DesktopPreviewOpenTabWindowInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.openTabWindow")(function* ({ tabId, partition }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.openTabWindow(tabId, partition);
+  }),
+});
+const closeTabWindow = tabMethod(
+  IpcChannels.PREVIEW_TAB_WINDOW_CLOSE_CHANNEL,
+  "desktop.ipc.preview.closeTabWindow",
+  (manager, tabId) => manager.closeTabWindow(tabId),
+);
 const closePictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL,
   "desktop.ipc.preview.closePictureInPicture",
@@ -469,6 +484,8 @@ export const methods = [
   copyArtifactToClipboard,
   openPictureInPicture,
   closePictureInPicture,
+  openTabWindow,
+  closeTabWindow,
   startRecording,
   stopRecording,
   saveRecording,

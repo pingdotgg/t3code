@@ -182,6 +182,8 @@ function RootRouteBranch() {
     return <Outlet />;
   }
 
+  if (pathname.startsWith("/browser-window/")) return <Outlet />;
+
   const appShell = (
     <CommandPalette>
       <AppSidebarLayout>

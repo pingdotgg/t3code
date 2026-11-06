@@ -39,6 +39,7 @@ interface Props {
   recording?: boolean | undefined;
   onPictureInPicture?: (() => void) | undefined;
   pictureInPicture?: boolean | undefined;
+  pictureInPictureLabel?: string | undefined;
   pictureInPictureDisabled?: boolean | undefined;
   onPickElement?: (() => void) | undefined;
   pickActive?: boolean | undefined;
@@ -68,6 +69,7 @@ export function PreviewChromeRow({
   recording,
   onPictureInPicture,
   pictureInPicture,
+  pictureInPictureLabel,
   pictureInPictureDisabled,
   onPickElement,
   pickActive,
@@ -76,6 +78,9 @@ export function PreviewChromeRow({
   trailingActions,
   leadingActions,
 }: Props) {
+  const pipLabel =
+    pictureInPictureLabel ??
+    (pictureInPicture ? "Close floating preview" : "Float preview over chat");
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
 
@@ -269,9 +274,7 @@ export function PreviewChromeRow({
                   variant={pictureInPicture ? "secondary" : "ghost"}
                   size="icon-xs"
                   onClick={onPictureInPicture}
-                  aria-label={
-                    pictureInPicture ? "Close floating preview" : "Float preview over chat"
-                  }
+                  aria-label={pipLabel}
                   aria-pressed={pictureInPicture ? "true" : "false"}
                   type="button"
                   disabled={pictureInPictureDisabled}
@@ -280,9 +283,7 @@ export function PreviewChromeRow({
             >
               <PictureInPicture2 className={cn(pictureInPicture && "text-primary")} />
             </TooltipTrigger>
-            <TooltipPopup>
-              {pictureInPicture ? "Close floating preview" : "Float preview over chat"}
-            </TooltipPopup>
+            <TooltipPopup>{pipLabel}</TooltipPopup>
           </Tooltip>
         ) : null}
         {trailingActions}
