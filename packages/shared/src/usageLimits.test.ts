@@ -132,6 +132,10 @@ describe("new thread model fallback", () => {
     ["antigravity", ["gemini-weekly"], "antigravity-default", true],
     ["opencode", ["go_weekly"], "opencode/big-pickle", false],
     ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
+    ["claudeAgent", ["seven_day_fable"], "claude-opus-5-5", false],
+    ["claudeAgent", ["seven_day_fable"], "claude-fable-5-1", true],
+    ["claudeAgent", ["seven_day", "seven_day_fable"], "claude-opus-5-5", true],
+    ["claudeAgent", ["five_hour"], "claude-opus-5-5", true],
   ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
     const defaultSelection = { ...selection, model };
     expect(
