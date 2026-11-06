@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -116,12 +117,20 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const control: {
     failCommand: string | undefined;
     stateAfterStop?: string;
-    linger: string;
+    /** `undefined` makes `loginctl show-user` fail, as when logind does not know the user. */
+    linger: string | undefined;
+    managerReachable: boolean;
+    /** The user bus is found only through `XDG_RUNTIME_DIR`, as without a login session. */
+    busNeedsRuntimeDir: boolean;
+    lingerStartsManager: boolean;
     enabled: boolean;
     active: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
+    managerReachable: true,
+    busNeedsRuntimeDir: false,
+    lingerStartsManager: true,
     enabled: true,
     active: true,
   };
@@ -134,10 +143,16 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       invocations.push(input);
       timeouts.set(command, input.timeout);
       const failed = command === control.failCommand;
-      if (!failed && command === "loginctl enable-linger --no-ask-password 501")
+      if (!failed && command.startsWith("loginctl enable-linger --no-ask-password ")) {
         control.linger = "yes";
+        control.managerReachable ||= control.lingerStartsManager;
+      }
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
+      // The manager loads units only from its own unit directory.
+      const unitOutsideManager =
+        command === "systemctl --user enable t3code.service" &&
+        !(yield* fs.exists(path.join(managerUnitDir, "t3code.service")));
       // A timed-out stop may still stop the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
       if (
@@ -145,7 +160,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         (command === "systemctl --user stop t3code.service" ||
           command.startsWith("launchctl bootout --wait "))
       ) {
-        yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
+        yield* fs.writeFileString(statePath, control.stateAfterStop);
       }
       return {
         stdout:
@@ -163,7 +178,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
             : input.args[0] === "--version"
               ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
               : input.command === "loginctl" && input.args[0] === "show-user"
-                ? `${control.linger}\n`
+                ? `${control.linger ?? ""}\n`
                 : input.args[1] === "is-enabled"
                   ? control.enabled
                     ? "enabled\n"
@@ -172,6 +187,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
+            unitOutsideManager ||
+            ((command === "systemctl --user show-environment" || input.command === "busctl") &&
+              (!control.managerReachable ||
+                (control.busNeedsRuntimeDir && input.env?.XDG_RUNTIME_DIR === undefined))) ||
+            (input.command === "loginctl" &&
+              input.args[0] === "show-user" &&
+              control.linger === undefined) ||
             (input.args[1] === "is-active" && !control.active) ||
             (input.args[1] === "is-enabled" && !control.enabled)
             ? 1
@@ -183,7 +205,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stdoutInvalidUtf8: false,
         stderrInvalidUtf8: false,
       };
-    }),
+    }, Effect.orDie),
   });
   const makeService = (
     environmentPath: string | undefined = installerPath,
@@ -191,6 +213,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     serviceBaseDir = baseDir,
     insideService = false,
     hostExecPath = "/usr/bin/t3",
+    underSudo = false,
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
@@ -208,7 +231,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, platform),
-          Layer.succeed(HostProcess.UserId, 501),
+          Layer.succeed(HostProcess.UserId, underSudo ? 0 : 501),
           Layer.succeed(HostProcess.ExecutablePath, hostExecPath),
           Layer.succeed(
             HttpClient.HttpClient,
@@ -223,6 +246,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                   ? {}
                   : { PATH: environmentPath }),
                 ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
+                ...(underSudo ? { SUDO_USER: "julius" } : {}),
               },
             }),
           ),
@@ -319,6 +343,162 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  // regression: #29881
+  it.effect.each([
+    { logind: "has lingering disabled", linger: "no" },
+    { logind: "does not know the user", linger: undefined },
+  ])(
+    "enables lingering to bring up an unreachable user manager when logind $logind",
+    ({ linger }) =>
+      Effect.gen(function* () {
+        const { service, commands, control } = yield* makeHarness();
+        control.linger = linger;
+        control.managerReachable = false;
+
+        yield* service.install();
+
+        expect(commands).toContain("loginctl enable-linger --no-ask-password 501");
+        expect((yield* service.status).current).toBe(true);
+      }),
+  );
+
+  // regression: #29881
+  it.effect("reports the unreachable user manager when lingering cannot start it", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, control } = yield* makeHarness();
+      control.linger = undefined;
+      control.managerReachable = false;
+      control.failCommand = "loginctl enable-linger --no-ask-password 501";
+
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePrerequisiteError",
+        problem: "user-manager-unavailable",
+      });
+      expect(yield* fs.exists(statePath)).toBe(false);
+    }),
+  );
+
+  it.effect("does not reach a running root user manager under sudo", () =>
+    Effect.gen(function* () {
+      const { makeService, commands, control } = yield* makeHarness();
+      control.busNeedsRuntimeDir = true;
+      const service = yield* makeService(undefined, "1.2.3", undefined, false, undefined, true);
+
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePrerequisiteError",
+        problem: "user-manager-unavailable",
+      });
+      expect(commands).not.toContain("systemctl --user enable t3code.service");
+    }),
+  );
+
+  it.effect.each([
+    { logind: "does not know root", linger: undefined },
+    { logind: "has root lingering disabled", linger: "no" },
+  ])("does not enable lingering for root under sudo when logind $logind", ({ linger }) =>
+    Effect.gen(function* () {
+      const { makeService, commands, control } = yield* makeHarness();
+      control.linger = linger;
+      control.managerReachable = false;
+      const service = yield* makeService(undefined, "1.2.3", undefined, false, undefined, true);
+
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePrerequisiteError",
+        problem: "user-manager-unavailable",
+      });
+      expect(commands.filter((command) => command.includes("enable-linger"))).toEqual([]);
+    }),
+  );
+
+  // regression: #29881
+  it.effect("installs into the unit directory of the user manager that lingering starts", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const shellConfigHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-xdg-config-" });
+      const { makeService, home, control } = yield* makeHarness(
+        "linux",
+        undefined,
+        shellConfigHome,
+        "",
+      );
+      control.linger = "no";
+      control.managerReachable = false;
+      const service = yield* makeService();
+
+      const plan = yield* service.install();
+
+      const unitPath = path.join(home, ".config", "systemd", "user", "t3code.service");
+      expect(plan.unitPath).toBe(unitPath);
+      expect(yield* service.status).toMatchObject({ current: true, unitPath });
+    }),
+  );
+
+  // regression: #29881
+  it.effect.each([
+    { manager: "starts after three probes", upAfterPauses: 3, pauses: 3 },
+    { manager: "never starts", upAfterPauses: undefined, pauses: 10 },
+  ])(
+    "waits a bounded time for the user manager lingering starts when it $manager",
+    ({ upAfterPauses, pauses }) =>
+      Effect.gen(function* () {
+        const { service, fs, commands, control } = yield* makeHarness();
+        const { unitPath } = yield* service.status;
+        control.linger = "no";
+        control.managerReachable = false;
+        control.lingerStartsManager = false;
+        const clock = yield* Clock.Clock;
+        const waited: number[] = [];
+
+        const result = yield* service.install().pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            sleep: (duration) =>
+              Effect.sync(() => {
+                if (waited.push(Duration.toMillis(duration)) === upAfterPauses) {
+                  control.managerReachable = true;
+                }
+              }),
+          }),
+          Effect.result,
+        );
+
+        expect(waited).toEqual(Array.from({ length: pauses }, () => 500));
+        expect(
+          commands.filter((command) => command === "systemctl --user show-environment"),
+        ).toHaveLength(pauses + 2);
+        if (upAfterPauses === undefined) {
+          expect(result).toMatchObject({
+            failure: { _tag: "BootServicePrerequisiteError", problem: "user-manager-unavailable" },
+          });
+          expect(yield* fs.exists(unitPath)).toBe(false);
+        } else {
+          expect(result._tag).toBe("Success");
+          expect((yield* service.status).current).toBe(true);
+        }
+      }),
+  );
+
+  // regression: #29881
+  it.effect("points systemd user commands at the user's runtime directory when none is set", () =>
+    Effect.gen(function* () {
+      const { service, invocations, makeService } = yield* makeHarness();
+      yield* service.install();
+      const inside = yield* makeService(undefined, "1.2.4", undefined, true);
+      yield* inside.install({ allowDowngrade: true });
+
+      const systemdCalls = invocations.filter(({ command }) =>
+        ["systemctl", "busctl", "systemd-run", "loginctl"].includes(command),
+      );
+      expect(new Set(systemdCalls.map(({ command }) => command)).size).toBe(4);
+      expect(
+        systemdCalls
+          .filter(({ env }) => env?.XDG_RUNTIME_DIR !== "/run/user/501")
+          .map(({ command, args }) => `${command} ${args.join(" ")}`),
+      ).toEqual([]);
     }),
   );
 
