@@ -160,5 +160,5 @@ it("can still add conflict resolution to an existing composer without checkout s
   await act(() => resolve.click());
   const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
   expect(draft?.prompt).toContain("conflicts");
-  expect(draft?.prompt).toContain(detail.url);
+  expect(draft?.reviewComments[0]?.pullRequest?.url).toBe(detail.url);
 });

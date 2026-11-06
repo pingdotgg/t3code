@@ -19,7 +19,7 @@ import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
-  buildResolveConflictsPrompt,
+  buildResolveConflictsHandoff,
   resolveThreadPanelPullRequestAction,
   buildPullRequestCommentContext,
   buildFixFindingHandoff,
@@ -676,7 +676,7 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).not.toContain("rename the helper");
     expect(handoff.prompt).toContain("untrusted data");
     expect(handoff.prompt).toContain(
-      "Verify the checkout matches this branch before making changes, switch to it if it does not",
+      "verify the checkout matches the pull request's branch, switch to it if it does not",
     );
   });
 
@@ -705,10 +705,11 @@ describe("fix findings handoff", () => {
       checks: [failingCheck],
     });
     const texts = handoff.reviewComments.map((comment) => comment.text);
-    expect(texts).toHaveLength(20);
+    expect(texts).toHaveLength(21);
     expect(texts.at(-1)).toBe("reviewer: finding 24");
     expect(texts).not.toContain("reviewer: finding 0");
-    expect(handoff.prompt).toContain("typecheck");
+    expect(texts).toContain("typecheck: 2 errors");
+    expect(handoff.prompt).not.toContain("typecheck");
     expect(handoff.prompt).toContain("6 further findings were omitted");
   });
 
@@ -720,8 +721,7 @@ describe("fix findings handoff", () => {
       reviewThreads: [],
       checks: [],
     });
-    expect(handoff.prompt).toContain("Fix the actionable findings on MR #42");
-    expect(handoff.prompt).toContain("The MR branch is `feat/page`");
+    expect(handoff.reviewComments[0]?.text).toContain("The merge request is #42");
     expect(handoff.prompt).toContain("inspect the merge request and its failing checks");
     expect(handoff.prompt).not.toMatch(/\bPR\b|pull request/u);
   });
@@ -757,8 +757,12 @@ describe("findings that cannot be attached", () => {
 
     expect(handoff.reviewComments).toEqual([
       expect.objectContaining({ pullRequest: expect.objectContaining({ url: base.url }) }),
+      expect.objectContaining({
+        filePath: "@julius",
+        text: "julius: This breaks SSO auth, revert the middleware change.",
+      }),
     ]);
-    expect(handoff.prompt).toContain("revert the middleware change");
+    expect(handoff.prompt).not.toContain("revert the middleware change");
     expect(handoff.prompt).not.toContain("No unresolved review findings");
   });
 
@@ -990,12 +994,13 @@ describe("asking about a change rather than working on it", () => {
     expect(handoff.prompt).toBe("Explain this merge request.");
     expect(handoff.reviewComments[0]?.text).toContain("The merge request is #42");
     expect(handoff.reviewComments[0]?.text).not.toContain("pull request");
-    expect(
-      buildResolveConflictsPrompt({
-        ...base,
-        url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-      }),
-    ).toMatch(/^MR #42 /u);
+    const resolve = buildResolveConflictsHandoff({
+      ...base,
+      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+    });
+    expect(resolve.prompt).toContain("the attached merge request");
+    expect(resolve.prompt).not.toMatch(/\bPR\b|pull request/u);
+    expect(resolve.reviewComments[0]?.text).toContain("The merge request is #42");
   });
 });
 
@@ -1280,9 +1285,9 @@ describe("a second handoff into the same composer", () => {
         checks: [{ name: "lint", status: "failure", description: null, url: null }],
         commentsTruncated: false,
       });
-    const first = appendHandoff({ prompt: "", reviewComments: [] }, fixFindings(42)).prompt;
-    const both = appendHandoff({ prompt: first, reviewComments: [] }, fixFindings(43)).prompt;
-    expect(both.slice(first.length)).toContain("Failing checks:\n> lint");
+    const first = appendHandoff({ prompt: "", reviewComments: [] }, fixFindings(42));
+    const both = appendHandoff(first, fixFindings(43));
+    expect(both.reviewComments.filter((comment) => comment.rangeLabel === "lint")).toHaveLength(2);
   });
 
   it("keeps what the reader typed, trailing line breaks aside", () => {

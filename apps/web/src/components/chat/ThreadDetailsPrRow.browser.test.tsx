@@ -224,9 +224,13 @@ it("adds the failing checks to the current composer instead of opening a thread"
       .find((button) => button.textContent?.trim() === "Fix")!
       .click();
   });
-  const prompt = useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt;
-  expect(prompt).toContain("https://github.com/owner/repo/pull/1");
-  expect(prompt).toContain("CI-failure");
+  const fixDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
+  expect(fixDraft?.prompt).toContain("Fix the actionable findings attached");
+  expect(fixDraft?.prompt).not.toContain("> CI-failure");
+  expect(fixDraft?.reviewComments.map((comment) => comment.rangeLabel)).toEqual([
+    "Test PR",
+    "CI-failure",
+  ]);
   await act(async () => {
     state.mergeability = "conflicting";
     await screen.rerender(
@@ -249,7 +253,7 @@ it("adds the failing checks to the current composer instead of opening a thread"
       .click();
   });
   expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toContain(
-    "conflicts with its base branch",
+    "Resolve the conflicts between the attached pull request",
   );
   expect(state.newThread).not.toHaveBeenCalled();
   expect(state.prepareThread).not.toHaveBeenCalled();
