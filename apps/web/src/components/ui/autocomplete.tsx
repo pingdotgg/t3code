@@ -4,6 +4,7 @@ import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { MENU_ROW_TEXT_CLASS } from "./menu-row-text";
 
 const Autocomplete = AutocompletePrimitive.Root;
 
@@ -128,7 +129,7 @@ function AutocompleteItem({
   return (
     <AutocompletePrimitive.Item
       className={cn(
-        "flex min-h-8 cursor-default select-none items-center gap-2.5 rounded-[8px] px-2.5 py-1 text-label text-foreground outline-none data-disabled:pointer-events-none data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        `flex min-h-8 cursor-default select-none items-center gap-2 rounded-[8px] px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:pointer-events-none data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='text-'])]:text-muted-foreground`,
         automaticHighlight &&
           "hover:surface-selected-soft data-selected:surface-selected-soft data-selected:text-strong-foreground data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground",
         className,
