@@ -124,7 +124,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
-  "workspace.prepare",
   "provider-runtime.continue",
   "provider-session.detach",
   "provider-thread.rollback",
@@ -138,6 +137,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
+  "workspace.prepare",
   "provider-turn.start",
   "provider-turn.interrupt",
   "provider-turn.steer",

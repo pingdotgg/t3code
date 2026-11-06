@@ -4722,6 +4722,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             const checkpoint = sourceProjection.checkpoints.find(
               (entry) => entry.id === checkpointId && entry.status === "ready",
             );
+            if (command.sourcePoint.type === "checkpoint" && checkpoint === undefined) {
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: `Checkpoint ${command.sourcePoint.checkpointId} is not ready to fork from.`,
+              });
+            }
             const { commitSha } = yield* git
               .resolveCommit({
                 cwd,
