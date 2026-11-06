@@ -39,7 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import type * as RuntimeLayer from "./runtimeLayer.ts";
-import { layerCeilingsMemory } from "./NadirRouting.ts";
+import { layerCeilingsMemory, NadirCeilings, rememberChoice } from "./NadirRouting.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
@@ -498,6 +498,7 @@ describe("Nadir routing at intake", () => {
     activeRunId: RunId | null,
     // Layer.empty leaves the receipt store to the caller's context.
     layerReceipts: typeof layerMockReceipts | typeof Layer.empty = layerMockReceipts,
+    layerCeilings: typeof layerCeilingsMemory | typeof Layer.empty = layerCeilingsMemory,
   ) =>
     Effect.gen(function* () {
       let requests = 0;
@@ -569,7 +570,7 @@ describe("Nadir routing at intake", () => {
                 );
               }),
             ),
-            layerCeilingsMemory,
+            layerCeilings,
             ServerSettings.layerTest({ nadirRouting: true }),
           ),
         ),
@@ -654,14 +655,21 @@ describe("Nadir routing at intake", () => {
         status: "accepted",
         error: null,
       });
-      expect(yield* run(dispatchCommand(send()), null, Layer.empty)).toEqual({
+      // The thread last ran routed down from Opus to Sonnet. Routing this send would record
+      // Haiku instead, so an unchanged record shows the replay never reached Nadir.
+      const ceilings = yield* NadirCeilings;
+      const ceiling = { baseline: opus, chosen: { instanceId, model: "claude-sonnet-5-5" } };
+      yield* rememberChoice(ceilings, "thread-routed", ceiling.baseline, ceiling.chosen);
+      expect(yield* run(dispatchCommand(send()), null, Layer.empty, Layer.empty)).toEqual({
         requests: 0,
         dispatched: [undefined],
       });
+      expect(yield* ceilings.get("thread-routed")).toEqual(Option.some(ceiling));
     }).pipe(
       Effect.provide(
-        Layer.merge(
+        Layer.mergeAll(
           CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          layerCeilingsMemory,
           layerIntakeTest,
         ),
       ),
