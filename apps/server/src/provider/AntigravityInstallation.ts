@@ -21,6 +21,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -497,9 +498,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         return;
       }
 
-      const available = yield* Effect.tryPromise(() =>
-        NodeFSP.statfs(versionsDirectory, { bigint: true }),
-      ).pipe(Effect.option);
+      const available = yield* Effect.tryPromise({
+        try: () => NodeFSP.statfs(versionsDirectory, { bigint: true }),
+        catch: (cause) => installationError("download", "Could not check free disk space.", cause),
+      }).pipe(Effect.option);
       const required =
         asset.archiveBytes + asset.executable.bytes + asset.harness.bytes + FREE_SPACE_MARGIN;
       if (
@@ -641,15 +643,39 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         }
       }).pipe(Effect.scoped);
       yield* fs.remove(archivePath);
+      const executablePath = path.join(pairDirectory, asset.executable.name);
+      const harnessPath = path.join(pairDirectory, asset.harness.name);
       if (platform !== "win32") {
-        yield* fs.chmod(path.join(pairDirectory, asset.executable.name), 0o755);
-        yield* fs.chmod(path.join(pairDirectory, asset.harness.name), 0o755);
+        yield* fs.chmod(executablePath, 0o755);
+        yield* fs.chmod(harnessPath, 0o755);
+      }
+      if (platform === "darwin" && arch === "x64") {
+        // Google signs the Intel build with the hardened runtime but no JIT entitlement, so
+        // libffi's writable+executable trampolines spin forever. Re-sign ad hoc after the hash check.
+        const exitCode = yield* spawner
+          .spawn(
+            ChildProcess.make(
+              "/usr/bin/codesign",
+              ["--force", "--sign", "-", executablePath, harnessPath],
+              { stdout: "ignore", stderr: "ignore" },
+            ),
+          )
+          .pipe(
+            Effect.flatMap((child) => child.exitCode),
+            Effect.scoped,
+          );
+        if (exitCode !== 0) {
+          return yield* installationError(
+            "extract",
+            "Could not prepare the Antigravity runtime for this Mac. Check that codesign is available.",
+          );
+        }
       }
       yield* report("verifying", "Checking the downloaded runtime.");
       yield* validate(
         {
-          executablePath: path.join(pairDirectory, asset.executable.name),
-          harnessPath: path.join(pairDirectory, asset.harness.name),
+          executablePath,
+          harnessPath,
           source: "managed",
           version: asset.version,
           managedVersionDirectory: pairDirectory,
@@ -659,8 +685,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       const record: InstalledRelease = {
         releaseId: asset.sha256,
         version: asset.version,
-        executable: asset.executable,
-        harness: asset.harness,
+        executable: {
+          name: asset.executable.name,
+          bytes: Number((yield* fs.stat(executablePath)).size),
+        },
+        harness: { name: asset.harness.name, bytes: Number((yield* fs.stat(harnessPath)).size) },
       };
       yield* fs.writeFileString(
         path.join(pairDirectory, RELEASE_RECORD),
