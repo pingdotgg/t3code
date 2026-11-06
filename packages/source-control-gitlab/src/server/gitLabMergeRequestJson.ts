@@ -300,7 +300,10 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
             status
             detailedStatus { label detailsPath }
             jobs(first: 100) {
-              nodes { name status allowFailure retried webPath detailedStatus { label } }
+              nodes {
+                name status allowFailure retried webPath detailedStatus { label }
+                downstreamPipeline { status path }
+              }
               pageInfo { hasNextPage }
             }
           }
@@ -320,6 +323,9 @@ const RawStageJobSchema = Schema.Struct({
   retried: Schema.optional(Schema.NullOr(Schema.Boolean)),
   webPath: OptionalString,
   detailedStatus: Schema.optional(Schema.NullOr(Schema.Struct({ label: OptionalString }))),
+  downstreamPipeline: Schema.optional(
+    Schema.NullOr(Schema.Struct({ status: OptionalString, path: OptionalString })),
+  ),
 });
 
 const RawStageSchema = Schema.Struct({
@@ -424,13 +430,15 @@ export function decodePipelineStageChecksJson(
     }
     for (const job of jobs) {
       if (job === null || job.retried === true) continue;
-      const status = toPipelineStatus(job.status);
+      // A trigger job reads as its downstream pipeline, as `decodeTriggerJobChecksJson` explains.
+      const downstream = job.downstreamPipeline;
+      const status = toPipelineStatus(downstream ? downstream.status : job.status);
       checks.push({
         name: `${name} / ${trimmed(job.name)}`,
         // The same reading as `manual`: GitLab was told this failure does not fail the pipeline.
         status: status === "failure" && job.allowFailure === true ? "neutral" : status,
-        description: trimmed(job.detailedStatus?.label),
-        url: link(trimmed(job.webPath)),
+        description: downstream ? "Downstream pipeline" : trimmed(job.detailedStatus?.label),
+        url: link(trimmed(downstream ? downstream.path : job.webPath)),
       });
     }
   }

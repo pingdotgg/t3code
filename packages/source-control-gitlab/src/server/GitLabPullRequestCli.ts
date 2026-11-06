@@ -1380,16 +1380,16 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const detail = yield* mergeRequestDetail(input);
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
-        const [stages, downstream] = yield* Effect.all(
-          [
-            pipelineStageChecks({ ...input, url: detail.url }),
-            triggerJobChecks({ cwd: input.cwd, pipeline: detail.headPipeline }),
-          ],
-          { concurrency: 2 },
-        );
-        return stages === null && downstream.length === 0
+        // The stages already carry each trigger job's downstream pipeline.
+        const stages = yield* pipelineStageChecks({ ...input, url: detail.url });
+        if (stages !== null) return { ...detail, checks: stages };
+        const downstream = yield* triggerJobChecks({
+          cwd: input.cwd,
+          pipeline: detail.headPipeline,
+        });
+        return downstream.length === 0
           ? detail
-          : { ...detail, checks: [...(stages ?? detail.checks), ...downstream] };
+          : { ...detail, checks: [...detail.checks, ...downstream] };
       },
     ),
 

@@ -1473,6 +1473,24 @@ layer("GitLabPullRequestCli.layer", (it) => {
                       nodes: [{ name: "unit", status: "FAILED", webPath: "/acme/web/-/jobs/3" }],
                     },
                   },
+                  {
+                    name: "deploy",
+                    status: "success",
+                    jobs: {
+                      nodes: [
+                        // A trigger job without `strategy: depend` succeeds whatever its child does.
+                        {
+                          name: "child-pipeline",
+                          status: "SUCCESS",
+                          webPath: null,
+                          downstreamPipeline: {
+                            status: "FAILED",
+                            path: "/acme/child/-/pipelines/10",
+                          },
+                        },
+                      ],
+                    },
+                  },
                 ],
               },
             },
@@ -1486,7 +1504,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
         request.args[1] === "graphql"
           ? graphql
           : request.args[1]?.includes("/bridges")
-            ? Effect.succeed(output("[]"))
+            ? Effect.succeed(
+                output(
+                  JSON.stringify([
+                    {
+                      name: "child-pipeline",
+                      status: "success",
+                      downstream_pipeline: {
+                        status: "failed",
+                        web_url: "https://gitlab.com/acme/child/-/pipelines/10",
+                      },
+                    },
+                  ]),
+                ),
+              )
             : Effect.succeed(output(mergeRequestJson({ head_pipeline: pipeline }))),
       );
     }
@@ -1528,6 +1559,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
             description: null,
             url: "https://gitlab.com/acme/web/-/jobs/3",
           },
+          {
+            name: "deploy / child-pipeline",
+            status: "failure",
+            description: "Downstream pipeline",
+            url: "https://gitlab.com/acme/child/-/pipelines/10",
+          },
         ]);
       }),
     );
@@ -1553,6 +1590,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
             status: "failure",
             description: "merge_request_event",
             url: "https://gitlab.com/acme/web/-/pipelines/9",
+          },
+          {
+            name: "child-pipeline",
+            status: "failure",
+            description: "Downstream pipeline",
+            url: "https://gitlab.com/acme/child/-/pipelines/10",
           },
         ]);
       }),
