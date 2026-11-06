@@ -565,6 +565,22 @@ describe("composer rich text document model", () => {
       expect(roundTrip(settled).value).toBe(settled);
     });
 
+    it("reads the blank line back as the separator, not an empty paragraph", () => {
+      const parse = (value: string) => {
+        const json = buildDocJson(value, (name) => ({ label: name, description: null }));
+        return ProseMirrorNode.fromJSON(schema, json);
+      };
+      const doc = parse("> quoted\n\ncomment");
+      expect(doc.toJSON().content).toEqual([quote("quoted"), paragraph("comment")]);
+      const restored = parse(serializeEditorDoc(parse(serializeEditorDoc(doc).value)).value);
+      expect(restored.eq(doc)).toBe(true);
+      expect(parse("> quote\n\n> another").toJSON().content).toEqual([
+        quote("quote"),
+        paragraph(),
+        quote("another"),
+      ]);
+    });
+
     it.each(["# Heading", "- item", "3. item", "---", "```\ncode\n```"])(
       "leaves %s on the next line, since it opens its own block",
       (next) => {

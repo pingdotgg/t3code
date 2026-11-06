@@ -879,7 +879,7 @@ export function buildTiptapContent(
     });
     openQuote = null;
   };
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if ("quote" in entry) {
       flushLists();
       if (openQuote && openQuote.prefix !== entry.quote.prefix) flushQuote();
@@ -908,6 +908,21 @@ export function buildTiptapContent(
       continue;
     }
     const line = entry.line;
+    const previous = entries[index - 1];
+    const next = entries[index + 1];
+    // The blank line `serializeDoc` writes between a quote and the paragraph after it.
+    if (
+      previous &&
+      "quote" in previous &&
+      !line.list &&
+      line.inline.length === 0 &&
+      next &&
+      "line" in next &&
+      !next.line.list &&
+      next.line.inline.length > 0
+    ) {
+      continue;
+    }
     if (!line.list) {
       flushLists();
       blocks.push({ type: "paragraph", content: line.inline });
