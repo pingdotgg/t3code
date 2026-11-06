@@ -814,20 +814,17 @@ function useChatMarkdownState({
     return local._tag === "Success" && (local.value.entries[0] ?? null) !== null;
   };
   const openOnLocalMachine = async (targetPath: string) => {
-    try {
-      const result = await openInLocalEditor(targetPath);
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-      throw squashAtomCommandFailure(result);
-    } catch (cause) {
-      reportMarkdownActionFailure({ operation: "open-file-in-editor", target: targetPath }, cause);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open file",
-          description: cause instanceof Error ? cause.message : "An error occurred.",
-        }),
-      );
-    }
+    const result = await openInLocalEditor(targetPath);
+    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+    const cause = squashAtomCommandFailure(result);
+    reportMarkdownActionFailure({ operation: "open-file-in-editor", target: targetPath }, cause);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Unable to open file",
+        description: cause instanceof Error ? cause.message : "An error occurred.",
+      }),
+    );
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
