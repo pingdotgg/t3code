@@ -403,6 +403,7 @@ function MenuSubPopup({
   align = "start",
   ...props
 }: MenuPrimitive.Popup.Props & {
+  keepMounted?: boolean;
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
