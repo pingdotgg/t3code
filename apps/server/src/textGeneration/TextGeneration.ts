@@ -91,12 +91,13 @@ export const make = Effect.gen(function* () {
     const readSnapshots = Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
     let snapshots = yield* readSnapshots;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const limited = exhaustedUsageWindow(
-      snapshots.find((provider) => provider.instanceId === selection.instanceId),
-      now,
-      selection.model,
-    );
-    if (limited) {
+    const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
+    // Only a failed probe counts: a pending one is also not installed yet.
+    const unusable =
+      selected?.enabled === true &&
+      selected.status === "error" &&
+      (!selected.installed || selected.auth.status === "unauthenticated");
+    if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
@@ -113,6 +114,7 @@ export const make = Effect.gen(function* () {
         resolveProjectProviderInstanceEnabled(settings, null, provider.instanceId) &&
         provider.installed &&
         provider.auth.status !== "unauthenticated" &&
+        provider.status !== "error" &&
         isProviderAvailable(provider) &&
         isProviderTextGenerationCapable(provider) &&
         (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(provider.driver));
