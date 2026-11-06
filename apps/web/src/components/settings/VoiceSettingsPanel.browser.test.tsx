@@ -4,6 +4,7 @@ import {
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
 } from "@t3tools/contracts";
+import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
@@ -13,15 +14,16 @@ import {
   useVoiceTranscriptionDestination,
 } from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
+import { useEnvironmentScope } from "../../state/session";
 import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+vi.mock(import("../../state/session"), { spy: true });
 
-it("keeps setup available with a non-English locale and preserves a filtered test transcript", async () => {
-  using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
+it("preserves the model test transcript when its model is filtered out", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
     label: "Test environment",
@@ -41,12 +43,12 @@ it("keeps setup available with a non-English locale and preserves a filtered tes
     supportsStreaming: false,
     supportsTranslation: false,
     supportsLanguageDetection: false,
-    active: false,
-    state: "downloadable",
+    active: true,
+    state: "installed",
   };
   const status = {
     supported: true,
-    state: "missing-model",
+    state: "ready",
     modelId: model.id,
     model: model.name,
     size: model.size,
@@ -104,7 +106,6 @@ it("keeps setup available with a non-English locale and preserves a filtered tes
             model: null,
             downloading: false,
             error: null,
-            show: async () => {},
             setOpen: () => {},
             download: async () => {},
             cancelDownload: async () => {},
@@ -130,13 +131,6 @@ it("keeps setup available with a non-English locale and preserves a filtered tes
               <VoiceSettingsPanel />
             </SettingsScopeProvider>,
           );
-          await expect
-            .element(screen.getByRole("button", { name: "Set up voice input", exact: true }))
-            .toBeVisible();
-          await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
-          await userEvent.click(
-            screen.getByRole("button", { name: "Set up voice input", exact: true }),
-          );
           const testModel = screen.getByRole("button", { name: "Test model", exact: true });
           await expect.element(testModel).toBeVisible();
           await userEvent.click(testModel);
@@ -146,22 +140,13 @@ it("keeps setup available with a non-English locale and preserves a filtered tes
           const search = screen.getByRole("textbox", { name: "Search transcription models" });
           await userEvent.fill(search, "no matching model");
           await expect.element(screen.getByText("No models match.")).toBeVisible();
-          await expect
-            .element(screen.getByRole("button", { name: "Set up voice input", exact: true }))
-            .toBeVisible();
           await userEvent.clear(search);
           await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
           const french = screen.getByRole("button", { name: "French", exact: true });
           await userEvent.click(french);
           await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
           await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
-          await expect
-            .element(
-              screen.container.querySelector<HTMLParagraphElement>(
-                '[aria-label="Test transcript"]',
-              ),
-            )
-            .not.toBeVisible();
+          expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
           await userEvent.click(french);
           await expect.element(result).toBeVisible();
           await vi.waitFor(() =>
@@ -173,6 +158,118 @@ it("keeps setup available with a non-English locale and preserves a filtered tes
       );
     },
   );
+});
+
+// A fresh destination has not downloaded its selected model, and a French browser filters an
+// English-only model out of the catalog. Setup must still be one click away.
+it("opens the selected model's setup wizard before it is downloaded or listed", async () => {
+  using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
+  const target = new PrimaryConnectionTarget({
+    environmentId: EnvironmentId.make("voice-first-run"),
+    label: "Test environment",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
+  const model: EnvironmentSpeechModel = {
+    id: "tiny",
+    name: "Tiny",
+    description: "",
+    size: 100,
+    languages: ["en"],
+    accuracy: 1,
+    speed: 1,
+    recommended: true,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: false,
+    active: false,
+    state: "downloadable",
+  };
+  const status = {
+    supported: true,
+    state: "missing-model",
+    modelId: model.id,
+    model: model.name,
+    size: model.size,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    acceleration: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  } satisfies EnvironmentSpeechStatus;
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/models")
+      return Promise.resolve(
+        Response.json({
+          models: [model, { ...model, id: "both", name: "Bilingual", languages: ["en", "fr"] }],
+        }),
+      );
+    return fetch(input, init);
+  });
+  using mocks = new DisposableStack();
+  mocks.defer(() => vi.mocked(useEnvironmentScope).mockReset());
+  vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  mocks.defer(() => vi.mocked(useVoiceTranscriptionDestination).mockReset());
+  mocks.defer(() => vi.mocked(useEnvironmentSpeechInput).mockReset());
+  vi.mocked(useVoiceTranscriptionDestination).mockImplementation(() => ({
+    environmentId: target.environmentId,
+    label: target.label,
+    grantId: "test",
+    prepared,
+  }));
+  // Mirrors the hook: starting with a missing model opens the wizard instead of recording.
+  vi.mocked(useEnvironmentSpeechInput).mockImplementation((input) => {
+    const [open, setOpen] = useState(false);
+    const [ready, setReady] = useState(false);
+    return {
+      available: true,
+      status,
+      transcriptionEnvironmentId: target.environmentId,
+      transcriptionEnvironmentLabel: target.label,
+      setup: {
+        open,
+        step: ready ? 1 : 0,
+        model,
+        downloading: false,
+        error: null,
+        setOpen,
+        download: async () => setReady(true),
+        cancelDownload: async () => {},
+        startRecording: async () => {
+          input.commitDraft("microphone test", { start: 15, end: 15 });
+          setOpen(false);
+        },
+      },
+      state: { phase: "idle", error: null, errorAction: null },
+      preview: null,
+      level: 0,
+      preparing: false,
+      blocksSubmission: false,
+      freezesEditor: false,
+      start: async () => setOpen(true),
+      submitAfterDictation: () => {},
+      stop: async () => {},
+      cancel: () => {},
+      skipPostProcessing: () => {},
+    };
+  });
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: /set up voice input/i }));
+  await expect.element(screen.getByRole("dialog", { name: "Set up voice input" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Download model" }));
+  await userEvent.click(screen.getByRole("button", { name: "Start dictating" }));
+  await expect
+    .element(screen.getByRole("status", { name: "Test transcript" }))
+    .toHaveTextContent("microphone test");
 });
 
 it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {

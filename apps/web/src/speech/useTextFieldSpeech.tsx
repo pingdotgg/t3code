@@ -33,6 +33,7 @@ export function useTextFieldSpeech(input: {
     ownerKey: input.ownerKey,
     draftText: input.text,
     disabled: input.disabled,
+    offerSetup: false,
     readDraft: () => {
       const field = latest.current.textareaRef.current;
       const cursor = field?.selectionStart ?? latest.current.text.length;

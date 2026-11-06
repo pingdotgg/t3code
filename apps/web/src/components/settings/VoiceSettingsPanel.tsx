@@ -36,9 +36,6 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { useAtomValue } from "@effect/atom-react";
-import { shortcutLabelForCommand } from "../../keybindings";
-import { primaryServerKeybindingsAtom } from "../../state/server";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import {
@@ -129,7 +126,6 @@ type ModelCardProps = {
   readonly onSelect: () => void;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
-  readonly hidden?: boolean;
   readonly testControls?: ReactNode;
   readonly children?: ReactNode;
 };
@@ -151,7 +147,7 @@ function ModelCard(props: ModelCardProps) {
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
-    <div hidden={props.hidden} className="flex flex-wrap items-start gap-3 px-3 py-2.5 sm:px-4">
+    <div className="flex flex-wrap items-start gap-3 px-3 py-2.5 sm:px-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium leading-5">{model.name}</span>
@@ -741,9 +737,10 @@ function SpeechModelBrowser(props: {
         (!query || (model.name + " " + model.description).toLocaleLowerCase().includes(query)),
     )
     .toSorted((left, right) => modelSortOrder(left) - modelSortOrder(right));
-  const activeModel = models.find(
-    (model) => model.active || (status?.supported && model.id === status.modelId),
-  );
+  // A selected model that is not downloaded yet is not active; the status still names it.
+  const selectedModelId = status?.supported ? status.modelId : null;
+  const activeModel =
+    models.find((model) => model.active) ?? models.find((model) => model.id === selectedModelId);
   const renderedModels =
     activeModel && !sortedModels.includes(activeModel)
       ? [activeModel, ...sortedModels]
@@ -867,7 +864,7 @@ function SpeechModelBrowser(props: {
                       key={model.id}
                       card={card}
                       hidden={!sortedModels.includes(model)}
-                      onSetup={() => {
+                      revealModel={() => {
                         setSearch("");
                         setSelection([]);
                       }}
@@ -891,7 +888,7 @@ function SpeechModelBrowser(props: {
 function TranscriptionTest(props: {
   readonly card: ModelCardProps;
   readonly hidden: boolean;
-  readonly onSetup: () => void;
+  readonly revealModel: () => void;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
   readonly projectName: string | null;
@@ -918,97 +915,91 @@ function TranscriptionTest(props: {
     commitDraft: (text) => setTranscript(text),
   });
   return (
-    <SettingsSearchTarget {...searchableSetting("transcription-test")}>
+    <>
       {speech.available && speech.state.phase === "idle" ? (
         <div className="flex justify-end px-3 py-2 sm:px-4">
-          <Button
-            size="sm"
-            onClick={() => {
-              props.onSetup();
-              setShowTranscript(true);
-              void speech.setup.show();
-            }}
-          >
+          <Button size="sm" onClick={() => void speech.start({ setupOnly: true })}>
             Set up voice input
           </Button>
         </div>
       ) : null}
-      <ModelCard
-        {...props.card}
-        hidden={props.hidden}
-        testControls={
-          <div className="flex min-w-0 max-w-full items-center gap-1">
-            <ComposerSpeechRecordingPill
-              state={speech.state}
-              progress={null}
-              level={speech.level}
-              onStart={() => void speech.start()}
-              onStop={() => void speech.stop()}
-              onCancel={() => speech.cancel()}
-              onSkipPostProcessing={() => speech.skipPostProcessing()}
-            />
-            {speech.available ? (
-              speech.state.phase === "idle" ? (
+      <SettingsSearchTarget {...searchableSetting("transcription-test")} hidden={props.hidden}>
+        <ModelCard
+          {...props.card}
+          testControls={
+            <div className="flex min-w-0 max-w-full items-center gap-1">
+              <ComposerSpeechRecordingPill
+                state={speech.state}
+                progress={null}
+                level={speech.level}
+                onStart={() => void speech.start()}
+                onStop={() => void speech.stop()}
+                onCancel={() => speech.cancel()}
+                onSkipPostProcessing={() => speech.skipPostProcessing()}
+              />
+              {speech.available ? (
+                speech.state.phase === "idle" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setShowTranscript(true);
+                      void speech.start();
+                    }}
+                  >
+                    <MicIcon />
+                    Test model
+                  </Button>
+                ) : null
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  {speech.status?.supported === false
+                    ? speech.status.reason
+                    : "Waiting for the environment to connect"}
+                </span>
+              )}
+            </div>
+          }
+        >
+          {showTranscript ? (
+            <div className="w-full">
+              <div className="flex items-start gap-2">
+                <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+                  Say a sentence in the language above. Cleanup is skipped, so you see exactly what
+                  the model heard. The transcript stays on this page.
+                </p>
                 <Button
-                  size="sm"
-                  variant="outline"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Close model test"
                   onClick={() => {
-                    setShowTranscript(true);
-                    void speech.start();
+                    speech.cancel();
+                    setShowTranscript(false);
                   }}
                 >
-                  <MicIcon />
-                  Test model
+                  <XIcon />
                 </Button>
-              ) : null
-            ) : (
-              <span className="text-xs text-muted-foreground">
-                {speech.status?.supported === false
-                  ? speech.status.reason
-                  : "Waiting for the environment to connect"}
-              </span>
-            )}
-          </div>
-        }
-      >
-        {showTranscript ? (
-          <div className="w-full">
-            <div className="flex items-start gap-2">
-              <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
-                Say a sentence in the language above. Cleanup is skipped, so you see exactly what
-                the model heard. The transcript stays on this page.
-              </p>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Close model test"
-                onClick={() => {
-                  speech.cancel();
-                  setShowTranscript(false);
-                }}
-              >
-                <XIcon />
-              </Button>
+              </div>
+              {speech.preview || transcript !== null ? (
+                <p
+                  role="status"
+                  aria-label="Test transcript"
+                  className="mt-2 select-text whitespace-pre-wrap break-words text-sm leading-relaxed"
+                >
+                  {speech.preview ? (
+                    <>
+                      {speech.preview.committed}
+                      <span className="text-muted-foreground">{speech.preview.tentative}</span>
+                    </>
+                  ) : (
+                    transcript || "No speech recognized. Try again."
+                  )}
+                </p>
+              ) : null}
             </div>
-            {speech.preview || transcript !== null ? (
-              <p
-                role="status"
-                aria-label="Test transcript"
-                className="mt-2 select-text whitespace-pre-wrap break-words text-sm leading-relaxed"
-              >
-                {speech.preview ? (
-                  <>
-                    {speech.preview.committed}
-                    <span className="text-muted-foreground">{speech.preview.tentative}</span>
-                  </>
-                ) : (
-                  transcript || "No speech recognized. Try again."
-                )}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-      </ModelCard>
+          ) : null}
+        </ModelCard>
+      </SettingsSearchTarget>
       <VoiceInputSetup
         environmentId={speech.transcriptionEnvironmentId}
         open={speech.setup.open}
@@ -1020,17 +1011,17 @@ function TranscriptionTest(props: {
         onOpenChange={speech.setup.setOpen}
         onDownload={() => void speech.setup.download()}
         onCancelDownload={() => void speech.setup.cancelDownload()}
-        onStartRecording={() => void speech.setup.startRecording()}
+        onStartRecording={() => {
+          if (props.hidden) props.revealModel();
+          setShowTranscript(true);
+          void speech.setup.startRecording();
+        }}
       />
-    </SettingsSearchTarget>
+    </>
   );
 }
 
 export function VoiceSettingsPanel() {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const dictationShortcut = shortcutLabelForCommand(keybindings, "composer.dictation", {
-    context: { terminalFocus: false, terminalOpen: false },
-  });
   const cleanupEnabled = useCleanupGrant() !== null;
   const settings = useClientSettings();
   const settingsScope = useOptionalSettingsScope();
@@ -1143,11 +1134,7 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
           title="Dictation shortcut"
-          description={
-            dictationShortcut
-              ? `Press ${dictationShortcut} to dictate in the focused editor. Choose how it starts and stops recording.`
-              : "No dictation shortcut is assigned. Set one in Keybindings settings."
-          }
+          description="How the dictation shortcut starts and stops recording."
           control={
             <Select
               value={settings.voiceShortcutMode}
@@ -1177,8 +1164,8 @@ export function VoiceSettingsPanel() {
           title="Send microphone audio to"
           description={
             <>
-              Audio is sent here to transcribe, then discarded. Choose Off to disable voice input.
-              Saved on this device only.
+              Microphone audio is sent to this environment to transcribe, then discarded. Choose Off
+              to turn voice input off on this device. This choice is saved on this device only.
             </>
           }
           control={
@@ -1216,11 +1203,6 @@ export function VoiceSettingsPanel() {
             </Select>
           }
         >
-          {!destination.environmentId ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Choose an environment to enable voice input, then select Set up voice input below.
-            </p>
-          ) : null}
           {destination.environmentId && chosenUnsupported ? (
             <p className="mt-2 text-xs text-destructive">
               {chosenEnvironment.label} can’t transcribe audio. Pick an environment that can to use
