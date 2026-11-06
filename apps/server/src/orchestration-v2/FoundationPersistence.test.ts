@@ -326,7 +326,7 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
-  it.effect("projects oversized tool bodies before both replay and live RPC retention", () =>
+  it.effect("projects oversized tool bodies once before replay and live RPC retention", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const sink = yield* EventSink.EventSinkV2;
@@ -369,17 +369,25 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             },
           ],
         });
-        const pull = yield* Stream.toPull(
-          sink.stream({
-            threadId: thread.id,
-            afterSequence: created!.sequence,
-            bounded: true,
-          }),
-        );
+        const subscribe = () =>
+          Stream.toPull(
+            sink.stream({
+              threadId: thread.id,
+              afterSequence: created!.sequence,
+              bounded: true,
+            }),
+          );
+        const pull = yield* subscribe();
+        const other = yield* subscribe();
         const replay = yield* pull;
         assert.lengthOf(replay, 1);
+        assert.lengthOf(yield* other, 1);
         assert.equal(replay[0]!.event.type, "turn-item.updated");
         assert.isBelow(Buffer.byteLength(yield* encodeJson(replay)), 4_000);
+        const stringify = yield* Effect.acquireRelease(
+          Effect.sync(() => vi.spyOn(JSON, "stringify")),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
         const [completed] = yield* sink.write({
           events: [
             {
@@ -392,9 +400,16 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           ],
         });
         const live = yield* pull;
+        const otherLive = yield* other;
         assert.deepEqual(
           live.map((stored) => stored.sequence),
           [completed!.sequence],
+        );
+        // Both subscribers get one shared projection, so the live budget sizes it once.
+        assert.strictEqual(otherLive[0], live[0]);
+        assert.lengthOf(
+          stringify.mock.calls.filter(([value]) => value === live[0] || value === otherLive[0]),
+          1,
         );
         assert.isBelow(Buffer.byteLength(yield* encodeJson(live)), 4_000);
         for (const stored of [...replay, ...live]) {
