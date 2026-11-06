@@ -34,6 +34,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  sidebarProjectFoldersRendered,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1524,6 +1525,18 @@ describe("sidebarFolderExpansionKeys", () => {
     expect(resolveProjectExpanded({}, keys)).toBe(true);
     expect(resolveProjectExpanded({ [cwdKey]: false }, keys)).toBe(false);
     expect(resolveProjectExpanded({ [keys[0]!]: true, [cwdKey]: false }, keys)).toBe(true);
+  });
+});
+
+describe("sidebarProjectFoldersRendered", () => {
+  it("stays false when boring mode is off or no folder is on screen", () => {
+    expect(sidebarProjectFoldersRendered(null)).toBe(false);
+    // Boring mode with nothing to group is [], not null. `!== null` still disables drag.
+    expect(sidebarProjectFoldersRendered([])).toBe(false);
+  });
+
+  it("is true once a folder renders, including an empty folder that is kept", () => {
+    expect(sidebarProjectFoldersRendered([{}])).toBe(true);
   });
 });
 

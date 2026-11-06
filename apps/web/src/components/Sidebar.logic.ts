@@ -936,6 +936,16 @@ export function sidebarFolderExpansionKeys(group: {
 }
 
 /**
+ * True when a boring-sidebar project folder is actually on screen.
+ * Boring mode passes an empty list, not null, when every thread is pinned,
+ * snoozed, or settled and no empty folder is kept. Drag reorder stays on in
+ * that case. `!== null` would turn it off even though nothing folder-shaped rendered.
+ */
+export function sidebarProjectFoldersRendered(projectFolders: readonly unknown[] | null): boolean {
+  return projectFolders !== null && projectFolders.length > 0;
+}
+
+/**
  * Boring sidebar folders. Folders follow `groups` order and threads keep their
  * input order. A project with no threads gets a folder only when `keepEmpty` says so.
  * A thread whose project is in no group has no folder and is left out.

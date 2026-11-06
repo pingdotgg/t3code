@@ -182,6 +182,7 @@ import {
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
+  sidebarProjectFoldersRendered,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -1914,7 +1915,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
     });
   };
-  const hasProjectFolders = projectFolders !== null && projectFolders.length > 0;
+  const hasProjectFolders = sidebarProjectFoldersRendered(projectFolders);
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -3343,7 +3344,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
                             sortableDisabled={
-                              projectFolders !== null ||
+                              hasProjectFolders ||
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
                               optimisticDrop !== null
