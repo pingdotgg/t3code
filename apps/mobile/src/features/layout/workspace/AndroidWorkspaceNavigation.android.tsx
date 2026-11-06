@@ -1,5 +1,6 @@
 import { selectedNavigationTab, visibleNavigationTabs } from "./navigation-tab-order";
 import { requireNativeView } from "expo";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { CommonActions, useNavigation } from "@react-navigation/native";
 import {
   Keyboard,
@@ -15,6 +16,7 @@ import { useAndroidControlSizing } from "../../../components/ui/useAndroidContro
 import { useToolbarLayout } from "../../../components/ui/useToolbarLayout";
 import { rootNavigationRef } from "../../../lib/rootNavigation";
 import { useWorkspaceConnectionState } from "../../../state/workspace";
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import { androidWorkspaceNavigationColors } from "./android-workspace-navigation-colors";
 import {
   androidWorkspaceTabNavigationState,
@@ -36,6 +38,8 @@ interface NativeNavigationProps extends ViewProps {
   readonly floating: boolean;
   readonly tabs: readonly string[];
   readonly selectedTab: AndroidWorkspaceNavigationTab;
+  readonly pullRequestsTitle: string;
+  readonly pullRequestsExpandedTitle: string;
   readonly dark: boolean;
   readonly textScale: number;
   readonly newEnabled: boolean;
@@ -73,6 +77,7 @@ export function AndroidWorkspaceNavigation(props: {
   readonly onOverlayChange?: (overlay: boolean) => void;
 }) {
   const workspace = useWorkspaceTabs()!;
+  const terms = useChangeRequestTerms();
   const order = useNavigationTabOrder();
   const hidden = useHiddenNavigationTabs();
   const root = useAndroidWorkspaceRoot();
@@ -122,6 +127,8 @@ export function AndroidWorkspaceNavigation(props: {
         floating={floating}
         tabs={tabs}
         selectedTab={selectedTab}
+        pullRequestsTitle={terms.shortLabel === "MR" ? "MRs" : "Pulls"}
+        pullRequestsExpandedTitle={capitalizeTerm(terms.plural)}
         dark={themeAppearance === "dark"}
         textScale={scale}
         newEnabled={connectionState.hasConnections}
