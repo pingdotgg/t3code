@@ -202,6 +202,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         let modelReads = 0;
         const replies = {
           ...OPENCODE_2_RESPONSES,
+          "/api/agent": {
+            status: 200,
+            contentType: "application/json",
+            body: '{"location":{"directory":"/work"},"data":[]}',
+          },
           "/api/provider": {
             status: 200,
             contentType: "application/json",
