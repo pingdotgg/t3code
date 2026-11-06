@@ -2015,15 +2015,17 @@ it.effect("keeps ingesting a failed root's background item when its work continu
   }),
 );
 
-it.effect("does not pin ingestion on background items when the root turn is interrupted", () =>
-  Effect.gen(function* () {
-    const observed = yield* runBackgroundItemScenario("bg-interrupted", (ids) => [
-      backgroundTurnItemEvent(ids, "command_execution", "running", 1),
-      rootTerminalEvent(ids, "interrupted"),
-      backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
-    ]);
-    assert.deepEqual(observed, ["turn_item:running", "root-finalized"]);
-  }),
+it.effect.each(["interrupted", "failed"] as const)(
+  "does not pin ingestion on background items when the root turn is %s",
+  (status) =>
+    Effect.gen(function* () {
+      const observed = yield* runBackgroundItemScenario(`bg-${status}`, (ids) => [
+        backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+        rootTerminalEvent(ids, status),
+        backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
+      ]);
+      assert.deepEqual(observed, ["turn_item:running", "root-finalized"]);
+    }),
 );
 
 it.effect("seeds inherited background items before their next update", () =>
