@@ -18,7 +18,8 @@ allowBuilds:
   electron: false
   electron-winstaller: false
   esbuild: true
-  koffi: true
+  # Ships prebuilds; its host-architecture probe triggers source builds during cross-packaging.
+  koffi: false
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
