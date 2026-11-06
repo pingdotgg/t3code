@@ -13,7 +13,11 @@ import { InlineButton } from "../ui/button";
 import { SidebarMenuItem } from "../ui/sidebar";
 
 /** Fills the free space in the sidebar footer's utility row, so it never moves or covers the list. */
-export function SidebarThreadUndoNotice() {
+export function SidebarThreadUndoNotice({
+  reserveActionSpace,
+}: {
+  readonly reserveActionSpace: boolean;
+}) {
   const notice = useThreadUndoNotice((state) => state.notice);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   // Short enough to fit beside the utility icons; screen readers hear the full summary.
@@ -31,7 +35,7 @@ export function SidebarThreadUndoNotice() {
 
   return (
     <SidebarMenuItem
-      className="@container flex min-w-0 flex-1"
+      className={cn("@container flex min-w-0 flex-1", reserveActionSpace && "min-w-6")}
       aria-hidden={!summary}
       inert={!summary}
     >

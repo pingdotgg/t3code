@@ -42,12 +42,12 @@ export function SidebarProviderUsage({ onClick }: { readonly onClick: () => void
 
   return (
     <SidebarMenuItem
-      className="min-w-8 flex-initial"
+      className="min-w-0 flex-initial"
       ref={observeWidth}
       style={{ width: Math.max(32, entries.length * 36 - 4) }}
     >
       <div className="flex min-w-0 items-center gap-1" data-provider-usage>
-        {entries.length === 0 || capacity === 0 ? (
+        {entries.length === 0 && capacity > 0 ? (
           <Tooltip>
             <TooltipTrigger
               render={<SidebarMenuButton aria-label="Usage" onClick={onClick} size="icon" />}
