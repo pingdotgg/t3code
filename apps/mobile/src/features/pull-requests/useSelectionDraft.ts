@@ -20,7 +20,13 @@ export function useSelectionDraft<T>(input: {
   }) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<SelectionDraft>(new Map());
-  const selections = input.candidates.map((candidate) => ({
+  // Rows toggled from a host search, which leave the list once the query changes.
+  const [picked, setPicked] = useState<ReadonlyMap<string, T>>(new Map());
+  const listedKeys = new Set(input.candidates.map(input.candidateKey));
+  const selections = [
+    ...input.candidates,
+    ...[...picked].flatMap(([key, candidate]) => (listedKeys.has(key) ? [] : [candidate])),
+  ].map((candidate) => ({
     key: input.candidateKey(candidate),
     selected: input.isSelected(candidate),
     candidate,
@@ -44,7 +50,9 @@ export function useSelectionDraft<T>(input: {
       }),
     toggle: (candidate: T) => {
       const toggled = selections.find((selection) => selection.candidate === candidate);
-      if (toggled) setDraft(toggleDraft(draft, selections, toggled, input.single));
+      if (!toggled) return;
+      setDraft(toggleDraft(draft, selections, toggled, input.single));
+      setPicked(new Map(picked).set(toggled.key, toggled.candidate));
     },
   };
 }

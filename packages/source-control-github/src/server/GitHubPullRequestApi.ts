@@ -24,6 +24,7 @@ import {
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
+  type PullRequestReferenceCandidate,
   type PullRequestComment,
   type PullRequestCommit,
   type PullRequestFileViewed,
@@ -74,6 +75,9 @@ import {
   pullRequestLookup,
   toLabelCandidates,
   toRepositoryAuthors,
+  toRepositoryReferences,
+  referenceSearchQuery,
+  searchPhrase,
   toRepositoryLabels,
   toPullRequestActivityPage,
   toPullRequestActionSummary,
@@ -601,6 +605,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly host: string;
       readonly number: number;
+      readonly query?: string | undefined;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitHubPullRequestApiError>;
 
     readonly setReviewerRequest: (input: {
@@ -639,6 +644,19 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly query?: string | undefined;
     }) => Effect.Effect<
       { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean },
+      GitHubPullRequestApiError
+    >;
+
+    readonly searchRepositoryReferences: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<
+      {
+        readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+        readonly truncated: boolean;
+      },
       GitHubPullRequestApiError
     >;
 
@@ -741,11 +759,6 @@ function parseRepositorySelector(value: string): {
 /** Bound decimal length to prevent exponential notation in request paths. */
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
-}
-
-/** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
-function searchPhrase(query: string): string {
-  return `"${query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 const REVIEW_QUALIFIERS = {
@@ -2313,10 +2326,10 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         const operation = "listReviewerCandidates";
         return client
-          .ReviewerCandidates({ owner, name, number: input.number })
+          .ReviewerCandidates({ owner, name, number: input.number, query: input.query ?? null })
           .pipe(
             graphql({ ...input, operation, allowReserve: true }),
-            Effect.map(toReviewerCandidates),
+            Effect.map((result) => toReviewerCandidates(result, input.query)),
             Effect.flatMap(found({ ...input, operation })),
           );
       },
@@ -2370,6 +2383,32 @@ export const make = Effect.gen(function* () {
             Effect.map(toRepositoryAuthors),
             Effect.flatMap(found({ ...input, operation })),
           );
+      },
+    ),
+
+    searchRepositoryReferences: Effect.fn("GitHubPullRequestApi.searchRepositoryReferences")(
+      function (input) {
+        const { owner, name } = parseRepositorySelector(input.repository);
+        const parsed = /^\d+$/.test(input.query ?? "") ? Number(input.query) : 0;
+        // GraphQL validates `$number: Int!` even when `@include` skips the lookup.
+        const exact = parsed > 0 && parsed <= 2_147_483_647;
+        const search = (lookup: boolean) =>
+          client.RepositoryReferences({
+            owner,
+            name,
+            q: referenceSearchQuery(input.repository, input.query),
+            number: lookup ? parsed : 0,
+            exact: lookup,
+          });
+        return search(exact).pipe(
+          // A missing number fails the whole query, which would discard the search results.
+          Effect.catchIf(
+            (error) => exact && isNotFoundOnly(error),
+            () => search(false),
+          ),
+          graphql({ ...input, operation: "searchRepositoryReferences", allowReserve: true }),
+          Effect.map(toRepositoryReferences),
+        );
       },
     ),
 

@@ -70,8 +70,14 @@ export function PullRequestCandidatePicker<T>({
   children: (candidate: T, selected: boolean) => ReactNode;
 }) {
   const [draft, setDraft] = useState<SelectionDraft>(new Map());
+  // Rows toggled from a host search, which leave the list once the query changes.
+  const [picked, setPicked] = useState<ReadonlyMap<string, T>>(new Map());
   const [sending, setSending] = useState(false);
-  const selections = candidates.map((candidate) => ({
+  const listedKeys = new Set(candidates.map(candidateKey));
+  const selections = [
+    ...candidates,
+    ...[...picked].flatMap(([key, candidate]) => (listedKeys.has(key) ? [] : [candidate])),
+  ].map((candidate) => ({
     key: candidateKey(candidate),
     selected: isSelected(candidate),
     candidate,
@@ -92,11 +98,14 @@ export function PullRequestCandidatePicker<T>({
     );
   }
 
-  const shown = selections.filter((selection) => matches(selection.candidate, query));
+  const shown = selections.filter(
+    (selection) => listedKeys.has(selection.key) && matches(selection.candidate, query),
+  );
   const keys = shown.map((selection) => selection.key);
 
   const commit = async () => {
     const changes = draftChanges(draft, selections);
+    setPicked(new Map());
     if (changes.add.length === 0 && changes.remove.length === 0) {
       setDraft(new Map());
       return;
@@ -119,7 +128,9 @@ export function PullRequestCandidatePicker<T>({
       value={null}
       onValueChange={(key) => {
         const toggled = selections.find((selection) => selection.key === key);
-        if (toggled) setDraft(toggleDraft(draft, selections, toggled, single));
+        if (!toggled) return;
+        setDraft(toggleDraft(draft, selections, toggled, single));
+        setPicked(new Map(picked).set(toggled.key, toggled.candidate));
       }}
       open={open}
       onOpenChange={(nextOpen, details) => {

@@ -32,6 +32,7 @@ const REMEMBERED_SETTINGS_PAGES: ReadonlySet<string> = new Set(
 );
 
 export function rememberedSettingsPage(selections: WorkspaceSelections): SettingsPageTarget {
+  if (selections.settings === "SettingsMicrophone") return "SettingsVoice";
   return selections.settings && REMEMBERED_SETTINGS_PAGES.has(selections.settings)
     ? (selections.settings as SettingsPageTarget)
     : DEFAULT_SETTINGS_PAGE;
