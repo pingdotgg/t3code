@@ -80,6 +80,10 @@ vi.mock("react-native", () => ({
   useWindowDimensions: () => ({ width: 390, height: 844, fontScale: 1 }),
   Text: ({ children }: { children?: ReactNode }) => createElement("span", null, children),
   AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
+  AccessibilityInfo: {
+    isReduceMotionEnabled: async () => true,
+    addEventListener: () => ({ remove() {} }),
+  },
   View: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
   Pressable: (props: {
     children?: ReactNode;
@@ -253,7 +257,10 @@ vi.mock("../native/NativeScrollViewMarker", () => ({
 vi.mock("../native/NativeWorkspaceColumns", () => ({
   useNativeWorkspaceColumnsSupported: () => false,
 }));
-vi.mock("../native/native-layout-metrics", () => ({ useDeviceType: () => "phone" }));
+vi.mock("../native/native-layout-metrics", () => ({
+  useDeviceType: () => "phone",
+  useNativeColumnLayoutMetrics: () => null,
+}));
 vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));

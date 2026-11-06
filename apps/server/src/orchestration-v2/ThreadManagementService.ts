@@ -146,6 +146,8 @@ export interface ThreadManagementSendInput {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
+  /** Start a new provider session; the orchestrator queues it instead of steering. */
+  readonly freshContext?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -402,6 +404,7 @@ export interface ThreadManagementServiceShape {
     ProjectionRecords<K>,
     ThreadManagementProjectionLoadError | ThreadManagementThreadNotFoundError
   >;
+  readonly getAgentAwarenessSnapshot: Orchestrator.OrchestratorV2["Service"]["getAgentAwarenessSnapshot"];
   readonly getShellSnapshot: (
     options?: Pick<
       ShellSnapshotOptions,
@@ -419,6 +422,8 @@ export interface ThreadManagementServiceShape {
     Orchestrator.OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
+  readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
+  readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
   /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
@@ -817,26 +822,31 @@ const make = Effect.gen(function* () {
       });
     }
     const steerableRun = latestSteerableRun(target);
+    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    const mode =
+      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+        ? "queue"
+        : input.mode;
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (input.mode === "steer" || input.mode === "restart") {
+    if (mode === "steer" || mode === "restart") {
       if (steerableRun === undefined) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,
-          mode: input.mode,
+          mode,
         });
       }
       dispatchMode = {
-        type: input.mode === "steer" ? "steer_active" : "restart_active",
+        type: mode === "steer" ? "steer_active" : "restart_active",
         targetRunId: steerableRun.id,
       };
-    } else if (input.mode === "auto" && steerableRun !== undefined) {
+    } else if (mode === "auto" && steerableRun !== undefined) {
       dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
-        type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
+        type: mode === "queue" ? "queue_after_active" : "start_immediately",
       };
     }
 
@@ -850,6 +860,7 @@ const make = Effect.gen(function* () {
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.freshContext ? { freshContext: true } : {}),
       dispatchMode,
       createdBy: input.createdBy,
       creationSource: input.creationSource,
@@ -885,7 +896,7 @@ const make = Effect.gen(function* () {
         ? "queued"
         : turnItem.inputIntent === "turn_start"
           ? "started"
-          : input.mode === "restart"
+          : mode === "restart"
             ? "restarted"
             : "steered";
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
@@ -1519,6 +1530,7 @@ const make = Effect.gen(function* () {
     getThreadTranscript,
     getThreadSnapshotWindow,
     getProjectThreadRecords,
+    getAgentAwarenessSnapshot: orchestrator.getAgentAwarenessSnapshot,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
     countThreads: orchestrator.countThreads,
@@ -1526,6 +1538,14 @@ const make = Effect.gen(function* () {
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,
     readShellSnapshot: orchestrator.readShellSnapshot,
     getThreadShell: orchestrator.getThreadShell,
+    listAppOwnedChildThreadIds: Effect.fn("ThreadManagementService.listAppOwnedChildThreadIds")(
+      function (threadId) {
+        return ensureProjectionTranscript(threadId).pipe(
+          Effect.andThen(orchestrator.listAppOwnedChildThreadIds(threadId)),
+        );
+      },
+    ),
+    getThreadTitles: orchestrator.getThreadTitles,
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,

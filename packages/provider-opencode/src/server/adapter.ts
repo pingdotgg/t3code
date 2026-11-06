@@ -35,6 +35,7 @@ import {
   type ProviderSessionId,
   type RuntimeRequestId,
   type ThreadId,
+  settingsSecretLiteral,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
@@ -80,7 +81,7 @@ import {
   makeSubagentChildThread,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
-import { openCodeToolTurnItem } from "./toolItems.ts";
+import { openCodeCommandFailed, openCodeToolOutput, openCodeToolTurnItem } from "./toolItems.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
@@ -446,7 +447,8 @@ export function makeOpenCodeProtocolLogger(input: {
 }): (event: OpenCodeProtocolLogEvent) => Effect.Effect<void, never> {
   return (event) =>
     Effect.gen(function* () {
-      if (!input.nativeEventLogger) return;
+      // Per-token deltas; the part's final message.part.updated is still logged.
+      if (!input.nativeEventLogger || event.method === "message.part.delta") return;
       const observedAt = DateTime.formatIso(yield* DateTime.now);
       const method = structuralProtocolMethod(event.method);
       yield* input.nativeEventLogger.write(
@@ -741,7 +743,9 @@ function toolStatus(part: ToolPart): {
     case "running":
       return { node: "running", item: "running" };
     case "completed":
-      return { node: "completed", item: "completed" };
+      return openCodeCommandFailed(part.tool, part.state.metadata)
+        ? { node: "failed", item: "failed" }
+        : { node: "completed", item: "completed" };
     case "error":
       return { node: "failed", item: "failed" };
   }
@@ -944,8 +948,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           binaryPath: options.settings.binaryPath,
           directory: cwd,
           serverUrl: options.settings.serverUrl,
-          ...(options.settings.serverPassword
-            ? { serverPassword: options.settings.serverPassword }
+          ...(settingsSecretLiteral(options.settings.serverPassword)
+            ? { serverPassword: settingsSecretLiteral(options.settings.serverPassword) }
             : {}),
           environment: options.environment,
         });
@@ -1602,6 +1606,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   toolName: part.tool.slice(serverName.replace(/[^a-zA-Z0-9_-]/g, "_").length + 1),
                   title: toolTitle(part) === part.tool ? undefined : toolTitle(part),
                 });
+          const files =
+            part.state.status === "completed"
+              ? part.state.attachments?.map((file) => ({ uri: file.url, mime: file.mime }))
+              : undefined;
           const turnItem: OrchestrationV2TurnItem = matchingServers?.length
             ? {
                 ...base,
@@ -1609,12 +1617,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ...presentation,
                 toolName: part.tool,
                 input,
-                ...(output === undefined ? {} : { output }),
+                ...(output === undefined && !files?.length
+                  ? {}
+                  : { output: openCodeToolOutput(output, files) }),
               }
             : openCodeToolTurnItem(base, {
                 name: part.tool,
                 input,
                 output,
+                files,
                 completedMetadata:
                   part.state.status === "completed" ? part.state.metadata : undefined,
               });
@@ -2977,7 +2988,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             .map((part) => part.text)
             .join("\n")
             .trim();
-          const match = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+          const match = text?.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
           const command = match
             ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
                 Effect.timeout("10 seconds"),

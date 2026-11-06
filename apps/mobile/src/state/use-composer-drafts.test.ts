@@ -1281,7 +1281,10 @@ describe("mobile composer drafts", () => {
         "pending-task:queued-1": { text: "Edited queued task", attachments: [file] },
       });
       appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, { queued: [queued] });
-      await archiveCloudComposerDrafts("account-a", new Set([environmentId]));
+      await archiveCloudComposerDrafts("account-a", new Set([environmentId]), [
+        environmentId,
+        EnvironmentId.make("direct-environment"),
+      ]);
       expect(appAtomRegistry.get(composerDraftsAtom)).toEqual({
         "direct-environment:thread-1": DRAFT,
       });
@@ -1347,7 +1350,9 @@ describe("mobile composer drafts", () => {
     appAtomRegistry.set(composerDraftsAtom, { "environment-1:thread-1": DRAFT });
     composerDraftFileMocks.setWriteError(new Error("Storage is full"));
     await expect(
-      archiveCloudComposerDrafts("account-a", new Set([EnvironmentId.make("environment-1")])),
+      archiveCloudComposerDrafts("account-a", new Set([EnvironmentId.make("environment-1")]), [
+        EnvironmentId.make("environment-1"),
+      ]),
     ).rejects.toThrow();
     expect(
       appAtomRegistry.get(composerCloudDraftsAtom).signedOut["account-a"]?.drafts[
@@ -1356,7 +1361,9 @@ describe("mobile composer drafts", () => {
     ).toEqual(DRAFT);
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
     composerDraftFileMocks.setWriteError(null);
-    await archiveCloudComposerDrafts(null, new Set([EnvironmentId.make("environment-1")]));
+    await archiveCloudComposerDrafts(null, new Set([EnvironmentId.make("environment-1")]), [
+      EnvironmentId.make("environment-1"),
+    ]);
     expect(
       decodePersistedComposerState(JSON.parse(composerDraftFileMocks.getDocument())).cloudDrafts
         .signedOut["account-a"]?.drafts["environment-1:thread-1"],
