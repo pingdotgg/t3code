@@ -425,9 +425,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         const finish = (state: ServerProviderUpdateState) =>
           setUpdateState(state).pipe(Effect.map((providers) => ({ providers })));
         const startedAtRef = yield* Ref.make<string | null>(null);
+        // Environment-wide: the installer binary can be shared across accounts.
         const drain = yield* gracefulShutdown
           .beginAndAwait({
-            scope: { type: "provider", providerInstanceId: instanceId },
+            scope: { type: "environment" },
             reason: "provider-update",
           })
           .pipe(
@@ -442,11 +443,15 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   )
                 : Effect.void,
             ),
-            Effect.catch((error) =>
-              Effect.logWarning("Graceful shutdown before provider update failed; continuing.", {
-                providerInstanceId: instanceId,
-                error: String(error),
-              }).pipe(Effect.as(null)),
+            Effect.mapError(
+              (error) =>
+                new ServerProviderUpdateError({
+                  provider,
+                  reason:
+                    error instanceof Error
+                      ? error.message
+                      : "Could not drain agents before updating this provider.",
+                }),
             ),
           );
 
@@ -652,9 +657,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         return yield* runCommandAndVerify().pipe(
           Effect.catchCause(recordFailedUpdate),
           Effect.ensuring(
-            drain === null
-              ? Effect.void
-              : gracefulShutdown.complete(drain.shutdownId).pipe(Effect.ignore({ log: true })),
+            gracefulShutdown.complete(drain.shutdownId).pipe(Effect.ignore({ log: true })),
           ),
         );
       },

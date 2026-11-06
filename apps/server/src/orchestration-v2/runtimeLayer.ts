@@ -264,7 +264,13 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
   ),
 );
 const layerGracefulShutdownProvided = GracefulShutdown.layer.pipe(
-  Layer.provide(Layer.mergeAll(layerGracefulShutdownGate, layerThreadManagementProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerGracefulShutdownGate,
+      layerThreadManagementProvided,
+      layerOrchestratorProvided,
+    ),
+  ),
 );
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(
   Layer.provide(layerProjectService),
