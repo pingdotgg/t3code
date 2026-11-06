@@ -220,9 +220,11 @@ In `apps/web`, a test that renders React or touches the DOM is named `*.browser.
 and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
 `*.test.ts` files run in Node.
 
-TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
-`@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
-refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
+TypeScript workspaces typecheck with `effect-tsgo tsrs --noEmit` from `@effect/tsgo`: the
+[tsrs](https://github.com/oxc-project/tsrs) checker with Effect diagnostics, quick fixes, and
+refactors built in. Only `apps/marketing` installs `typescript`, for Astro. VS Code's TypeScript 7
+extension starts the same checker through `.vscode/tsdk/tsgo` (`js/ts.tsdk.path`), a POSIX
+script, so on Windows open the workspace through WSL.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
