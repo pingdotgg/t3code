@@ -260,7 +260,10 @@ function toState(
 }
 
 function toMergeability(
-  raw: Pick<Schema.Schema.Type<typeof RawMergeRequestSchema>, "has_conflicts" | "merge_status">,
+  raw: Pick<
+    Schema.Schema.Type<typeof RawMergeRequestSchema>,
+    "has_conflicts" | "merge_status" | "detailed_merge_status"
+  >,
 ): PullRequestMergeability {
   if (raw.has_conflicts === true) return "conflicting";
   switch (raw.detailed_merge_status?.trim().toLowerCase()) {
