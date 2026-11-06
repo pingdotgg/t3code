@@ -560,7 +560,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         new VibeAppServerError.VibeAppServerRequestError({
           method,
           code: "internal_error",
-          detail: cause instanceof Error ? cause.message : String(cause),
+          detail: "Failed to allocate runtime request.",
+          data: cause,
         });
       // Advertised client tools get matching handlers: serve file read/write from the session checkout.
       if (method === "clientTool/readTextFile" || method === "clientTool/writeTextFile") {
@@ -589,7 +590,14 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           );
           return { content };
         }
-        const content = typeof record["content"] === "string" ? record["content"] : "";
+        const content = record["content"];
+        if (typeof content !== "string") {
+          return yield* new VibeAppServerError.VibeAppServerRequestError({
+            method,
+            code: "invalid_params",
+            detail: "content is required",
+          });
+        }
         yield* fileSystem.writeFileString(absolute, content).pipe(
           Effect.mapError(
             (cause) =>
