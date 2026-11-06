@@ -46,6 +46,9 @@ const COMMAND_FEATURES: {
   "queued-run.edit": () => ({ feature: "queue.edit" }),
   "thread.guest-share.close": () => ({ feature: "guest_share.close" }),
   "thread.guest-message.dismiss": () => ({ feature: "guest_message.dismiss" }),
+  "thread.side_chat.open": () => ({ feature: "side_chat.open" }),
+  "thread.side_chat.done": (command) =>
+    use("side_chat.finish", command.discard === true ? "discard" : "done"),
 };
 
 /**
@@ -73,6 +76,12 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.sourceControlSignInStart]: () => ({ feature: "source_control.sign_in" }),
   [WS_METHODS.serverUpsertKeybinding]: () => ({ feature: "keybinding.customize" }),
   [WS_METHODS.guestShareCreate]: () => ({ feature: "guest_share.create" }),
+  [WS_METHODS.lessonCreate]: (payload) =>
+    use("lesson.create", payload.projectId === undefined ? "new_project" : "in_project"),
+  // Settings fetches the map each time it opens, and again after a remove.
+  [WS_METHODS.knowledgeList]: () => ({ feature: "knowledge_map.open" }),
+  [WS_METHODS.knowledgeRemove]: () => ({ feature: "knowledge_map.remove" }),
+  [WS_METHODS.coursesRemove]: () => ({ feature: "course.remove" }),
 };
 
 /** The feature a dispatched command uses, or undefined when it is not a tracked feature. */

@@ -405,6 +405,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
   it.effect.each([
     { label: "is disabled", enabled: { T3CODE_TELEMETRY_ENABLED: false } },
     { label: "is not configured (T3 Learn's default)", enabled: {} },
+    {
+      label: "is enabled without a key",
+      enabled: { T3CODE_TELEMETRY_ENABLED: true, T3CODE_POSTHOG_KEY: "" },
+    },
+    {
+      label: "is enabled without a host",
+      enabled: { T3CODE_TELEMETRY_ENABLED: true, T3CODE_POSTHOG_HOST: "" },
+    },
   ])("does not send batch requests when telemetry $label", ({ enabled }) =>
     Effect.gen(function* () {
       const capturedPaths: Array<string> = [];
@@ -414,9 +422,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          ...enabled,
           T3CODE_POSTHOG_KEY: "phc_test_key",
           T3CODE_POSTHOG_HOST: "http://localhost",
+          ...enabled,
         }),
       );
       const layerBatchServer = HttpServer.serve(

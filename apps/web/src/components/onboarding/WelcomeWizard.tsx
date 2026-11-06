@@ -438,8 +438,9 @@ function ConnectionStep({
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          {telemetryOff ?? "By default, OminaX sends no usage data to T3 Code's analytics."} To read
-          more about how your data is used, see T3 Code's{" "}
+          {telemetryOff ??
+            "OminaX never sends usage data to T3 Code, and sends none at all unless you set up your own analytics server."}{" "}
+          To read more about how your data is used, see T3 Code's{" "}
           <a
             className="underline underline-offset-2 hover:text-foreground"
             href={PRIVACY_POLICY_URL}

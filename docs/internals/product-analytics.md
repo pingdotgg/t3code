@@ -136,7 +136,9 @@ repeating the call's outcome and duration, so event counts are not call counts.
 
 The server sends batches to the ingest endpoint at `ingest.t3.codes`, which archives
 every event and forwards some of them to PostHog. A send can fail after the endpoint
-has stored the batch, so every retry is a copy.
+has stored the batch, so every retry is a copy. T3 Learn sets no default for
+`T3CODE_POSTHOG_KEY` or `T3CODE_POSTHOG_HOST`, and sends nothing until both are
+set, so turning telemetry on can never reach T3 Code's endpoint.
 [Delivery](../../apps/server/src/telemetry/AnalyticsService.ts) gives each event a
 uuid when it is recorded (the endpoint rejects events without one), backs off after
 a failed send, and drops a batch after a few tries. Without these limits, one stuck
@@ -151,4 +153,5 @@ must not reject a connection. PostHog person profiles remain disabled.
 
 Dev-runner servers and the CI archive smoke test turn telemetry off, which also
 stops relay tracing, because each would count as a new install. Set
-`T3CODE_TELEMETRY_ENABLED=true` to test analytics or relay tracing from a dev server.
+`T3CODE_TELEMETRY_ENABLED=true` (plus a key and host for analytics) to test
+analytics or relay tracing from a dev server.
