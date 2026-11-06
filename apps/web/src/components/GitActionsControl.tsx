@@ -46,6 +46,7 @@ import {
   buildMenuItems,
   formatGitActionElapsed,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
+  hasUsableGitMenuContent,
   type GitActionProgressPresentation,
   type GitActionIconName,
   type GitActionMenuItem,
@@ -1395,6 +1396,19 @@ export default function GitActionsControl({
 
   const canPublishRepository =
     canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+  const isDetachedHead = gitStatusForActions?.refName === null;
+  const isCleanAndBehind =
+    gitStatusForActions !== null &&
+    gitStatusForActions.refName !== null &&
+    !gitStatusForActions.hasWorkingTreeChanges &&
+    gitStatusForActions.behindCount > 0 &&
+    gitStatusForActions.aheadCount === 0;
+  const hasGitMenuContent = hasUsableGitMenuContent({
+    menuItems: gitActionMenuItems,
+    canWriteSourceControl,
+    canPublishRepository,
+    hasNotice: isDetachedHead || isCleanAndBehind || Boolean(gitStatusError),
+  });
 
   const initializeGit = () => {
     void (async () => {
@@ -1466,19 +1480,15 @@ export default function GitActionsControl({
           <MenuItemLabel>Publish repository...</MenuItemLabel>
         </MenuItem>
       ) : null}
-      {gitStatusForActions?.refName === null && (
+      {isDetachedHead && (
         <p className="px-2 py-1.5 text-xs text-warning">
           Detached HEAD: create and check out a branch to enable push and{" "}
           {changeRequestTerminology.singular} actions.
         </p>
       )}
-      {gitStatusForActions &&
-        gitStatusForActions.refName !== null &&
-        !gitStatusForActions.hasWorkingTreeChanges &&
-        gitStatusForActions.behindCount > 0 &&
-        gitStatusForActions.aheadCount === 0 && (
-          <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
-        )}
+      {isCleanAndBehind && (
+        <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
+      )}
       {gitStatusError && <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>}
     </>
   );
@@ -1613,7 +1623,7 @@ export default function GitActionsControl({
                       panel
                     />
                   }
-                  disabled={isGitActionRunning}
+                  disabled={isGitActionRunning || !hasGitMenuContent}
                 >
                   <ChevronDownIcon
                     aria-hidden="true"
