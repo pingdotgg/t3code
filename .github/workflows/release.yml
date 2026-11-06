@@ -599,14 +599,15 @@ jobs:
       - name: Build the npm launcher
         run: node scripts/build-npm-launcher.ts --version "${{ needs.preflight.outputs.version }}" --output-dir npm-packages
 
-      # Kept past the JS bundle's one day so a rerun of a failed publish still finds it.
+      # GitHub allows a failed-jobs rerun for 30 days, and a publish_cli rerun
+      # reads this artifact from the original attempt.
       - name: Upload the npm launcher
         uses: actions/upload-artifact@v7
         with:
           name: npm-launcher
           path: npm-packages/t3.tgz
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   # One job per platform and architecture (see release-desktop.yml), each
   # gated only on the JS bundle. Windows targets build on Linux and run their
