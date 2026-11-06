@@ -432,13 +432,24 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
-  it.effect(
-    "runs the initial provider check in the background and streams the refreshed snapshot",
-    () =>
+  it.effect.each([false, true])(
+    "runs the initial provider check in the background (external usage: %s)",
+    (externalUsage) =>
       Effect.scoped(
         Effect.gen(function* () {
           const checkCalls = yield* Ref.make(0);
           const releaseCheck = yield* Deferred.make<void>();
+          const checkStarted = yield* Deferred.make<void>();
+          const expectedSnapshot = externalUsage
+            ? {
+                ...refreshedSnapshot,
+                usageLimits: {
+                  checkedAt: refreshedSnapshot.checkedAt,
+                  windows: [],
+                  externalUsage: { label: "Usage dashboard", url: "https://example.com/usage" },
+                },
+              }
+            : refreshedSnapshot;
           const provider = yield* makeManagedServerProvider<TestSettings>({
             resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
             getSettings: Effect.succeed({ enabled: true }),
@@ -446,8 +457,9 @@ describe("makeManagedServerProvider", () => {
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
             initialSnapshot: () => Effect.succeed(initialSnapshot),
             checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
-              Effect.flatMap(() => Deferred.await(releaseCheck)),
-              Effect.as(refreshedSnapshot),
+              Effect.andThen(Deferred.succeed(checkStarted, undefined)),
+              Effect.andThen(Deferred.await(releaseCheck)),
+              Effect.as(expectedSnapshot),
             ),
             refreshInterval: "1 hour",
           });
@@ -457,19 +469,31 @@ describe("makeManagedServerProvider", () => {
 
           const updatesFiber = yield* Stream.take(provider.streamChanges, 1).pipe(
             Stream.runCollect,
-            Effect.forkChild,
+            Effect.forkChild({ startImmediately: true }),
           );
-          yield* Effect.yieldNow;
+          yield* Deferred.await(checkStarted);
+          const demand = externalUsage
+            ? yield* provider.refreshUsage!.pipe(Effect.forkChild({ startImmediately: true }))
+            : undefined;
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
 
           yield* Deferred.succeed(releaseCheck, undefined);
 
           const updates = Array.from(yield* Fiber.join(updatesFiber));
+          if (demand) yield* Fiber.join(demand);
           const latest = yield* provider.getSnapshot;
 
-          assert.deepStrictEqual(updates, [refreshedSnapshot]);
-          assert.deepStrictEqual(latest, refreshedSnapshot);
+          assert.deepStrictEqual(updates, [expectedSnapshot]);
+          assert.deepStrictEqual(latest, expectedSnapshot);
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
+          if (externalUsage) {
+            yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true));
+            assert.deepStrictEqual(yield* provider.getSnapshot, expectedSnapshot);
+            yield* TestClock.adjust("5 minutes");
+            yield* provider.refreshUsage!;
+            assert.deepStrictEqual(yield* provider.getSnapshot, expectedSnapshot);
+            assert.strictEqual(yield* Ref.get(checkCalls), 2);
+          }
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

@@ -179,7 +179,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       current.auth.status === "authenticated"
         ? withUsageLimits(current, yield* input.checkUsageLimits)
         : yield* input.checkProvider.pipe(Effect.provideService(UsagePolling, pollingUsage));
-    if (probedSnapshot.usageLimits?.refreshAfter !== undefined) {
+    if (probedSnapshot.usageLimits?.externalUsage) {
+      usageRefreshAfter = 0;
+    } else if (probedSnapshot.usageLimits?.refreshAfter !== undefined) {
       usageRefreshAfter = probedSnapshot.usageLimits.refreshAfter;
     } else if (pollingUsage) usageRefreshAfter = (yield* Clock.currentTimeMillis) + 5 * 60_000;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
@@ -264,8 +266,6 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
-    const { snapshot } = yield* Ref.get(snapshotStateRef);
-    if (!snapshot.enabled || snapshot.usageLimits?.externalUsage) return;
     // An in-flight refresh may have read cached usage, so one refresh waits behind it.
     yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
@@ -291,6 +291,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                 yield* release;
                 const settings = yield* input.getSettings;
                 const current = (yield* Ref.get(snapshotStateRef)).snapshot;
+                if (!current.enabled || current.usageLimits?.externalUsage) return;
                 if (
                   (yield* Clock.currentTimeMillis) < usageRefreshAfter &&
                   current.usageLimits?.unavailable?.reason !== "unsupported" &&
