@@ -41,7 +41,7 @@ On macOS and Linux, the desktop app reads all three from your shell profile (for
 `~/.zshrc`), so it sends events even when opened from the Dock or a launcher. On Windows, set all
 three as user environment variables; a WSL backend receives them too.
 
-The web app in a browser, including one the `t3` CLI opens, does not read these environment
+The web app in a browser, including one the `ominax` CLI opens, does not read these environment
 variables. When its build has relay tracing configured, it sends its own connection traces even
 if the server has opted out. The browser app has no relay tracing toggle.
 
