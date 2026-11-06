@@ -442,15 +442,17 @@ describe("ChatMarkdown Obsidian note links", () => {
       `[Note](${href})\n\n[Reference][note]\n\n[note]: ${href}\n\n[Vault](ObSiDiAn://open?vault=Example%20Vault)\n\n[Write](obsidian://adv-uri?filepath=Example&data=overwrite&mode=overwrite)\n\n[Command](obsidian://adv-uri?commandid=app%3Adelete-file)\n\n<a href="ObSiDiAn://open?vault=Example%20Vault">HTML note</a>\n\n<a href="obsidian://adv-uri?filepath=Example&data=overwrite">HTML write</a>`,
       { parseRawHtml },
     );
-    const anchors = [...screen.container.querySelectorAll("a")];
-    expect(anchors.map((anchor) => anchor.getAttribute("href"))).toEqual([
-      href,
-      href,
-      "obsidian://open?vault=Example%20Vault",
-      null,
-      null,
-      ...(parseRawHtml ? ["obsidian://open?vault=Example%20Vault", null] : []),
-    ]);
+    await vi.waitFor(() => {
+      const anchors = [...screen.container.querySelectorAll("a")];
+      expect(anchors.map((anchor) => anchor.getAttribute("href"))).toEqual([
+        href,
+        href,
+        "obsidian://open?vault=Example%20Vault",
+        null,
+        null,
+        ...(parseRawHtml ? ["obsidian://open?vault=Example%20Vault", null] : []),
+      ]);
+    });
   });
 });
 
