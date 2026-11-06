@@ -11,6 +11,8 @@ import type {
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
+import { withThreadOpenPullRequest } from "../../state/thread-pr-presentation";
 import { vcsActionManager, vcsEnvironment } from "../../state/vcs";
 import { useVcsActionState } from "../../state/use-vcs-action-state";
 import { ThreadHeader } from "./ThreadHeader";
@@ -22,6 +24,7 @@ export function DraftThreadHeader(props: {
 }) {
   const navigation = useNavigation();
   const environmentId = props.thread.environmentId;
+  const runtime = useRemoteEnvironmentRuntime(environmentId);
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canWriteGit = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const status = useEnvironmentQuery(
@@ -46,6 +49,7 @@ export function DraftThreadHeader(props: {
   return (
     <ThreadHeader
       draft
+      thread={props.thread}
       title="New thread"
       subtitle=""
       hasThreadCwd={props.cwd !== null}
@@ -56,7 +60,11 @@ export function DraftThreadHeader(props: {
         threadId: props.thread.id,
         hasThread: false,
         currentBranch: props.thread.branch,
-        gitStatus: status.data,
+        gitStatus: withThreadOpenPullRequest(
+          status.data ?? null,
+          props.thread.pullRequests,
+          runtime?.serverConfig?.environment.capabilities.threadPullRequests === true,
+        ),
         gitOperationLabel: progress.currentLabel,
         canOpenTerminal: false,
         canOperateTerminal: false,
