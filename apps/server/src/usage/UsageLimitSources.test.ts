@@ -131,6 +131,7 @@ it.effect("refreshes usage limits when a Command Code provider instance is added
       Layer.succeed(SecretResolver.SecretResolver, {
         read: (references) => Effect.succeed(references.map(() => undefined)),
         invalidate: () => Effect.void,
+        label: (provider) => Effect.succeed(provider),
       }),
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
