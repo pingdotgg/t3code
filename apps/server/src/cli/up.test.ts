@@ -182,6 +182,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "the local network opens",
+      prints: "Run `t3 pair --base-dir <baseDir>`.",
       installed: true,
       env: "T3CODE_LAN=false\n",
       args: ["--lan"],
@@ -220,7 +221,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Fix that, then run `t3 up` again.",
+      prints: "Fix that, then run `t3 up --base-dir <baseDir>` again.",
       installed: true,
       status: { current: false },
       installFails: true,
@@ -337,7 +338,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         ),
       );
       if (input.prints !== undefined) {
-        expect(lines.join("\n")).toContain(input.prints);
+        expect(lines.join("\n")).toContain(input.prints.replace("<baseDir>", baseDir));
       }
       expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
       expect({ installs, restarts }).toEqual({
