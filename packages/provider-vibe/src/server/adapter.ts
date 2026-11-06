@@ -38,6 +38,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   MISTRAL_VIBE_RATE_LIMITED,
+  applyVibeHistoryPatch,
   VIBE_PROVIDER,
   buildVibeSpawnInput,
   resolveVibeModelId,
@@ -174,38 +175,6 @@ function entryText(entry: unknown): string {
     .join("");
 }
 
-/** Minimal JSON Patch (RFC 6902 subset: add/replace/remove on `/`-separated paths). */
-function applyJsonPatch(
-  target: Record<string, unknown>,
-  patch: ReadonlyArray<unknown>,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = JSON.parse(JSON.stringify(target)) as Record<
-    string,
-    unknown
-  >;
-  for (const operation of patch) {
-    const op = asRecord(operation);
-    if (!op) continue;
-    const path = str(op["path"]) ?? "";
-    const segments = path.split("/").filter((segment) => segment.length > 0);
-    if (segments.length === 0) continue;
-    let cursor: Record<string, unknown> | unknown[] = result;
-    for (const segment of segments.slice(0, -1)) {
-      const next = (cursor as Record<string, unknown>)[segment];
-      if (typeof next !== "object" || next === null) break;
-      cursor = next as Record<string, unknown>;
-    }
-    const key = segments[segments.length - 1]!;
-    if (typeof cursor !== "object" || cursor === null) continue;
-    if (op["op"] === "remove") {
-      delete (cursor as Record<string, unknown>)[key];
-    } else {
-      (cursor as Record<string, unknown>)[key] = op["value"];
-    }
-  }
-  return result;
-}
-
 /** Maps a vibe turn error/stop reason to the native failure contract; `-31001` is Vibe's rate limit. */
 export function vibeTurnFailure(turn: {
   readonly status?: unknown;
@@ -316,9 +285,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     ) {
       if (!state.thread) return;
       const role = str(entry["role"]);
-      // The enqueued user input is echoed back as a history entry; the app already owns that
-      // message, so re-projecting it would duplicate it. Only agent entries become messages.
-      if (role === "user") return;
+      // User input is echoed back as a history entry and the app already owns it; system
+      // entries are not conversation. Only assistant entries become messages.
+      if (str(entry["type"]) !== "message" || role !== "assistant") return;
       const text = entryText(entry);
       if (!text) return;
       const messageId = idAllocator.derive.messageFromProviderItem({
@@ -331,13 +300,13 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       });
       const timestamp = yield* DateTime.now;
       const message: OrchestrationV2ConversationMessage = {
-        createdBy: role === "user" ? "user" : "agent",
+        createdBy: "agent",
         creationSource: "provider",
         id: messageId,
         threadId,
         runId: state.currentRun?.runId ?? null,
         nodeId: state.currentRun?.rootNodeId ?? null,
-        role: role === "user" ? "user" : "assistant",
+        role: "assistant",
         text,
         attachments: [],
         streaming: false,
@@ -359,13 +328,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         startedAt: null,
         completedAt: timestamp,
         updatedAt: timestamp,
-        type: role === "user" ? ("user_message" as const) : ("assistant_message" as const),
+        type: "assistant_message" as const,
         messageId,
         text,
         textOmitted: true as const,
-        ...(role === "user"
-          ? { inputIntent: "turn_start" as const, attachments: [] as const }
-          : { streaming: false as const }),
+        streaming: false as const,
       };
       yield* emit({ type: "message.updated", driver: VIBE_PROVIDER, message });
       yield* emit({
@@ -543,7 +510,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           const stored = entryId !== undefined ? state.entries.get(entryId) : undefined;
           if (!entryId || !stored || !state.thread) return;
           const patch = Array.isArray(record["patch"]) ? record["patch"] : [];
-          const patched = applyJsonPatch(stored, patch);
+          const patched = applyVibeHistoryPatch(stored, patch);
           state.entries.set(entryId, patched);
           yield* projectHistoryEntry(patched, entryId, input.threadId);
           return;
@@ -982,7 +949,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           const role = str(entry["role"]) === "user" ? "user" : "assistant";
           const nativeItemId = str(entry["id"]) ?? `entry-${messages.length}`;
           messages.push({
-            createdBy: role === "user" ? "user" : "agent",
+            createdBy: "agent",
             creationSource: "provider",
             id: idAllocator.derive.messageFromProviderItem({
               driver: VIBE_PROVIDER,

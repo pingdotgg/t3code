@@ -24,6 +24,53 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
 
 const str = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
+/**
+ * Applies a `history/entryUpdated` patch: RFC 6902 add/replace/remove plus Vibe's non-standard
+ * `append`, which streams assistant text by concatenating onto an existing string.
+ */
+export function applyVibeHistoryPatch(
+  target: Record<string, unknown>,
+  patch: ReadonlyArray<unknown>,
+): Record<string, unknown> {
+  const result = structuredClone(target);
+  for (const operation of patch) {
+    const op = asRecord(operation);
+    const segments = (str(op?.["path"]) ?? "")
+      .split("/")
+      .slice(1)
+      .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+    if (!op || segments.length === 0) continue;
+    let cursor: unknown = result;
+    for (const segment of segments.slice(0, -1)) {
+      cursor =
+        typeof cursor === "object" && cursor !== null
+          ? (cursor as Record<string, unknown>)[segment]
+          : undefined;
+    }
+    if (typeof cursor !== "object" || cursor === null) continue;
+    const key = segments[segments.length - 1]!;
+    const value = op["value"];
+    if (Array.isArray(cursor)) {
+      const index = key === "-" ? cursor.length : Number(key);
+      if (!Number.isInteger(index) || index < 0 || index > cursor.length) continue;
+      if (op["op"] === "remove") cursor.splice(index, 1);
+      else if (op["op"] === "add") cursor.splice(index, 0, value);
+      else if (op["op"] === "append" && typeof cursor[index] === "string")
+        cursor[index] = `${cursor[index]}${typeof value === "string" ? value : ""}`;
+      else cursor[index] = value;
+      continue;
+    }
+    const record = cursor as Record<string, unknown>;
+    if (op["op"] === "remove") delete record[key];
+    else if (op["op"] === "append") {
+      const current = record[key];
+      record[key] =
+        `${typeof current === "string" ? current : ""}${typeof value === "string" ? value : ""}`;
+    } else record[key] = value;
+  }
+  return result;
+}
+
 export const DEFAULT_VIBE_MODEL = "mistral-medium-3.5";
 
 /** Mistral Vibe's application rate-limit code, outside the JSON-RPC reserved range. */

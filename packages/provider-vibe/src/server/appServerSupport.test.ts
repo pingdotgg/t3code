@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { VibeSettings } from "../settings.ts";
 import {
   DEFAULT_VIBE_MODEL,
+  applyVibeHistoryPatch,
   VIBE_DEFAULT_BINARY,
   buildVibeEnvironment,
   buildVibeSpawnInput,
@@ -95,5 +96,33 @@ describe("vibeWorktreeInputForCwd", () => {
       kind: "existing",
       cwd: "/repo/.t3/worktrees/thread-1",
     });
+  });
+});
+
+describe("applyVibeHistoryPatch", () => {
+  it("concatenates streamed `append` chunks instead of replacing the text", () => {
+    let entry: Record<string, unknown> = { content: [{ type: "text", text: "" }] };
+    for (const chunk of ["Let me ", "check the ", "DB for the UUID."]) {
+      entry = applyVibeHistoryPatch(entry, [
+        { op: "append", path: "/content/0/text", value: chunk },
+        { op: "replace", path: "/updatedAt", value: 1 },
+      ]);
+    }
+    expect(entry).toEqual({
+      content: [{ type: "text", text: "Let me check the DB for the UUID." }],
+      updatedAt: 1,
+    });
+  });
+
+  it("inserts into arrays for `add`, including the `-` end marker", () => {
+    const entry = applyVibeHistoryPatch({ content: [{ type: "text", text: "a" }] }, [
+      { op: "add", path: "/content/-", value: { type: "text", text: "c" } },
+      { op: "add", path: "/content/1", value: { type: "text", text: "b" } },
+    ]);
+    expect(entry["content"]).toEqual([
+      { type: "text", text: "a" },
+      { type: "text", text: "b" },
+      { type: "text", text: "c" },
+    ]);
   });
 });
