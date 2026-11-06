@@ -1369,7 +1369,7 @@ export const ServerSettings = Schema.Struct({
   ),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechPostProcessingEnabled: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   speechCorrectionWord: Schema.String.check(Schema.isMaxLength(50)).pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
