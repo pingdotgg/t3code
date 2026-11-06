@@ -77,7 +77,8 @@ export function vibeHistoryTurnItem(
   const detail = asRecord(entry["detail"]);
   const state = asRecord(entry["state"]);
   const input = asRecord(detail?.["input"]);
-  const toolName = str(detail?.["toolName"]) ?? null;
+  // Vibe names MCP tools `mcp_<server>.<tool>`; T3's tool labels expect `mcp__<server>__<tool>`.
+  const toolName = str(detail?.["toolName"])?.replace(/^mcp_([^.]+)\.(.+)$/, "mcp__$1__$2") ?? null;
   const status = EFFECT_STATUS[str(state?.["status"]) ?? ""] ?? "running";
   const title = str(asRecord(detail?.["display"])?.["summary"]) ?? str(entry["title"]) ?? null;
   const output = effectOutput(state);
