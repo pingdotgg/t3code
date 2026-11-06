@@ -367,8 +367,9 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     if ("failed" in result && before.service.installed) {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
+      const { command } = yield* resolveHostCliCommand("up", baseDirArgs);
       yield* Console.log(
-        `Service setup failed: ${result.failed} Fix that, then run \`t3 up\` again.`,
+        `Service setup failed: ${result.failed} Fix that, then run \`${command}\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -387,7 +388,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
           }),
         ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
       if (!confirmed) {
-        yield* Console.log("Run `t3 service restart` to turn T3 Connect off.");
+        const { command } = yield* resolveHostCliCommand("service restart", baseDirArgs);
+        yield* Console.log(`Run \`${command}\` to turn T3 Connect off.`);
       } else {
         if (!interactive && !stopped) {
           yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
