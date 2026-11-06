@@ -123,11 +123,17 @@ export const make = Effect.gen(function* () {
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
-  const hasEndpoint =
-    telemetryConfig.posthogKey.trim() !== "" && telemetryConfig.posthogHost.trim() !== "";
+  // T3 Learn: a Dock-launched desktop learns key and host from the login shell, after startup.
+  const endpoint = () => {
+    const late = (name: "T3CODE_POSTHOG_KEY" | "T3CODE_POSTHOG_HOST") =>
+      awaitingShellConsent ? (hostEnvironment[name]?.trim() ?? "") : "";
+    const key = telemetryConfig.posthogKey.trim() || late("T3CODE_POSTHOG_KEY");
+    const host = telemetryConfig.posthogHost.trim() || late("T3CODE_POSTHOG_HOST");
+    return key && host ? { key, host } : undefined;
+  };
   // A cached PATH does not establish consent from the current login shell.
   const telemetryEnabled = Effect.suspend(() => {
-    if (!policyAllows || !hasEndpoint) return Effect.succeed(false);
+    if (!policyAllows || endpoint() === undefined) return Effect.succeed(false);
     // T3 Learn: a desktop launch learns a shell-profile opt-in only from the late read below.
     if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
@@ -200,10 +206,11 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!(yield* telemetryEnabled) || !distinctId) return;
+    const target = endpoint();
+    if (!(yield* telemetryEnabled) || !distinctId || target === undefined) return;
 
     const payload = {
-      api_key: telemetryConfig.posthogKey,
+      api_key: target.key,
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
@@ -228,7 +235,7 @@ export const make = Effect.gen(function* () {
       })),
     };
 
-    yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
+    yield* HttpClientRequest.post(`${target.host}/batch/`).pipe(
       HttpClientRequest.bodyJson(payload),
       Effect.flatMap(httpClient.execute),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
