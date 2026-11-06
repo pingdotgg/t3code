@@ -185,6 +185,7 @@ export function ComposerPermissionsSection(props: {
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   children?: React.ReactNode;
+  renderSpeechAction?: ((inPill: boolean) => React.ReactNode) | undefined;
   compact: boolean;
   canOperateThread: boolean;
   isPreparingWorktree: boolean;
@@ -212,6 +213,8 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   onResume: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onStopDictation?: (() => void) | undefined;
+  stopDictationShortcutLabel?: string | null;
   compactBeforeSendTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -236,10 +239,13 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         canResume={props.canResume}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         isEditingQueuedMessage={props.isEditingQueuedMessage}
+        renderSpeechAction={props.renderSpeechAction}
         onSubmitMessage={props.onSubmitMessage}
         onResume={props.onResume}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onStopDictation={props.onStopDictation}
+        stopDictationShortcutLabel={props.stopDictationShortcutLabel ?? null}
         compactBeforeSendTokens={props.compactBeforeSendTokens}
         keepFullHistory={props.keepFullHistory}
         onToggleKeepFullHistory={props.onToggleKeepFullHistory}
