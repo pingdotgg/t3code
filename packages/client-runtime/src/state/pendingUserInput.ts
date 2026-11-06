@@ -5,6 +5,7 @@ export interface PendingUserInputQuestion {
   readonly multiSelect?: boolean | undefined;
   readonly allowCustomAnswer?: boolean | undefined;
   readonly initialAnswer?: string | undefined;
+  readonly required?: boolean | undefined;
 }
 
 export interface PendingUserInputDraftAnswer {
@@ -77,8 +78,10 @@ export function resolvePendingUserInputAnswer(
     customAnswer ??
     (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null);
   if (question.multiSelect) {
-    // Checking nothing is a valid multi-select answer: "none of these".
-    return selectedOptionValues.length > 0 ? selectedOptionValues : (fallback ?? []);
+    // Checking nothing answers "none of these" unless the provider requires a choice.
+    return selectedOptionValues.length > 0
+      ? selectedOptionValues
+      : (fallback ?? (question.required ? null : []));
   }
   return selectedOptionValues[0] ?? fallback;
 }

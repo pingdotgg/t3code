@@ -205,5 +205,10 @@ describe("buildPendingUserInputAnswers", () => {
     expect(
       buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], { extras: {} }),
     ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, { ...extrasQuestion, required: true }], {
+        scope,
+      }),
+    ).toBeNull();
   });
 });

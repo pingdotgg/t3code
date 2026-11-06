@@ -440,6 +440,9 @@ const formQuestions = (
       options,
       multiSelect: field.type === "multiselect",
       allowCustomAnswer: field.custom === true || options.length === 0,
+      ...(field.required === true || (field.type === "multiselect" && (field.minItems ?? 0) > 0)
+        ? { required: true }
+        : {}),
     });
   }
   return { questions };
