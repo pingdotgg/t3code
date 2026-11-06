@@ -190,6 +190,7 @@ export type ServerBrowserViewerOutput =
       readonly editable: boolean;
     }
   | { readonly _tag: "clipboard"; readonly text: string }
+  | { readonly _tag: "copyOffer"; readonly text: string; readonly host: string }
   | {
       readonly _tag: "pointer";
       readonly phase: "move" | "click";
@@ -268,6 +269,8 @@ interface ViewerState {
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
   scrolledAt: number;
+  /** Counts presses; a newer one stops an older click's copy offer. */
+  clicks: number;
 
   requestedSize: { width: number; height: number; order: number } | null;
 }
@@ -423,19 +426,30 @@ const editingCommand = (key: string, modifiers: number) => {
 
 const CLIPBOARD_TEXT_LIMIT = 1024 * 1024;
 const CLIPBOARD_WORLD = "t3-preview-clipboard";
-// Chromium shares its clipboard across contexts; capture real copy/cut keys in a page-inaccessible world instead.
+const CLIPBOARD_WRITE_EVENT = "t3-preview-clipboard-write";
+// Chromium's transient user activation lasts as long, so a clicked page may copy after awaiting work.
+const CLICK_COPY_MS = 5_000;
+const CLICK_COPY_READS_MS = [0, 250, 1_000, 2_500, CLICK_COPY_MS];
+// Chromium shares its clipboard across contexts; capture copies made during real keys and clicks in a page-inaccessible world instead.
 const CLIPBOARD_SCRIPT = `(() => {
   let keying = false;
-  let copied = "";
+  let clickedAt = -Infinity;
+  let keyCopy = "";
+  let clickCopy = "";
   // The same Ctrl or Cmd + C or X that editingCommand sends as copy or cut.
   addEventListener("keydown", (event) => {
     if (!event.isTrusted || event.altKey || event.ctrlKey === event.metaKey) return;
     const key = event.key.toLowerCase();
     if (key !== "c" && key !== "x") return;
     keying = true;
-    copied = "";
+    keyCopy = "";
     setTimeout(() => { keying = false; });
   }, true);
+  for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+    addEventListener(type, (event) => {
+      if (event.isTrusted) clickedAt = performance.now();
+    }, true);
+  }
   const selection = () => {
     let field = document.activeElement;
     while (field?.shadowRoot?.activeElement) field = field.shadowRoot.activeElement;
@@ -444,27 +458,95 @@ const CLIPBOARD_SCRIPT = `(() => {
     return String(document.getSelection() ?? "");
   };
   const record = (text) => {
-    copied = String(text ?? "").slice(0, ${CLIPBOARD_TEXT_LIMIT});
+    const value = String(text ?? "").slice(0, ${CLIPBOARD_TEXT_LIMIT});
+    if (keying) keyCopy = value;
+    else if (performance.now() - clickedAt < ${CLICK_COPY_MS}) clickCopy = value;
   };
   // Capturing at window runs before page handlers can stop the event, and
   // before cut removes the selection.
   const snapshot = (event) => {
-    if (keying && event.isTrusted) record(selection());
+    if (event.isTrusted) record(selection());
   };
   // Bubbling back to window picks up text a page handler set instead.
   const replace = (event) => {
-    if (keying && event.isTrusted && event.defaultPrevented) record(event.clipboardData?.getData("text/plain"));
+    if (event.isTrusted && event.defaultPrevented) record(event.clipboardData?.getData("text/plain"));
   };
   for (const type of ["copy", "cut"]) {
     addEventListener(type, snapshot, true);
     addEventListener(type, replace);
   }
-  globalThis.takeCopy = () => {
-    const text = copied;
-    copied = "";
+  addEventListener("${CLIPBOARD_WRITE_EVENT}", (event) => {
+    if (!keying && typeof event.detail === "string") record(event.detail);
+  }, true);
+  globalThis.takeCopy = (click) => {
+    const text = click ? clickCopy : keyCopy;
+    if (click) clickCopy = "";
+    else keyCopy = "";
     return text;
   };
 })();`;
+// navigator.clipboard.writeText fires no copy event, so the page's own world reports its text.
+// Only CLIPBOARD_SCRIPT, shortly after a real click, keeps it.
+const CLIPBOARD_WRITE_SCRIPT = `(() => {
+  const clipboard = globalThis.Clipboard?.prototype;
+  const writeText = clipboard?.writeText;
+  if (typeof writeText !== "function") return;
+  const dispatch = EventTarget.prototype.dispatchEvent;
+  const Report = CustomEvent;
+  clipboard.writeText = new Proxy(writeText, {
+    apply(target, self, args) {
+      if (typeof args[0] === "string") {
+        try {
+          Reflect.apply(dispatch, globalThis, [new Report("${CLIPBOARD_WRITE_EVENT}", { detail: args[0] })]);
+        } catch {}
+      }
+      return Reflect.apply(target, self, args);
+    },
+  });
+})();`;
+
+export const recordCopies = async (cdp: CDPSession) => {
+  // Scripts for new documents run only while this session's Page domain is on.
+  await cdp.send("Page.enable");
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: CLIPBOARD_SCRIPT,
+    worldName: CLIPBOARD_WORLD,
+    runImmediately: true,
+  });
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: CLIPBOARD_WRITE_SCRIPT,
+    runImmediately: true,
+  });
+};
+
+/** Reads and clears what each frame copied during real copy keys, or after real clicks. */
+export const takeSessionCopies = async (cdp: CDPSession, click = false) => {
+  const tree = await cdp.send("Page.getFrameTree").catch(() => null);
+  if (!tree) return [];
+  const frameIds = (node: typeof tree.frameTree): Array<string> => [
+    node.frame.id,
+    ...(node.childFrames ?? []).flatMap(frameIds),
+  ];
+  return Promise.all(
+    frameIds(tree.frameTree).map((frameId) =>
+      cdp
+        .send("Page.createIsolatedWorld", { frameId, worldName: CLIPBOARD_WORLD })
+        .then(({ executionContextId }) =>
+          cdp.send("Runtime.evaluate", {
+            contextId: executionContextId,
+            expression: `globalThis.takeCopy?.(${click})`,
+            returnByValue: true,
+          }),
+        )
+        .then(
+          ({ result }) => (typeof result.value === "string" ? result.value : ""),
+          () => "",
+        ),
+    ),
+  );
+};
+
+const hostOf = (url: string) => (URL.canParse(url) ? new URL(url).host : "");
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -1269,16 +1351,6 @@ const make = Effect.gen(function* () {
     await context.grantPermissions(["clipboard-write"]);
   };
 
-  const recordCopies = async (cdp: CDPSession) => {
-    // Scripts for new documents run only while this session's Page domain is on.
-    await cdp.send("Page.enable");
-    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
-      source: CLIPBOARD_SCRIPT,
-      worldName: CLIPBOARD_WORLD,
-      runImmediately: true,
-    });
-  };
-
   /** Out-of-process frames need their own copy-recording session until target closure. */
   const recordFrameCopies = async (tab: ServerTab, frame: Frame) => {
     if (frame === tab.page.mainFrame() || tab.frameSessions.has(frame)) return;
@@ -1302,37 +1374,35 @@ const make = Effect.gen(function* () {
     await recordCopies(cdp).catch(constVoid);
   };
 
-  const takeSessionCopies = async (cdp: CDPSession) => {
-    const tree = await cdp.send("Page.getFrameTree").catch(() => null);
-    if (!tree) return [];
-    const frameIds = (node: typeof tree.frameTree): Array<string> => [
-      node.frame.id,
-      ...(node.childFrames ?? []).flatMap(frameIds),
-    ];
-    return Promise.all(
-      frameIds(tree.frameTree).map((frameId) =>
-        cdp
-          .send("Page.createIsolatedWorld", { frameId, worldName: CLIPBOARD_WORLD })
-          .then(({ executionContextId }) =>
-            cdp.send("Runtime.evaluate", {
-              contextId: executionContextId,
-              expression: "globalThis.takeCopy?.()",
-              returnByValue: true,
-            }),
-          )
-          .then(
-            ({ result }) => (typeof result.value === "string" ? result.value : ""),
-            () => "",
-          ),
-      ),
-    );
-  };
-
-  const takeCopiedText = async (tab: ServerTab) => {
+  const takeCopiedText = async (tab: ServerTab, click = false) => {
     const copies = await Promise.all(
-      [tab.cdp, ...tab.frameSessions.values()].map(takeSessionCopies),
+      [tab.cdp, ...tab.frameSessions.values()].map((cdp) => takeSessionCopies(cdp, click)),
     );
     return copies.flat().find((text) => text.length > 0);
+  };
+
+  /** Offers this viewer what the page copies after its click, until another click or a control change. */
+  const offerClickCopy = async (tab: ServerTab, viewer: ViewerState) => {
+    const click = ++viewer.clicks;
+    const generation = tab.control.generation;
+    const current = () =>
+      viewer.clicks === click &&
+      tab.control.generation === generation &&
+      tab.control.controller === viewer.id &&
+      tab.viewers.has(viewer) &&
+      !tab.closing;
+    let waited = 0;
+    for (const at of CLICK_COPY_READS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, at - waited));
+      waited = at;
+      if (!current()) return;
+      const copied = await takeCopiedText(tab, true);
+      if (!current()) return;
+      if (copied) {
+        viewer.push({ _tag: "copyOffer", text: copied, host: hostOf(tab.page.url()) });
+        return;
+      }
+    }
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
@@ -2399,6 +2469,12 @@ const make = Effect.gen(function* () {
         const button = ["none", "left", "middle", "right"].includes(String(message.button))
           ? (message.button as "none" | "left" | "middle" | "right")
           : "none";
+        // Text the page copies after this viewer's own left click is offered, never written.
+        const offers = !tab.desktop && button === "left";
+        if (!tab.desktop && button !== "none" && action === "down") {
+          viewer.clicks++;
+          if (offers) await takeCopiedText(tab, true);
+        }
         await session.send("Input.dispatchMouseEvent", {
           type,
           x: num(message.x),
@@ -2413,6 +2489,7 @@ const make = Effect.gen(function* () {
             viewer.pressedButtons.set(button, { x: num(message.x), y: num(message.y) });
           else if (action === "up") viewer.pressedButtons.delete(button);
         }
+        if (offers && action === "up") void offerClickCopy(tab, viewer).catch(constVoid);
         return;
       }
       case "wheel":
@@ -2569,6 +2646,7 @@ const make = Effect.gen(function* () {
       canOperate: input.canOperate,
       pressedKeys: new Map(),
       pressedButtons: new Map(),
+      clicks: 0,
       push: (next) => {
         // Dropped frames must still release Chromium.
         if (Queue.offerUnsafe(output, next)) return;

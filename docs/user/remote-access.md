@@ -253,9 +253,10 @@ Agent tabs have separate storage and share a Chromium process. Take control befo
 typing into an agent's tab, then release control when you want the agent to
 continue. Read-only connections can watch without changing the page.
 
-While you have control, the tab works with your device: text the page copies or
-cuts goes to your clipboard, a file picker on the page opens your device's
-picker, and a finished download is offered for you to save. Popups such as
+While you have control, the tab works with your device: text you copy or cut
+goes to your clipboard, text a page copies when you click it (such as a Copy
+button) waits for you to choose **Copy**, a file picker on the page opens your
+device's picker, and a finished download is offered for you to save. Popups such as
 sign-in windows open as their own tabs. Downloads stay on the host until the
 tab closes. Audio does not play on your device.
 

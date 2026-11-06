@@ -5,6 +5,7 @@ import {
   previewStreamModifiers,
   type PreviewStreamClient,
   type PreviewStreamControl,
+  type PreviewStreamCopyOffer,
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   uploadPreviewStreamFiles,
@@ -120,6 +121,21 @@ async function copyPageText(text: string) {
       },
     });
   }
+}
+
+/** Only this click writes a page's own copy to the clipboard. */
+function offerPageCopy({ text, host }: PreviewStreamCopyOffer) {
+  const id = toastManager.add({
+    type: "info",
+    title: `${host || "This page"} wants to copy text`,
+    actionProps: {
+      children: "Copy",
+      onClick: () => {
+        toastManager.close(id);
+        void navigator.clipboard.writeText(text).catch(() => undefined);
+      },
+    },
+  });
 }
 
 function offerDownload(download: PreviewStreamDownload) {
@@ -397,6 +413,7 @@ export function ServerBrowserSurface(props: {
           if (placed) setAgentCursor(placed);
         },
         onClipboard: (text) => void copyPageText(text),
+        onCopyOffer: offerPageCopy,
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,

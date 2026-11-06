@@ -133,6 +133,20 @@ function makeSession(
         if (focusedFrame) focusedFrame.copy = keyCopy || focusedFrame.copy;
         else pageCopy = keyCopy || pageCopy;
       }
+      if (
+        method === "Input.dispatchMouseEvent" &&
+        (input as { type?: unknown }).type === "mouseReleased"
+      ) {
+        pageClickCopy = clickCopy || pageClickCopy;
+      }
+      if (
+        method === "Runtime.evaluate" &&
+        (input as { expression?: string }).expression === "globalThis.takeCopy?.(true)"
+      ) {
+        const value = pageClickCopy;
+        pageClickCopy = "";
+        return { result: { value } };
+      }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
         const value = frame ? frame.copy : pageCopy;
         if (frame) frame.copy = "";
@@ -302,6 +316,8 @@ const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
+let clickCopy = "";
+let pageClickCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let pageSetupFailure: Error | null = null;
@@ -456,6 +472,8 @@ beforeEach(() => {
   initialNavigation = null;
   pageCopy = "";
   keyCopy = "";
+  clickCopy = "";
+  pageClickCopy = "";
   focusedFrame = null;
   desktopTabs.clear();
   shownDesktopTabs.clear();
@@ -1320,6 +1338,46 @@ it.live("only the controlling viewer's copy and cut keys reach its clipboard", (
       yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
       expect(yield* clipboard(viewer.output)).toEqual([]);
       expect(yield* clipboard(watcher.output)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("text the page copies after the controlling viewer's click is only offered to it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const watcher = yield* browser.attachViewer(viewerInput(tabId, false));
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "navigate", url: "https://copy.example/app" });
+      const nextCopy = Effect.gen(function* () {
+        for (;;) {
+          const item = yield* Queue.take(viewer.output);
+          if (item._tag === "clipboard" || item._tag === "copyOffer") return item;
+        }
+      });
+      const click = (button: string) =>
+        Effect.forEach(["down", "up"], (action) =>
+          viewer.input({ type: "mouse", action, x: 10, y: 10, button, buttons: 1 }),
+        );
+      const offer = (text: string) => ({ _tag: "copyOffer", text, host: "copy.example" });
+      // Text left from before the click and a right click's copy are never offered.
+      pageClickCopy = "before the click";
+      yield* click("left");
+      clickCopy = "right button";
+      yield* click("right");
+      clickCopy = "secret";
+      yield* click("left");
+      expect(yield* nextCopy).toEqual(offer("secret"));
+      clickCopy = "";
+      yield* click("left");
+      pageClickCopy = "after awaiting";
+      expect(yield* nextCopy).toEqual(offer("after awaiting"));
+      keyCopy = "keys";
+      yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
+      expect(yield* nextCopy).toEqual({ _tag: "clipboard", text: "keys" });
+      const watched = yield* Queue.clear(watcher.output);
+      expect(watched.filter((item) => item._tag === "copyOffer")).toEqual([]);
     }),
   ).pipe(Effect.provide(layer)),
 );
