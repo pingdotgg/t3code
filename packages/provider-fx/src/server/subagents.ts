@@ -232,6 +232,8 @@ interface RootSubagentCall {
   readonly sessionId: string;
   /** fx's ACP `tool_call` arrived, so a hook-made update cannot invent a tool. */
   announced: boolean;
+  /** Repeated on hook-made updates: one landing after the turn is parsed alone. */
+  rawInput?: unknown;
   state: FxSubagentHookState;
 }
 
@@ -257,6 +259,8 @@ export function makeFxSubagentHookRouter() {
             update: {
               sessionUpdate: "tool_call_update",
               toolCallId: callId,
+              name: FX_SUBAGENT_TOOL,
+              rawInput: call.rawInput,
               _meta: { [HOOK_STATE_META_KEY]: call.state },
             },
           },
@@ -400,6 +404,7 @@ export function makeFxSubagentHookRouter() {
         calls.set(update.toolCallId, call);
       }
       call.announced = true;
+      if (update.rawInput !== undefined) call.rawInput = update.rawInput;
       return {
         ...notification,
         update: { ...update, _meta: { ...update._meta, [HOOK_STATE_META_KEY]: call.state } },

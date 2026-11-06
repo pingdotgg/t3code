@@ -274,6 +274,17 @@ describe("fx sub-agent hooks", () => {
       status: "cancelled",
       result: "cancelled",
     });
+
+    // After the parent turn ends, the adapter parses a late root update without prior tool state.
+    const router = makeFxSubagentHookRouter();
+    router.enrich(announce);
+    router.route(delegation("dispatched"));
+    const late = router.route(rootResult(WHOLE_RESULT)).at(-1);
+    if (late === undefined) throw new Error("the whole result produced no root update");
+    const alone = parseSessionUpdateEvent(late).events.flatMap((event) =>
+      event._tag === "ToolCallUpdated" ? [extractFxSubagentUpdate(event.toolCall)] : [],
+    );
+    assert.deepInclude(alone[0], { status: "completed", result: REPLY });
   });
 
   it("ignores hooks for calls fx never announced over ACP and for sessions it never dispatched", () => {
