@@ -258,10 +258,26 @@ export const OrchestratorMcpTaskCancelResult = Schema.Struct({
 });
 export type OrchestratorMcpTaskCancelResult = typeof OrchestratorMcpTaskCancelResult.Type;
 
+export const OrchestratorMcpCreateThreadTarget = Schema.Struct({
+  ...OrchestratorMcpTarget.fields,
+  environmentId: Schema.optional(
+    EnvironmentId.annotate({
+      description: "Not supported here. For a linked environment, use `t3_thread_launch`.",
+    }),
+  ),
+  projectId: Schema.optional(
+    ProjectId.annotate({
+      description:
+        "Project to create the thread in, from `t3_project_list`. Default: yours, with your branch and worktree. Another project starts on its root checkout.",
+    }),
+  ),
+});
+export type OrchestratorMcpCreateThreadTarget = typeof OrchestratorMcpCreateThreadTarget.Type;
+
 export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),
-  target: Schema.optional(OrchestratorMcpTarget),
+  target: Schema.optional(OrchestratorMcpCreateThreadTarget),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
@@ -288,6 +304,7 @@ export type OrchestratorMcpCreatedThreadStatus = typeof OrchestratorMcpCreatedTh
 export const OrchestratorMcpCreatedThread = Schema.Struct({
   threadId: ThreadId,
   link: Schema.optional(Schema.String),
+  projectId: ProjectId,
   runId: Schema.NullOr(RunId),
   status: OrchestratorMcpCreatedThreadStatus,
   title: Schema.String,
