@@ -12,6 +12,7 @@ import {
   formatResetsIn,
   paceRemainingPercent,
   remainingPercent,
+  resetWhenEmptyWindow,
   type LimitAccount,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
@@ -26,6 +27,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
+import { useNowMinuteMs } from "../../lib/clock";
+import { ResetWhenEmpty } from "./ResetWhenEmpty";
 import { ResetCredits } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
@@ -536,7 +539,8 @@ type AccountScreenProps = StaticScreenProps<{
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const insets = useSafeAreaInsets();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
-  const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
+  const { accountKey, windowId, windowKind, environmentIds } = route.params;
+  const now = useNowMinuteMs();
   const selectedIds =
     environmentIds === null ? null : new Set(environmentIds.map((id) => EnvironmentId.make(id)));
   const selected =
@@ -549,6 +553,8 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     .find((candidate) => candidate.driver === account?.driver)
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
+  const resetsIn = window ? formatResetsIn(window, now) : null;
+  const reportedWindow = resetWhenEmptyWindow(account, window);
   const evenPace = window ? paceRemainingPercent(window, now) : null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
@@ -602,6 +608,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                     dateStyle: "medium",
                     timeStyle: "short",
                   })}
+                  {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
                 </Text>
               ) : null}
               {evenPace !== null ? (
@@ -639,6 +646,13 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   credits={account.limits.resetCredits}
                   now={now}
                 />
+                {account.limits.resetCredits.availableCount > 0 && reportedWindow ? (
+                  <ResetWhenEmpty
+                    environmentId={account.redeem.environmentId}
+                    target={account.redeem.input}
+                    window={reportedWindow}
+                  />
+                ) : null}
               </View>
             ) : null}
           </>

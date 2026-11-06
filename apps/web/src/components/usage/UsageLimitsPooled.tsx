@@ -1,3 +1,5 @@
+import { ResetWhenEmpty } from "./ResetWhenEmpty";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -13,6 +15,7 @@ import {
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
+  resetWhenEmptyWindow,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -137,7 +140,7 @@ function SegmentPopover({
   account,
   window,
   reset,
-  now,
+  now: snapshotNow,
   redeem,
   onRedeem,
 }: {
@@ -148,7 +151,9 @@ function SegmentPopover({
   readonly redeem: ReturnType<typeof useResetCredit> | null;
   readonly onRedeem: () => void;
 }) {
+  const now = Math.max(snapshotNow, Date.parse(`${useNowMinute()}:00Z`));
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const reportedWindow = resetWhenEmptyWindow(account, window);
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);
@@ -210,6 +215,13 @@ function SegmentPopover({
               {redeem.busy ? "Using…" : "Use reset"}
             </Button>
           </span>
+          {account.redeem && reportedWindow ? (
+            <ResetWhenEmpty
+              environmentId={account.redeem.environmentId}
+              target={account.redeem.input}
+              window={reportedWindow}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

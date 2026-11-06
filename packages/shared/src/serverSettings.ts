@@ -540,6 +540,9 @@ export function applyServerSettingsPatch(
     ...(backgroundActivity === undefined && backgroundActivityPatch !== undefined
       ? { backgroundActivity: backgroundActivityPatch }
       : {}),
+    ...(patch.resetCreditsWhenEmpty !== undefined
+      ? { resetCreditsWhenEmpty: patch.resetCreditsWhenEmpty }
+      : {}),
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
