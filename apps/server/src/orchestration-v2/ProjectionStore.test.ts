@@ -8439,6 +8439,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           .pipe(Effect.withTracer(tracer))).runs.map((run) => run.id),
         [runId, newerRunId],
       );
+      assert.lengthOf(statements, 2);
       // Live-item filters must hit the active partial indexes, not walk the thread's history.
       const sql = yield* SqlClient.SqlClient;
       for (const statement of statements.filter((query) => query.includes("turn_items"))) {

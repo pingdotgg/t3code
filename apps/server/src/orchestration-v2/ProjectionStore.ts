@@ -4608,21 +4608,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           if (threadRows[0] === undefined) {
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           }
-          const [
-            thread,
-            runRows,
-            attemptRows,
-            nodeRows,
-            subagentRows,
-            providerSessionRows,
-            providerThreadRows,
-            providerTurnRows,
-            runtimeRequestRows,
-            messageRows,
-            turnItemRows,
-          ] = yield* Effect.all([
-            decodeThreadPayload(threadRows[0].payload_json),
-            sql<PayloadRow>`
+          const thread = yield* decodeThreadPayload(threadRows[0].payload_json);
+          // One worker round trip and one SQLite snapshot; decisions still read after the prior commit.
+          const queries = {
+            runs: sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_runs AS run
               WHERE run.thread_id = ${threadId}
                 AND (
@@ -4665,7 +4654,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY run.ordinal ASC
             `,
-            sql<PayloadRow>`
+            attempts: sql<PayloadRow>`
               SELECT attempt.payload_json
               FROM orchestration_v2_projection_run_attempts AS attempt
               WHERE attempt.thread_id = ${threadId}
@@ -4676,7 +4665,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY attempt.run_id ASC, attempt.attempt_ordinal ASC
             `,
-            sql<PayloadRow>`
+            nodes: sql<PayloadRow>`
               SELECT node.payload_json FROM orchestration_v2_projection_nodes AS node
               WHERE node.thread_id = ${threadId}
                 AND node.status IN ('pending', 'starting', 'running', 'waiting')
@@ -4711,7 +4700,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
             `,
-            sql<PayloadRow>`
+            subagents: sql<PayloadRow>`
               SELECT subagent.payload_json FROM orchestration_v2_projection_subagents AS subagent
               WHERE subagent.thread_id = ${threadId}
                 AND subagent.status IN ('pending', 'starting', 'running', 'waiting')
@@ -4731,7 +4720,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY COALESCE(subagent.started_at, ''), subagent.subagent_id ASC
             `,
-            sql<PayloadRow>`
+            providerSessions: sql<PayloadRow>`
               SELECT session.payload_json
               FROM orchestration_v2_projection_provider_sessions AS session
               WHERE (
@@ -4769,7 +4758,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY session.updated_at ASC, session.provider_session_id ASC
             `,
-            sql<PayloadRow>`
+            providerThreads: sql<PayloadRow>`
               SELECT provider_thread.payload_json
               FROM orchestration_v2_projection_provider_threads AS provider_thread
               WHERE provider_thread.provider_thread_id IN (
@@ -4815,7 +4804,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY COALESCE(provider_thread.first_run_ordinal, 0), provider_thread.provider_thread_id ASC
             `,
-            sql<PayloadRow>`
+            providerTurns: sql<PayloadRow>`
               SELECT provider_turn.payload_json
               FROM orchestration_v2_projection_provider_turns AS provider_turn
               WHERE provider_turn.thread_id = ${threadId}
@@ -4843,22 +4832,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY provider_turn.provider_thread_id ASC, provider_turn.ordinal ASC
             `,
-            sql<PayloadRow>`
+            runtimeRequests: sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_runtime_requests
               WHERE thread_id = ${threadId} AND status = 'pending'
               ORDER BY created_at ASC, runtime_request_id ASC
             `,
             // CROSS JOIN keeps empty run cohorts out of message history; the run index bounds each lookup.
-            sql<PayloadRow>`
-              SELECT message.payload_json FROM orchestration_v2_projection_runs AS run
+            messages: sql<PayloadRow>`
+              SELECT message.payload_json FROM orchestration_v2_projection_runs AS message_run
               CROSS JOIN orchestration_v2_projection_messages AS message
-                INDEXED BY orchestration_v2_projection_messages_run_idx ON message.run_id = run.run_id
-              WHERE run.thread_id = ${threadId}
-                AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                INDEXED BY orchestration_v2_projection_messages_run_idx ON message.run_id = message_run.run_id
+              WHERE message_run.thread_id = ${threadId}
+                AND message_run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
                 AND message.thread_id = ${threadId} AND message.streaming = 1
               ORDER BY message.created_at ASC, message.message_id ASC
             `,
-            sql<PayloadRow>`
+            turnItems: sql<PayloadRow>`
               SELECT item.payload_json FROM orchestration_v2_projection_turn_items AS item
               WHERE item.thread_id = ${threadId}
                 AND item.status IN ('pending', 'running', 'waiting')
@@ -4889,7 +4878,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               ORDER BY item.ordinal ASC, item.turn_item_id ASC
             `,
-          ]);
+          };
+          const sections = Object.entries(queries).map(
+            ([section, query]) => sql`
+              SELECT ${section} AS section, payload_json, row_number() OVER () AS position
+              FROM (${query})
+            `,
+          );
+          const rows = yield* sql<PayloadRow & { readonly section: string }>`
+            ${sql.join(" UNION ALL ", false)(sections)}
+            ORDER BY section, position
+          `;
+          const readRows = (section: keyof typeof queries) =>
+            rows.filter((row) => row.section === section);
           const [
             runs,
             attempts,
@@ -4902,16 +4903,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             messages,
             turnItems,
           ] = yield* Effect.all([
-            decodeRows(decodeRunPayload, threadId)(runRows),
-            decodeRows(decodeRunAttemptPayload, threadId)(attemptRows),
-            decodeRows(decodeNodePayload, threadId)(nodeRows),
-            decodeRows(decodeSubagentPayload, threadId)(subagentRows),
-            decodeRows(decodeProviderSessionPayload, threadId)(providerSessionRows),
-            decodeRows(decodeProviderThreadPayload, threadId)(providerThreadRows),
-            decodeRows(decodeProviderTurnPayload, threadId)(providerTurnRows),
-            decodeRows(decodeRuntimeRequestPayload, threadId)(runtimeRequestRows),
-            decodeRows(decodeMessagePayload, threadId)(messageRows),
-            decodeRows(decodeTurnItemPayload, threadId)(turnItemRows),
+            decodeRows(decodeRunPayload, threadId)(readRows("runs")),
+            decodeRows(decodeRunAttemptPayload, threadId)(readRows("attempts")),
+            decodeRows(decodeNodePayload, threadId)(readRows("nodes")),
+            decodeRows(decodeSubagentPayload, threadId)(readRows("subagents")),
+            decodeRows(decodeProviderSessionPayload, threadId)(readRows("providerSessions")),
+            decodeRows(decodeProviderThreadPayload, threadId)(readRows("providerThreads")),
+            decodeRows(decodeProviderTurnPayload, threadId)(readRows("providerTurns")),
+            decodeRows(decodeRuntimeRequestPayload, threadId)(readRows("runtimeRequests")),
+            decodeRows(decodeMessagePayload, threadId)(readRows("messages")),
+            decodeRows(decodeTurnItemPayload, threadId)(readRows("turnItems")),
           ]);
           return {
             thread,
