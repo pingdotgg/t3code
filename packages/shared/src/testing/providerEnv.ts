@@ -5,6 +5,8 @@
 const PROVIDER_ENV_PREFIXES = ["ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "T3CODE_", "T3_"];
 
 const KEPT_ENV = new Set([
+  // Selects the mobile test platform; the Vite config and platform-branched tests must agree on it.
+  "T3_MOBILE_TEST_PLATFORM",
   // CI sets these so the transfer budget integration test writes its report for the job summary.
   "T3CODE_TRANSFER_BUDGET_REPORT_PATH",
   "T3CODE_TRANSFER_BUDGET_RESULT_PATH",

@@ -929,6 +929,43 @@ describe("synchronized mobile model visibility", () => {
   });
 });
 
+describe("mobile unavailable provider model options", () => {
+  it.each([
+    ["signed out", { auth: { status: "unauthenticated" as const } }],
+    ["not checked yet", { installed: false }],
+  ])("keeps an enabled %s provider listed with unavailable models", (_state, probe) => {
+    const config = {
+      providers: [
+        {
+          instanceId: "claudeAgent",
+          driver: "claudeAgent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" as const },
+          ...probe,
+          models: [
+            { slug: "claude-opus", name: "Claude Opus", isCustom: false, capabilities: null },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(config, null, undefined, null, "composer");
+
+    expect(options).toMatchObject([
+      { providerKey: "claudeAgent", providerLabel: "Claude", isUnavailable: true },
+    ]);
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: options,
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("mobile account pool model options", () => {
   const memberId = ProviderInstanceId.make("claudeAgent_work");
   const poolId = ProviderInstanceId.make("pool_claudeAgent");
