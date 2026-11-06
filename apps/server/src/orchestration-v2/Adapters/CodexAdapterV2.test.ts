@@ -1836,6 +1836,101 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "message.updated" && event.message.role === "assistant",
     );
 
+  it.effect("lists each Codex web search target once beside the query Codex derives from it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "web-search-thread";
+        const nativeTurnId = "web-search-turn";
+        const url = "https://developers.openai.com/codex";
+        // `query` is what Codex's `web_search_action_detail` derives from each action.
+        const searches = [
+          {
+            id: "search",
+            query: "codex changelog",
+            action: { type: "search", query: "codex changelog", queries: null },
+            patterns: ["codex changelog"],
+          },
+          {
+            id: "search-many",
+            query: "codex changelog ...",
+            action: { type: "search", query: null, queries: ["codex changelog", "codex 0.160"] },
+            patterns: ["codex changelog", "codex 0.160"],
+          },
+          {
+            id: "open-page",
+            query: url,
+            action: { type: "openPage", url },
+            patterns: [url],
+          },
+          {
+            id: "find-in-page",
+            query: `'sandbox' in ${url}`,
+            action: { type: "findInPage", pattern: "sandbox", url },
+            patterns: ["sandbox", url],
+          },
+        ] as const;
+        const transcript = makeCodexReplayTranscript({
+          scenario: "web-search-patterns",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Search the web." }),
+            ...searches.map(({ id, query, action }) => ({
+              type: "emit_inbound" as const,
+              label: `web-search-${id}`,
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  item: { type: "webSearch", id, query, action, results: null },
+                },
+              },
+            })),
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("web-search-attempt"),
+            text: "Search the web.",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const patterns = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "web_search"
+            ? [event.turnItem.patterns]
+            : [],
+        );
+        assert.deepEqual(
+          patterns,
+          searches.map((search) => search.patterns),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
       Effect.gen(function* () {
