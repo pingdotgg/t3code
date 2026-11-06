@@ -985,21 +985,40 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
-        yield* rest({
-          host: locator.host,
-          operation: "createPullRequest",
-          method: "POST",
-          allowReserve: true,
-          path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
-          // Explicitly allow maintainer edits to match gh; the API default is undocumented.
-          body: {
-            base: input.baseRefName,
-            head: input.headSelector,
-            title: input.title,
-            body,
-            maintainer_can_modify: true,
-          },
-        });
+        yield* api
+          .rest({
+            host: locator.host,
+            operation: "createPullRequest",
+            method: "POST",
+            allowReserve: true,
+            path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
+            // Explicitly allow maintainer edits to match gh; the API default is undocumented.
+            body: {
+              base: input.baseRefName,
+              head: input.headSelector,
+              title: input.title,
+              body,
+              maintainer_can_modify: true,
+            },
+          })
+          .pipe(
+            Effect.mapError((error) => {
+              if (
+                error._tag === "GitHubApiResponseError" &&
+                error.status === 422 &&
+                error.githubErrors?.includes("base invalid")
+              ) {
+                const base = SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.baseRefName,
+                );
+                return failure(
+                  `GitHub rejected base branch ${JSON.stringify(base)} for ${locator.host}/${locator.owner}/${locator.name}. Push the intended base branch to that repository, or choose an existing base branch and retry.`,
+                  error,
+                );
+              }
+              return fromGitHubApiError(error);
+            }),
+          );
       },
       (effect, input) =>
         effect.pipe(
