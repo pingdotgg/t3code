@@ -2,6 +2,8 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
+import "~/index.css";
+
 import { render } from "../../../../test/render";
 import { installSidebarTree } from "../../../lib/sidebarTree";
 
@@ -62,6 +64,26 @@ it("keeps the terminal control on a worker's line", async () => {
   );
   const button = screen.getByRole("button", { name: "Open terminal" }).element();
   expect(button.closest("[data-row-line1]")).not.toBeNull();
+});
+
+it("keeps Settle reachable on a Detailed row showing answers", async () => {
+  await using screen = await render(
+    <div>
+      {row({
+        thread: { ...thread, hasPendingApprovals: true },
+        statusSlot: (content: ReactNode) => (
+          <span data-status-slot>
+            {content}
+            <button type="button" aria-label="Settle thread" />
+          </span>
+        ),
+      })}
+    </div>,
+  );
+  const settle = screen.getByRole("button", { name: "Settle thread" }).element() as HTMLElement;
+  expect(settle.getClientRects().length).toBeGreaterThan(0);
+  settle.focus();
+  expect(document.activeElement).toBe(settle);
 });
 
 it("keeps a parent's terminal control beside its answers", async () => {

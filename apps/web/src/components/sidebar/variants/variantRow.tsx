@@ -266,8 +266,8 @@ export function resolveVariantRow(input: {
         {input.terminal}
         <span data-line2-rest className="contents">
           {input.lineExtras}
-          {input.statusSlot(input.time, false)}
         </span>
+        {input.statusSlot(input.time, false)}
       </div>
     ) : null;
 

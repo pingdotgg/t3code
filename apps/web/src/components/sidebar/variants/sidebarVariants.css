@@ -250,7 +250,8 @@
   line-height: 1.5;
 
   /* Taller controls overhang the line, so the row keeps its height. */
-  & [data-line2-rest] > * {
+  & [data-line2-rest] > *,
+  & [data-status-slot] {
     margin-block: -0.5rem;
   }
 
@@ -304,6 +305,7 @@
   border-radius: 9999px;
   font-size: 0.6875rem;
   font-weight: 600;
+  max-width: 100%;
 }
 
 [data-row-answers] button[aria-label="More approval options"] {

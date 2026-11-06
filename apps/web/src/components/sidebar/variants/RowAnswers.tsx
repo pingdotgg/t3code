@@ -61,7 +61,7 @@ function AnswerBody(props: {
           {props.note}
         </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-1">{props.children}</div>
+      <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1">{props.children}</div>
       {props.error !== null ? (
         <p
           role="alert"
