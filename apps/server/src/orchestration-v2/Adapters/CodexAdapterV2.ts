@@ -1391,6 +1391,8 @@ export class CodexAppServerClientFactory extends Context.Service<
 export const CODEX_THREAD_CONFIG = {
   "tools.update_plan.enabled": true,
   mcp_optional_startup_grace_ms: 10_000,
+  // Compact after the final response so the next prompt usually avoids compaction.
+  model_post_turn_compact_threshold_percent: 80,
 } as const;
 
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
