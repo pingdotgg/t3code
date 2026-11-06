@@ -1835,6 +1835,10 @@ export const make = Effect.gen(function* () {
             snapshot.claudeFields,
           );
           if (parsedThread === "empty") {
+            // null means an unreadable history base, which may hold the conversation.
+            if (candidate.source === "codex" && inheritedRecords === null) {
+              return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            }
             // Never recorded as imported, so charging them would starve real sessions every run.
             transcriptsRemaining += 1;
             return Option.none<AgentSessionRecentThread>();
