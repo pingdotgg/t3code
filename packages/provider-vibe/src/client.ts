@@ -15,7 +15,7 @@ export const vibeClient = defineProviderClient({
       name: "MISTRAL_API_KEY",
       label: "Mistral API key",
       description:
-        "Optional. La Plateforme API key used by vibe-acp instead of an interactive login.",
+        "Optional. La Plateforme API key used by vibe-app-server instead of an interactive login.",
       placeholder: "Paste API key",
       sensitive: true,
     },

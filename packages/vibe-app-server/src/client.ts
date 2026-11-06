@@ -582,6 +582,8 @@ const makeChildProcessClient = Effect.fn(
   "@t3tools/vibe-app-server/VibeAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: VibeAppServerClientOptions) {
   const encoder = new TextEncoder();
+  // Drain the child's stderr in a scoped fiber, or a chatty server can block on a full pipe.
+  yield* Effect.forkScoped(handle.stderr.pipe(Stream.runDrain));
   const stdio = Stdio.make({
     args: Effect.succeed([]),
     stdin: handle.stdout,
