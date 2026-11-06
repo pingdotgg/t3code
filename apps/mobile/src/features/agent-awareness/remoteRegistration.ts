@@ -744,7 +744,7 @@ const refreshAgentActivityWidget = Effect.fn("remoteRegistration.refreshAgentAct
     const expectedDeviceGeneration = deviceRegistrationGeneration;
     const expectedRefreshGeneration = ++widgetRefreshGeneration;
     const readStartedWith = observedWidgetActivities;
-    const readStartedAt = Date.now();
+    const readStartedAt = yield* Clock.currentTimeMillis;
     const snapshot = yield* readAgentActivitySnapshot();
     if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider) {
       return null;

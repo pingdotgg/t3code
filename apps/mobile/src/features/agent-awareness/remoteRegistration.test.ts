@@ -9,6 +9,7 @@ import * as Cause from "effect/Cause";
 import type { LiveActivity } from "expo-widgets";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as TestClock from "effect/testing/TestClock";
 import { makeRawThreadShell } from "../../test-fixtures";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -626,11 +627,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           const foreground = backgroundRuntime.pending.shift();
           if (!foreground) throw new Error("Expected foreground Live Activity reconciliation");
           const exit = yield* Effect.exit(
-            foreground.operation as Effect.Effect<
-              unknown,
-              unknown,
-              ManagedRelay.ManagedRelayClient
-            >,
+            foreground.operation as Effect.Effect<unknown, Error, ManagedRelay.ManagedRelayClient>,
           ).pipe(Effect.provide(layer));
           foreground.resolve(exit);
           expect(Exit.isSuccess(exit)).toBe(true);
@@ -1621,7 +1618,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         const pending = backgroundRuntime.pending.shift();
         if (!pending) throw new Error("Expected local token registration");
         const localRegistration = yield* Effect.exit(
-          pending.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
+          pending.operation as Effect.Effect<unknown, Error, ManagedRelay.ManagedRelayClient>,
         ).pipe(Effect.provide(layer), Effect.forkChild);
         yield* Effect.promise(() => tokenRead);
         yield* Deferred.succeed(finishRead, undefined);
@@ -1849,7 +1846,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           );
         });
         const exit = yield* Effect.exit(
-          pending.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
+          pending.operation as Effect.Effect<unknown, Error, ManagedRelay.ManagedRelayClient>,
         ).pipe(Effect.provide(failedRelay));
         pending.resolve(exit);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -1926,7 +1923,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       addLiveEnvironment();
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
       backgroundRuntime.pending.length = 0;
-      const earlier = new Date(Date.parse(liveShellUpdatedAt) - 1_000).toISOString();
+      const earlier = DateTime.formatIso(
+        DateTime.makeUnsafe(Date.parse(liveShellUpdatedAt) - 1_000),
+      );
       const relaySnapshot: RelayAgentActivitySnapshotResponse = {
         aggregate: {
           ...activeAgentActivitySnapshot.aggregate,
@@ -2474,6 +2473,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     Effect.gen(function* () {
       const now = Date.parse("2026-10-02T12:00:00.000Z");
       const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      yield* TestClock.setTime(now);
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
       backgroundRuntime.pending.length = 0;
       const layer = snapshotRelayLayer();
@@ -2482,6 +2482,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(original.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
 
       clock.mockReturnValue(now + 60_000);
+      yield* TestClock.setTime(now + 60_000);
       yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
       const renewed = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
       expect(renewed.activities).toEqual(original.activities);
@@ -2489,6 +2490,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
 
       clock.mockReturnValue(now + 120_000);
+      yield* TestClock.setTime(now + 120_000);
       yield* refreshActiveLiveActivityRemoteRegistration().pipe(
         Effect.provide(
           snapshotRelayLayer(() =>
@@ -2513,6 +2515,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     Effect.gen(function* () {
       const now = Date.parse("2026-10-02T12:00:00.000Z");
       const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      yield* TestClock.setTime(now);
       const started = yield* Deferred.make<void>();
       const finish = yield* Deferred.make<void>();
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
@@ -2530,11 +2533,13 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
       yield* Deferred.await(started);
       clock.mockReturnValue(now + 60_000);
+      yield* TestClock.setTime(now + 60_000);
       yield* refreshActiveLiveActivityRemoteRegistration().pipe(
         Effect.provide(snapshotRelayLayer()),
       );
       const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
       clock.mockReturnValue(now + 120_000);
+      yield* TestClock.setTime(now + 120_000);
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(older);
       expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications);
@@ -2548,6 +2553,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     Effect.gen(function* () {
       const now = Date.parse("2026-10-02T12:00:00.000Z");
       const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      yield* TestClock.setTime(now);
       const started = yield* Deferred.make<void>();
       const finish = yield* Deferred.make<void>();
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
@@ -2566,13 +2572,14 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* Deferred.await(started);
       const arrivedAt = now + AGENT_ACTIVITY_FRESHNESS_MS + 1;
       clock.mockReturnValue(arrivedAt);
+      yield* TestClock.setTime(arrivedAt);
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(refresh);
       const publication = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
       expect(publication.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
       expect(agentActivityTimeline(publication, arrivedAt)).toEqual([
         {
-          date: new Date(arrivedAt),
+          date: DateTime.toDateUtc(DateTime.makeUnsafe(arrivedAt)),
           props: expect.objectContaining({ isExpired: true, activeCount: -1 }),
         },
       ]);

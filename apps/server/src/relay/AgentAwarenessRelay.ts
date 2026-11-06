@@ -571,14 +571,27 @@ export const make = Effect.gen(function* () {
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     const completedAt = threadShell?.latestRunCompletedAt?.epochMilliseconds;
     const previousTerminal = publishedTerminalWork.get(threadId);
+    const snoozeExpired =
+      threadShell?.snoozedUntil !== null &&
+      threadShell?.snoozedUntil !== undefined &&
+      threadShell.snoozedUntil.epochMilliseconds <= (yield* DateTime.now).epochMilliseconds;
     const replay =
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      ((completedAt !== undefined &&
-        previousTerminal?.completedAt === completedAt &&
-        previousTerminal.phase === snapshot.state.phase) ||
+      ((snoozeExpired && !hasLivePublishedState(publishedStateByThread, threadId)) ||
+        (completedAt !== undefined &&
+          previousTerminal?.completedAt === completedAt &&
+          previousTerminal.phase === snapshot.state.phase) ||
         (!publishedStateByThread.has(threadId) &&
           Option.isSome(thread) &&
           !terminalWorkSinceStart(thread.value, startedAt)));
+    if (
+      (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
+      !replay &&
+      publishedStateByThread.has(threadId) &&
+      !hasLivePublishedState(publishedStateByThread, threadId) &&
+      (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt))
+    )
+      return;
     if (
       publishedStateByThread.get(threadId) === publishIdentity &&
       !(snapshot.state === null && heldCompletions.has(threadId))
@@ -599,7 +612,8 @@ export const make = Effect.gen(function* () {
     // alerts on every move into completed.
     const requiresConfirmation =
       (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
+        (publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null) ||
+          heldCompletions.has(threadId))) ||
       (snapshot.state?.phase === "completed" && !replay);
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
@@ -777,9 +791,13 @@ export const make = Effect.gen(function* () {
     const projectSnapshot = yield* projects.snapshot;
     const activitySnapshot = yield* threads.getAgentAwarenessSnapshot();
     const nowMs = (yield* DateTime.now).epochMilliseconds;
-    yield* Effect.forEach(activitySnapshot.threads, (thread) => scheduleSnoozeWakeup(thread, nowMs), {
-      discard: true,
-    });
+    yield* Effect.forEach(
+      activitySnapshot.threads,
+      (thread) => scheduleSnoozeWakeup(thread, nowMs),
+      {
+        discard: true,
+      },
+    );
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       now: nowMs,
