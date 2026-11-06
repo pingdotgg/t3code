@@ -48,6 +48,7 @@ export function PullRequestComposer({
   const composerId = useId();
   const [reviewPending, setReviewPending] = useState(false);
   const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");
+  const rootRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLButtonElement>(null);
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const reviewRef = useRef<HTMLTextAreaElement>(null);
@@ -92,12 +93,17 @@ export function PullRequestComposer({
   };
 
   const collapse = () => {
+    // A slow submission can finish after the user has moved on; a locked field leaves focus on body.
+    const focused = document.activeElement;
+    const movedElsewhere =
+      focused !== null && focused !== document.body && !rootRef.current?.contains(focused);
     flushSync(() => setOpen(false));
-    barRef.current?.focus();
+    if (!movedElsewhere) barRef.current?.focus();
   };
 
   return (
     <div
+      ref={rootRef}
       className={cn("flex flex-col items-end", !compact && "items-stretch")}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !open || event.defaultPrevented) return;
