@@ -1142,10 +1142,11 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
         updatedAtState: "pending",
         observedAt: 100,
       };
+      let hostDetail: object = open;
       const read = (name: string) => () =>
         Effect.sync(() => {
           reads.push(name);
-          return open;
+          return name === "detail" ? hostDetail : open;
         });
       const replies: unknown[] = [];
       const listAnswers: unknown[] = [];
@@ -1172,7 +1173,7 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
         undefined,
         false,
         {
-          actionReply: (target, reply) => Effect.sync(() => replies.push({ target, reply })),
+          summary: (target, reply) => Effect.sync(() => replies.push({ target, reply })),
           list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
         },
         {
@@ -1196,6 +1197,7 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
         yield* Effect.promise(() => executeAtomQuery(registry, atom));
       }
       reads.length = 0;
+      replies.length = 0;
 
       const answer = yield* Effect.promise(() =>
         atoms.runAction.run(registry, { ...target, input: { ...target.input, action: "merge" } }),
@@ -1230,6 +1232,20 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
       // Only a read can place a row the listing did not hold.
       yield* AtomRegistry.getResult(registry, merged, { suspendOnWaiting: true });
       expect(reads).toEqual(["list:merged"]);
+
+      // A detail read that finds a newer edit, such as a comment, dates the loaded rows too.
+      const commented = { ...actionReply, updatedAt: "2026-10-27T11:00:00Z", observedAt: 300 };
+      hostDetail = commented;
+      registry.refresh(atoms.detail(target));
+      yield* AtomRegistry.getResult(registry, atoms.detail(target), { suspendOnWaiting: true });
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
+        { updatedAt: commented.updatedAt, observedAt: 100 },
+      ]);
+      expect(replies).toEqual([
+        { target, reply: actionReply },
+        { target, reply: commented },
+      ]);
+      expect(reads).toEqual(["list:merged", "detail"]);
     }),
   ),
 );

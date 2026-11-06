@@ -137,6 +137,13 @@ interface ActionReplyPatch {
     reply: PullRequestSummary | undefined,
     readsBeforeSend: ReadonlySet<object>,
   ) => Effect.Effect<void>;
+  /** Shows a newer read of the pull request itself, without reading again. */
+  readonly observe?: (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    reference: PullRequestRef,
+    summary: PullRequestSummary,
+  ) => Effect.Effect<void>;
 }
 
 // Module-wide so readers built by separate factories, such as linked summaries, are patched too.
@@ -254,6 +261,8 @@ function actionPatchedQuery<Input, A, E>(
     readonly rereadWithoutReply?: boolean;
     /** False for reads the refresh stream does not restart; defaults to true. */
     readonly refreshedByServer?: (input: Input) => boolean;
+    /** Also shows detail reads, so a refresh of one pull request reaches its loaded rows. */
+    readonly observesDetail?: boolean;
   },
 ) {
   const writable = Atom.family((atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
@@ -269,6 +278,24 @@ function actionPatchedQuery<Input, A, E>(
       ) as AsyncResult.AsyncResult<A, E> | undefined;
       return result?.waiting === true ? result : undefined;
     };
+    const shownValue = (registry: AtomRegistry.AtomRegistry) =>
+      Option.flatMap(
+        registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
+        (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
+      );
+    const show = Effect.fnUntraced(function* (registry: AtomRegistry.AtomRegistry, next: A) {
+      registry.update(
+        atom,
+        AsyncResult.map(() => next),
+      );
+      if (options.persistence !== undefined) {
+        yield* options.persistence.save(
+          target.environmentId,
+          queryPersistenceKey(options.label, target.input),
+          next,
+        );
+      }
+    });
     actionReplyPatches.set(atom, {
       pendingRead,
       apply: Effect.fnUntraced(
@@ -286,10 +313,7 @@ function actionPatchedQuery<Input, A, E>(
           if (reply === undefined) {
             return options.rereadWithoutReply === true ? reread() : undefined;
           }
-          const shown = Option.flatMap(
-            registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
-            (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
-          );
+          const shown = shownValue(registry);
           if (Option.isNone(shown)) return reread();
           const patched = options.patch(target.input, shown.value, reference, reply);
           if (patched === "refresh") return reread();
@@ -301,19 +325,29 @@ function actionPatchedQuery<Input, A, E>(
           const mounted = (registry.getNodes().get(atom)?.listeners.size ?? 0) > 0;
           if (!freshRead && (pending !== undefined || lacking || (unrefreshed && mounted)))
             registry.refresh(atom);
-          registry.update(
-            atom,
-            AsyncResult.map(() => next),
-          );
-          if (options.persistence !== undefined) {
-            yield* options.persistence.save(
-              environmentId,
-              queryPersistenceKey(options.label, target.input),
-              next,
-            );
-          }
+          yield* show(registry, next);
         },
       ),
+      ...(options.observesDetail !== true
+        ? {}
+        : {
+            // Rows the read does not hold, or a stale read, wait for the listing's own refresh.
+            observe: Effect.fnUntraced(function* (registry, environmentId, reference, summary) {
+              if (
+                environmentId !== target.environmentId ||
+                !options.concerns(target.input, reference)
+              )
+                return;
+              const shown = shownValue(registry);
+              if (Option.isNone(shown)) return;
+              const patched = options.patch(target.input, shown.value, reference, summary);
+              if (patched === "refresh") return;
+              const next = reuseUnchanged(shown.value, patched);
+              if (next === shown.value) return;
+              yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
+              yield* show(registry, next);
+            }),
+          }),
     });
     return atom;
   };
@@ -394,8 +428,11 @@ export interface PullRequestAnswerHandlers {
   readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
   readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
   readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
-  /** Once per action reply, after the loaded readers show it; unscoped references only. */
-  readonly actionReply?: QueryAnswerHandler<PullRequestRef, PullRequestSummary>;
+  /**
+   * Once per action reply or detail read, after the loaded lists show it; unscoped references
+   * only. It can be older than what a reader shows.
+   */
+  readonly summary?: QueryAnswerHandler<PullRequestRef, PullRequestSummary>;
 }
 
 export function createPullRequestStackAtomFamily<R, E>(
@@ -478,7 +515,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               value,
               version: (previous?.version ?? 0) + 1,
             }));
-          }).pipe(Effect.andThen(() => onAnswer.detail?.(target, value, registry) ?? Effect.void)),
+          }).pipe(
+            Effect.andThen(() => onAnswer.detail?.(target, value, registry) ?? Effect.void),
+            Effect.andThen(() => showDetailInLists(registry, target, value)),
+          ),
       }),
       {
         label: detailLabel,
@@ -681,9 +721,21 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }
     if (reply !== undefined && reference.expectedAccountId === undefined) {
       yield* (
-        onAnswer.actionReply?.({ environmentId, input: reference }, reply, registry) ?? Effect.void
+        onAnswer.summary?.({ environmentId, input: reference }, reply, registry) ?? Effect.void
       );
     }
+  });
+  // A detail refresh reaches only the host's read of that pull request; listings stay cached.
+  const showDetailInLists = Effect.fn("PullRequests.showDetailInLists")(function* (
+    registry: AtomRegistry.AtomRegistry,
+    target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef },
+    value: PullRequestDetail,
+  ) {
+    if (target.input.expectedAccountId !== undefined) return;
+    for (const reader of actionReplyReaders(registry)) {
+      yield* reader.observe?.(registry, target.environmentId, target.input, value) ?? Effect.void;
+    }
+    yield* onAnswer.summary?.(target, value, registry) ?? Effect.void;
   });
   const listLabel = "environment-data:pull-requests:list";
   const listPersistence = persistQuery(PullRequestListResult);
@@ -729,6 +781,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             reference.host === undefined ||
             input.host.toLowerCase() === reference.host.toLowerCase()),
         refreshedByServer: (input) => input.cursors === undefined,
+        observesDetail: true,
         patch: patchListWithReply,
       },
     ),
