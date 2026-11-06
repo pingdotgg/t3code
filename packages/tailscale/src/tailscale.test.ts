@@ -338,7 +338,8 @@ describe("tailscale", () => {
     return Effect.gen(function* () {
       yield* readTailscaleStatus.pipe(Effect.provide(layer));
       yield* readTailscaleSshEnabled.pipe(Effect.provide(layer));
-      assert.deepEqual(killGraces, [500, 500]);
+      yield* ensureTailscaleServe({ localPort: 45_678 }).pipe(Effect.provide(layer));
+      assert.deepEqual(killGraces, [500, 500, 500]);
     });
   });
 });

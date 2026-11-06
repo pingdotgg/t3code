@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -13,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -42,15 +43,14 @@ import {
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
-  crypto: undefined as never,
+  random: undefined as never,
   fileSystem: undefined as never,
   path: undefined as never,
   host: undefined as never,
   selfInvocation: undefined as never,
   makeRuntime: () => Effect.die("not spawned in this test"),
   withProcess: (_stop, task) => task,
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-  defaultModel: Effect.succeed(undefined),
+  defaultModel: Effect.undefined,
 });
 
 function permissionRequest(
@@ -137,9 +137,12 @@ describe("AntigravityAdapterV2 flavor", () => {
 
 const layerSession = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
-  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
 );
 
 describe("AntigravityAdapterV2 compaction", () => {
@@ -147,7 +150,7 @@ describe("AntigravityAdapterV2 compaction", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -165,10 +168,9 @@ describe("AntigravityAdapterV2 compaction", () => {
               cwd: input.cwd,
               env: { T3_ACP_ANTIGRAVITY: "1" },
             },
-          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const session = yield* adapter.openSession({
         threadId: ThreadId.make("thread-antigravity-compaction"),
@@ -216,8 +218,7 @@ describe("AntigravityAdapterV2 session open", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: () => Effect.fail(cause),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const threadId = ThreadId.make("thread-antigravity-sign-in");
       const error = yield* adapter
@@ -258,7 +259,7 @@ describe("AntigravityAdapterV2 client file system", () => {
       let writeTextFile: Parameters<RuntimeService["handleWriteTextFile"]>[0] | undefined;
       const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
       const requestLog = path.join(logs, "requests.ndjson");
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
@@ -274,7 +275,7 @@ describe("AntigravityAdapterV2 client file system", () => {
               env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_REQUEST_LOG_PATH: requestLog },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               handleReadTextFile: (handler) =>
@@ -288,8 +289,7 @@ describe("AntigravityAdapterV2 client file system", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-antigravity-workspace-",
@@ -395,7 +395,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -427,7 +427,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
               env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_HANG_PROMPT_FOREVER: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               prompt: (request) =>
@@ -454,8 +454,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const workspaceA = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-a-" });
       const workspaceB = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-b-" });
@@ -565,7 +564,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -598,7 +597,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
               env: { T3_ACP_ANTIGRAVITY: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               handleSessionUpdate: (handler) =>
@@ -705,8 +704,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -847,7 +845,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -883,7 +881,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
               env: { T3_ACP_ANTIGRAVITY: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               handleSessionUpdate: (handler) =>
@@ -950,8 +948,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -1055,7 +1052,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -1076,7 +1073,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
               env: { T3_ACP_ANTIGRAVITY: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               setMode: (modeId) =>
@@ -1086,8 +1083,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const threadId = ThreadId.make("thread-antigravity-ceiling");
       yield* adapter.openSession({
@@ -1125,7 +1121,7 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
         );
@@ -1153,7 +1149,7 @@ describe("AntigravityAdapterV2 session system prompt", () => {
                 },
               },
             }).pipe(
-              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
               Effect.map((runtime): RuntimeService => ({
                 ...runtime,
                 prompt: (request) =>
@@ -1163,8 +1159,7 @@ describe("AntigravityAdapterV2 session system prompt", () => {
               })),
             ),
           withProcess: (_stop, task) => task,
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-          defaultModel: Effect.succeed(undefined),
+          defaultModel: Effect.undefined,
         });
         const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-sp-" });
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({

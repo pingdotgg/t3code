@@ -15,12 +15,12 @@
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { runBuildChild } from "../core/BuildChild.ts";
+import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import {
   NODE_BUNDLE_CONDITIONS,
   NODE_SERVE_ENTRY_FILE_NAME,
   writeNodeServeEntry,
 } from "../core/NodeServe.ts";
-import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import { make, type ViteTarget, type ViteTargetConfig } from "./Vite.ts";
 
 const fail = (message: string, cause?: unknown) =>
@@ -41,16 +41,11 @@ const makeNodeChildTarget = (config: ViteTargetConfig = {}): ViteTarget =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         if (output.clientDirectory === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The Vite build produced no client directory for the Node serve entry",
-            ),
+          return yield* fail(
+            "The Vite build produced no client directory for the Node serve entry",
           );
         }
-        const servePath = path.join(
-          output.clientDirectory,
-          NODE_SERVE_ENTRY_FILE_NAME,
-        );
+        const servePath = path.join(output.clientDirectory, NODE_SERVE_ENTRY_FILE_NAME);
         return yield* writeNodeServeEntry({
           output,
           servePath,

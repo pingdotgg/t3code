@@ -73,10 +73,7 @@ export const isSamePreset = (a: string, b: string): boolean =>
   normalizePresetName(a) === normalizePresetName(b);
 
 /** The actionable error message for a caller-configured foreign preset. */
-export const presetConflictMessage = (
-  userPreset: string,
-  targetPreset: string,
-): string =>
+export const presetConflictMessage = (userPreset: string, targetPreset: string): string =>
   `The integration was given \`nitro.preset: "${userPreset}"\`, but this deploy target ` +
   `builds through the "${targetPreset}" preset — a "${userPreset}" build would never be ` +
   "deployed. Remove `nitro.preset` and let the deploy target select it, or run the " +
@@ -109,9 +106,7 @@ export interface ResolveNitroConfigInput {
  * instance: the caller's overrides first, then the owned keys (`preset`,
  * `rootDir`) enforced over them, then the deploy target's pass.
  */
-export const resolveNitroConfig = (
-  input: ResolveNitroConfigInput,
-): NitroConfigSlice => {
+export const resolveNitroConfig = (input: ResolveNitroConfigInput): NitroConfigSlice => {
   const config: NitroConfigSlice = { ...input.nitro };
   config.preset = input.preset;
   config.rootDir = input.rootDir;
@@ -132,9 +127,7 @@ export const findPresetConflict = (
   targetPreset: string,
 ): string | undefined => {
   const preset = nitro?.["preset"];
-  return typeof preset === "string" &&
-    preset.length > 0 &&
-    !isSamePreset(preset, targetPreset)
+  return typeof preset === "string" && preset.length > 0 && !isSamePreset(preset, targetPreset)
     ? preset
     : undefined;
 };
@@ -158,15 +151,10 @@ export const resolveNitroOutputDirs = (
 };
 
 /** Marker set on the plugin instances this integration appends. */
-const INJECTED = Symbol.for(
-  "@alchemy.run/frontend-frameworks/solidstart/injected",
-);
+const INJECTED = Symbol.for("@alchemy.run/frontend-frameworks/solidstart/injected");
 
 /** Flatten a vite `plugins` value (nested arrays, falsy entries) to objects. */
-const flattenPlugins = (
-  value: unknown,
-  out: Array<Record<string | symbol, unknown>>,
-): void => {
+const flattenPlugins = (value: unknown, out: Array<Record<string | symbol, unknown>>): void => {
   if (Array.isArray(value)) {
     for (const entry of value) flattenPlugins(entry, out);
     return;
@@ -193,8 +181,5 @@ export const markInjectedPlugins = <T>(plugins: T): T => {
 export const hasForeignNitroPlugin = (plugins: unknown): boolean => {
   const flat: Array<Record<string | symbol, unknown>> = [];
   flattenPlugins(plugins, flat);
-  return flat.some(
-    (plugin) =>
-      plugin["name"] === NITRO_PLUGIN_NAME && plugin[INJECTED] !== true,
-  );
+  return flat.some((plugin) => plugin["name"] === NITRO_PLUGIN_NAME && plugin[INJECTED] !== true);
 };
