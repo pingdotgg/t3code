@@ -1,8 +1,10 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/contracts";
@@ -33,6 +35,7 @@ import * as GitLabCli from "./GitLabCli.ts";
 import {
   AWARD_EMOJI_GRAPHQL_QUERY,
   decodeAwardEmojiJson,
+  decodeBranchJson,
   decodeCommitDiffRefsJson,
   decodeCommitsJson,
   decodeDiffRefsJson,
@@ -53,6 +56,7 @@ import {
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
   decodeReviewDecisionsJson,
+  decodeSourceBranchJson,
   decodeTriggerJobChecksJson,
   decodeViewerJson,
   gitLabAwardName,
@@ -62,6 +66,7 @@ import {
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   REVIEW_DECISIONS_GRAPHQL_QUERY,
+  SOURCE_BRANCH_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
@@ -193,6 +198,41 @@ export class GitLabDiffFileContentsUnavailableError extends Schema.TaggedError<G
   }
 }
 
+export class GitLabBranchDeletionRefusedError extends Schema.TaggedError<GitLabBranchDeletionRefusedError>()(
+  "GitLabBranchDeletionRefusedError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    number: Schema.Int,
+    reason: Schema.Literals([
+      "open",
+      "not-allowed",
+      "source-unavailable",
+      "default-branch",
+      "head-changed",
+    ]),
+  },
+) {
+  get detail(): string {
+    switch (this.reason) {
+      case "open":
+        return `Close or merge merge request !${this.number} before deleting its source branch.`;
+      case "not-allowed":
+        return "GitLab does not let you delete this source branch. It may be protected, or you may not be able to push to it.";
+      case "source-unavailable":
+        return `GitLab did not report a source project for merge request !${this.number}.`;
+      case "default-branch":
+        return "The source branch is its project's default branch and cannot be deleted here.";
+      case "head-changed":
+        return "The source branch has new commits and was not deleted.";
+    }
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in deleteSourceBranch: ${this.detail}`;
+  }
+}
+
 export class GitLabUnknownLabelError extends Schema.TaggedError<GitLabUnknownLabelError>()(
   "GitLabUnknownLabelError",
   {
@@ -212,6 +252,7 @@ export class GitLabUnknownLabelError extends Schema.TaggedError<GitLabUnknownLab
 
 export type GitLabPullRequestCliError =
   | GitLabCli.GitLabCliError
+  | GitLabBranchDeletionRefusedError
   | GitLabMergeRequestReadError
   | GitLabUnknownLabelError
   | GitLabDiffCursorError
@@ -657,6 +698,7 @@ export const make = Effect.gen(function* () {
     readonly path: string;
     readonly method?: string;
     readonly stdin?: string;
+    readonly headers?: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
     readonly timeoutMs?: number;
   }) =>
@@ -671,6 +713,7 @@ export const make = Effect.gen(function* () {
         ...(input.stdin === undefined
           ? []
           : ["--input", "-", "--header", "Content-Type: application/json"]),
+        ...(input.headers ?? []).flatMap((header) => ["--header", header]),
       ],
       ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
@@ -1281,6 +1324,88 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const sourceBranch = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: "getSourceBranch",
+      query: SOURCE_BRANCH_GRAPHQL_QUERY,
+      variables: { fullPath: input.repository, iid: String(input.number) },
+      decode: decodeSourceBranchJson,
+    });
+
+  const deleteSourceBranch = Effect.fn("GitLabPullRequestCli.deleteSourceBranch")(
+    function* (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) {
+      const refuse = (reason: GitLabBranchDeletionRefusedError["reason"]) =>
+        new GitLabBranchDeletionRefusedError({
+          command: "glab",
+          cwd: input.cwd,
+          number: input.number,
+          reason,
+        });
+      const source = yield* sourceBranch(input);
+      if (source === null) {
+        return yield* new GitLabMergeRequestReadError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "getSourceBranch",
+          cause: new Error("GitLab reported no merge request."),
+        });
+      }
+      if (source.open) return yield* refuse("open");
+      if (!source.canDelete) return yield* refuse("not-allowed");
+      if (source.sourceProject === null || source.headSha === null) {
+        return yield* refuse("source-unavailable");
+      }
+      const path = `projects/${projectPath(source.sourceProject)}/repository/branches/${encodeURIComponent(source.branch)}`;
+      const branch = yield* api({ cwd: input.cwd, host: input.host, path }).pipe(
+        Effect.flatMap((result) => {
+          const decoded = decodeBranchJson(result.stdout.trim());
+          return Result.isSuccess(decoded)
+            ? Effect.succeed(decoded.success)
+            : Effect.fail(
+                new GitLabMergeRequestReadError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "getSourceBranch",
+                  cause: decoded.failure,
+                }),
+              );
+        }),
+      );
+      if (branch.isDefault) return yield* refuse("default-branch");
+      if (branch.headSha !== source.headSha) return yield* refuse("head-changed");
+      // GitLab's branch delete takes no expected SHA. It answers 412 when the head's authored
+      // date is newer than If-Unmodified-Since, which catches a commit pushed after this read but
+      // not a force-push of an older-dated commit (a rebase keeps author dates).
+      const authoredAt =
+        branch.headAuthoredDate === null ? Option.none() : DateTime.make(branch.headAuthoredDate);
+      yield* api({
+        cwd: input.cwd,
+        host: input.host,
+        path,
+        method: "DELETE",
+        ...(Option.isNone(authoredAt)
+          ? {}
+          : {
+              headers: [
+                `If-Unmodified-Since: ${DateTime.toDateUtc(authoredAt.value).toUTCString()}`,
+              ],
+            }),
+      });
+    },
+  );
+
   const mergeRequestStats = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1472,7 +1597,26 @@ export const make = Effect.gen(function* () {
           [mergeRequestDetail(input), labelPermission(input)],
           { concurrency: 2 },
         );
-        const detail = { ...read, viewerCanEditLabels };
+        // Only a closed or merged merge request offers its branch for deletion, so an open one,
+        // the page most often read, skips the extra query.
+        const detail =
+          read.state === "open"
+            ? { ...read, viewerCanEditLabels }
+            : {
+                ...read,
+                viewerCanEditLabels,
+                viewerCanDeleteBranch: yield* sourceBranch(input).pipe(
+                  Effect.map((source) => source?.canDelete === true),
+                  // The answer gates one optional action; an unusable CLI or account still surfaces.
+                  Effect.catchIf(
+                    (cause) =>
+                      cause._tag !== "GitLabCliUnavailableError" &&
+                      cause._tag !== "GitLabCliAuthenticationError" &&
+                      cause._tag !== "GitLabCliRateLimitError",
+                    () => Effect.succeed(false),
+                  ),
+                ),
+              };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
@@ -1820,6 +1964,7 @@ export const make = Effect.gen(function* () {
         // `glab mr merge` arms auto-merge and never disarms it, so the one direction the CLI has
         // no flag for is asked of GitLab directly through the same `api` passthrough the rest of
         // this module writes with.
+        if (input.action === "delete-branch") return yield* deleteSourceBranch(input);
         if (input.action === "disable-auto-merge") {
           const result = yield* api({
             cwd: input.cwd,

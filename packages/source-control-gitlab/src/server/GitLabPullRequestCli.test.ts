@@ -87,6 +87,23 @@ function mergeRequestJson(overrides: Record<string, unknown>): string {
   });
 }
 
+function sourceBranchJson(overrides: Record<string, unknown>): string {
+  return JSON.stringify({
+    data: {
+      project: {
+        mergeRequest: {
+          state: "merged",
+          sourceBranch: "feat/page",
+          diffHeadSha: "head",
+          sourceProject: { fullPath: "acme/web" },
+          userPermissions: { removeSourceBranch: true },
+          ...overrides,
+        },
+      },
+    },
+  });
+}
+
 function argsOfCall(index: number): ReadonlyArray<string> {
   return callAt(index).args;
 }
@@ -1462,6 +1479,98 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(mockedExecute).toHaveBeenCalledTimes(1);
       expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ remove_labels: "bug" });
+    }),
+  );
+
+  it.effect.each([
+    { answer: sourceBranchJson({}), expected: true },
+    { answer: "not json", expected: false },
+  ])("asks GitLab whether a merged merge request's branch can be deleted", ({ answer, expected }) =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ state: "merged" }))))
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
+        .mockReturnValueOnce(Effect.succeed(output(answer)));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(detail.viewerCanDeleteBranch).toBe(expected);
+      expect(argsOfCall(2)).toContain("graphql");
+    }),
+  );
+
+  it.effect("deletes the source branch in the source project once its head is the merged one", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(sourceBranchJson({ sourceProject: { fullPath: "fork/web" } }))),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                default: false,
+                commit: { id: "head", authored_date: "2026-11-03T20:29:40.000-07:00" },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "delete-branch",
+      });
+
+      expect(argsOfCall(1)).toEqual(["api", "projects/fork%2Fweb/repository/branches/feat%2Fpage"]);
+      expect(argsOfCall(2)).toEqual([
+        "api",
+        "projects/fork%2Fweb/repository/branches/feat%2Fpage",
+        "--method",
+        "DELETE",
+        "--header",
+        "If-Unmodified-Since: Wed, 04 Nov 2026 03:29:40 GMT",
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    { reason: "open", source: { state: "opened" }, branch: undefined },
+    { reason: "open", source: { state: "locked" }, branch: undefined },
+    {
+      reason: "not-allowed",
+      source: { userPermissions: { removeSourceBranch: false } },
+      branch: undefined,
+    },
+    { reason: "default-branch", source: {}, branch: { default: true, commit: { id: "head" } } },
+    { reason: "head-changed", source: {}, branch: { default: false, commit: { id: "newer" } } },
+  ])("refuses to delete the source branch when it is $reason", ({ reason, source, branch }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(sourceBranchJson(source))));
+      if (branch !== undefined) {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify(branch))));
+      }
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const error = yield* cli
+        .runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "delete-branch",
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "GitLabBranchDeletionRefusedError", reason });
+      expect(mockedExecute).toHaveBeenCalledTimes(branch === undefined ? 1 : 2);
     }),
   );
 
