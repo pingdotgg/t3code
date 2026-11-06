@@ -74,9 +74,11 @@ export function resolveHandoffEndpoints(
         }));
   const to = { instanceId: item.toProviderInstanceId, model: toModel };
   // A fork onto the same model moves context, not the conversation, so it has no source to show.
-  const sameModel = fromEndpoints.every(
-    (endpoint) => endpoint.instanceId === to.instanceId && endpoint.model === to.model,
-  );
+  const sameModel =
+    to.model !== undefined &&
+    fromEndpoints.every(
+      (endpoint) => endpoint.instanceId === to.instanceId && endpoint.model === to.model,
+    );
   return { from: sameModel ? [] : fromEndpoints, to };
 }
 

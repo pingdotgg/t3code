@@ -67,6 +67,10 @@ describe("handoff endpoints shared by web and mobile", () => {
       from: [{ instanceId: from, model: undefined }],
       to: { instanceId: to, model: undefined },
     });
+    expect(resolveHandoffEndpoints({ ...item, toProviderInstanceId: from }, [])).toEqual({
+      from: [{ instanceId: from, model: undefined }],
+      to: { instanceId: from, model: undefined },
+    });
   });
 
   it("names a same-model fork by its title instead of a handoff to itself", () => {
