@@ -145,7 +145,7 @@ it.live.each(
             arg.startsWith("model_providers.openai_token_sharing="),
           )!;
           assert.include(provider, 'base_url="https://api.openai.com/v1"');
-          assert.include(provider, 'model_catalog_url="https://api.openai.com/v1/models"');
+          assert.notInclude(provider, "model_catalog_url");
           assert.notInclude(provider, "env_key");
           assert.include(provider, "refresh_interval_ms=0");
           // regression: #16132 Codex fetches each token through this helper, so a running
