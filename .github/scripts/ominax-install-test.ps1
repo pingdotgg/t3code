@@ -1,16 +1,33 @@
-# Installs a T3 Learn release with its one-line installer on a Windows runner
+# Installs an OminaX release with its one-line installer on a Windows runner
 # and checks that it runs next to (or without) T3 Code:
 #   ominax-install-test.ps1 <fresh|next-to-t3-code> <version>
 # Screenshots and logs land in $env:ARTIFACTS.
 param([string] $Scenario, [string] $Version)
 $ErrorActionPreference = "Stop"
-$repo = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } else { "aabdel0181/t3-learn" }
+$repo = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } else { "aabdel0181/ominax" }
 $artifacts = if ($env:ARTIFACTS) { $env:ARTIFACTS } else { Join-Path $PWD "install-test" }
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
 
 function Log([string] $message) { Write-Host "`n== $message" }
 function Fail([string] $message) { throw "FAIL: $message" }
+
+$legacyData = Join-Path $HOME ".t3-learn"
+$newData = Join-Path $HOME ".ominax"
+function Plant-Learning {
+  $learning = Join-Path $legacyData "userdata"
+  New-Item -ItemType Directory -Force -Path (Join-Path $learning "courses\install-test\units"), (Join-Path $learning "visuals\install-test") | Out-Null
+  '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content (Join-Path $learning "knowledge.json")
+  '{"title":"install test"}' | Set-Content (Join-Path $learning "courses\install-test\course.json")
+  'kept across updates' | Set-Content (Join-Path $learning "courses\install-test\units\01.txt")
+  '{"concept":"install-test"}' | Set-Content (Join-Path $learning "visuals\install-test\meta.json")
+}
+function Check-Learning {
+  $learning = if (Test-Path (Join-Path $newData "userdata")) { Join-Path $newData "userdata" } else { Join-Path $legacyData "userdata" }
+  foreach ($item in @("knowledge.json", "courses", "visuals")) {
+    if (-not (Test-Path (Join-Path $learning $item))) { Fail "learning data $item is missing" }
+  }
+}
 
 function Screenshot([string] $name) {
   try {
@@ -63,19 +80,21 @@ if ($Scenario -eq "fresh") {
   $previous = (gh release view -R $repo --json tagName -q .tagName 2>$null | ForEach-Object { $_ -replace '^v', '' })
   if ($previous -and $previous -ne $Version) {
     Log "Installing the previous release, $previous"
-    $env:T3LEARN_VERSION = $previous
+    $env:OMINAX_VERSION = $previous
     $previousCommand = "irm https://github.com/$repo/releases/download/v$previous/install.ps1 | iex"
     powershell -NoProfile -Command $previousCommand
     if ($LASTEXITCODE -ne 0) { Fail "the previous installer failed" }
     $previousRunning = Wait-Server (Join-Path $HOME ".t3-learn") $previous
     Log "OminaX $previousRunning is running"
+    Plant-Learning
+    if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") { node apps/desktop/scripts/plant-saved-connection.mjs plant }
   } else {
     Log "No distinct previous promoted release; installing OminaX $Version fresh"
   }
 }
 
 Log "Installing OminaX $Version"
-$env:T3LEARN_VERSION = $Version
+$env:OMINAX_VERSION = $Version
 $installCommand = "irm https://github.com/$repo/releases/download/v$Version/install.ps1 | iex"
 # A fresh PowerShell, like a user's, keeps the installer's variables out of this script.
 powershell -NoProfile -Command $installCommand
@@ -86,12 +105,30 @@ Log "OminaX $learnVersion is running"
 Start-Sleep -Seconds 5
 Screenshot "t3-learn"
 
-$learnDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
-if (-not (Test-Path (Join-Path $learnDir "OminaX.exe"))) { Fail "OminaX.exe is missing" }
-if (Test-Path (Join-Path $learnDir "T3 Learn.exe")) { Fail "the old T3 Learn.exe is still installed" }
-$uninstallKeys = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
+$learnDir = Join-Path $env:LOCALAPPDATA "Programs\ominax"
+$legacyLearnDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
+$installedDirs = @(@($learnDir, $legacyLearnDir) | Where-Object { Test-Path $_ })
+if ($installedDirs.Count -ne 1) { Fail "expected one OminaX install folder, found $($installedDirs.Count)" }
+if (-not (Test-Path (Join-Path $installedDirs[0] "OminaX.exe"))) { Fail "OminaX.exe is missing" }
+if (Test-Path (Join-Path $installedDirs[0] "T3 Learn.exe")) { Fail "the old T3 Learn.exe is still installed" }
+$uninstallKeys = @(Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
   ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like "OminaX*" }
-if (-not $uninstallKeys) { Fail "OminaX has no entry in Installed apps" }
+)
+if ($uninstallKeys.Count -ne 1) { Fail "expected one OminaX entry in Installed apps, found $($uninstallKeys.Count)" }
+$legacyDataItem = Get-Item $legacyData -Force -ErrorAction SilentlyContinue
+if (-not (Test-Path (Join-Path $newData "userdata")) -or -not $legacyDataItem -or $legacyDataItem.LinkType -notin @("SymbolicLink", "Junction")) { Fail "OminaX data migration did not create ~/.ominax and a legacy link" }
+Check-Learning
+foreach ($launcherName in @("ominax", "t3-learn")) {
+  $launcher = Get-ChildItem $installedDirs[0] -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.BaseName -eq $launcherName -and $_.Extension -in @(".cmd", ".exe", "") } | Select-Object -First 1
+  if ($launcher) {
+    & $launcher.FullName --version | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "$launcherName --version failed" }
+  } else {
+    Log "$launcherName launcher is not reachable until Settings -> About installs the CLI; skipping"
+  }
+}
+if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") { node apps/desktop/scripts/plant-saved-connection.mjs check }
 
 if ($Scenario -eq "next-to-t3-code") {
   Log "Checking that T3 Code is untouched"
@@ -105,12 +142,12 @@ if ($Scenario -eq "next-to-t3-code") {
 }
 
 Log "Uninstalling OminaX"
-$env:T3LEARN_UNINSTALL = "1"
+$env:OMINAX_UNINSTALL = "1"
 powershell -NoProfile -Command $installCommand
 if ($LASTEXITCODE -ne 0) { Fail "the uninstaller failed" }
-Remove-Item Env:T3LEARN_UNINSTALL
+Remove-Item Env:OMINAX_UNINSTALL
 if (Test-Path (Join-Path $learnDir "OminaX.exe")) { Fail "OminaX is still installed" }
-if (-not (Test-Path (Join-Path $HOME ".t3-learn\userdata"))) { Fail "uninstall removed OminaX's data" }
+if (-not (Test-Path (Join-Path $newData "userdata")) -and -not (Test-Path (Join-Path $legacyData "userdata"))) { Fail "uninstall removed OminaX's data" }
 if ($Scenario -eq "next-to-t3-code") {
   if ((Wait-Server (Join-Path $HOME ".t3") $t3CodeVersion) -ne $t3CodeVersion) { Fail "T3 Code stopped after uninstalling OminaX" }
 }
