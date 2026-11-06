@@ -20,12 +20,14 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 import {
   type ProviderChangeRequestWatchFingerprint,
@@ -250,6 +252,19 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   const readFailures = new Map<string, number>();
+  /** The last sweep's groups, which host change events read from between sweeps. */
+  let currentGroups: ReadonlyArray<WatchGroup> = [];
+  // A change event can land while the sweep reads the same group.
+  const groupLocks = new Map<string, Semaphore.Semaphore>();
+  const locked = <A, E>(key: string, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      let lock = groupLocks.get(key);
+      if (lock === undefined) {
+        lock = Semaphore.makeUnsafe(1);
+        groupLocks.set(key, lock);
+      }
+      return lock.withPermit(effect);
+    });
   const lastReads = new Map<string, LastRead>();
   const threadTails = new Map<
     string,
@@ -612,7 +627,8 @@ export const make = Effect.gen(function* () {
       targets: members,
       fingerprint: [...new Set(members.map(snapshotFingerprint))].toSorted().join("\n"),
     }));
-    for (const cache of [readFailures, lastReads, threadTails]) {
+    currentGroups = groups;
+    for (const cache of [readFailures, lastReads, threadTails, groupLocks]) {
       for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
     }
     yield* Effect.forEach(
@@ -640,7 +656,7 @@ export const make = Effect.gen(function* () {
             fingerprint === "paused"
               ? Effect.void
               : reads.withPermit(
-                  readGroup(group, fingerprint).pipe(
+                  locked(group.key, readGroup(group, fingerprint)).pipe(
                     Effect.catchCause(
                       logFailure("pull request watch check failed", { pullRequest: group.key }),
                     ),
@@ -655,10 +671,63 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("PullRequestWatchReactor.sweep"),
   );
 
-  const start: PullRequestWatchReactor["Service"]["start"] = () =>
-    forkParked(
-      sweep.pipe(Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)), Effect.asVoid),
+  const pullRequestOf = (group: WatchGroup) => threadPullRequestKeyOf(group.targets[0]!.link);
+
+  /** A host event can come from any change, so reread now rather than at the next sweep. */
+  const readOnChange = Effect.fn("PullRequestWatchReactor.readOnChange")(function* (
+    pullRequest: string,
+  ) {
+    const groups = currentGroups.filter((group) => pullRequestOf(group) === pullRequest);
+    yield* Effect.forEach(
+      groups,
+      (group) =>
+        pullRequests.invalidate({ reference: referenceOf(group) }, { notifyReaders: true }).pipe(
+          Effect.andThen(fingerprintOf(group)),
+          Effect.flatMap((fingerprint) =>
+            fingerprint === "paused"
+              ? Effect.void
+              : locked(group.key, readGroup(group, fingerprint)).pipe(Effect.asVoid),
+          ),
+          Effect.catchCause(
+            logFailure("pull request watch change read failed", { pullRequest: group.key }),
+          ),
+        ),
+      { discard: true },
     );
+  });
+
+  const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
+    "PullRequestWatchReactor.start",
+  )(function* () {
+    // One feed per pull request: the host keeps one subscription per pull request and account.
+    const feeds = yield* FiberMap.make<string>();
+    const follow = Effect.gen(function* () {
+      const wanted = new Map(currentGroups.map((group) => [pullRequestOf(group), group]));
+      const stale = Array.from(feeds, ([pullRequest]) => pullRequest).filter(
+        (pullRequest) => !wanted.has(pullRequest),
+      );
+      yield* Effect.forEach(stale, (pullRequest) => FiberMap.remove(feeds, pullRequest), {
+        discard: true,
+      });
+      for (const [pullRequest, group] of wanted) {
+        // An ended feed restarts here, so a host that refused it is asked again each sweep.
+        yield* FiberMap.run(feeds, pullRequest, { onlyIfMissing: true })(
+          pullRequests.changes(referenceOf(group)).pipe(
+            // A review sends an event per comment; those landing during a read make one more.
+            Stream.buffer({ capacity: 1, strategy: "sliding" }),
+            Stream.runForEach(() => readOnChange(pullRequest)),
+          ),
+        );
+      }
+    });
+    yield* forkParked(
+      sweep.pipe(
+        Effect.andThen(follow),
+        Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)),
+        Effect.asVoid,
+      ),
+    );
+  });
 
   return { start, sweep } satisfies PullRequestWatchReactor["Service"];
 });

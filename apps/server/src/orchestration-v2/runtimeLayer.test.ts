@@ -3854,6 +3854,102 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "reads a watched pull request when the host reports a change, not at the next sweep",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threadId = ThreadId.make("runtime-pull-request-watch-host-event");
+          const projectId = ProjectId.make("pr-watch-host-event-project");
+          yield* seedProject({
+            projectId,
+            title: "Watch host events",
+            workspaceRoot: "/workspace/watch-host-event",
+            defaultModelSelection: null,
+            createdAt: "2026-10-01T00:00:00.000Z",
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("pr-watch-host-event-create"),
+            threadId,
+            projectId,
+            title: "Watch host events",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make("pr-watch-host-event-start"),
+            threadId,
+            ...key,
+            watching: true,
+            link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+          });
+
+          let headSha = "aaaaaaaaaa";
+          const events = yield* Queue.unbounded<void>();
+          const following = yield* Deferred.make<void>();
+          const readPush = yield* Deferred.make<void>();
+          const host = Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () =>
+                Effect.sync(() => {
+                  if (headSha !== "aaaaaaaaaa") Deferred.doneUnsafe(readPush, Effect.void);
+                  return {
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: 15,
+                      at: "2026-10-02T12:00:00.000Z",
+                    }),
+                    headSha,
+                  };
+                }),
+              activity: () =>
+                Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
+              watchFingerprint: () => Effect.sync(() => ({ status: headSha, remarks: "" })),
+              invalidate: () => Effect.void,
+              changes: () =>
+                Stream.fromEffectDrain(Deferred.succeed(following, undefined)).pipe(
+                  Stream.concat(Stream.fromQueue(events)),
+                ),
+            }),
+          );
+          const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+          yield* reactor.start();
+          // The feed starts after the first sweep has read the pull request.
+          yield* Deferred.await(following);
+
+          headSha = "bbbbbbbbbb";
+          yield* Queue.offer(events, undefined);
+          // The clock never moves, so no sweep can be the one that reads the push.
+          yield* Deferred.await(readPush);
+
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make("pr-watch-host-event-end"),
+            threadId,
+            ...key,
+            watching: false,
+          });
+        }),
+      ),
+  );
+
   it.effect("wakes for checks that complete after the no-checks notice on the same head", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
