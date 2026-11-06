@@ -286,7 +286,15 @@ This also applies to HTML previews. T3 Code does not download or update that bro
 you maintain its Playwright compatibility, libraries, and security updates. An empty,
 relative, missing, or non-executable path fails without falling back to a download.
 
-macOS, Windows, and Linux desktops run the browser as is. Some Linux hosts need
+The configured browser also needs its own working sandbox. On Linux hosts that
+restrict user namespaces, its package must supply a usable sandbox helper or an
+AppArmor profile permitting user namespaces for that executable's actual path.
+See [Chromium's sandbox guidance](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
+`t3 browser setup` configures only T3's managed browser path; its success message
+and the managed-profile startup check do not establish that a configured browser
+can launch. Follow the configured browser package's sandbox setup instructions.
+
+For T3's default managed browser, macOS, Windows, and Linux desktops run it as is. Some Linux hosts need
 one-time setup: Ubuntu 23.10 and later block the sandbox the browser runs in,
 and minimal images and containers lack libraries it loads. When that happens,
 the server says so at startup, and browser tabs and HTML previews show the
