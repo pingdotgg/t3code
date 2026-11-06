@@ -1,5 +1,5 @@
-import * as Prisma from "alchemy/Prisma";
-import * as SQL from "alchemy/SQL/Postgres";
+import * as Prisma from "@alchemy.run/prisma";
+import * as SQL from "@alchemy.run/sql/Postgres";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";

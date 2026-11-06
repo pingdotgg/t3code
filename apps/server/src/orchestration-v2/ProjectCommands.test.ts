@@ -23,6 +23,8 @@ const row = (overrides: Partial<ProjectRow> = {}): ProjectRow => ({
   faviconPath: null,
   projectIcon: null,
   scripts: [],
+  pinnedAt: null,
+  archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
@@ -75,6 +77,38 @@ describe("planProjectCommand", () => {
       failureOf(withLegacy([legacy, script("another.invalid.id")]))._tag,
       "ProjectCommandInvariantError",
     );
+  });
+
+  it("keeps the first pin and archive time, and clears both on undo", () => {
+    const earlier = "2025-12-01T00:00:00.000Z";
+    const update = (project: ProjectRow, change: { pinned?: boolean; archived?: boolean }) =>
+      payloadOf(
+        plan(
+          {
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-organize"),
+            projectId,
+            ...change,
+          },
+          { project },
+        ),
+      );
+    assert.deepInclude(update(row(), { pinned: true, archived: true }), {
+      pinnedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const organized = row({ pinnedAt: earlier, archivedAt: earlier });
+    assert.deepInclude(update(organized, { pinned: true, archived: true }), {
+      pinnedAt: earlier,
+      archivedAt: earlier,
+    });
+    assert.deepInclude(update(organized, { pinned: false, archived: false }), {
+      pinnedAt: null,
+      archivedAt: null,
+    });
+    const untouched = update(organized, {});
+    assert.notProperty(untouched, "pinnedAt");
+    assert.notProperty(untouched, "archivedAt");
   });
 
   it("rejects a workspace root held by another active project", () => {
