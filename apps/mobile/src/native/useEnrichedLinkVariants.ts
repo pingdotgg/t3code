@@ -129,15 +129,17 @@ export function useEnrichedLinkVariants(
       Object.fromEntries(
         [...links].map(([url, link]) => {
           const chipForeground = chipForegrounds.get(url);
+          const wrap = !link.chip && link.label === undefined;
           return [
             enrichedLinkVariantPattern(url),
             {
               pill: {
+                wrap,
                 borderColor: "transparent",
                 borderWidth: 0,
                 borderRadius: 6,
-                paddingHorizontal: 5,
-                paddingVertical: 2,
+                paddingHorizontal: wrap ? 0 : 5,
+                paddingVertical: wrap ? 0 : 2,
               },
               fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
               color: chipForeground ?? link.color ?? textStyle.fileTextColor,
