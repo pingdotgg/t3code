@@ -307,6 +307,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "--skip-git-repo-check",
           "-s",
           "read-only",
+          // Otherwise a user's approval policy lets it request escalation out of read-only.
+          "--config",
+          'approval_policy="never"',
           "--model",
           model,
           "--config",
