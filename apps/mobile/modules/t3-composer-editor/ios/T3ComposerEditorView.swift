@@ -681,6 +681,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     if isReset {
       resetGeneration = document.resetGeneration
+      // JS drops a paste from before the reset by generation, so the flush must not wait for it.
+      lastPasteEventCount = 0
       endComposition()
     }
     // iOS destroys this view under display: none and mounts a fresh one while JS keeps its
