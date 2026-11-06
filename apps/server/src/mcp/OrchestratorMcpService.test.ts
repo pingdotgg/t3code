@@ -3440,6 +3440,36 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
+  it.effect("tells an agent steering a finished thread to start a new turn instead", () =>
+    Effect.gen(function* () {
+      const sent = yield* Ref.make(0);
+      return yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        for (const mode of ["steer", "restart"] as const) {
+          const error = yield* mcp
+            .sendToThread(client, { threadId: launched.id, message: "hello", mode })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "thread_not_sendable");
+          assert.include(error.message, 'mode: "auto"');
+          assert.include(error.message, '"queue"');
+        }
+      }).pipe(
+        Effect.provide(
+          service([launched], sent, {
+            getProjectThreadRecords: () => Effect.succeed(idleThreadProjection(launched)),
+            sendToThread: (input) =>
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementNoSteerableRunError({
+                  threadId: input.threadId,
+                  mode: input.mode === "restart" ? "restart" : "steer",
+                }),
+              ),
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("refuses waiting without orchestration capability before reading the target", () =>
     Effect.gen(function* () {
       const sent = yield* Ref.make(0);

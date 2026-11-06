@@ -18,8 +18,8 @@ const client: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
-const readBare = (existing: ReadonlyArray<ThreadId>) =>
-  readThread(bareId).pipe(
+const readMissing = (threadId: ThreadId, existing: ReadonlyArray<ThreadId>) =>
+  readThread(threadId).pipe(
     Effect.flip,
     Effect.provideService(McpInvocationContext.McpInvocationContext, client),
     Effect.provide(
@@ -32,9 +32,22 @@ const readBare = (existing: ReadonlyArray<ThreadId>) =>
 
 it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
   Effect.gen(function* () {
-    const error = yield* readBare([ThreadId.make(`mcp:${bareId}`)]);
+    const error = yield* readMissing(bareId, [ThreadId.make(`mcp:${bareId}`)]);
 
     expect(error.code).toBe("thread_not_found");
     expect(error.message).toBe(`The thread was not found. Did you mean \`mcp:${bareId}\`?`);
+  }),
+);
+
+it.effect("points an unencoded delegated-task id at the encoded thread it belongs to", () =>
+  Effect.gen(function* () {
+    const commandId = `command:mcp:${bareId}:delegate-task:0e7d2c41-6b9a-4f3e-8d15-a2c4b6e8f019`;
+    const encoded = ThreadId.make(`thread:delegated-task:${encodeURIComponent(commandId)}`);
+    const error = yield* readMissing(ThreadId.make(`thread:delegated-task:${commandId}`), [
+      encoded,
+    ]);
+
+    expect(error.code).toBe("thread_not_found");
+    expect(error.message).toContain(`\`${encoded}\``);
   }),
 );
