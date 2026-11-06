@@ -338,13 +338,14 @@ function threadComments(
   ids: ReadonlyArray<string>,
   endCursor: string | null,
   totalCount = ids.length,
+  author: Readonly<Record<string, unknown>> | null = null,
 ) {
   return {
     totalCount,
     pageInfo: { hasNextPage: endCursor !== null, endCursor },
     nodes: ids.map((id) => ({
       id,
-      author: null,
+      author,
       body: id,
       createdAt: "2026-07-01T00:00:00Z",
       lastEditedAt: null,
@@ -733,6 +734,43 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
+  it.effect("keeps recent references when the typed number does not exist", () =>
+    Effect.gen(function* () {
+      const search = {
+        pageInfo: { hasNextPage: false },
+        nodes: [{ __typename: "Issue", number: 7, title: "Seven", issueState: "OPEN" }],
+      };
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          output(
+            encodeJson(
+              call.kind === "graphql" && call.variables?.["exact"] === true
+                ? {
+                    data: { search, repository: { issueOrPullRequest: null } },
+                    errors: [
+                      {
+                        type: "NOT_FOUND",
+                        path: ["repository", "issueOrPullRequest"],
+                        message: "Could not resolve to an issue or pull request.",
+                      },
+                    ],
+                  }
+                : { data: { search } },
+            ),
+          ),
+        ),
+      );
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const result = yield* api.searchRepositoryReferences({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        query: "99",
+      });
+      expect(result.items.map((item) => item.reference)).toEqual(["#7"]);
+    }),
+  );
+
   it.effect("turns maintainer edits off without rewriting the pull request's text", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
@@ -3420,29 +3458,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect.each(
-    [false, true].flatMap((later) =>
-      ["reviewRequests", "reviewRequestEvents", "both"].map((selection) => ({ later, selection })),
-    ),
-  )(
-    "keeps thread cursors and reviewers after a $selection refusal (later page: $later)",
-    ({ later, selection }) =>
+  it.effect.each(["reviewRequests", "reviewRequestEvents", "both"])(
+    "keeps thread cursors after a %s refusal",
+    (selection) =>
       Effect.gen(function* () {
-        if (later)
-          mockedExecute.mockReturnValueOnce(
-            Effect.succeed(
-              output(
-                reviewThreadsPage([thread("T1", "c1")], "next", [
-                  {
-                    __typename: "User",
-                    login: "prior",
-                    name: null,
-                    avatarUrl: "https://avatars/prior",
-                  },
-                ]),
-              ),
-            ),
-          );
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
             output(
@@ -3468,39 +3487,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
         const read = cli.listReviewThreadComments({
           ...pullRequestInput,
-          repository: `acme/refused-threads-${later}`,
+          repository: `acme/refused-threads-${selection}`,
         });
         const conversation = yield* read;
         expect(
-          variablesOf("ReviewThreads").map((v) => [
-            v["after"],
-            v["requestedReviewers"],
-            v["requestEvents"],
-          ]),
-        ).toEqual(
-          later
-            ? [
-                [null, 50, true],
-                ["next", 50, true],
-                ["next", 0, false],
-                ["last", 0, false],
-              ]
-            : [
-                [null, 50, true],
-                [null, 0, false],
-                ["last", 0, false],
-              ],
-        );
-        expect(conversation.comments.map((c) => c.id)).toEqual(
-          later ? ["c1", "c2", "c3"] : ["c2", "c3"],
-        );
-        expect(conversation.reviewers.map((r) => r.login)).toEqual(later ? ["prior"] : []);
+          variablesOf("ReviewThreads").map((v) => [v["requestedReviewers"], v["requestEvents"]]),
+        ).toEqual([
+          [50, true],
+          [0, false],
+        ]);
+        expect(variablesOf("ReviewThreadPages").map((v) => v["after"])).toEqual(["last"]);
+        expect(conversation.comments.map((c) => c.id)).toEqual(["c2", "c3"]);
+        expect(conversation.reviewers).toEqual([]);
         expect(conversation.truncated).toBe(false);
 
         mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
         yield* read;
         expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({
-          after: null,
           requestedReviewers: 0,
           requestEvents: false,
         });
@@ -3756,10 +3759,32 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("follows the cursor to the review threads the first page left behind", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(reviewThreadsPage([thread("PRRT_1", "c1")], "Y3Vyc29yOjE"))),
+        Effect.succeed(
+          output(
+            reviewThreadsPage([thread("PRRT_1", "c1")], "Y3Vyc29yOjE", [
+              { __typename: "User", login: "prior", name: null, avatarUrl: "https://avatars/p" },
+            ]),
+          ),
+        ),
       );
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(reviewThreadsPage([thread("PRRT_2", "c2")], null))),
+        Effect.succeed(
+          output(
+            reviewThreadsPage(
+              [
+                {
+                  ...thread("PRRT_2", "c2"),
+                  comments: threadComments(["c2"], null, 1, {
+                    __typename: "Bot",
+                    login: "later-bot",
+                    avatarUrl: "https://avatars/later-bot",
+                  }),
+                },
+              ],
+              null,
+            ),
+          ),
+        ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -3770,9 +3795,20 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      expect(varsAt(0)["after"]).toBeNull();
-      expect(varsAt(1)["after"]).toBe("Y3Vyc29yOjE");
+      expect(callAt(0)).toMatchObject({ operationName: "ReviewThreads" });
+      // Later pages ask for the threads alone and keep the first page's PR-wide fields.
+      const later = callAt(1);
+      assert(later.kind === "graphql");
+      expect(later).toMatchObject({
+        operationName: "ReviewThreadPages",
+        variables: { after: "Y3Vyc29yOjE" },
+      });
+      for (const field of ["reviewRequests", "commits(", "reviewDismissals", "latestReviews"])
+        expect(later.query).not.toContain(field);
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
+      expect(conversation.reviewers.map((reviewer) => reviewer.login)).toEqual(["prior"]);
+      expect(conversation.avatarsByLogin.get("later-bot")).toBe("https://avatars/later-bot");
+      expect(conversation.botLogins.has("later-bot")).toBe(true);
       assert.isFalse(conversation.truncated);
     }),
   );
@@ -3988,6 +4024,54 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
         ["octocat", true],
         ["hubot", false],
+      ]);
+    }),
+  );
+
+  it.effect("asks GitHub to search everyone assignable when the reviewer menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  assignableUsers: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [{ login: "octocat", name: null, avatarUrl: "https://avatars/octocat" }],
+                  },
+                  pullRequest: {
+                    author: { __typename: "User", login: "bilal" },
+                    reviewRequests: {
+                      nodes: ["octocat", "unrelated"].map((login) => ({
+                        requestedReviewer: {
+                          __typename: "User",
+                          login,
+                          name: null,
+                          avatarUrl: "https://avatars/user",
+                        },
+                      })),
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        query: "octo",
+      });
+
+      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7, query: "octo" });
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        ["octocat", true],
       ]);
     }),
   );
