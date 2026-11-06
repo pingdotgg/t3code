@@ -4184,6 +4184,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       let removal: PullRequestDetail["mergeQueueRemoval"];
       const host = Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
           watchFingerprint: () =>
             Effect.succeed({ status: removal?.id ?? "green", remarks: "none" }),
