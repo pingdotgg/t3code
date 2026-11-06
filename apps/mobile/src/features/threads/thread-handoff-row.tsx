@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   resolveHandoffEndpoints,
+  resolveHandoffLabel,
   resolveModelSwitchChange,
   type HandoffEndpoints,
 } from "@t3tools/client-runtime/handoff";
@@ -98,7 +99,7 @@ export function ThreadHandoffRow(props: {
       endpoints={endpoints}
       iconColor={color}
       surfaceColor={props.surfaceColor}
-      label="Context handoff"
+      label={resolveHandoffLabel(item, endpoints)}
       failed={item.status === "failed"}
     />
   );
