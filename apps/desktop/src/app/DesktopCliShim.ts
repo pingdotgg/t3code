@@ -148,8 +148,12 @@ export const install = Effect.gen(function* () {
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
       const staging = `${shimPath}.${process.pid}.tmp`;
-      yield* fs.writeFileString(staging, content, { mode: 0o755 });
-      yield* fs.rename(staging, shimPath);
+      yield* fs
+        .writeFileString(staging, content, { mode: 0o755 })
+        .pipe(
+          Effect.andThen(fs.rename(staging, shimPath)),
+          Effect.ensuring(fs.remove(staging, { force: true }).pipe(Effect.ignore)),
+        );
       yield* logInfo("installed t3 launcher", { shimPath });
     }
     return Option.some(shimPath);
