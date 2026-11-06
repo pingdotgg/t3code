@@ -83,6 +83,7 @@ import {
 } from "@t3tools/shared/mcpApp";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
@@ -5032,6 +5033,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     });
     if (script === undefined) {
       yield* Effect.logDebug("Nadir compaction skipped: not installed, or Claude Code runs it");
+      return undefined;
+    }
+    // Every hook would fail on a host without python3, so skip rather than add them.
+    const resolveExecutable = yield* SpawnExecutableResolution;
+    if (resolveExecutable("python3", hostPlatform, adapterOptions.environment) === undefined) {
+      yield* Effect.logDebug("Nadir compaction skipped: python3 is not on PATH");
       return undefined;
     }
     return nadirCompactionHooks(script, nadirStateDir);

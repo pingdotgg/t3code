@@ -27,6 +27,11 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         const writeJson = (file: string, value: unknown) =>
           fileSystem.writeFileString(file, JSON.stringify(value));
         expect(yield* find()).toBeUndefined();
+        // A directory at the script's path is not a script.
+        const labsScript = path.join(claudeHome, "nadir", "context_session.py");
+        yield* fileSystem.makeDirectory(labsScript, { recursive: true });
+        expect(yield* find()).toBeUndefined();
+        yield* fileSystem.remove(labsScript, { recursive: true });
 
         const installPath = path.join(claudeHome, "plugins", "cache", "nadir-route", "1.0.0");
         const pluginScript = path.join(installPath, "scripts", "context_session.py");
@@ -36,8 +41,17 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         });
         expect(yield* find()).toBe(pluginScript);
 
+        // The host's own nadir-labs install outranks a plugin, and a malformed entry is ignored.
+        const hostLabsScript = path.join(hostHome, ".claude", "nadir", "context_session.py");
+        yield* touch(hostLabsScript);
+        expect(yield* find()).toBe(hostLabsScript);
+        yield* writeJson(path.join(claudeHome, "plugins", "installed_plugins.json"), {
+          plugins: { "nadir-route@nadir": [{ installPath: 42 }] },
+        });
+        expect(yield* find()).toBe(hostLabsScript);
+        yield* fileSystem.remove(hostLabsScript);
+
         // npx nadir-labs installs the script beside the user's Claude settings.
-        const labsScript = path.join(claudeHome, "nadir", "context_session.py");
         yield* touch(labsScript);
         expect(yield* find()).toBe(labsScript);
 

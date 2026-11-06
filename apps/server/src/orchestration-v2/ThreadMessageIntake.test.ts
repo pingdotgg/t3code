@@ -3,31 +3,41 @@ import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
   CommandId,
   EventId,
   GuestMessageId,
   MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2Command,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
+  type ServerProvider,
   type UserInputAttachments,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import {
   createAttachmentId,
   createPendingAttachmentId,
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import { layerCeilingsMemory } from "./NadirRouting.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
@@ -426,3 +436,132 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     expect(command.attachments).toEqual([guestFile]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
+
+describe("Nadir routing at intake", () => {
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const opus = { instanceId, model: "claude-opus-5-5" };
+  const send = (
+    overrides: Partial<Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>> = {},
+  ): OrchestrationV2Command => ({
+    type: "message.dispatch",
+    commandId: CommandId.make("send-routed"),
+    threadId: ThreadId.make("thread-routed"),
+    messageId: MessageId.make("message-routed"),
+    text: "Rename the helper and update every caller",
+    attachments: [],
+    dispatchMode: { type: "start_immediately" },
+    createdBy: "user",
+    creationSource: "web",
+    ...overrides,
+  });
+  const provider: ServerProvider = {
+    instanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    version: "0.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-11-06T00:00:00.000Z",
+    models: ["claude-opus-5-5", "claude-haiku-5-5"].map((slug) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: null,
+    })),
+    slashCommands: [],
+    skills: [],
+  };
+
+  const route = (command: OrchestrationV2Command, shell: { activeRunId: RunId | null }) =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const captured: OrchestrationV2ServerCommand[] = [];
+      yield* dispatchCommand(command).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              dispatch: layerFailingDispatchHandler(captured),
+              // Only these shell fields are read.
+              getThreadShell: () =>
+                Effect.succeed({
+                  ...shell,
+                  modelSelection: opus,
+                  activeProviderThreadId: null,
+                } as unknown as Effect.Success<
+                  ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadShell"]>
+                >),
+              getThreadSnapshotWindow: () =>
+                Effect.succeed({ projection: { providerThreads: [] } } as unknown as Effect.Success<
+                  ReturnType<
+                    ThreadManagementService.ThreadManagementServiceShape["getThreadSnapshotWindow"]
+                  >
+                >),
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed([provider]),
+            }),
+            Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
+              getByCommandId: (commandId) =>
+                Effect.succeed(
+                  commandId === "send-replayed" ? Option.some({} as never) : Option.none(),
+                ),
+            }),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                requests += 1;
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({
+                      selected_model: "claude-haiku-5-5",
+                      policy: { advised_model: "claude-haiku-5-5", suppressed: false },
+                      coverage_held: false,
+                      input_truncated: false,
+                    }),
+                  ),
+                );
+              }),
+            ),
+            layerCeilingsMemory,
+            ServerSettings.layerTest({ nadirRouting: true }),
+          ),
+        ),
+        Effect.result,
+      );
+      const dispatched = captured[0];
+      return {
+        requests,
+        model: dispatched?.type === "message.dispatch" ? dispatched.modelSelection?.model : null,
+      };
+    });
+
+  it.effect("routes a user's new turn and leaves every other send alone", () =>
+    Effect.gen(function* () {
+      expect(yield* route(send(), { activeRunId: null })).toEqual({
+        requests: 1,
+        model: "claude-haiku-5-5",
+      });
+      // Each case differs from the routed send by one field, so no other guard hides it.
+      const unrouted: ReadonlyArray<readonly [string, OrchestrationV2Command, RunId | null]> = [
+        ["a queued send", send({ dispatchMode: { type: "queue_after_active" } }), null],
+        ["a steer", send({ deliveryIntent: "steer" }), null],
+        ["a scheduled task", send({ scheduledTaskId: ScheduledTaskId.make("task-1") }), null],
+        ["a delegated send", send({ senderThreadId: ThreadId.make("thread-parent") }), null],
+        [
+          "a restart continuation",
+          send({ restartContinuationOfRunId: RunId.make("run-earlier") }),
+          null,
+        ],
+        ["a retried command", send({ commandId: CommandId.make("send-replayed") }), null],
+        ["a send during a run", send(), RunId.make("run-active")],
+      ];
+      for (const [label, command, activeRunId] of unrouted) {
+        const result = yield* route(command, { activeRunId });
+        expect(result.requests, label).toBe(0);
+        expect(result.model, label).toBeUndefined();
+      }
+    }).pipe(Effect.provide(layerIntakeTest)),
+  );
+});

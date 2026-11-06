@@ -71,7 +71,11 @@ export const findNadirCompactionScript = Effect.fn("NadirCompaction.findScript")
   }
   const candidates = [...homes.map((home) => path.join(home, "nadir", SCRIPT)), ...pluginScripts];
   for (const script of candidates) {
-    if (yield* fileSystem.exists(script).pipe(Effect.orElseSucceed(() => false))) return script;
+    const isFile = yield* fileSystem.stat(script).pipe(
+      Effect.map((info) => info.type === "File"),
+      Effect.orElseSucceed(() => false),
+    );
+    if (isFile) return script;
   }
   return undefined;
 });

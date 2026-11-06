@@ -2,12 +2,14 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as NadirRouting from "./NadirRouting.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -103,6 +105,14 @@ const withNadirModel = Effect.fn("ThreadMessageIntake.withNadirModel")(function*
     command.deliveryIntent !== "restart" &&
     command.dispatchMode.type === "start_immediately";
   if (!plainUserTurn || !(yield* NadirRouting.isEnabled)) return command;
+  // A retried command replays its first receipt; routing again would record a model it never ran.
+  const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
+  if (Option.isSome(receipts)) {
+    const prior = yield* receipts.value
+      .getByCommandId(command.commandId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(prior)) return command;
+  }
   const threads = yield* ThreadManagement.ThreadManagementService;
   const shell = yield* threads
     .getThreadShell(command.threadId)

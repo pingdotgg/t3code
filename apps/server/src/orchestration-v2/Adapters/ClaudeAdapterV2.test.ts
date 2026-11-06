@@ -365,7 +365,12 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       nativeThreadId: "native-tool-search",
       resume: false,
       cwd: "/workspace",
-      sdkSettings: { env: { OTHER: "kept" } },
+      sdkSettings: {
+        env: { OTHER: "kept" },
+        hooks: {
+          PostToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "user-hook" }] }],
+        },
+      },
       toolSearchOverride: "true",
       extraHooks: {
         PostToolUse: [{ matcher: "Read", hooks: [{ type: "command", command: "x" }] }],
@@ -376,6 +381,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       ENABLE_TOOL_SEARCH: "true",
     });
     assert.deepEqual((options.settings as { hooks?: Record<string, unknown> }).hooks?.PostToolUse, [
+      { matcher: "Write", hooks: [{ type: "command", command: "user-hook" }] },
       { matcher: "Read", hooks: [{ type: "command", command: "x" }] },
     ]);
   });

@@ -189,6 +189,7 @@ export function pickModel(
   const answer = record(response);
   if (answer === undefined) return context.baseline;
   // An organization policy on the account names the model to use.
+  // An organization's pinned model outranks the user's pick; the settings text says so.
   const governed = answer.governance_model;
   if (typeof governed === "string") {
     return context.menu.includes(governed) ? governed : context.baseline;
@@ -237,8 +238,9 @@ const askNadir = Effect.fn("NadirRouting.askNadir")(function* (
 });
 
 /**
- * The selection a user's turn should run on. Returns `selection` unchanged when routing is off,
- * the prompt is too short or long to judge, or Nadir is slow, down or unsure.
+ * The selection a user's turn should run on. Returns `selection` unchanged when routing is off or
+ * the prompt is too short or long to judge. When Nadir is slow, down or unsure, the turn runs on
+ * the user's pick.
  */
 export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection")(
   function* (input: {
@@ -268,10 +270,8 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
     const providers = yield* registry.value.getProviders;
     const provider = providers.find((candidate) => candidate.instanceId === baseline.instanceId);
     const menu = modelMenu(provider);
-    if (!judgeable || !menu.includes(baseline.model)) {
-      yield* rememberChoice(ceilings.value, input.threadId, baseline, baseline);
-      return baseline;
-    }
+    // A short follow-up or a slash command continues on the thread's model; the ceiling stays.
+    if (!judgeable || !menu.includes(baseline.model)) return input.selection;
     const current = input.cache?.model ?? input.selection.model;
     const answer = yield* askNadir(
       client.value,
