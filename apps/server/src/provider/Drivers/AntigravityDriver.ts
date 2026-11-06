@@ -4,8 +4,10 @@ import {
   ProviderDriverKind,
   ProviderSetupError,
   settingsSecretLiteral,
+  type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   NodeRuntimeUnavailableError,
@@ -32,6 +34,7 @@ import {
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
@@ -60,7 +63,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeAntigravityProvider } from "../AntigravityProvider.ts";
+import { makeAntigravityProvider, type AntigravityProbeResult } from "../AntigravityProvider.ts";
 import { makeAntigravityUsageProbe } from "../antigravityUsageLimits.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -76,6 +79,31 @@ import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./Antigra
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+
+// The Runtime settings row installs the pinned release; there is no update command to run.
+function managedRuntimeAdvisory(
+  executable: AntigravityInstallation.AntigravityExecutable,
+  pinnedVersion: string | undefined,
+): ServerProviderVersionAdvisory | undefined {
+  if (
+    executable.source !== "managed" ||
+    !executable.version ||
+    !pinnedVersion ||
+    compareSemverVersions(executable.version, pinnedVersion) >= 0
+  ) {
+    return undefined;
+  }
+  return {
+    status: "behind_latest",
+    currentVersion: executable.version,
+    latestVersion: pinnedVersion,
+    updateCommand: null,
+    canUpdate: false,
+    canInstallVersion: false,
+    checkedAt: null,
+    message: `Antigravity ${pinnedVersion} is available. Update it from this provider's Runtime settings.`,
+  };
+}
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
@@ -133,11 +161,16 @@ export const AntigravityDriver: ProviderDriver<
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const platform = yield* HostProcess.Platform;
     const userHome = resolveAntigravityUserHome(
-      yield* HostProcess.Platform,
+      platform,
       processEnvironment,
       yield* HostProcess.HomeDirectory,
     );
+    const pinnedVersion = resolveAntigravityReleaseAsset(
+      platform,
+      yield* HostProcess.Architecture,
+    )?.version;
     const directories = yield* resolveAntigravityInstanceDirectories(
       host.paths.stateDir,
       instanceId,
@@ -389,7 +422,9 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      const versionAdvisory = managedRuntimeAdvisory(executable, pinnedVersion);
       return {
+        ...(versionAdvisory ? { versionAdvisory } : {}),
         protocolVersion: 1,
         agentCapabilities: {
           loadSession: true,
@@ -402,7 +437,7 @@ export const AntigravityDriver: ProviderDriver<
           title: "Google Antigravity",
           version: executable.version ?? "unknown",
         },
-      };
+      } satisfies AntigravityProbeResult;
     });
 
     const usage = yield* makeAntigravityUsageProbe({

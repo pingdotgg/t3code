@@ -7,6 +7,7 @@ import {
   type ServerProviderModel,
   type ServerProviderSlashCommand,
   type ServerProviderUsageLimits,
+  type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
@@ -154,10 +155,15 @@ interface AntigravityProviderState {
   readonly authRevision: number;
 }
 
+/** The probe never spawns the agent, so the driver also reports the managed runtime's update here. */
+export interface AntigravityProbeResult extends EffectAcpSchema.InitializeResponse {
+  readonly versionAdvisory?: ServerProviderVersionAdvisory;
+}
+
 interface AntigravityProviderOptions {
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
   readonly probe: Effect.Effect<
-    EffectAcpSchema.InitializeResponse,
+    AntigravityProbeResult,
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
@@ -295,7 +301,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
-      const { message: _previousMessage, ...draft } = state.draft;
+      const {
+        message: _previousMessage,
+        versionAdvisory: _previousAdvisory,
+        ...draft
+      } = state.draft;
       const authenticated = draft.auth.status === "authenticated";
       const message =
         errorMessage ??
@@ -330,6 +340,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               }
             : {}),
           ...(message ? { message } : {}),
+          ...(initialized?.versionAdvisory ? { versionAdvisory: initialized.versionAdvisory } : {}),
         },
       } satisfies AntigravityProviderState;
     });

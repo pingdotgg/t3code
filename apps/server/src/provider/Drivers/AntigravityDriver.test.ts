@@ -397,6 +397,20 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect.skipIf(windowsHost || pinnedRelease === null)(
+    "clears the update advisory once the managed runtime reaches the pinned release",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        h.controls.selected = { ...h.first, version: "1.1.1" };
+        yield* h.instance.snapshot.refresh;
+        h.controls.selected = { ...h.first, version: pinnedRelease?.version ?? "" };
+        const snapshot = yield* h.instance.snapshot.refresh;
+        expect(snapshot.version).toBe(pinnedRelease?.version);
+        expect(snapshot.versionAdvisory).toBeUndefined();
+      }).pipe(Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "removes runtime temp directories left by a previous server on create",
     () =>
