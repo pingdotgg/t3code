@@ -56,6 +56,15 @@ const UsageResponse = Schema.Struct({
   usage: Schema.Struct({ rolling: UsageWindow, weekly: UsageWindow, monthly: UsageWindow }),
 });
 
+class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialReadError>()(
+  "OpenCodeCredentialReadError",
+  { databasePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not read OpenCode credentials from ${this.databasePath}.`;
+  }
+}
+
 // Select before decoding so a self-hosted connection cannot fall through to
 // another stored account. NULL-active rows predate the selection flag. T3 never
 // refreshes a sign-in: Console rotates refresh tokens, and OpenCode owns renewal.
@@ -94,17 +103,20 @@ const readStoredCredential = (database: NodeSqlite.DatabaseSync, integrationId: 
 // OpenCode 2 keeps a standalone Go key in its database under "opencode-go";
 // auth.json only seeded that row once, so its copy can be stale.
 const readStoredCredentials = (databasePath: string) =>
-  Effect.try(() => {
-    const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
-    try {
-      database.exec("PRAGMA busy_timeout = 100");
-      return {
-        console: readStoredCredential(database, "opencode"),
-        go: readStoredCredential(database, "opencode-go"),
-      };
-    } finally {
-      database.close();
-    }
+  Effect.try({
+    try: () => {
+      const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+      try {
+        database.exec("PRAGMA busy_timeout = 100");
+        return {
+          console: readStoredCredential(database, "opencode"),
+          go: readStoredCredential(database, "opencode-go"),
+        };
+      } finally {
+        database.close();
+      }
+    },
+    catch: (cause) => new OpenCodeCredentialReadError({ databasePath, cause }),
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 /** External OpenCode servers own their credentials; never read the host's account for them. */
