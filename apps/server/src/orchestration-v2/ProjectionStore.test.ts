@@ -484,6 +484,176 @@ it.effect("record reads restrict provider histories to delivery identities", () 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("provider-thread reads find owned threads without walking the thread's nodes", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = yield* addRolledBackRecoveryCandidate("provider-ownership");
+    const otherThreadId = yield* addRolledBackRecoveryCandidate("provider-ownership-other");
+    const ownerNodeId = NodeId.make("node:provider-ownership:owner");
+    const foreignNodeId = NodeId.make("node:provider-ownership:foreign");
+    for (const [nodeId, nodeThreadId] of [
+      [ownerNodeId, threadId],
+      [foreignNodeId, otherThreadId],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:${nodeId}`),
+        type: "node.updated",
+        threadId: nodeThreadId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: nodeId,
+          threadId: nodeThreadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: nodeId,
+          kind: "root_turn",
+          status: "completed",
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+    }
+    const cases = [
+      { name: "direct", appThreadId: threadId, ownerNodeId: null, subagent: false, ordinal: 2 },
+      { name: "owner", appThreadId: otherThreadId, ownerNodeId, subagent: false, ordinal: null },
+      { name: "owner-only", appThreadId: null, ownerNodeId, subagent: false, ordinal: 1 },
+      {
+        name: "subagent",
+        appThreadId: otherThreadId,
+        ownerNodeId: null,
+        subagent: true,
+        ordinal: 1,
+      },
+      { name: "duplicate", appThreadId: threadId, ownerNodeId, subagent: true, ordinal: 3 },
+      {
+        name: "foreign-owner",
+        appThreadId: otherThreadId,
+        ownerNodeId: foreignNodeId,
+        subagent: false,
+        ordinal: 4,
+      },
+      {
+        name: "unrelated",
+        appThreadId: otherThreadId,
+        ownerNodeId: null,
+        subagent: false,
+        ordinal: 5,
+      },
+    ] as const;
+    const idOf = (name: string) => ProviderThreadId.make(`provider-thread:ownership:${name}`);
+    for (const entry of cases) {
+      yield* store.apply({
+        id: EventId.make(`event:provider-ownership:${entry.name}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: idOf(entry.name),
+          appThreadId: entry.appThreadId,
+          ownerNodeId: entry.ownerNodeId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: entry.ordinal,
+          lastRunOrdinal: entry.ordinal,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      if (entry.subagent) {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_subagents
+            (subagent_id, thread_id, parent_node_id, provider, provider_thread_id,
+             origin, status, updated_at, payload_json)
+          VALUES (${`subagent:${entry.name}`}, ${threadId}, ${ownerNodeId}, 'codex',
+            ${idOf(entry.name)}, 'provider_native', 'completed', '', '{}')
+        `;
+      }
+    }
+
+    const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+    const observe: Statement.Transformer = (statement) => {
+      const compiled = statement.compile();
+      if (compiled[0].includes("FROM orchestration_v2_projection_provider_threads")) {
+        statements.push(compiled);
+      }
+      return Effect.succeed(statement);
+    };
+    const observed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+
+    const records = yield* observed(store.getThreadRecords(threadId, ["providerThreads"]));
+    assert.deepEqual(
+      records.providerThreads.map((row) => row.id),
+      ["owner", "owner-only", "subagent", "direct", "duplicate"].map(idOf),
+    );
+    const filtered = yield* observed(
+      store.getThreadRecords(threadId, ["providerThreads"], {
+        providerThreadIds: [idOf("subagent"), idOf("foreign-owner"), idOf("unrelated")],
+      }),
+    );
+    assert.deepEqual(
+      filtered.providerThreads.map((row) => row.id),
+      [idOf("subagent")],
+    );
+    const providerTurnId = ProviderTurnId.make("provider-turn:provider-ownership:missing");
+    for (const [name, owned] of [
+      ["owner-only", true],
+      ["foreign-owner", false],
+    ] as const) {
+      const control = yield* observed(
+        store.getProviderControlContext(threadId, { providerThreadId: idOf(name), providerTurnId }),
+      );
+      assert.equal(control.providerThread?.id, owned ? idOf(name) : undefined, name);
+    }
+    const rollback = yield* observed(
+      store.getCheckpointRollbackContext(threadId, {
+        providerThreadId: idOf("subagent"),
+        checkpointId: CheckpointId.make("checkpoint:provider-ownership:missing"),
+        scopeId: CheckpointScopeId.make("scope:provider-ownership:missing"),
+      }),
+    );
+    assert.equal(rollback.providerThread?.id, idOf("subagent"));
+    yield* observed(
+      store.getCheckpointCaptureContext(threadId, {
+        runId: RunId.make("run:provider-ownership:rolled-back"),
+        scopeId: CheckpointScopeId.make("scope:provider-ownership:missing"),
+      }),
+    );
+
+    // The record read, provider control, checkpoint rollback, and checkpoint capture.
+    const ownershipReads = statements.filter(([query]) => query.includes("owner_node_id"));
+    assert.lengthOf(ownershipReads, 6);
+    for (const [query, params] of ownershipReads) {
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${query}`,
+        params,
+      );
+      assert.isFalse(
+        plan.some((row) =>
+          /USING (?:COVERING )?INDEX orchestration_v2_projection_nodes_thread/.test(row.detail),
+        ),
+        JSON.stringify(plan),
+      );
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("idle compaction filters keep the latest run, live work and the newest usage", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

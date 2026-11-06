@@ -3108,6 +3108,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
     });
 
+    // Provider threads a thread owns directly, through one of its nodes, or through a subagent.
+    const ownedProviderThreadIds = (threadId: ThreadId) => sql`
+      SELECT provider_thread_id FROM orchestration_v2_projection_provider_threads
+      WHERE thread_id = ${threadId}
+      UNION
+      -- Start with non-null owners; a thread can have a large settled node history.
+      SELECT owned.provider_thread_id
+      FROM orchestration_v2_projection_provider_threads AS owned
+        INDEXED BY orchestration_v2_projection_provider_threads_owner_idx
+      CROSS JOIN orchestration_v2_projection_nodes AS owner
+        ON owner.node_id = owned.owner_node_id
+      WHERE owned.owner_node_id IS NOT NULL AND owner.thread_id = ${threadId}
+      UNION
+      SELECT provider_thread_id FROM orchestration_v2_projection_subagents
+      WHERE thread_id = ${threadId} AND provider_thread_id IS NOT NULL
+    `;
+
     const readCanonicalProjection = Effect.fn("ProjectionStore.readCanonicalProjection")(
       function* (
         threadId: ThreadId,
@@ -3499,18 +3516,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_threads
-            WHERE (thread_id = ${threadId}
-               OR owner_node_id IN (
-                 SELECT node_id
-                 FROM orchestration_v2_projection_nodes
-                 WHERE thread_id = ${threadId}
-               )
-               OR provider_thread_id IN (
-                 SELECT provider_thread_id
-                 FROM orchestration_v2_projection_subagents
-                 WHERE thread_id = ${threadId}
-                   AND provider_thread_id IS NOT NULL
-               ))
+            WHERE provider_thread_id IN (${ownedProviderThreadIds(threadId)})
               ${filter?.providerThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerThreadIds)}))`}
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
@@ -4772,21 +4778,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             sql<PayloadRow>`
               SELECT provider_thread.payload_json
               FROM orchestration_v2_projection_provider_threads AS provider_thread
-              WHERE provider_thread.provider_thread_id IN (
-                  SELECT provider_thread_id FROM orchestration_v2_projection_provider_threads
-                  WHERE thread_id = ${threadId}
-                  UNION
-                  -- Start with non-null owners; a thread can have a large settled node history.
-                  SELECT owned.provider_thread_id
-                  FROM orchestration_v2_projection_provider_threads AS owned
-                    INDEXED BY orchestration_v2_projection_provider_threads_owner_idx
-                  CROSS JOIN orchestration_v2_projection_nodes AS owner
-                    ON owner.node_id = owned.owner_node_id
-                  WHERE owned.owner_node_id IS NOT NULL AND owner.thread_id = ${threadId}
-                  UNION
-                  SELECT provider_thread_id FROM orchestration_v2_projection_subagents
-                  WHERE thread_id = ${threadId} AND provider_thread_id IS NOT NULL
-                )
+              WHERE provider_thread.provider_thread_id IN (${ownedProviderThreadIds(threadId)})
                 AND (
                   provider_thread.status = 'active'
                   OR CASE WHEN json_valid(provider_thread.payload_json)
@@ -5082,11 +5074,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             yield* requireThread(threadId);
             const [threadRows, turnRows, attemptRows, messageRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
-            WHERE provider_thread_id = ${target.providerThreadId} AND (
-              thread_id = ${threadId}
-              OR owner_node_id IN (SELECT node_id FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId})
-              OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId})
-            )`,
+            WHERE provider_thread_id = ${target.providerThreadId}
+              AND provider_thread_id IN (${ownedProviderThreadIds(threadId)})`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
             WHERE thread_id = ${threadId} AND provider_turn_id = ${target.providerTurnId}`,
               target.attemptId === undefined
@@ -5323,9 +5312,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
             WHERE provider_thread_id = ${run?.providerThreadId ?? null}
-              AND (thread_id = ${threadId}
-                OR owner_node_id IN (SELECT node_id FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId})
-                OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId}))`,
+              AND provider_thread_id IN (${ownedProviderThreadIds(threadId)})`,
               sql<{ readonly ordinal: number }>`SELECT ordinal_within_scope AS ordinal
             FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId} AND status = 'ready'`,
@@ -5362,9 +5349,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const [providerRows, checkpointRows, scopeRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
             WHERE provider_thread_id = ${target.providerThreadId}
-              AND (thread_id = ${threadId}
-                OR owner_node_id IN (SELECT node_id FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId})
-                OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId}))`,
+              AND provider_thread_id IN (${ownedProviderThreadIds(threadId)})`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND checkpoint_id = ${target.checkpointId}`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
