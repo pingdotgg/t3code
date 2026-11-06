@@ -10155,6 +10155,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("clears background tasks when the Claude process exits mid-turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-probe-exit"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* Queue.shutdown(harness.sdkMessages);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+        assert.deepStrictEqual(
+          providerThreadRosterEvents(harness.events)
+            .at(-1)
+            ?.providerThread.pendingBackgroundTasks?.map((task) => task.taskId) ?? [],
+          [],
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("wakes the idle thread when a task outlives a turn that failed on a live process", () =>
     Effect.scoped(
       Effect.gen(function* () {
