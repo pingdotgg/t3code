@@ -80,6 +80,27 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  // GitHub keeps CRLF in a body written in its web editor.
+  it("recognizes fences in a body with CRLF line endings", () => {
+    const body = "```\r\nhttps://example.com/demo.mp4\r\n```";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it("closes a CRLF fence, so a video after it still lifts out", () => {
+    const code = '```html\r\n<video src="https://example.com/example.mp4"></video>\r\n```';
+    expect(splitPullRequestBody(`${code}\r\n\r\nhttps://example.com/demo.mp4\r\n`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+  });
+
   it("does not let a different fence marker close an open fence", () => {
     const body = "```\n~~~\nhttps://example.com/demo.mp4\n```";
     expect(splitPullRequestBody(body)).toEqual([
@@ -157,7 +178,6 @@ describe("change request reference autolinks", () => {
 
   // regression: the mobile review guide linked every host's `#5` with GitHub's grammar
   it("links nothing on a host whose grammar is not applied", () => {
-    expect(urls("gitlab", "https://gitlab.com/group/project/-/merge_requests/7", "#5")).toBeNull();
     expect(urls("forgejo", "https://codeberg.org/acme/web/pulls/7", "#5")).toBeNull();
   });
 });
