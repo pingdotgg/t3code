@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { ChevronRightIcon } from "lucide-react";
+import { BotIcon, ChevronRightIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -212,11 +212,12 @@ export function resolveVariantRow(input: {
         <>
           {input.workerCount !== null ? (
             <span
-              aria-hidden
+              role="img"
+              aria-label={input.workerSummary ?? undefined}
               data-worker-count
               className="inline-flex shrink-0 items-center gap-0.5 text-2xs font-medium text-muted-foreground tabular-nums"
             >
-              <ChevronRightIcon className="size-3 shrink-0" />
+              <BotIcon aria-hidden className="size-3 shrink-0" />
               {input.workerCount}
             </span>
           ) : null}
