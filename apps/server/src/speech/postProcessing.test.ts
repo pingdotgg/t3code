@@ -24,6 +24,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
+const POST_PROCESSING_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: true };
+
 const codexProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
   driver: ProviderDriverKind.make("codex"),
@@ -89,7 +91,7 @@ describe("postProcessTranscript", () => {
       Effect.gen(function* () {
         const generate = vi.fn(() => Effect.succeed({ transcription: "Clean text." }));
         const result = yield* runPostProcess(
-          { transcript: "raw text", cwd: "C:/neutral", settings: DEFAULT_SERVER_SETTINGS },
+          { transcript: "raw text", cwd: "C:/neutral", settings: POST_PROCESSING_SETTINGS },
           generate,
           [
             codexProvider,
@@ -199,7 +201,7 @@ describe("postProcessTranscript", () => {
         };
         expect(
           yield* runPostProcess(
-            { transcript: "raw", cwd: "C:/neutral", settings: DEFAULT_SERVER_SETTINGS },
+            { transcript: "raw", cwd: "C:/neutral", settings: POST_PROCESSING_SETTINGS },
             generate,
             [codex, claude],
           ),
@@ -220,10 +222,7 @@ describe("postProcessTranscript", () => {
           >[0],
         ) => Effect.succeed({ transcription: "  Clean text.  " }),
       );
-      const settings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        speechPostProcessingEnabled: true,
-      };
+      const settings = POST_PROCESSING_SETTINGS;
 
       expect(
         yield* runPostProcess(
@@ -260,7 +259,7 @@ describe("postProcessTranscript", () => {
           transcript: "clean text",
           cwd: "C:/neutral",
           settings: {
-            ...DEFAULT_SERVER_SETTINGS,
+            ...POST_PROCESSING_SETTINGS,
             speechPostProcessingPrompt: {
               mode: "custom",
               customInstructions: "Keep technical terms verbatim.",
@@ -289,7 +288,7 @@ describe("postProcessTranscript", () => {
           transcript: "clean text",
           cwd: "C:/neutral",
           settings: {
-            ...DEFAULT_SERVER_SETTINGS,
+            ...POST_PROCESSING_SETTINGS,
             speechPostProcessingPrompt: { mode: "custom", customInstructions: "" },
           },
         },
@@ -316,7 +315,7 @@ describe("postProcessTranscript", () => {
       for (const providers of [[], ...unavailableProviders.map((provider) => [provider])]) {
         expect(
           yield* runPostProcess(
-            { transcript: "raw text", cwd: "C:/neutral", settings: DEFAULT_SERVER_SETTINGS },
+            { transcript: "raw text", cwd: "C:/neutral", settings: POST_PROCESSING_SETTINGS },
             generate,
             providers,
           ),
@@ -329,7 +328,7 @@ describe("postProcessTranscript", () => {
   it.effect("adds context-sensitive correction instructions to the prompt", () =>
     Effect.gen(function* () {
       const generate = vi.fn(() => Effect.succeed({ transcription: "I want yellow." }));
-      const settings = { ...DEFAULT_SERVER_SETTINGS, speechCorrectionWord: "err" };
+      const settings = { ...POST_PROCESSING_SETTINGS, speechCorrectionWord: "err" };
       yield* runPostProcess(
         {
           transcript: "I want orange, err, yellow.",
@@ -367,7 +366,7 @@ describe("postProcessTranscript", () => {
           {
             transcript: "raw text",
             cwd: "C:/neutral",
-            settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: true },
+            settings: POST_PROCESSING_SETTINGS,
           },
           () => Effect.succeed({ transcription: "   " }),
         ),
@@ -383,7 +382,7 @@ describe("postProcessTranscript", () => {
             transcript: "Use MiniMax.",
             cwd: "C:/neutral",
             settings: {
-              ...DEFAULT_SERVER_SETTINGS,
+              ...POST_PROCESSING_SETTINGS,
               speechCustomWords: [{ term: "MiniMax", aliases: ["mini max"] }],
             },
           },
