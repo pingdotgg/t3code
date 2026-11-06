@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -47,7 +48,10 @@ it.live.runIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* fs.makeDirectory(path.join(runtimeDir, "versions", "1.0.0"), { recursive: true });
       yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "t3.exe"), "");
 
-      const child = spawnWindowsRemoval(process.env.ComSpec ?? "cmd.exe", runtimeDir);
+      const child = spawnWindowsRemoval(
+        yield* Config.String("ComSpec").pipe(Config.withDefault("cmd.exe")),
+        runtimeDir,
+      );
       yield* Effect.callback<void, Error>((resume) => {
         child.once("error", (error) => resume(Effect.fail(error)));
         child.once("exit", (code) =>
