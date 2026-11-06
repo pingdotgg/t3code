@@ -28,6 +28,8 @@ export class MentionIndexFigmaSyncer extends Context.Service<
   {
     readonly ensureIndexed: (projectId: ProjectId) => Effect.Effect<void>;
     readonly syncProject: (projectId: ProjectId) => Effect.Effect<void>;
+    /** Always fetch one file by key and write it through into the index. */
+    readonly ensureExact: (projectId: ProjectId, fileKey: string) => Effect.Effect<void>;
     readonly listTeams: (
       input: MentionIndexFigmaBrowseInput,
     ) => Effect.Effect<MentionIndexFigmaBrowseTeamsResult>;
@@ -41,6 +43,7 @@ const make = Effect.gen(function* () {
   const index = yield* MentionIndex;
   const mcp = yield* MentionIndexMcpClient;
   const inFlight = yield* Ref.make(new Set<string>());
+  const exactInFlight = yield* Ref.make(new Set<string>());
 
   const resolveFigmaServer = Effect.fn("MentionIndexFigmaSyncer.resolveFigmaServer")(
     function* (input: {
@@ -320,7 +323,105 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return MentionIndexFigmaSyncer.of({ ensureIndexed, syncProject, listTeams, listProjects });
+  const ensureExact = Effect.fn("MentionIndexFigmaSyncer.ensureExact")(function* (
+    projectId: ProjectId,
+    fileKey: string,
+  ) {
+    const flightKey = `${projectId}:${fileKey}`;
+    const claimed = yield* Ref.modify(exactInFlight, (set) => {
+      if (set.has(flightKey)) return [false, set] as const;
+      const next = new Set(set);
+      next.add(flightKey);
+      return [true, next] as const;
+    });
+    if (!claimed) return;
+
+    yield* Effect.gen(function* () {
+      const server = yield* resolveFigmaServer({ projectId });
+      const now = yield* Clock.currentTimeMillis;
+      if (server === null) {
+        yield* index.upsertRows(mentionIndexScopeKey("figma", projectId), [
+          figmaRow({ fileKey, name: fileKey, now, hasThumbnail: false }),
+        ]);
+        return;
+      }
+
+      const fetched = yield* Effect.result(
+        mcp.withSession(server, (session) =>
+          Effect.gen(function* () {
+            const tools = yield* session.listTools();
+            const names = new Set(tools.map((tool) => tool.name));
+            let name = fileKey;
+            let hasThumbnail = false;
+
+            if (names.has("get_metadata")) {
+              const metaResult = yield* Effect.result(
+                session.callTool("get_metadata", {
+                  fileKey,
+                  clientLanguages: "unknown",
+                  clientFrameworks: "unknown",
+                }),
+              );
+              if (Result.isSuccess(metaResult)) {
+                name = extractFigmaName(metaResult.success, fileKey) ?? name;
+              }
+            }
+
+            if (names.has("get_screenshot")) {
+              const shot = yield* Effect.result(
+                session.callTool("get_screenshot", {
+                  fileKey,
+                  clientLanguages: "unknown",
+                  clientFrameworks: "unknown",
+                }),
+              );
+              if (Result.isSuccess(shot)) {
+                const image = extractMcpImage(shot.success);
+                if (image !== null) {
+                  yield* index.putThumbnail(mentionIndexThumbKey("figma", projectId, fileKey), {
+                    mimeType: image.mimeType,
+                    dataBase64: image.dataBase64,
+                  });
+                  hasThumbnail = true;
+                }
+              }
+            }
+
+            return figmaRow({ fileKey, name, now, hasThumbnail });
+          }),
+        ),
+      );
+
+      if (Result.isFailure(fetched)) {
+        yield* Effect.logWarning("Mention index exact Figma fetch failed", {
+          projectId,
+          fileKey,
+          cause: fetched.failure,
+        });
+        yield* index.upsertRows(mentionIndexScopeKey("figma", projectId), [
+          figmaRow({ fileKey, name: fileKey, now, hasThumbnail: false }),
+        ]);
+        return;
+      }
+      yield* index.upsertRows(mentionIndexScopeKey("figma", projectId), [fetched.success]);
+    }).pipe(
+      Effect.ensuring(
+        Ref.update(exactInFlight, (set) => {
+          const next = new Set(set);
+          next.delete(flightKey);
+          return next;
+        }),
+      ),
+    );
+  });
+
+  return MentionIndexFigmaSyncer.of({
+    ensureIndexed,
+    syncProject,
+    ensureExact,
+    listTeams,
+    listProjects,
+  });
 });
 
 function asRecord(value: unknown): Record<string, unknown> | null {

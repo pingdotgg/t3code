@@ -12,6 +12,9 @@ import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
+import { mentionIndexPresenceRequests } from "@t3tools/shared/mentionIndexPresence";
+import { mentionIndexEnvironment } from "~/state/pullRequests";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
@@ -1035,6 +1038,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return collapseExpandedComposerCursor(value, value.length, isLiteralPendingAnswer);
   });
   const mentionIndexEnabled = settings.mentionIndexEnabled;
+  const ensureMentionIndexed = useAtomCommand(mentionIndexEnvironment.ensureIndexed, {
+    reportFailure: false,
+  });
+  const ensureMentionPresence = useEffectEvent((records: ReadonlyArray<ComposerContextRecord>) => {
+    if (!mentionIndexEnabled || pullRequestProjectId === null) return;
+    for (const request of mentionIndexPresenceRequests(records)) {
+      void ensureMentionIndexed({
+        environmentId,
+        input: {
+          projectId: pullRequestProjectId,
+          query: request.query,
+          providers: [...request.providers],
+        },
+      });
+    }
+  });
   const detectTrigger = (text: string, cursor: number) =>
     detectComposerTrigger(text, cursor, { mentionIndexEnabled });
   const {
@@ -1413,8 +1432,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     countReservedAttachments,
     countReservedAttachmentsStable,
     importContextRecords,
-    importContextFragment,
-    importContextFragmentStable,
+    importContextFragment: importContextFragmentBase,
   } = useComposerContextImport({
     environmentId,
     linkedEnvironments,
@@ -1433,6 +1451,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingThreadImportsRef,
     addComposerFilesToDraft,
   });
+  const importContextFragment = (
+    fragment: Parameters<typeof importContextFragmentBase>[0],
+  ): ReturnType<typeof importContextFragmentBase> => {
+    const rewritten = importContextFragmentBase(fragment);
+    ensureMentionPresence(fragment.records);
+    return rewritten;
+  };
+  const importContextFragmentStable = useStableCallback(importContextFragment);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared prompt ref in step with the committed draft prompt for imperative handlers
   useEffect(() => {
@@ -2907,6 +2933,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       if (inserted) {
         addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
+        if (mentionIndexEnabled && pullRequestProjectId !== null) {
+          void ensureMentionIndexed({
+            environmentId,
+            input: {
+              projectId: pullRequestProjectId,
+              query: pullRequest.url,
+              providers: ["pull-request"],
+            },
+          });
+        }
       }
       return inserted;
     },

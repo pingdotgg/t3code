@@ -19,6 +19,7 @@ import {
 export {
   parseFigmaDesignUrl,
   parseGitHubIssueUrl,
+  parseGitHubPullRequestUrl,
   parseJiraBrowseUrl,
 } from "./composerContextExternalUrls.ts";
 

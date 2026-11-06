@@ -384,12 +384,13 @@ export const make = Effect.gen(function* () {
       const merged = [...byKey.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .slice(0, MAX_ROWS_PER_SCOPE);
-      const now = yield* Clock.currentTimeMillis;
+      // Keep syncedAt so a one-row write-through does not look like a full scope replace.
       yield* setScope(scopeKey, {
         rows: merged,
         meta: {
-          syncedAt: now,
+          syncedAt: previous.meta.syncedAt,
           status: merged.length === 0 ? "empty" : "ready",
+          ...(previous.meta.detail !== undefined ? { detail: previous.meta.detail } : {}),
         },
       });
     }),

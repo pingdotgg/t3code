@@ -219,6 +219,7 @@ import {
   MentionIndexFigmaBrowseTeamsResult,
   MentionIndexFigmaListProjectsInput,
   MentionIndexFigmaListProjectsResult,
+  MentionIndexProviderId,
   MentionIndexSearchInput,
   MentionIndexSearchResult,
   MentionIndexThumbnailInput,
@@ -1033,7 +1034,14 @@ const WsMentionsSearchRpc = Rpc.make(WS_METHODS.mentionsSearch, {
 });
 
 const WsMentionsEnsureIndexedRpc = Rpc.make(WS_METHODS.mentionsEnsureIndexed, {
-  payload: Schema.Struct({ projectId: ProjectId }),
+  payload: Schema.Struct({
+    projectId: ProjectId,
+    /** When set, fetch this exact presence into the index (number, key, or URL). */
+    query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+    providers: Schema.optionalKey(
+      Schema.Array(MentionIndexProviderId).check(Schema.isMaxLength(8)),
+    ),
+  }),
   success: MentionIndexSearchResult,
   error: MentionIndexRpcError,
 });

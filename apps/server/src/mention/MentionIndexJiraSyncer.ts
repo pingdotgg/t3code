@@ -17,6 +17,8 @@ export class MentionIndexJiraSyncer extends Context.Service<
   {
     readonly ensureIndexed: (projectId: ProjectId) => Effect.Effect<void>;
     readonly syncProject: (projectId: ProjectId) => Effect.Effect<void>;
+    /** Always fetch one issue by key and write it through into the index. */
+    readonly ensureExact: (projectId: ProjectId, key: string) => Effect.Effect<void>;
   }
 >()("t3/mention/MentionIndexJiraSyncer") {}
 
@@ -24,6 +26,7 @@ const make = Effect.gen(function* () {
   const index = yield* MentionIndex;
   const mcp = yield* MentionIndexMcpClient;
   const inFlight = yield* Ref.make(new Set<string>());
+  const exactInFlight = yield* Ref.make(new Set<string>());
 
   const syncProject = Effect.fn("MentionIndexJiraSyncer.syncProject")(function* (
     projectId: ProjectId,
@@ -149,7 +152,94 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return MentionIndexJiraSyncer.of({ ensureIndexed, syncProject });
+  const ensureExact = Effect.fn("MentionIndexJiraSyncer.ensureExact")(function* (
+    projectId: ProjectId,
+    key: string,
+  ) {
+    const flightKey = `${projectId}:${key}`;
+    const claimed = yield* Ref.modify(exactInFlight, (set) => {
+      if (set.has(flightKey)) return [false, set] as const;
+      const next = new Set(set);
+      next.add(flightKey);
+      return [true, next] as const;
+    });
+    if (!claimed) return;
+
+    yield* Effect.gen(function* () {
+      const settings = yield* mcp.readSettings(projectId);
+      const jiraSettings = settings.jira;
+      const server = yield* mcp.resolveServer({
+        kind: "jira",
+        ...(jiraSettings?.serverName !== undefined ? { serverName: jiraSettings.serverName } : {}),
+      });
+      if (server === null) return;
+
+      const fetched = yield* Effect.result(
+        mcp.withSession(server, (session) =>
+          Effect.gen(function* () {
+            const tools = yield* session.listTools();
+            const names = new Set(tools.map((tool) => tool.name));
+            // Exact keys are [A-Z][A-Z0-9]+-\d+; quote without JSON.stringify (banned in Effect).
+            const jql = `key = "${key}"`;
+
+            let payload: unknown;
+            if (names.has("searchJiraIssuesUsingJql")) {
+              let cloudId: string | undefined;
+              if (names.has("getAccessibleAtlassianResources")) {
+                const resources = yield* session.callTool("getAccessibleAtlassianResources", {});
+                cloudId = firstAtlassianCloudId(resources);
+              }
+              payload = yield* session.callTool("searchJiraIssuesUsingJql", {
+                jql,
+                maxResults: 1,
+                ...(cloudId !== undefined ? { cloudId } : {}),
+              });
+            } else if (names.has("getJiraIssue") || names.has("jira_get_issue")) {
+              const tool = names.has("getJiraIssue") ? "getJiraIssue" : "jira_get_issue";
+              payload = yield* session.callTool(tool, { issueIdOrKey: key, key });
+            } else if (names.has("search") || names.has("jira_search")) {
+              const tool = names.has("search") ? "search" : "jira_search";
+              payload = yield* session.callTool(tool, { jql, limit: 1 });
+            } else {
+              return yield* new MentionIndexMcpError({
+                detail: "Jira MCP server has no issue lookup tool for exact keys",
+              });
+            }
+
+            if (asRecord(payload)?.isError === true) {
+              return yield* new MentionIndexMcpError({
+                detail: "Jira MCP tool returned isError",
+              });
+            }
+
+            const now = yield* Clock.currentTimeMillis;
+            return extractJiraRows(payload, now);
+          }),
+        ),
+      );
+
+      if (Result.isFailure(fetched)) {
+        yield* Effect.logWarning("Mention index exact Jira fetch failed", {
+          projectId,
+          key,
+          cause: fetched.failure,
+        });
+        return;
+      }
+      if (fetched.success.length === 0) return;
+      yield* index.upsertRows(mentionIndexScopeKey("jira", projectId), fetched.success);
+    }).pipe(
+      Effect.ensuring(
+        Ref.update(exactInFlight, (set) => {
+          const next = new Set(set);
+          next.delete(flightKey);
+          return next;
+        }),
+      ),
+    );
+  });
+
+  return MentionIndexJiraSyncer.of({ ensureIndexed, syncProject, ensureExact });
 });
 
 function asRecord(value: unknown): Record<string, unknown> | null {
