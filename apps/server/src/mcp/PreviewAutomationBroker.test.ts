@@ -1086,3 +1086,85 @@ it.effect("keeps each thread's current tab when threads share a provider session
     }),
   ),
 );
+
+const connectTabHost = Effect.fn("connectTabHost")(function* (
+  broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+) {
+  const openTabs: PreviewTabId[] = [];
+  const routed: RoutedRequest[] = [];
+  const requests = requestsFrom(
+    yield* broker.connect(makeHost({ supportedOperations: ["open", "snapshot", "close"] })),
+  );
+  yield* Stream.runForEach(requests, (request) => {
+    routed.push(request);
+    const reply = { clientId: "client-1", connectionId: request.connectionId };
+    if (request.operation === "open") {
+      const tabId = PreviewTabId.make(`tab-${routed.length}`);
+      openTabs.push(tabId);
+      return broker.respond({
+        ...reply,
+        requestId: request.requestId,
+        ok: true,
+        result: { tabId },
+      });
+    }
+    const tabId = request.tabId ?? openTabs.at(-1);
+    if (tabId === undefined || !openTabs.includes(tabId)) {
+      return broker.respond({
+        ...reply,
+        requestId: request.requestId,
+        ok: false,
+        error: { _tag: "PreviewAutomationTabNotFoundError", message: "No tab." },
+      });
+    }
+    if (request.operation === "close") openTabs.splice(openTabs.indexOf(tabId), 1);
+    return broker.respond({ ...reply, requestId: request.requestId, ok: true, result: {} });
+  }).pipe(Effect.forkScoped);
+  yield* Effect.yieldNow;
+  return routed;
+});
+
+it.effect("does not name a closed current tab when the caller omitted tabId", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      yield* connectTabHost(broker);
+      const opened = yield* broker.invoke<{ tabId: PreviewTabId }>({
+        scope,
+        operation: "open",
+        input: {},
+      });
+      yield* broker.invoke({ scope, operation: "close", input: {}, tabId: opened.tabId });
+
+      const error = yield* broker
+        .invoke<void>({ scope, operation: "snapshot", input: {} })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("PreviewAutomationTabNotFoundError");
+      expect(error.message).toBe(
+        "No active preview tab was found for snapshot. Call preview_open first.",
+      );
+    }),
+  ),
+);
+
+it.effect("stops targeting a closed current tab once the host reports it missing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const routed = yield* connectTabHost(broker);
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      const second = yield* broker.invoke<{ tabId: PreviewTabId }>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false },
+      });
+      yield* broker.invoke({ scope, operation: "close", input: {}, tabId: second.tabId });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} }).pipe(Effect.ignore);
+
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} }).pipe(Effect.ignore);
+
+      expect(routed.at(-1)?.tabId).toBeUndefined();
+    }),
+  ),
+);
