@@ -441,21 +441,24 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamicWithSession(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        const { omitIdleSubagents, omitOlderSettled, serverVersion } =
+        const { omitIdleSubagents, omitOlderSettled, serverVersion, databaseMigration } =
           yield* session.initialConfig.pipe(
             Effect.map((config) => ({
               omitIdleSubagents: config.shellThreadFamilies === true,
               omitOlderSettled:
                 config.shellOlderSettled === true && config.shellThreadFamilies === true,
               serverVersion: config.environment.serverVersion as string | null,
+              databaseMigration: config.environment.databaseMigration,
             })),
             Effect.orElseSucceed(() => ({
               omitIdleSubagents: false,
               omitOlderSettled: false,
               serverVersion: null,
+              databaseMigration: undefined,
             })),
           );
-        const omissionKey = `${omitIdleSubagents}:${omitOlderSettled}`;
+        // Migrations rewrite projections without events, so a migrated server reloads.
+        const omissionKey = `${omitIdleSubagents}:${omitOlderSettled}:${databaseMigration ?? ""}`;
         yield* Ref.set(activeSubscription, { session, omissionKey, serverVersion });
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;

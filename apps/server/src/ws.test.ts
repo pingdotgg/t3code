@@ -35,6 +35,7 @@ import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
+import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -734,6 +735,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
 
 const layerConfigSources = Layer.mergeAll(
   Keybindings.layer,
+  AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer)),
   ServerSettings.layer.pipe(
     Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
   ),
@@ -792,8 +794,7 @@ it.effect.each([
               Effect.andThen(Deferred.await(finishDiscovery)),
               Effect.as([]),
             ),
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-          resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+          resolveFileManagerRevealKind: () => Effect.undefined,
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
@@ -1024,8 +1025,15 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       auth: { status: "authenticated" },
       checkedAt: "2026-10-25T00:00:00.000Z",
       models: [],
-      slashCommands: [{ name: "machine-command" }],
-      skills: [],
+      slashCommands: [{ name: "machine-command", description: "A machine command" }],
+      skills: [
+        {
+          name: "machine-skill",
+          description: "Machine skill",
+          path: "/skills/machine-skill",
+          enabled: true,
+        },
+      ],
       workspaceSnapshots: [
         snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
         snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
@@ -1039,8 +1047,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       layerUnusedConfigRpcServices,
       Layer.mock(ExternalLauncher.ExternalLauncher)({
         resolveAvailableEditors: () => Effect.succeed([]),
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+        resolveFileManagerRevealKind: () => Effect.undefined,
       }),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
         getProviders: Effect.succeed([provider]),
@@ -1055,6 +1062,13 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
             ? { instanceId, snapshotForCwd: () => Effect.die("unused") }
             : { instanceId }) as never,
         ]),
+        getInstance: () =>
+          Effect.sync(
+            () =>
+              (scansCwd
+                ? { instanceId, snapshotForCwd: () => Effect.die("unused") }
+                : { instanceId }) as never,
+          ),
       }),
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
@@ -1131,9 +1145,11 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
     assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
-    // The cwd snapshot the client fetches replaces the machine catalog, so it is not sent.
-    assert.deepEqual(snapshot.config.providers[0]?.slashCommands, []);
-    assert.deepEqual(snapshot.config.providers[0]?.skills, []);
+    // The cwd snapshot the client fetches carries the catalog, so only command names are sent.
+    assert.deepEqual(snapshot.config.providers[0]?.slashCommands, [{ name: "machine-command" }]);
+    assert.deepEqual(snapshot.config.providers[0]?.skills, [
+      { name: "machine-skill", path: "/skills/machine-skill", enabled: true },
+    ]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
     // A rescan that only touches a snapshot sends nothing; the next real change does.
@@ -1156,31 +1172,12 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
     assert.equal(update.payload.providers[0]?.status, "warning");
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
-    assert.deepEqual(update.payload.providers[0]?.slashCommands, [USAGE_LIMITS_COMMAND]);
-    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
-    const antigravity = {
-      ...provider,
-      driver: ProviderDriverKind.make("antigravity"),
-      status: "warning" as const,
-    };
-    yield* Queue.offer(providerChanges, [antigravity]);
-    yield* Queue.take(pulled);
-    yield* TestClock.adjust("1 second");
-    const liveCatalog = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
-    if (liveCatalog.type !== "providerStatuses")
-      return yield* Effect.die("Expected provider update");
-    assert.deepEqual(liveCatalog.payload.providers[0]?.slashCommands, provider.slashCommands);
-    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
-    yield* Queue.offer(providerChanges, [
-      { ...antigravity, slashCommands: [{ name: "live-command" }] },
+    assert.deepEqual(update.payload.providers[0]?.slashCommands, [
+      { name: "machine-command" },
+      { name: USAGE_LIMITS_COMMAND.name },
     ]);
-    yield* Queue.take(pulled);
-    yield* TestClock.adjust("1 second");
-    const discovered = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
-    if (discovered.type !== "providerStatuses") return yield* Effect.die("Expected live commands");
-    assert.deepEqual(discovered.payload.providers[0]?.slashCommands, [{ name: "live-command" }]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
-    // A replacement that cannot scan a cwd sends its machine catalog again.
+    // A replacement that cannot scan a cwd sends its full machine catalog.
     scansCwd = false;
     yield* Queue.offer(providerChanges, [{ ...provider, status: "warning" }]);
     yield* Queue.take(pulled);
@@ -1188,6 +1185,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     const replaced = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (replaced.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
     assert.deepEqual(replaced.payload.providers[0]?.slashCommands, provider.slashCommands);
+    assert.deepEqual(replaced.payload.providers[0]?.skills, provider.skills);
 
     yield* server.write(0, {
       _tag: "Request",
@@ -1203,35 +1201,30 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
-    const refreshCatalogOnDemand = Effect.fn(function* (id: string) {
-      yield* server.write(0, {
-        _tag: "Request",
-        id: RpcMessage.RequestId(id),
-        tag: WS_METHODS.serverRefreshProviders,
-        payload: {
-          instanceId,
-          cwd: "/c",
-          workspaceSnapshotsOnDemand: true,
-          providerCatalogsOnDemand: true,
-        },
-        headers: Headers.empty,
-      });
-      const response = (yield* Queue.take(responses)) as {
-        readonly providers: ReadonlyArray<ServerProvider>;
-      };
-      return response.providers[0]?.workspaceSnapshots;
-    });
-    // A provider that cannot scan already sent its machine catalog, so nothing stays pending.
-    assert.deepEqual(yield* refreshCatalogOnDemand("refresh-no-scan"), []);
     // A failed scan still gives a client without the machine catalog its commands.
     scansCwd = true;
-    assert.deepEqual(yield* refreshCatalogOnDemand("refresh-failed-scan"), [
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-failed-scan"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: {
+        instanceId,
+        cwd: "/c",
+        workspaceSnapshotsOnDemand: true,
+        providerCatalogsOnDemand: true,
+      },
+      headers: Headers.empty,
+    });
+    const fallback = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.deepEqual(fallback.providers[0]?.workspaceSnapshots, [
       {
         cwd: "/c",
         checkedAt: provider.checkedAt,
         slashCommands: provider.slashCommands,
         slashCommandsPending: true,
-        skills: [],
+        skills: provider.skills,
       },
     ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });

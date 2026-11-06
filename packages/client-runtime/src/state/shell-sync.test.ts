@@ -858,7 +858,7 @@ describe("environment shell synchronization", () => {
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           shellOlderSettled: true,
-          environment: { serverVersion: SERVER_VERSION },
+          environment: { serverVersion: SERVER_VERSION, databaseMigration: 70 },
         } as never),
       };
       const activeSession = yield* SubscriptionRef.make(Option.some(familySession));
@@ -945,6 +945,22 @@ describe("environment shell synchronization", () => {
         omitOlderSettled: true,
       });
       expect(yield* Ref.get(loadOptions)).toHaveLength(1);
+
+      // A migrated server may have rewritten rows without events, so it reloads.
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some({
+          ...familySession,
+          initialConfig: familySession.initialConfig.pipe(
+            Effect.map((config) => ({
+              ...config,
+              environment: { ...config.environment, databaseMigration: 71 },
+            })),
+          ),
+        }),
+      );
+      yield* Queue.take(subscribeInputs);
+      expect(yield* Ref.get(loadOptions)).toHaveLength(2);
     }),
   );
 
@@ -1252,7 +1268,7 @@ describe("environment shell cold start from a vouched cache", () => {
   const VOUCHED_AT = 1_800_000_000_000;
   const HOUR_MS = 60 * 60 * 1000;
   const VOUCH: Persistence.ShellCacheVouch = {
-    omissionKey: "false:false",
+    omissionKey: "false:false:",
     serverVersion: SERVER_VERSION,
     authoritativeAt: VOUCHED_AT,
   };
@@ -1334,7 +1350,7 @@ describe("environment shell cold start from a vouched cache", () => {
     { label: "a legacy cache without a vouch", vouch: undefined, resumes: false },
     {
       label: "another omission key",
-      vouch: { ...VOUCH, omissionKey: "true:false" },
+      vouch: { ...VOUCH, omissionKey: "true:false:" },
       resumes: false,
     },
     {
