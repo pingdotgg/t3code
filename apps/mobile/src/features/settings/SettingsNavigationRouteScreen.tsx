@@ -7,7 +7,7 @@ import {
   moveNavigationTab,
   navigationCustomizationAvailable,
   toggleNavigationTabVisibility,
-} from "../workspace/navigation-tab-order";
+} from "../layout/workspace/navigation-tab-order";
 import { AppText as Text } from "../../components/ui/AppText";
 import { IconButton } from "../../components/ui/IconButton";
 import { Button } from "../../components/ui/Button";
@@ -20,10 +20,10 @@ import {
   useNavigationTabOrder,
   useHiddenNavigationTabs,
   useEnabledNavigationTabs,
-} from "../workspace/navigation-tabs";
+} from "../layout/workspace/navigation-tabs";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
-import { resolveWorkspaceTabOrder } from "../workspace/workspace-tabs-state";
+import { resolveWorkspaceTabOrder } from "../layout/workspace/workspace-tabs-state";
 
 export function SettingsNavigationRouteScreen() {
   const insets = useSafeAreaInsets();
