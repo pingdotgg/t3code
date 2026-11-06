@@ -11,6 +11,7 @@ import {
   narrowPullRequestMentions,
   narrowPullRequestReferences,
   pullRequestCompletionKey,
+  pullRequestCompletionListVisible,
   pullRequestCompletionSearch,
   type PullRequestComposerTrigger,
 } from "@t3tools/shared/pullRequestComposerTrigger";
@@ -190,12 +191,13 @@ export function PullRequestMarkdownTextarea({
     completionScope === null || caret === null || props.readOnly
       ? null
       : detectPullRequestComposerTrigger(value, caret);
-  const open = trigger !== null && trigger.rangeStart !== dismissedAt;
+  const searching = trigger !== null && trigger.rangeStart !== dismissedAt;
   const {
     completions: candidates,
     isPending,
     failed,
-  } = useCompletions(completionScope, open ? trigger : null);
+  } = useCompletions(completionScope, searching ? trigger : null);
+  const open = searching && pullRequestCompletionListVisible(trigger, candidates.length);
   const activeIndex =
     trigger !== null && highlight.query === trigger.query
       ? Math.min(highlight.index, Math.max(0, candidates.length - 1))

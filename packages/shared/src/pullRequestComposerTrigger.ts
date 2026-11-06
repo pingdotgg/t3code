@@ -48,6 +48,14 @@ export function insertPullRequestCompletion(
 // shorter text narrows the unsearched list locally instead. A number is looked up as typed.
 const MIN_HOST_SEARCH = 3;
 
+/** `!` is also punctuation and links nothing on hosts that only use `#`, so it stays quiet when empty. */
+export function pullRequestCompletionListVisible(
+  trigger: Pick<PullRequestComposerTrigger, "sigil">,
+  candidateCount: number,
+): boolean {
+  return trigger.sigil !== "!" || candidateCount > 0;
+}
+
 /** The search to send the host for what follows the trigger's sigil, if any. */
 export function pullRequestCompletionSearch(
   trigger: Pick<PullRequestComposerTrigger, "kind" | "query">,

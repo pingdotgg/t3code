@@ -13,6 +13,7 @@ import {
   narrowPullRequestMentions,
   narrowPullRequestReferences,
   pullRequestCompletionKey,
+  pullRequestCompletionListVisible,
   pullRequestCompletionSearch,
 } from "@t3tools/shared/pullRequestComposerTrigger";
 import * as Option from "effect/Option";
@@ -99,7 +100,10 @@ export function usePullRequestCompletions(input: {
           );
 
   return {
-    kind: trigger?.kind ?? null,
+    kind:
+      trigger !== null && pullRequestCompletionListVisible(trigger, candidates.length)
+        ? trigger.kind
+        : null,
     candidates,
     isLoading: hosted.waiting || sent !== search,
     failed: hosted.failed,

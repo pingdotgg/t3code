@@ -7,6 +7,7 @@ import {
   narrowPullRequestMentions,
   narrowPullRequestReferences,
   pullRequestCompletionSearch,
+  pullRequestCompletionListVisible,
 } from "./pullRequestComposerTrigger.ts";
 
 describe("detectPullRequestComposerTrigger", () => {
@@ -122,5 +123,14 @@ describe("narrowPullRequestReferences", () => {
     expect(narrowed("#", "12")).toEqual(["#12", "#3", "#120"]);
     expect(narrowed("!", "CRASH")).toEqual(["!12"]);
     expect(narrowed("#", "")).toEqual(["#12", "#3", "#120"]);
+  });
+});
+
+describe("pullRequestCompletionListVisible", () => {
+  it("keeps a bare ! quiet until the host has something it links", () => {
+    expect(pullRequestCompletionListVisible({ sigil: "!" }, 0)).toBe(false);
+    expect(pullRequestCompletionListVisible({ sigil: "!" }, 1)).toBe(true);
+    expect(pullRequestCompletionListVisible({ sigil: "#" }, 0)).toBe(true);
+    expect(pullRequestCompletionListVisible({ sigil: "@" }, 0)).toBe(true);
   });
 });
