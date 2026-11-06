@@ -10,16 +10,22 @@ describe("imageMime", () => {
     });
   });
 
-  it("parses base64 data URL with spaces in payload", () => {
-    expect(parseBase64DataUrl("data:image/png;base64,SGVs bG8=\n")).toEqual({
-      mimeType: "image/png",
-      base64: "SGVsbG8=",
-    });
-  });
+  it.each(["\t", "\n", "\f", "\r", " "])(
+    "parses base64 data URL with ASCII whitespace %j",
+    (space) => {
+      expect(parseBase64DataUrl(`data:image/png;base64,SGVs${space}bG8=\n`)).toEqual({
+        mimeType: "image/png",
+        base64: "SGVsbG8=",
+      });
+    },
+  );
 
   it("rejects payload with characters outside the base64 alphabet", () => {
     expect(parseBase64DataUrl("data:image/png;base64,SGVs!bG8=")).toBeNull();
     expect(parseBase64DataUrl("data:image/png;base64,SGVs,bG8=")).toBeNull();
+    for (const space of ["\v", "\u00a0", "\u2003"]) {
+      expect(parseBase64DataUrl(`data:image/png;base64,SGVs${space}bG8=`)).toBeNull();
+    }
   });
 
   // regression: #3952 image upload crashed dispatchCommand with a stack overflow
@@ -43,7 +49,7 @@ describe("imageMime", () => {
 
   it("rejects empty and whitespace-only payloads", () => {
     expect(parseBase64DataUrl("data:image/png;base64,")).toBeNull();
-    expect(parseBase64DataUrl("data:image/png;base64, \r\n")).toBeNull();
+    expect(parseBase64DataUrl("data:image/png;base64, \t\r\n\f")).toBeNull();
   });
 
   it("parses a case-insensitive scheme and mime type", () => {
