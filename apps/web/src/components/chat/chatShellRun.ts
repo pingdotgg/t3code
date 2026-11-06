@@ -20,6 +20,8 @@ export type ChatShellCommandRunner = (
 export interface ChatShellRunOutput {
   readonly text: string;
   readonly exitCode: number | null;
+  /** Set when the terminal failed before the command reported an exit code. */
+  readonly error?: string;
 }
 
 export function createChatShellRunId(): string {
@@ -89,7 +91,11 @@ export function chatShellRunResultMessage(command: string, output: ChatShellRunO
     "Command:",
     command,
     "",
-    `Exit code: ${output.exitCode}`,
+    output.exitCode === null
+      ? `The terminal ended before the command reported an exit code${
+          output.error ? ` (terminal error: ${output.error})` : ""
+        }. The output below may be incomplete.`
+      : `Exit code: ${output.exitCode}`,
     text.length < output.text.length ? `Output (last ${text.length} characters):` : "Output:",
     text,
     `</${RESULT_MESSAGE_TAG}>`,

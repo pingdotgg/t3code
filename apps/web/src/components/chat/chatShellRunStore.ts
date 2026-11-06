@@ -49,7 +49,11 @@ export function watchChatShellRun(
       session.status === "exited" || (session.status === "closed" && session.version > 0);
     if (output.exitCode === null && !ended && session.error === null) return;
     unsubscribe();
-    if (output.exitCode === null && session.error !== null) return;
+    if (output.exitCode === null && session.error !== null) {
+      // The terminal failed mid-run, so it is not idle at a prompt and stays out of the reuse set.
+      onFinished({ ...output, error: String(session.error) });
+      return;
+    }
     finishedRunIds.add(run.id);
     onFinished(output);
   });

@@ -85,6 +85,15 @@ describe("chatShellRunResultMessage", () => {
     expect(isChatShellRunResultMessage(message)).toBe(true);
   });
 
+  it("says when the terminal ended without an exit code, with any terminal error", () => {
+    const ended = chatShellRunResultMessage("sleep 9", { text: "partial", exitCode: null });
+    expect(ended).toContain("ended before the command reported an exit code");
+    expect(ended).not.toContain("Exit code: null");
+    expect(ended).toContain("partial");
+    const failed = chatShellRunResultMessage("x", { text: "", exitCode: null, error: "boom" });
+    expect(failed).toContain("terminal error: boom");
+  });
+
   it("keeps the end of very long output", () => {
     const message = chatShellRunResultMessage("x", {
       text: `${"a".repeat(30_000)}END`,
