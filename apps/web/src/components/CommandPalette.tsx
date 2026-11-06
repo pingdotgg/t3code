@@ -134,6 +134,7 @@ import {
 } from "../state/environments";
 import {
   useAnyEnvironmentHiding,
+  useDelegatedUnderParent,
   useHiddenThreadKeys,
   useEnvironmentThreadRefs,
   useProjects,
@@ -219,6 +220,7 @@ import {
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import {
   collectVisiblePullRequestUrls,
+  filterSidebarV2VisibleThreads,
   isSidebarHiddenThread,
   isSidebarIdleThread,
 } from "./Sidebar.logic";
@@ -510,8 +512,9 @@ function OpenCommandPaletteDialog(props: {
   };
   // Side chats and subagents open inside their parent, so opening a project never lands on one.
   const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
+  const delegatedUnderParent = useDelegatedUnderParent();
   const idlePullRequestUrls = collectVisiblePullRequestUrls(
-    threads.filter((thread) =>
+    filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent).filter((thread) =>
       isSidebarIdleThread(thread, {
         now: nowMinute,
         configLoaded: serverConfigs.has(thread.environmentId),
