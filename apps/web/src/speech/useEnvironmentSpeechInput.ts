@@ -535,8 +535,19 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       if (
         modelId !== currentStatus.modelId &&
         models.some(({ id, state }) => id === modelId && state === "installed")
-      )
-        await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
+      ) {
+        try {
+          await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
+        } catch {
+          if (request !== startRequestRef.current) return;
+          setSetup((current) => ({
+            ...current,
+            downloading: false,
+            error: "The model downloaded, but this environment could not select it. Try again.",
+          }));
+          return;
+        }
+      }
       if (request !== startRequestRef.current) return;
       const next = await probeSpeechStatus(prepared, true);
       if (request !== startRequestRef.current) return;
