@@ -462,6 +462,8 @@ continuation, a scheduled task's run, or a monitor notification's run is passed
 over.
 Queued runs can start out of order, so start time orders them; a run that failed
 to start counts once it ends, and one held or removed from the queue does not.
+`runId` and `untilDelegatedWorkSettled` do not apply then, and a timeout reports
+`afterRunId`'s latest restart with `timedOut: true`.
 
 ### `t3_thread_interrupt`
 
