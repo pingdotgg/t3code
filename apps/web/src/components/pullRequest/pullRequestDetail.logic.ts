@@ -1149,7 +1149,7 @@ export function buildPullRequestCommentContext(
   return {
     id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
-    sectionTitle: `PR #${pullRequestNumber} conversation`,
+    sectionTitle: `${currentChangeRequestTerms().shortLabel} #${pullRequestNumber} conversation`,
     // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
     filePath: comment.path ?? `@${author}`,
     startIndex: 0,
