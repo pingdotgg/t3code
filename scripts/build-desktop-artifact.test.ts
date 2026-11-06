@@ -914,6 +914,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(result.unpackedFiles, ["node_modules/native/addon.node"]);
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
+
+        for (let index = result.fileCount; index < 82; index += 1) {
+          yield* fs.writeFileString(
+            path.join(fixture.packagedAppDir, `runtime-${String(index)}.dat`),
+            "runtime",
+          );
+        }
+        const currentPayload = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
+        });
+        assert.equal(currentPayload.fileCount, 82);
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
@@ -1311,6 +1325,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "file-limit-exceeded");
         assert.isAbove(error.fileCount ?? 0, 2);
+
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        for (
+          let index = error.fileCount ?? 0;
+          index <= WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT;
+          index += 1
+        ) {
+          yield* fs.writeFileString(
+            path.join(fixture.packagedAppDir, `runtime-${String(index)}.dat`),
+            "runtime",
+          );
+        }
+        const defaultLimitError = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
+        }).pipe(Effect.flip);
+        assert.instanceOf(defaultLimitError, WindowsPackagedPayloadValidationError);
+        assert.equal(defaultLimitError.reason, "file-limit-exceeded");
+        assert.equal(defaultLimitError.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT + 1);
+        assert.equal(defaultLimitError.fileLimit, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
       }),
     ),
   );
