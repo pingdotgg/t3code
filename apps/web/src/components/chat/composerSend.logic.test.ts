@@ -7,6 +7,7 @@ import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
   approvalsForComposerRedirect,
+  composerDraftChangedSinceSend,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -146,5 +147,41 @@ describe("approvalsForComposerRedirect", () => {
     expect(
       approvalsForComposerRedirect({ ...input, dispatchMode: "steer", sameThread: false }),
     ).toEqual([]);
+  });
+});
+
+describe("composerDraftChangedSinceSend", () => {
+  const sent = {
+    pendingAttachments: false,
+    prompt: "Queue this",
+    sentPrompts: ["Queue this"],
+    attachmentIds: ["upload"],
+    sentAttachmentIds: ["upload"],
+    annotationImageId: undefined,
+  };
+
+  it("catches text, attachments and pastes added while the send uploads", () => {
+    expect(composerDraftChangedSinceSend(sent)).toBe(false);
+    expect(composerDraftChangedSinceSend({ ...sent, prompt: "Queue this too" })).toBe(true);
+    expect(composerDraftChangedSinceSend({ ...sent, attachmentIds: ["upload", "added"] })).toBe(
+      true,
+    );
+    expect(composerDraftChangedSinceSend({ ...sent, pendingAttachments: true })).toBe(true);
+  });
+
+  it("ignores the annotation a direct annotation send writes into the draft", () => {
+    const annotated = {
+      ...sent,
+      sentPrompts: ["Queue this", "Queue this @annotation"],
+      sentAttachmentIds: ["upload", "annotation"],
+      annotationImageId: "annotation",
+    };
+    expect(composerDraftChangedSinceSend(annotated)).toBe(false);
+    expect(composerDraftChangedSinceSend({ ...annotated, prompt: "Queue this @annotation" })).toBe(
+      false,
+    );
+    expect(
+      composerDraftChangedSinceSend({ ...annotated, attachmentIds: ["upload", "annotation"] }),
+    ).toBe(false);
   });
 });

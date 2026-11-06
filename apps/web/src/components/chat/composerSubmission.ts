@@ -19,7 +19,7 @@ export function getComposerPromptInputLength(prompt: string): number {
   );
 }
 
-export function getComposerPromptLengthValidationMessage(prompt: string): string | null {
+function getComposerPromptLengthValidationMessage(prompt: string): string | null {
   const inputLength = getComposerPromptInputLength(prompt);
   const excessCharacters = inputLength - PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
   if (excessCharacters <= 0) return null;

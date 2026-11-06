@@ -94,6 +94,7 @@ import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
   approvalsForComposerRedirect,
+  composerDraftChangedSinceSend,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -921,36 +922,28 @@ export function useComposerSend(input: ComposerSendInput) {
       dispatchMode,
       sameThread: currentRouteThreadKeyRef.current === routeThreadKey,
     });
-    if (approvalsToDecline.length > 0 || approvalFeedbackTarget !== undefined) {
-      // A draft edited since send, or a paste still landing in it, is no longer the message
-      // the user sent.
-      const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
-      // A direct annotation send writes its image and reference into the draft as it sends,
-      // so the live draft may still lack them; anything else differing is a real edit.
-      const annotationImageId = directAnnotation?.image?.id;
-      const attachmentIdsBeforeAnnotation = attachmentIdsAtSend.filter(
-        (id) => id !== annotationImageId,
-      );
-      const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
-        left.length === right.length && left.every((id, index) => id === right[index]);
-      const draftChangedSinceSend = () => {
-        if (composerRef.current?.hasPendingAttachments() === true) return true;
-        const sendContext = composerRef.current?.getSendContext();
-        const attachmentIds = sendContext
+    const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
+    // A draft edited since send, or a paste still landing in it, is no longer the message
+    // the user sent. A direct annotation send writes its image and reference into the draft
+    // as it sends, so the live draft may still lack them.
+    const draftChangedSinceSend = () => {
+      const sendContext = composerRef.current?.getSendContext();
+      return composerDraftChangedSinceSend({
+        pendingAttachments: composerRef.current?.hasPendingAttachments() === true,
+        prompt: promptRef.current,
+        sentPrompts: [promptAtSend, promptForSend],
+        attachmentIds: sendContext
           ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
-          : attachmentIdsAtSend;
-        const promptUnchanged =
-          promptRef.current === promptAtSend || promptRef.current === promptForSend;
-        const attachmentsUnchanged =
-          sameIds(attachmentIds, attachmentIdsAtSend) ||
-          (annotationImageId !== undefined &&
-            sameIds(attachmentIds, attachmentIdsBeforeAnnotation));
-        return !promptUnchanged || !attachmentsUnchanged;
-      };
+          : attachmentIdsAtSend,
+        sentAttachmentIds: attachmentIdsAtSend,
+        annotationImageId: directAnnotation?.image?.id,
+      });
+    };
+    const changedBeforeDispatch = draftChangedSinceSend();
+    if (approvalsToDecline.length > 0 || approvalFeedbackTarget !== undefined) {
       const draftBeforeDecline = useComposerDraftStore
         .getState()
         .getComposerDraft(composerDraftTarget);
-      const changedBeforeDecline = draftChangedSinceSend();
       const pendingIdsBeforeDecline = pendingApprovalsRef.current.map(
         (approval) => approval.requestId,
       );
@@ -967,7 +960,7 @@ export function useComposerSend(input: ComposerSendInput) {
           return;
         }
         if (
-          changedBeforeDecline ||
+          changedBeforeDispatch ||
           approvalResponding ||
           currentRouteThreadKeyRef.current !== routeThreadKey
         ) {
@@ -994,13 +987,13 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
       const declined =
-        !changedBeforeDecline &&
+        !changedBeforeDispatch &&
         !approvalResponding &&
         (await declinePendingApprovals(approvalsToDecline, onRespondToApprovalStable).catch(
           () => false,
         ));
       const draftChanged =
-        changedBeforeDecline ||
+        changedBeforeDispatch ||
         draftChangedSinceSend() ||
         useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) !==
           draftBeforeDecline;
@@ -1034,6 +1027,17 @@ export function useComposerSend(input: ComposerSendInput) {
         }
         return;
       }
+    } else if (changedBeforeDispatch) {
+      sendInFlightRef.current = false;
+      setDockedDraftHeroThreadKey((currentThreadKey) =>
+        currentThreadKey === activeThreadKey ? null : currentThreadKey,
+      );
+      toastManager.add({
+        type: "info",
+        title: "Your message changed, so it wasn't sent.",
+        description: "Send again when it's ready.",
+      });
+      return;
     }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
