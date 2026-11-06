@@ -232,7 +232,11 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
   const dest = piT3McpExtensionDestPath(cacheDir);
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
   if (existing !== PI_T3_MCP_EXTENSION_SOURCE) {
-    yield* fs.writeFileString(dest, PI_T3_MCP_EXTENSION_SOURCE);
+    // Concurrent pi launches read this file: write to a sibling and rename so
+    // a reader never observes the truncated mid-write state.
+    const staging = `${dest}.materializing`;
+    yield* fs.writeFileString(staging, PI_T3_MCP_EXTENSION_SOURCE);
+    yield* fs.rename(staging, dest).pipe(Effect.retry({ times: 3 }));
   }
   return dest;
 });
