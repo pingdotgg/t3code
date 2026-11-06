@@ -546,8 +546,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
-      let customAnswerFollowUp: { readonly titlePrefix: string; readonly value: string } | null =
-        null;
+      // Custom answers waiting for their ask_user_question follow-up input, keyed by title prefix.
+      const customAnswerFollowUps = new Map<string, string>();
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -1404,6 +1404,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) {
         const pending = Array.from(pendingPrompts.values());
         pendingPrompts.clear();
+        customAnswerFollowUps.clear();
         yield* Effect.forEach(pending, (prompt) => cancelPrompt(prompt, resolvedAt), {
           discard: true,
         });
@@ -1488,18 +1489,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         if (nativeRequestId === undefined) return;
-        const followUp = customAnswerFollowUp;
-        customAnswerFollowUp = null;
-        if (
-          followUp !== null &&
-          method === "input" &&
-          recordString(event, "title")?.startsWith(followUp.titlePrefix)
-        ) {
-          yield* connection.send({
-            type: "extension_ui_response",
-            id: nativeRequestId,
-            value: followUp.value,
-          });
+        const inputTitle = method === "input" ? (recordString(event, "title") ?? "") : "";
+        const followUpPrefix = Array.from(customAnswerFollowUps.keys())
+          .filter((prefix) => inputTitle.startsWith(prefix))
+          .reduce<string | undefined>(
+            (longest, prefix) => (prefix.length > (longest?.length ?? -1) ? prefix : longest),
+            undefined,
+          );
+        if (followUpPrefix !== undefined) {
+          const value = customAnswerFollowUps.get(followUpPrefix) ?? "";
+          customAnswerFollowUps.delete(followUpPrefix);
+          yield* connection.send({ type: "extension_ui_response", id: nativeRequestId, value });
           return;
         }
         const approvalTitle = recordString(event, "title") ?? "";
@@ -3032,10 +3032,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               response["value"].trim().length > 0 &&
               !route.lines.includes(response["value"])
             ) {
-              customAnswerFollowUp = {
-                titlePrefix: route.followUpTitlePrefix,
-                value: response["value"],
-              };
+              customAnswerFollowUps.set(route.followUpTitlePrefix, response["value"]);
               response = { value: route.sentinel };
             }
             yield* connection.send({

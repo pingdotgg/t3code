@@ -3983,6 +3983,23 @@ describe("PiAdapterV2", () => {
       });
       const selectResponse = yield* fake.takeRequest("extension_ui_response");
       assert.equal(selectResponse["value"], "3. Type something.");
+      // A parallel tool's dialog can arrive before the extension's follow-up input.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-other",
+        method: "input",
+        title: "Anything else?",
+      });
+      const other = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "user_input_request" &&
+          event.turnItem.status === "waiting",
+      );
+      assert.equal(
+        other.type === "turn_item.updated" ? other.turnItem.title : undefined,
+        "Anything else?",
+      );
       yield* fake.emit({
         type: "extension_ui_request",
         id: "ui-custom",
@@ -3994,22 +4011,6 @@ describe("PiAdapterV2", () => {
       assert.deepEqual(
         { id: inputResponse["id"], value: inputResponse["value"] },
         { id: "ui-custom", value: "2" },
-      );
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-next",
-        method: "input",
-        title: "Anything else?",
-      });
-      const next = yield* takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "user_input_request" &&
-          event.turnItem.status === "waiting",
-      );
-      assert.equal(
-        next.type === "turn_item.updated" ? next.turnItem.title : undefined,
-        "Anything else?",
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
