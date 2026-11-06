@@ -2915,13 +2915,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       runFork(
         prepareWebview(contents).pipe(
           Effect.andThen(
-            withTabLifecycleLock(tabId, registerWebviewUnlocked(tabId, contents.id, generation)),
-          ),
-          Effect.andThen(update(tabId, { detached: true })),
-          // A close that landed before this commit already cleared detached; undo our stale write.
-          Effect.andThen(
-            Effect.suspend(() =>
-              window.isDestroyed() ? update(tabId, { detached: false }) : Effect.void,
+            withTabLifecycleLock(
+              tabId,
+              registerWebviewUnlocked(tabId, contents.id, generation).pipe(
+                // Under the lock, so a close or recreate can't land between registering and this write.
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    window.isDestroyed() || tabWindows.get(tabId) !== window
+                      ? Effect.void
+                      : update(tabId, { detached: true }),
+                  ),
+                ),
+              ),
             ),
           ),
           Effect.catchCause((cause) =>
