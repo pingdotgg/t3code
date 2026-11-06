@@ -16,7 +16,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { type AcpError } from "effect-acp/errors";
+import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
 
@@ -115,7 +115,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
         }),
       );
       return yield* Fiber.await(child).pipe(
-        Effect.flatMap((exit) => exit),
+        Effect.flatten,
         Effect.ensuring(Fiber.interrupt(child)),
       );
     });
@@ -453,6 +453,27 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
   );
 
   it.effect.each([
+    {
+      code: -32000,
+      detail: "Sign in to Antigravity in Settings before you continue.",
+    },
+    { code: -32603, detail: "Antigravity text generation failed." },
+  ])("maps ACP error $code from the prompt request to a fixed detail", ({ code, detail }) =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        prompt: () =>
+          Effect.fail(new AcpRequestError({ code, errorMessage: "Raw provider failure text." })),
+      });
+      const error = yield* fixture.textGeneration
+        .generateThreadTitle(fixture.titleInput)
+        .pipe(Effect.flip);
+      expect(error.detail).toBe(detail);
+      expect(error.detail).not.toContain("Raw provider failure text.");
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
     { relativePath: "unexpected.txt", kind: "file" },
     { relativePath: ".agents/skills/unexpected.txt", kind: "file" },
     { relativePath: ".gemini/unexpected", kind: "directory" },
@@ -551,6 +572,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .generateThreadTitle(fixture.titleInput)
         .pipe(Effect.flip);
       expect(error._tag).toBe("TextGenerationError");
+      expect(error.detail).toBe("Sign in before starting Antigravity.");
       expect(fixture.state.workspaces).toEqual([]);
       yield* fixture.assertCleaned;
     }).pipe(Effect.scoped),
