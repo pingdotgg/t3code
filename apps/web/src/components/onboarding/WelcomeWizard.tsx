@@ -15,10 +15,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AgentSessionSource,
   AuthTerminalOperateScope,
   CommandId,
   defaultInstanceIdForDriver,
   AuthOrchestrationOperateScope,
+  isManagedDriverAllowed,
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
@@ -59,6 +61,11 @@ import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, waitForProject } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
+import {
+  managedInstanceLocks,
+  managedTelemetryOffMessage,
+  usePrimaryManagedPolicy,
+} from "../../state/managedPolicy";
 import {
   isOnboardingRelayEnvironment,
   resolveOnboardingSetup,
@@ -124,6 +131,7 @@ export function WelcomeWizard({
   const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
     resumeEnvironmentId ? [resumeEnvironmentId] : [],
   );
+  const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
@@ -279,6 +287,8 @@ export function WelcomeWizard({
           ) : (
             <ImportStep
               scans={scans}
+              importSelection={importSelection}
+              onImportSelectionChange={setImportSelection}
               isImporting={isImporting}
               setIsImporting={setIsImporting}
               onDone={finish}
@@ -309,6 +319,7 @@ function ConnectionStep({
   readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
   const { environments } = useEnvironments();
+  const telemetryOff = managedTelemetryOffMessage(usePrimaryManagedPolicy());
   const cloudEnabled = hasCloudPublicConfig();
   const directEnvironments = environments.filter(
     (environment) => !cloudEnabled || !isOnboardingRelayEnvironment(environment),
@@ -433,8 +444,9 @@ function ConnectionStep({
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          T3 Code collects anonymous usage data to help us improve it. To read more about how your
-          data is used and how to opt out, see our{" "}
+          {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
+          more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
+          see our{" "}
           <a
             className="underline underline-offset-2 hover:text-foreground"
             href={PRIVACY_POLICY_URL}
@@ -637,12 +649,12 @@ function PairingForm({
           </div>
           <CollapsiblePanel>
             <p className="pt-3 text-sm text-muted-foreground">
-              Run this on the computer with your code.
+              On the computer with your code, start T3 Code or run{" "}
+              <code className="font-mono">npx t3 serve</code>, then run:
             </p>
             <CommandBlock command="npx t3 pair" className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Start T3 Code first, or run <code className="font-mono">npx t3 serve</code>. Add{" "}
-              <code className="font-mono">--tailscale</code> to use your tailnet.
+              On a tailnet, run <code className="font-mono">npx t3 pair --tailscale</code> instead.
             </p>
           </CollapsiblePanel>
         </Collapsible>
@@ -727,8 +739,16 @@ function ConnectedAgentsStep({
   }, [environmentId, refreshProviders]);
 
   const byDriver = selectOnboardingProvidersByDriver(providers);
+  const managedPolicy = serverConfig?.managedPolicy;
+  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
+  const chatGptAllowed =
+    managedInstanceLocks(managedPolicy, ProviderDriverKind.make("codex"))?.configKeys.has(
+      "setupMode",
+    ) !== true;
 
-  const primaryAgents = PRIMARY_AGENT_DRIVERS.flatMap((driver) => {
+  const primaryAgents = PRIMARY_AGENT_DRIVERS.filter((driver) =>
+    isManagedDriverAllowed(managedPolicy, ProviderDriverKind.make(driver)),
+  ).flatMap((driver) => {
     const instances =
       driver === "codex" ? providers?.filter((provider) => provider.driver === driver) : undefined;
     return instances?.length
@@ -830,7 +850,8 @@ function ConnectedAgentsStep({
           ),
         )}
       </div>
-      {providers?.some(
+      {chatGptAllowed &&
+      providers?.some(
         (provider) =>
           provider.driver === "codex" && getOnboardingProviderState(provider) === "ready",
       ) ? (
@@ -1172,13 +1193,23 @@ function AgentInstallTerminal({
 
 const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
 
+interface ImportSelection {
+  // Computers whose projects were listed when the selection changed; later ones get the defaults.
+  readonly environmentIds: ReadonlySet<EnvironmentId>;
+  readonly keys: ReadonlySet<string>;
+}
+
 function ImportStep({
   scans,
+  importSelection,
+  onImportSelectionChange,
   isImporting,
   setIsImporting,
   onDone,
 }: {
   readonly scans: ReturnType<typeof useProjectScans>;
+  readonly importSelection: ImportSelection | null;
+  readonly onImportSelectionChange: (next: ImportSelection) => void;
   readonly isImporting: boolean;
   readonly setIsImporting: (value: boolean) => void;
   readonly onDone: (
@@ -1191,7 +1222,6 @@ function ImportStep({
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
-  const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
   const importWarningRef = useRef("");
   const importedThreadCountRef = useRef(0);
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
@@ -1219,8 +1249,20 @@ function ImportStep({
       })),
     ),
   );
-  const selectedKeys = selectedPaths ?? new Set(recent.map((candidate) => candidate.key));
-  const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
+  const recentKeys = new Set(recent.map((candidate) => candidate.key));
+  const selected = candidates.filter((candidate) =>
+    importSelection?.environmentIds.has(candidate.environmentId)
+      ? importSelection.keys.has(candidate.key)
+      : recentKeys.has(candidate.key),
+  );
+  const selectedKeys = new Set(selected.map((candidate) => candidate.key));
+  const setSelectedKeys = (keys: ReadonlySet<string>) =>
+    onImportSelectionChange({
+      environmentIds: new Set(
+        scans.flatMap((scan) => (scan.data === null ? [] : [scan.environmentId])),
+      ),
+      keys,
+    });
 
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
@@ -1430,7 +1472,7 @@ function ImportStep({
               variant="ghost"
               size="xs"
               disabled={isImporting || selected.length === candidates.length}
-              onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
+              onClick={() => setSelectedKeys(new Set(candidates.map((item) => item.key)))}
             >
               Select all
             </Button>
@@ -1438,7 +1480,7 @@ function ImportStep({
               variant="ghost"
               size="xs"
               disabled={isImporting || selected.length === 0}
-              onClick={() => setSelectedPaths(new Set())}
+              onClick={() => setSelectedKeys(new Set())}
             >
               Select none
             </Button>
@@ -1491,7 +1533,7 @@ function ImportStep({
                 <ImportCandidateList
                   candidates={scanCandidates}
                   selectedKeys={selectedKeys}
-                  onSelectionChange={setSelectedPaths}
+                  onSelectionChange={setSelectedKeys}
                 />
               </fieldset>
             );
@@ -1715,41 +1757,38 @@ function ImportCandidateRow({
   );
 }
 
+const IMPORT_SOURCE_NAMES: Record<AgentSessionSource, string> = {
+  claudeAgent: "Claude Code",
+  codex: "Codex",
+  pi: "Pi",
+};
+
 function ImportRowMeta({
   sources,
   threadCount,
   lastActiveAt,
 }: {
-  readonly sources: ReadonlyArray<"claudeAgent" | "codex"> | null;
+  readonly sources: ReadonlyArray<AgentSessionSource> | null;
   readonly threadCount: number;
   readonly lastActiveAt: string | null;
 }) {
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
   const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
   return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
-      <span className="flex size-4 items-center justify-center">
-        {sources?.includes("claudeAgent") ? (
-          <span role="img" aria-label="Claude Code">
-            <ProviderInstanceIcon
-              driverKind={ProviderDriverKind.make("claudeAgent")}
-              displayName="Claude Code"
-              iconClassName="size-3"
-            />
-          </span>
-        ) : null}
-      </span>
-      <span className="flex size-4 items-center justify-center">
-        {sources?.includes("codex") ? (
-          <span role="img" aria-label="Codex">
-            <ProviderInstanceIcon
-              driverKind={ProviderDriverKind.make("codex")}
-              displayName="Codex"
-              iconClassName="size-3"
-            />
-          </span>
-        ) : null}
-      </span>
+    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
+      {AgentSessionSource.literals.map((source) => (
+        <span key={source} className="flex size-4 items-center justify-center">
+          {sources?.includes(source) ? (
+            <span role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
+              <ProviderInstanceIcon
+                driverKind={ProviderDriverKind.make(source)}
+                displayName={IMPORT_SOURCE_NAMES[source]}
+                iconClassName="size-3"
+              />
+            </span>
+          ) : null}
+        </span>
+      ))}
       <span className="text-right">{threadCount}</span>
       <span className="text-right whitespace-nowrap">{age}</span>
     </span>

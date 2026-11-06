@@ -183,6 +183,29 @@ describe("ServerBrowserContexts", () => {
     await pool.close();
   });
 
+  it("waits for the context to close when the same profile is cleared concurrently", async () => {
+    const human = makeContext();
+    const closed = Promise.withResolvers<void>();
+    human.close.mockImplementation(async () => closed.promise);
+    launches.persistent.mockResolvedValue(human as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("work/team");
+
+    const first = pool.clearProfile("work/team");
+    const second = pool.clearProfile("work/team");
+    const deletionsBeforeClose = launches.rm.mock.calls.length;
+    closed.resolve();
+    await Promise.all([first, second]);
+
+    expect(deletionsBeforeClose).toBe(0);
+    expect(human.close).toHaveBeenCalledTimes(1);
+    expect(launches.rm).toHaveBeenCalledExactlyOnceWith("/test/profiles/work%2Fteam", {
+      recursive: true,
+      force: true,
+    });
+    await pool.close();
+  });
+
   it("opens a profile requested during its clear only after the storage is deleted", async () => {
     launches.persistent.mockImplementation(async () => makeContext() as unknown as BrowserContext);
     const configuration = options();

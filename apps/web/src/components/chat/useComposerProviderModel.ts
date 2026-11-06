@@ -70,6 +70,7 @@ export function useComposerProviderModel(
     providers: providerStatuses,
     selectedProvider,
     selectedInstanceId,
+    requestedInstanceId: selection.requestedInstanceId,
     threadModelSelection,
     projectModelSelection,
     settings,
