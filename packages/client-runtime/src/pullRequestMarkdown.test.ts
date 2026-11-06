@@ -239,6 +239,11 @@ describe("media tables", () => {
     ],
     ["an unclosed table", "<table>\n<tr><td>", ""],
     ["a spanning cell", '<table>\n<tr><td colspan="2">', "</td></tr>\n</table>"],
+    [
+      "an indented cell",
+      "<table>\n  <tr>\n    <th>\n      Before\n    </th>\n  </tr>\n  <tr><td>",
+      "</td></tr>\n</table>",
+    ],
   ])("splits a media table with %s line by line, as before", (_name, open, close) => {
     const body = `${open}\n\n${video}\n\n${close}`;
     expect(splitPullRequestBody(body)).toEqual([

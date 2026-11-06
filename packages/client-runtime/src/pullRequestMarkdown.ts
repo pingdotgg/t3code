@@ -100,12 +100,13 @@ function tableRows(html: string, htmlOffset: number): TableRows | null {
     const tag = match[2]!.toLowerCase();
     if (cell !== null) {
       if (!closing || tag !== cell.tag) return null;
+      const content = html.slice(cell.contentStart, match.index);
+      // Indented HTML would render as a code block once the cell is markdown on its own.
+      if (content.split("\n").some((line) => INDENTED_CODE_PATTERN.test(line) && line.trim()))
+        return null;
       row!.push({
         header: tag === "th",
-        segments: splitBodyAt(
-          html.slice(cell.contentStart, match.index),
-          htmlOffset + cell.contentStart,
-        ),
+        segments: splitBodyAt(content, htmlOffset + cell.contentStart),
       });
       cell = null;
     } else {
