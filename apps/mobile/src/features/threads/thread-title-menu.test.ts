@@ -95,9 +95,9 @@ describe("thread title actions", () => {
     expect(ids({ thread: settled, hasQueuedMessages: true })).toContain("settle");
     expect(ids({ thread: settled, hasQueuedMessages: true })).not.toContain("unsettle");
   });
-  it("cannot snooze a thread waiting for a response", () => {
+  it("cannot snooze a thread waiting for approval, but can while it asks a question", () => {
     expect(ids({ thread: { ...thread, hasPendingApprovals: true } })).not.toContain("snooze");
-    expect(ids({ thread: { ...thread, hasPendingUserInput: true } })).not.toContain("snooze");
+    expect(ids({ thread: { ...thread, hasPendingUserInput: true } })).toContain("snooze");
   });
   it("returns snooze after expiry and provides future presets", () => {
     const actions = menu({ thread: { ...thread, snoozedUntil: "2026-10-17T12:00:00.000Z" } });
@@ -213,7 +213,7 @@ describe("thread title header content", () => {
     expect(idle.hasPendingUserInput).toBe(false);
     expect(asking.hasPendingUserInput).toBe(true);
     expect(ids({ thread: idle })).toContain("snooze");
-    expect(ids({ thread: asking })).not.toContain("snooze");
+    expect(ids({ thread: asking })).toContain("snooze");
     expect(threadTitleMenuVersion(asking)).not.toEqual(threadTitleMenuVersion(idle));
     expect(threadTitleMenuVersion({ ...asking, itemCount: 9 })).toEqual(
       threadTitleMenuVersion(asking),
