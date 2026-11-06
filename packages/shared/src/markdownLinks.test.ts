@@ -15,6 +15,8 @@ describe("isMarkdownFileLinkLabel", () => {
     ["validates the input", "/repo/src/example.ts:12", false],
     ["example.ts:12", "/repo/src/example.ts:12", true],
     ["example.ts:99", "/repo/src/example.ts:12", false],
+    ["example.ts:12-14", "/repo/src/example.ts:12-14", true],
+    ["example.ts:12-13", "/repo/src/example.ts:12-14", false],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
