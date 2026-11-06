@@ -75,7 +75,7 @@ export function TextFieldSpeechControls({
   return (
     <>
       {speech.preview ? (
-        <p role="status" className="w-full text-sm text-muted-foreground">
+        <p role="status" className="w-full text-body text-muted-foreground">
           {speech.preview.committed}
           <span className="opacity-70">{speech.preview.tentative}</span>
         </p>
@@ -96,11 +96,9 @@ export function TextFieldSpeechControls({
         {speech.available ? (
           <ComposerSpeechButton
             state={speech.state}
-            progress={null}
             shortcutLabel={speech.shortcutLabel}
             disabled={disabled}
             onStart={() => void speech.start()}
-            onCancel={speech.cancel}
           />
         ) : null}
       </div>
