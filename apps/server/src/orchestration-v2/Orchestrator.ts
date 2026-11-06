@@ -13409,7 +13409,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const now = yield* DateTime.now;
         const planDeletion = Effect.fn("Orchestrator.planDeletion")(function* (
           deletion: typeof command,
-          attachmentIds: ReadonlyArray<string>,
         ) {
           const projection = yield* projectionStore
             .getThreadRecords(deletion.threadId, [
@@ -13429,7 +13428,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             planThreadDeletion({
               command: deletion,
               projection,
-              attachmentIds,
               now,
               idAllocator,
             }),
@@ -13449,21 +13447,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
         // The dispatch wrapper holds each side chat's lock, so none can commit after this plan.
-        // Side chats share the parent's fork family, so the parent's plan carries its files.
-        const attachmentIds = yield* projectionStore
-          .getDeletableAttachmentIds([command.threadId, ...sideChatIds])
-          .pipe(mapDispatchError(command));
         const plans = [
-          yield* planDeletion(command, attachmentIds),
+          yield* planDeletion(command),
           ...(yield* Effect.forEach(sideChatIds, (threadId) =>
-            planDeletion(
-              {
-                ...command,
-                commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
-                threadId,
-              },
-              [],
-            ),
+            planDeletion({
+              ...command,
+              commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
+              threadId,
+            }),
           )),
         ];
         return {

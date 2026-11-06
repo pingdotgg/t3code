@@ -452,12 +452,11 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   /**
-   * Files to remove when `threadIds` are deleted together. Forks show their source's history, so
-   * a fork family (threads sharing `lineage.rootThreadId`) keeps every member's files until no
-   * member outside `threadIds` is live.
+   * Every file of this thread's fork family (threads sharing `lineage.rootThreadId`) once no
+   * member is live, else none: forks show their source's history without copying its files.
    */
   readonly getDeletableAttachmentIds: (
-    threadIds: ReadonlyArray<ThreadId>,
+    threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   readonly getThreadHistoryPage: (
     threadId: ThreadId,
@@ -5624,31 +5623,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const getDeletableAttachmentIds = Effect.fn("ProjectionStore.getDeletableAttachmentIds")(
-      function* (threadIds: ReadonlyArray<ThreadId>) {
+      function* (threadId: ThreadId) {
         const members = yield* sql<{ thread_id: string }>`
-          WITH deleting AS (SELECT value AS thread_id FROM json_each(${encodeIdList(threadIds)})),
-          members AS (
-            SELECT member.thread_id, member.deleted_at,
-              json_extract(member.payload_json, '$.lineage.rootThreadId') AS root_thread_id
+          WITH members AS (
+            SELECT member.thread_id, member.deleted_at
             FROM orchestration_v2_projection_threads AS member
-            WHERE json_extract(member.payload_json, '$.lineage.rootThreadId') IN (
+            WHERE json_extract(member.payload_json, '$.lineage.rootThreadId') = (
               SELECT json_extract(thread.payload_json, '$.lineage.rootThreadId')
               FROM orchestration_v2_projection_threads AS thread
-              WHERE thread.thread_id IN (SELECT thread_id FROM deleting)
+              WHERE thread.thread_id = ${threadId}
             )
           )
-          SELECT member.thread_id FROM members AS member
-          WHERE NOT EXISTS (
-            SELECT 1 FROM members AS live
-            WHERE live.root_thread_id = member.root_thread_id
-              AND live.deleted_at IS NULL
-              AND live.thread_id NOT IN (SELECT thread_id FROM deleting)
-          )
-        `.pipe(
-          Effect.mapError(
-            (cause) => new ProjectionStoreReadError({ threadId: threadIds[0]!, cause }),
-          ),
-        );
+          SELECT thread_id FROM members
+          WHERE NOT EXISTS (SELECT 1 FROM members WHERE deleted_at IS NULL)
+        `.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
         const ids = yield* Effect.forEach(members, (member) =>
           getThreadAttachmentIds(ThreadId.make(member.thread_id)),
         );

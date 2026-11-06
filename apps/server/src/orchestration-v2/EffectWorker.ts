@@ -538,6 +538,17 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "thread-attachments.cleanup":
+            return resourceCleanup.cleanupThreadAttachments(effect.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({
