@@ -211,7 +211,7 @@ export function modelContextRecord(
   return {
     version: 1,
     kind: "model",
-    contextId: toKindScopedComposerContextId("model", `${providerInstanceId}_${model}`),
+    contextId: toKindScopedComposerContextId("model", JSON.stringify([providerInstanceId, model])),
     label: sanitizeComposerContextLabel(label, "model"),
     payload: {
       providerInstanceId,

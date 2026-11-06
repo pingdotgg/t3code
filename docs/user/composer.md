@@ -335,7 +335,7 @@ history on demand, so attaching a long thread costs nothing until the agent look
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
 On web and desktop, the composer also completes the names of your models and, while the Linked
-environments beta is on, your machines. Type three letters or more, with or without `@`, and the
+environments beta is on, your machines. Type three letters or more of a name, without `@`, and the
 rest of the name appears as gray text after the cursor. Press Tab to turn it into a chip that tells
 the agent exactly which one you mean, or Esc to dismiss it.
 

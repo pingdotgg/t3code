@@ -16,6 +16,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  modelContextRecord,
   asKnownContextRecord,
   buildMessageContext,
   composerContextImportLookupIds,
@@ -481,5 +482,13 @@ describe("selectedMessageContextFragment", () => {
 
     expect(fragment).toContain(review.contextId);
     expect(fragment).not.toContain(terminal.contextId);
+  });
+});
+
+describe("modelContextRecord", () => {
+  it("keeps instance and model apart in its id", () => {
+    expect(modelContextRecord("a_b", "charlie", "Charlie").contextId).not.toBe(
+      modelContextRecord("a", "b_charlie", "Charlie").contextId,
+    );
   });
 });
