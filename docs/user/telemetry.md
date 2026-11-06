@@ -16,10 +16,10 @@ Claude accounts when you are signed in, and a random identifier for each device 
 permission mode, turn and request results, duration, release channel, and token counts when
 available. Child-agent token counts are reported separately from the main agent's. Model names
 are sent only when they appear in a provider's public model list. Lesson features are counted
-too: new lessons, side chats opened and finished, quiz cards, and changes to the knowledge map
-and courses.
+too: new lessons, side chats opened and finished, quiz cards and whether each answer was right,
+What's new actions, viewing and changing the knowledge map, and changes to courses.
 
-Events do not include prompts, responses, lesson text, quiz answers, file contents, authentication tokens, conversation IDs,
+Events do not include prompts, responses, lesson text, the text of quiz answers, file contents, authentication tokens, conversation IDs,
 raw provider events, or child-agent output.
 
 T3 Code also sends relay connection traces to Axiom to diagnose T3 Connect connectivity.

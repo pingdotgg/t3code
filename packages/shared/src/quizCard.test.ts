@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  quizAnswerGrade,
   quizAnswerMessage,
   quizCardProblem,
   readQuizCard,
@@ -80,5 +81,13 @@ describe("quiz cards", () => {
     expect(quizAnswerMessage({ answer: null, correct: false, thinking: "unsure" })).toBe(
       "Quiz answer: I don't know. My thinking: unsure",
     );
+  });
+  it("reads the grade back from an answer message", () => {
+    expect(quizAnswerGrade(quizAnswerMessage({ answer: "High", correct: true }))).toBe("right");
+    expect(
+      quizAnswerGrade(quizAnswerMessage({ answer: "Low", correct: false, thinking: '", right.' })),
+    ).toBe("wrong");
+    expect(quizAnswerGrade(quizAnswerMessage({ answer: null, correct: false }))).toBe("unknown");
+    expect(quizAnswerGrade("Is the answer right?")).toBe(undefined);
   });
 });

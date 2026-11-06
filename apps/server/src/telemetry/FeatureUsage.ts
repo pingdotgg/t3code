@@ -1,4 +1,9 @@
-import { type OrchestrationV2Command, WS_METHODS } from "@t3tools/contracts";
+import {
+  type OrchestrationV2Command,
+  type OrchestrationV2StoredEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import { quizAnswerGrade } from "@t3tools/shared/quizCard";
 
 export interface FeatureUsage {
   readonly feature: string;
@@ -22,8 +27,11 @@ const COMMAND_FEATURES: {
     command: Extract<OrchestrationV2Command, { readonly type: Type }>,
   ) => FeatureUsage | undefined;
 } = {
-  "message.dispatch": (command) =>
-    command.guestMessageId === undefined ? undefined : { feature: "guest_message.send" },
+  "message.dispatch": (command) => {
+    if (command.guestMessageId !== undefined) return { feature: "guest_message.send" };
+    const grade = quizAnswerGrade(command.text);
+    return grade === undefined ? undefined : use("quiz.answer", grade);
+  },
   "checkpoint.rollback": (command) => ({
     feature: "checkpoint.rollback",
     variant: command.restoreFiles === false ? "conversation_only" : "with_files",
@@ -80,6 +88,8 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
     use("lesson.create", payload.projectId === undefined ? "new_project" : "in_project"),
   [WS_METHODS.knowledgeRemove]: () => ({ feature: "knowledge_map.remove" }),
   [WS_METHODS.coursesRemove]: () => ({ feature: "course.remove" }),
+  [WS_METHODS.learnFeatureUsed]: (payload) =>
+    use(payload.feature as string, literal(payload, "variant")),
 };
 
 /** The feature a dispatched command uses, or undefined when it is not a tracked feature. */
@@ -95,4 +105,20 @@ export function commandFeatureUsage(command: OrchestrationV2Command): FeatureUsa
 export function featureUsage(method: string, payload: unknown): FeatureUsage | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
   return METHOD_FEATURES[method]?.(payload as Payload);
+}
+
+/**
+ * Side chats a sent message finished by itself (auto-finish), read from the events it committed.
+ * The Orchestrator stays free of analytics; Done and Discard are counted as their own command.
+ */
+export function autoFinishedSideChats(
+  command: OrchestrationV2Command,
+  storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>,
+): number {
+  if (command.type !== "message.dispatch") return 0;
+  return storedEvents.filter(
+    ({ event }) =>
+      event.type === "thread.metadata-updated" &&
+      event.payload.sideChat?.done?.outcome.status === "generating",
+  ).length;
 }

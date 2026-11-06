@@ -146,4 +146,31 @@ it("counts T3 Learn features without their text", () => {
   expect(featureUsage(WS_METHODS.coursesRemove, { id: "course-private" })).toEqual({
     feature: "course.remove",
   });
+  const answer = (text: string) =>
+    commandFeatureUsage(
+      command({
+        ...ids,
+        type: "message.dispatch",
+        messageId: "message-private",
+        text,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      }),
+    );
+  expect(answer('Quiz answer: "Secret pick", wrong. My thinking: secret')).toEqual({
+    feature: "quiz.answer",
+    variant: "wrong",
+  });
+  expect(answer("Quiz answer: I don't know.")).toEqual({
+    feature: "quiz.answer",
+    variant: "unknown",
+  });
+  expect(
+    featureUsage(WS_METHODS.learnFeatureUsed, { feature: "whats_new.action", variant: "courses" }),
+  ).toEqual({ feature: "whats_new.action", variant: "courses" });
+  expect(featureUsage(WS_METHODS.learnFeatureUsed, { feature: "knowledge_map.view" })).toEqual({
+    feature: "knowledge_map.view",
+  });
 });

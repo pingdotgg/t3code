@@ -40,6 +40,7 @@ import {
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationV2Command,
+  type OrchestrationV2StoredEvent,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type MessageId,
@@ -241,7 +242,11 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
+import {
+  autoFinishedSideChats,
+  commandFeatureUsage,
+  featureUsage,
+} from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -1388,8 +1393,21 @@ export const layerWsRpc = (
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
-      const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
+      const recordClientCommandAnalytics = (
+        command: OrchestrationV2Command,
+        storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>,
+      ) => {
+        const surface = originProps.surface === undefined ? {} : { surface: originProps.surface };
         const usage = commandFeatureUsage(command);
+        const autoFinished = Array.from(
+          { length: autoFinishedSideChats(command, storedEvents) },
+          () =>
+            analytics.record("feature.used", {
+              feature: "side_chat.finish",
+              variant: "auto",
+              ...surface,
+            }),
+        );
         return Effect.all(
           [
             command.type === "message.dispatch"
@@ -1397,10 +1415,8 @@ export const layerWsRpc = (
               : Effect.void,
             usage === undefined
               ? Effect.void
-              : analytics.record("feature.used", {
-                  ...usage,
-                  ...(originProps.surface === undefined ? {} : { surface: originProps.surface }),
-                }),
+              : analytics.record("feature.used", { ...usage, ...surface }),
+            ...autoFinished,
           ],
           { discard: true },
         ).pipe(Effect.ignore);
@@ -2055,7 +2071,9 @@ export const layerWsRpc = (
                 )
                 .pipe(
                   Effect.tap((result) =>
-                    result.replayed ? Effect.void : recordClientCommandAnalytics(command),
+                    result.replayed
+                      ? Effect.void
+                      : recordClientCommandAnalytics(command, result.storedEvents),
                   ),
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
@@ -2657,6 +2675,8 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetChatSyncStatus]: () => chatSync.status,
         [WS_METHODS.knowledgeList]: () => knowledgeMap.list,
         [WS_METHODS.knowledgeRemove]: (input) => knowledgeMap.remove(input.topic),
+        // RpcAuthorization's feature hook records it; there is nothing else to do.
+        [WS_METHODS.learnFeatureUsed]: () => Effect.void,
         [WS_METHODS.coursesList]: () => courses.list,
         [WS_METHODS.coursesRemove]: (input) => courses.remove(input.id),
         [WS_METHODS.visualsClear]: () => courses.clearCachedClips,
