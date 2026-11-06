@@ -1742,3 +1742,73 @@ it.effect.each(["Stop", "Force stop"] as const)(
       );
     }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect(
+  "Stop settles a delegated row whose finished child still records a running native subagent",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make("thread:held-row");
+      yield* createWatchingThread(parentThreadId, 30);
+      yield* send(parentThreadId, "parent", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, "held child");
+      const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      const now = yield* DateTime.now;
+      // A native subagent the provider never reported ending, with no open turn item.
+      yield* projections.apply({
+        id: EventId.make("event:held-row:native"),
+        type: "subagent.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: {
+          ...task,
+          id: NodeId.make("node:held-row-native"),
+          threadId: childThreadId,
+          runId: childRun.id,
+          parentNodeId: childRun.rootNodeId!,
+          origin: "provider_native",
+          childThreadId: null,
+          status: "running",
+          completionDelivery: undefined,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:held-row:child-completed"),
+        type: "run.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: { ...childRun, status: "completed", startedAt: now, completedAt: now },
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+        "running",
+      );
+
+      // The row's Stop: the parent's task, then the child thread.
+      yield* orchestrator.dispatch({
+        type: "subagent.stop",
+        commandId: CommandId.make("held-row:stop-task"),
+        threadId: parentThreadId,
+        runId: task.runId!,
+        subagentId: task.id,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("held-row:stop-child"),
+        threadId: childThreadId,
+      });
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* worker.drain();
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.notInclude(
+        ["pending", "running", "waiting"],
+        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+        "Stop leaves the finished child's row working",
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
