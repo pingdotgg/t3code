@@ -10,6 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../Orchestrator.ts";
@@ -18,6 +19,8 @@ import * as ThreadLaunchService from "../ThreadLaunchService.ts";
 import { ThreadManagementProviderInstanceDisabledError } from "../ThreadManagementService.ts";
 import { buildLessonOpening } from "./LessonService.ts";
 import * as LessonModule from "./LessonService.ts";
+import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
 
 const sourceThreadId = ThreadId.make("thread:source");
 const targetProjectId = ProjectId.make("project:target");
@@ -29,6 +32,10 @@ const modelSelection = {
 const lessonLayer = (
   getThread: ProjectionStore.ProjectionStoreV2["Service"]["getThread"],
   launch: ThreadLaunchService.ThreadLaunchService["Service"]["launch"],
+  options?: {
+    readonly folders?: ManagedProjectFolders.ManagedProjectFolders["Service"];
+    readonly projects?: ProjectService.ProjectService["Service"];
+  },
 ) =>
   LessonModule.layer.pipe(
     Layer.provide(
@@ -43,6 +50,20 @@ const lessonLayer = (
           getEnvironmentId: Effect.succeed(EnvironmentId.make("test-environment")),
           getDescriptor: Effect.die("unused"),
         }),
+        Layer.succeed(
+          ManagedProjectFolders.ManagedProjectFolders,
+          options?.folders ??
+            ({
+              createNamedProject: () => Effect.die("unused"),
+            } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"]),
+        ),
+        Layer.succeed(
+          ProjectService.ProjectService,
+          options?.projects ??
+            ({
+              getById: () => Effect.succeedNone,
+            } as unknown as ProjectService.ProjectService["Service"]),
+        ),
       ),
     ),
   );
@@ -161,6 +182,85 @@ it.effect.each(refusals)(
       assert.equal(error.message, reason.message);
       assert.equal(error.invalidRequest, true);
     }),
+);
+
+it.effect("creates its own project when projectId is absent, and reuses it on retry", () =>
+  Effect.gen(function* () {
+    const created = yield* Ref.make(0);
+    const createInputs = yield* Ref.make<
+      ReadonlyArray<{ name: string; root?: "lessons"; projectId?: ProjectId }>
+    >([]);
+    const lookups = yield* Ref.make(0);
+    const launches = yield* Ref.make<ThreadLaunchService.ThreadLaunchInput[]>([]);
+    const commandId = CommandId.make("lesson:retry");
+    const derivedProjectId = ProjectId.make(`lesson-project:${commandId}`);
+    const result = yield* Effect.gen(function* () {
+      const service = yield* LessonModule.LessonService;
+      const input = {
+        commandId,
+        lesson: {
+          topic: "A very useful topic",
+          depth: "working" as const,
+          purpose: "outcome" as const,
+        },
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+      };
+      const first = yield* service.create(input);
+      const second = yield* service.create(input);
+      return { first, second };
+    }).pipe(
+      Effect.provide(
+        lessonLayer(
+          () => Effect.die("unused"),
+          (input) =>
+            Effect.gen(function* () {
+              yield* Ref.update(launches, (items) => [...items, input]);
+              return {
+                threadId: ThreadId.make(`thread:${(yield* Ref.get(launches)).length}`),
+              } as ThreadLaunchService.ThreadLaunchResult;
+            }),
+          {
+            folders: {
+              createNamedProject: (input: {
+                readonly name: string;
+                readonly root?: "lessons";
+                readonly projectId?: ProjectId;
+              }) =>
+                Ref.update(createInputs, (items) => [...items, input]).pipe(
+                  Effect.andThen(Ref.updateAndGet(created, (count) => count + 1)),
+                  Effect.as({
+                    projectId: derivedProjectId,
+                    workspaceRoot: `/lessons/${input.name}`,
+                  }),
+                ),
+            } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"],
+            projects: {
+              getById: () =>
+                Ref.updateAndGet(lookups, (count) => count + 1).pipe(
+                  Effect.map((count) =>
+                    count === 1 ? Option.none() : Option.some({ id: derivedProjectId } as never),
+                  ),
+                ),
+            } as unknown as ProjectService.ProjectService["Service"],
+          },
+        ),
+      ),
+    );
+    assert.equal(result.first.threadId, ThreadId.make("thread:1"));
+    assert.equal(result.second.threadId, ThreadId.make("thread:2"));
+    assert.equal(yield* Ref.get(created), 1);
+    assert.deepEqual(yield* Ref.get(createInputs), [
+      { name: "A very useful topic", root: "lessons", projectId: derivedProjectId },
+    ]);
+    assert.deepEqual(
+      (yield* Ref.get(launches)).map((input) => input.projectId),
+      [derivedProjectId, derivedProjectId],
+    );
+  }),
 );
 
 it("asks to follow a course when the topic is a link", () => {

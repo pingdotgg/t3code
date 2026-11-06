@@ -405,6 +405,26 @@ it.effect("gives concurrent named projects with the same name distinct folders",
   ),
 );
 
+it.effect("creates lesson projects under lessons with the requested id", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const path = yield* Path.Path;
+        const projectId = ProjectId.make("lesson-project:lesson:test");
+        const result = yield* folders.createNamedProject({
+          name: "Ohm's law",
+          root: "lessons",
+          projectId,
+        });
+        assert.equal(result.projectId, projectId);
+        assert.equal(result.workspaceRoot, path.join(baseDir, "lessons", "ohm-s-law"));
+      }),
+    ),
+  ),
+);
+
 it.effect("keeps a named project and reports why when Git cannot commit", () =>
   withScratch(({ baseDir }) =>
     withGitEnv(

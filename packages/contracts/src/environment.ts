@@ -157,6 +157,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   lessonSideChats: Schema.optionalKey(Schema.Boolean),
   /** Server-backed learner knowledge map. */
   knowledgeMap: Schema.optionalKey(Schema.Boolean),
+  /** Server creates unrelated lessons in their own projects. */
+  lessonProjects: Schema.optionalKey(Schema.Boolean),
   courses: Schema.optionalKey(Schema.Boolean),
   /** Server links to other environments (`PeerLink`) and its agents can work
       in them. Absent on servers from before linking, which clients must not
@@ -204,6 +206,12 @@ export function supportsLessons(
   environment: Pick<ExecutionEnvironmentDescriptor, "capabilities">,
 ): boolean {
   return environment.capabilities.knowledgeMap === true;
+}
+
+export function supportsLessonProjects(
+  environment: Pick<ExecutionEnvironmentDescriptor, "capabilities">,
+): boolean {
+  return environment.capabilities.lessonProjects === true;
 }
 
 /** Upstream side chats. Released T3 Learn servers sent `sideChats` for T3 Learn side chats only. */

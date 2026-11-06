@@ -1,6 +1,7 @@
 import {
   CommandId,
   LessonCreateError,
+  ProjectId,
   type OrchestrationV2Lesson,
   type ModelSelection,
   type ProviderInteractionMode,
@@ -12,12 +13,15 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import {
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ThreadLaunchService from "../ThreadLaunchService.ts";
+import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../Orchestrator.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { truncate } from "@t3tools/shared/String";
@@ -55,7 +59,7 @@ export class LessonService extends Context.Service<
   LessonService,
   {
     readonly create: (input: {
-      readonly projectId: import("@t3tools/contracts").ProjectId;
+      readonly projectId?: import("@t3tools/contracts").ProjectId;
       readonly commandId: CommandId;
       readonly lesson: OrchestrationV2Lesson;
       readonly modelSelection: ModelSelection;
@@ -72,10 +76,13 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const projects = yield* ProjectService.ProjectService;
 
   const create: LessonService["Service"]["create"] = Effect.fn("LessonService.create")(
     function* (input) {
       let projectId = input.projectId;
+      const title = truncate(input.lesson.topic.replaceAll(/\s+/g, " "), 80);
       let context: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
       let sourceChat: string | undefined;
       if (input.lesson.source !== undefined) {
@@ -89,14 +96,34 @@ const make = Effect.gen(function* () {
         if (source.deletedAt !== null) {
           return yield* new LessonCreateError({ message: "Source thread was deleted." });
         }
-        projectId = source.projectId;
+        if (input.projectId !== undefined) projectId = source.projectId;
         const environmentId = yield* serverEnvironment.getEnvironmentId;
         const record = threadContextRecord({ environmentId, threadId: source.id }, source.title);
         context = { version: 1, records: [record] };
         // A context record shows as a chip only where the text references it.
         sourceChat = formatComposerContextReference(record);
       }
-      const title = truncate(input.lesson.topic.replaceAll(/\s+/g, " "), 80);
+      if (projectId === undefined) {
+        const lessonProjectId = ProjectId.make(`lesson-project:${input.commandId}`);
+        const existing = yield* projects
+          .getById(lessonProjectId)
+          .pipe(
+            Effect.mapError(
+              () => new LessonCreateError({ message: "Failed to find the lesson project." }),
+            ),
+          );
+        if (Option.isSome(existing)) {
+          projectId = existing.value.id;
+        } else {
+          const created = yield* folders
+            .createNamedProject({ name: title, root: "lessons", projectId: lessonProjectId })
+            .pipe(Effect.mapError((error) => new LessonCreateError({ message: error.message })));
+          projectId = created.projectId;
+        }
+      }
+      if (projectId === undefined) {
+        return yield* new LessonCreateError({ message: "Lesson project was not created." });
+      }
       const launched = yield* threadLaunch
         .launch({
           commandId: input.commandId,
