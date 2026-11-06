@@ -1,5 +1,5 @@
 import { AsyncResult } from "effect/reactivity";
-import { usageRefreshDeadline } from "@t3tools/client-runtime/state/usage";
+import { usageRefreshDeadline, usageRefreshAccountKey } from "@t3tools/client-runtime/state/usage";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRouterState } from "@tanstack/react-router";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
@@ -21,6 +21,7 @@ export function useUsageLimitsRefresh(
   const chatVisible = useRouterState({
     select: (state) => !isAppModalPage(state.location.pathname),
   });
+  const providers = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.providers ?? [];
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
   useLiveRefresh(
     () => {
@@ -57,8 +58,15 @@ export function useUsageLimitsRefresh(
       enabled: enabled && connected && chatVisible && instanceId !== null,
       key: `usage:${environmentId}:${instanceId}:${driver ?? ""}`,
       refreshKeys: [
-        ...(driver ? [JSON.stringify([environmentId, driver])] : []),
-        JSON.stringify([environmentId, driver, instanceId]),
+        ...(driver
+          ? [JSON.stringify([environmentId, driver, usageRefreshAccountKey(providers, driver)])]
+          : []),
+        JSON.stringify([
+          environmentId,
+          driver,
+          instanceId,
+          usageRefreshAccountKey(providers, driver, instanceId),
+        ]),
       ],
       refreshDeadline: (result) => (typeof result === "number" ? result : undefined),
       refreshOnShow: true,

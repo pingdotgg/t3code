@@ -20,6 +20,7 @@ import {
   cursorKeychainAccessEnvironments,
   refreshUsageLimits,
   usageRefreshDeadline,
+  usageRefreshAccountKey,
 } from "@t3tools/client-runtime/state/usage";
 import {
   updatingProvidersLabel,
@@ -275,7 +276,10 @@ export function UsagePage() {
                 }),
               false,
               afterPending,
-              JSON.stringify([...hiddenProviders].sort()),
+              JSON.stringify([
+                [...hiddenProviders].sort(),
+                usageRefreshAccountKey(presentation.serverConfig?.providers ?? []),
+              ]),
             ).then((response) =>
               response !== undefined && AsyncResult.isSuccess(response)
                 ? usageRefreshDeadline(
@@ -386,11 +390,26 @@ export function UsagePage() {
       presentation.serverConfig !== null &&
       (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId))
         ? [
-            ...visibleDrivers.map((driver) => JSON.stringify([environmentId, driver])),
+            ...visibleDrivers.map((driver) =>
+              JSON.stringify([
+                environmentId,
+                driver,
+                usageRefreshAccountKey(presentation.serverConfig?.providers ?? [], driver),
+              ]),
+            ),
             ...presentation.serverConfig.providers
               .filter((provider) => visibleDrivers.includes(provider.driver))
               .map((provider) =>
-                JSON.stringify([environmentId, provider.driver, provider.instanceId]),
+                JSON.stringify([
+                  environmentId,
+                  provider.driver,
+                  provider.instanceId,
+                  usageRefreshAccountKey(
+                    presentation.serverConfig?.providers ?? [],
+                    provider.driver,
+                    provider.instanceId,
+                  ),
+                ]),
               ),
           ]
         : [],

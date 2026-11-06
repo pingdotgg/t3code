@@ -1,3 +1,5 @@
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { usageRefreshAccountKey } from "@t3tools/client-runtime/state/usage";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../test/render";
@@ -26,6 +28,32 @@ function Probe(props: {
 }
 
 describe("useLiveRefresh", () => {
+  it("reads a newly signed-in account without reusing its signed-out deadline", async () => {
+    const refresh = vi.fn();
+    using _timers = fakeTimers({ now: 9_000_000 });
+    const instanceId = ProviderInstanceId.make("web-auth-change");
+    const driver = ProviderDriverKind.make("codex");
+    const probe = (auth: ServerProvider["auth"]) => (
+      <Probe
+        refresh={refresh}
+        viewKey="web-auth-change"
+        refreshKeys={[usageRefreshAccountKey([{ instanceId, driver, auth }], driver)]}
+        refreshOnShow
+        refreshWhileIdle
+      />
+    );
+    // Bare usage hook; nothing here navigates.
+    await using screen = await render(probe({ status: "unauthenticated" }), { router: false });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await screen.rerender(<></>);
+    await act(() => vi.advanceTimersByTime(60_000));
+    await screen.rerender(probe({ status: "authenticated", email: "new@example.com" }));
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await screen.rerender(<></>);
+    await screen.rerender(probe({ status: "authenticated", email: "new@example.com" }));
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["continuous", "reenabled", "remounted"])(
     "schedules usage intervals after a slow refresh completes (%s)",
     async (lifecycle) => {

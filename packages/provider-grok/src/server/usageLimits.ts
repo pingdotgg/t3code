@@ -1,6 +1,7 @@
 import {
   UsageAccountIdentity,
   usageResponseCheckedAt,
+  usageResponseRefreshAfter,
 } from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -197,6 +198,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
       new TextEncoder().encode(email ? `grok\0account\0${email}` : `grok\0token\0${token}`),
     )
     .pipe(Effect.map(Hex.encode), Effect.orDie);
+  let refreshAfter: number | undefined;
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -204,6 +206,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
         HttpClientRequest.bearerToken(token),
       ),
     );
+    refreshAfter = usageResponseRefreshAfter(response);
     if (response.status === 403) {
       const { error } = yield* HttpClientResponse.schemaBodyJson(GrokErrorResponse)(response);
       // xAI refuses Grok Build while the account's privacy setting is a legacy mode.
@@ -226,7 +229,11 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   );
   return {
     email,
-    usageLimits: { ...usageLimits, credentialFingerprint },
+    usageLimits: {
+      ...usageLimits,
+      credentialFingerprint,
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+    },
     supportsUsageLimits: true,
   };
 });

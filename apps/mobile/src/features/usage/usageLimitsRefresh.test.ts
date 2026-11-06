@@ -12,7 +12,11 @@ import { expect, it, vi } from "vite-plus/test";
 type RefreshResult = AsyncResult.AsyncResult<{ providers: readonly ServerProvider[] }, string>;
 
 const state = vi.hoisted(() => ({
-  providers: [] as Array<{ instanceId: ProviderInstanceId; driver: ProviderDriverKind }>,
+  providers: [] as Array<{
+    instanceId: ProviderInstanceId;
+    driver: ProviderDriverKind;
+    auth?: ServerProvider["auth"];
+  }>,
   refresh: (_environmentId: string): Promise<RefreshResult> => {
     throw new Error("refresh not set up");
   },
@@ -134,6 +138,7 @@ it.each(["limits", "thread", "thread-and-other-provider"] as const)(
           instanceLimitsRefreshSelection(
             ProviderInstanceId.make("cursor-instance"),
             ProviderDriverKind.make("cursor"),
+            state.providers as ServerProvider[],
           ),
         );
         if (entry === "thread-and-other-provider")
@@ -155,6 +160,33 @@ it.each(["limits", "thread", "thread-and-other-provider"] as const)(
       expect(automatic).toHaveBeenCalledTimes(entry === "thread-and-other-provider" ? 4 : 2);
     } finally {
       unmount?.();
+      registry.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["sign-in", "account-switch"] as const)(
+  "reads fresh quotas after %s",
+  async (transition) => {
+    vi.useFakeTimers({ now: 8_000_000 });
+    const a = EnvironmentId.make(`mobile-limits-auth-${transition}`);
+    const refresh = vi.fn(() => Promise.resolve(success));
+    const { registry } = setup(refresh);
+    try {
+      state.providers[0]!.auth =
+        transition === "sign-in"
+          ? { status: "unauthenticated" }
+          : { status: "authenticated", email: "old@example.com" };
+      await refreshEnvironmentLimits(registry, a, { automatic: true });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      state.providers[0]!.auth = { status: "authenticated", email: "new@example.com" };
+      await refreshEnvironmentLimits(registry, a, { automatic: true });
+      expect(refresh).toHaveBeenCalledTimes(2);
+      await refreshEnvironmentLimits(registry, a, { automatic: true });
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
       registry.dispose();
       vi.useRealTimers();
     }

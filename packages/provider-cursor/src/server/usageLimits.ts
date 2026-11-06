@@ -1,5 +1,6 @@
 import {
   usageResponseCheckedAt,
+  usageResponseRefreshAfter,
   UsageAccountIdentity,
 } from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
@@ -71,6 +72,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
   allowKeychain = false,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  let refreshAfter: number | undefined;
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -153,6 +155,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
         ),
       )
       .pipe(Effect.provideService(UsageAccountIdentity, usageIdentity));
+    refreshAfter = usageResponseRefreshAfter(response);
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
@@ -166,5 +169,9 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
         message: "Cursor could not read usage limits.",
       }),
     ),
+    Effect.map((limits) => ({
+      ...limits,
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+    })),
   );
 });

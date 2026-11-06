@@ -3,12 +3,14 @@ import {
   EnvironmentId,
   type ProviderInstanceId,
   type ProviderDriverKind,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   refreshUsageLimits,
   usageLimitsRefreshDelay,
   usageRefreshDeadline,
+  usageRefreshAccountKey,
 } from "@t3tools/client-runtime/state/usage";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -25,12 +27,20 @@ const limitsRefreshFailedAtom = Atom.family((environmentId: EnvironmentId) =>
 export function instanceLimitsRefreshSelection(
   instanceId: ProviderInstanceId,
   driver?: ProviderDriverKind,
+  providers: readonly Pick<ServerProvider, "instanceId" | "driver" | "auth">[] = [],
 ) {
   return {
-    key: JSON.stringify([instanceId, driver]),
+    key: JSON.stringify([instanceId, driver, usageRefreshAccountKey(providers, driver)]),
     resources: [
-      ...(driver ? [JSON.stringify(["provider", driver])] : []),
-      JSON.stringify(["instance", instanceId, driver]),
+      ...(driver
+        ? [JSON.stringify(["provider", driver, usageRefreshAccountKey(providers, driver)])]
+        : []),
+      JSON.stringify([
+        "instance",
+        instanceId,
+        driver,
+        usageRefreshAccountKey(providers, driver, instanceId),
+      ]),
     ],
   };
 }
@@ -41,7 +51,9 @@ function environmentLimitsRefreshKeys(
 ) {
   const config = registry.get(serverEnvironment.configValueAtom(environmentId));
   const keys = (config?.providers ?? []).flatMap(
-    (provider) => instanceLimitsRefreshSelection(provider.instanceId, provider.driver).resources,
+    (provider) =>
+      instanceLimitsRefreshSelection(provider.instanceId, provider.driver, config?.providers ?? [])
+        .resources,
   );
   for (const source of config?.usageLimitSources ?? []) {
     keys.push(
@@ -63,6 +75,7 @@ export async function refreshEnvironmentLimits(
   } = {},
 ): Promise<void> {
   if (!isAppActive()) return;
+  const providers = registry.get(serverEnvironment.configValueAtom(environmentId))?.providers ?? [];
   const result = await refreshUsageLimits(
     environmentId,
     () =>
@@ -81,8 +94,11 @@ export async function refreshEnvironmentLimits(
     options.afterPending,
     {
       ...(options.instanceId
-        ? instanceLimitsRefreshSelection(options.instanceId, options.driver)
-        : { key: "", resources: environmentLimitsRefreshKeys(registry, environmentId) }),
+        ? instanceLimitsRefreshSelection(options.instanceId, options.driver, providers)
+        : {
+            key: usageRefreshAccountKey(providers),
+            resources: environmentLimitsRefreshKeys(registry, environmentId),
+          }),
       refreshDeadline: (result) =>
         AsyncResult.isSuccess(result)
           ? usageRefreshDeadline(
@@ -117,10 +133,17 @@ export async function refreshEnvironmentLimits(
   registry.set(limitsRefreshFailedAtom(environmentId), result._tag === "Failure");
 }
 
+const limitsAccountKeyAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    usageRefreshAccountKey(get(serverEnvironment.configValueAtom(environmentId))?.providers ?? []),
+  ),
+);
+
 // Mounting starts an automatic refresh, which refreshUsageLimits throttles to
 // one every few minutes per environment.
 const limitsAutoRefreshAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {
+    get(limitsAccountKeyAtom(environmentId));
     let disposed = false;
     let pending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;

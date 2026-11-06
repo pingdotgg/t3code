@@ -1,4 +1,7 @@
-import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
+import {
+  usageResponseCheckedAt,
+  usageResponseRefreshAfter,
+} from "@t3tools/provider-core/server/usageLimits";
 import * as NodeSqlite from "node:sqlite";
 
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
@@ -95,6 +98,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   if (!input.enabled || input.serverUrl.trim()) return unsupported;
 
   let credentialFingerprint: string | undefined;
+  let refreshAfter: number | undefined;
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -155,6 +159,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       apiKey = key;
       response = yield* readUsage(apiKey);
     }
+    refreshAfter = usageResponseRefreshAfter(response);
     // A valid Zen key can exist without a Go subscription.
     if (response.status === 403) return unsupported;
     const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
@@ -198,6 +203,10 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         message: "OpenCode Go could not read usage.",
       }),
       ...(credentialFingerprint ? { credentialFingerprint } : {}),
+    })),
+    Effect.map((limits) => ({
+      ...limits,
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
     })),
   );
 });

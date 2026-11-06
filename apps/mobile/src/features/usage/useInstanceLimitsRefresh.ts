@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../state/server";
 import { useIsFocused } from "@react-navigation/native";
 import { useEffect } from "react";
 import type { EnvironmentId, ProviderInstanceId, ProviderDriverKind } from "@t3tools/contracts";
@@ -14,10 +16,16 @@ export function useInstanceLimitsRefresh(
   visible: boolean,
 ) {
   const focused = useIsFocused();
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const selectionKeyJson = JSON.stringify(
+    instanceLimitsRefreshSelection(instanceId, driver, config?.providers ?? []),
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- quota demand follows the native panel and app lifecycle
   useEffect(() => {
     if (!visible || !focused) return;
-    const selectionKey = instanceLimitsRefreshSelection(instanceId, driver);
+    const selectionKey = JSON.parse(selectionKeyJson) as ReturnType<
+      typeof instanceLimitsRefreshSelection
+    >;
     let disposed = false;
     let pending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -48,5 +56,5 @@ export function useInstanceLimitsRefresh(
       unsubscribe();
       clearTimeout(timer);
     };
-  }, [registry, environmentId, instanceId, driver, visible, focused]);
+  }, [registry, environmentId, instanceId, driver, visible, focused, selectionKeyJson]);
 }

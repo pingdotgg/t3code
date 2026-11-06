@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   ProviderInstanceId,
+  ProviderDriverKind,
   ServerProvider,
   ServerProviderUsageLimits,
   UsageModelFilter,
@@ -121,6 +122,29 @@ export function usageRefreshDeadline(
       deadline !== undefined && Number.isFinite(deadline) && deadline > (serverTime ?? now),
   );
   return deadlines.length ? now + Math.min(...deadlines) - (serverTime ?? now) : undefined;
+}
+
+export function usageRefreshAccountKey(
+  providers: readonly Pick<ServerProvider, "instanceId" | "driver" | "auth">[],
+  driver?: ProviderDriverKind | null,
+  instanceId?: ProviderInstanceId | null,
+) {
+  return JSON.stringify(
+    providers
+      .filter(
+        (provider) =>
+          (!driver || provider.driver === driver) &&
+          (!instanceId || provider.instanceId === instanceId),
+      )
+      .sort((a, b) => a.instanceId.localeCompare(b.instanceId))
+      .map((provider) => [
+        provider.instanceId,
+        provider.auth?.status,
+        provider.auth?.type,
+        provider.auth?.email?.toLowerCase(),
+        provider.auth?.workspaceId,
+      ]),
+  );
 }
 
 const limitsRefreshAfter = new Map<string, number>();
