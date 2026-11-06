@@ -4900,6 +4900,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.environment,
   ).pipe(Effect.provideService(Path.Path, path));
   const resolveMessageCursor = Effect.fn("ClaudeAdapterV2.resolveMessageCursor")(function* (
+    cwd: string,
     nativeThreadId: string,
     cursor: string,
   ) {
@@ -4912,7 +4913,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     const candidates = new Set<string>();
     let exact = false;
     let containsBlock = false;
-    const projectsDir = path.join(homePath, "projects");
+    const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+    const projectsDir = path.join(
+      configuredDir.length > 0 ? path.resolve(cwd, configuredDir) : homePath,
+      "projects",
+    );
     const projects = yield* fileSystem
       .readDirectory(projectsDir)
       .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
@@ -4930,7 +4935,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (entry.uuid === cursor) exact = true;
             if (entry.uuid.slice(0, 24) !== prefix) return;
             candidates.add(entry.uuid);
-            if (entry.message.content.length > 1 && entry.message.content.length > blockIndex) {
+            if (entry.message.content.length > blockIndex) {
               containsBlock = true;
             }
           }),
@@ -8011,6 +8016,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const nativeThreadId = input.context.input.providerThread.nativeThreadRef?.nativeId;
           if (input.context.nativeMessageCursor !== null && nativeThreadId != null) {
             input.context.nativeMessageCursor = yield* resolveMessageCursor(
+              session.cwd,
               nativeThreadId,
               input.context.nativeMessageCursor,
             ).pipe(Effect.orElseSucceed(() => input.context.nativeMessageCursor));
@@ -10973,7 +10979,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const resumeSessionAt =
             pinnedHead === undefined
               ? undefined
-              : yield* resolveMessageCursor(nativeThreadId, pinnedHead);
+              : yield* resolveMessageCursor(session.cwd, nativeThreadId, pinnedHead);
           const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
           // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
           const hasPersistedProviderTurn =
@@ -12259,7 +12265,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const now = yield* DateTime.now;
               const cursor = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
               const resumeSessionAt =
-                cursor === null ? null : yield* resolveMessageCursor(nativeThreadId, cursor);
+                cursor === null
+                  ? null
+                  : yield* resolveMessageCursor(session.cwd, nativeThreadId, cursor);
 
               if (rollbackInput.target.type === "thread_start" && resumeSessionAt === null) {
                 const resetNativeThreadId = yield* queryRunner.allocateSessionId;
@@ -12337,7 +12345,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const upToMessageId =
                 cursor === undefined
                   ? undefined
-                  : yield* resolveMessageCursor(sourceNativeThreadId, cursor);
+                  : yield* resolveMessageCursor(session.cwd, sourceNativeThreadId, cursor);
               const forkOptions: ForkSessionOptions = {
                 ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),

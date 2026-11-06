@@ -6815,163 +6815,172 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["ordinary", "blocks", "late", "exact", "ambiguous", "missing", "out-of-range"])(
-    "rolls back to the persisted main-thread assistant message (%s)",
-    (kind) =>
-      Effect.gen(function* () {
-        const perBlock = kind !== "ordinary";
-        const delayed = kind === "late" || kind === "missing";
-        const fs = yield* FileSystem.FileSystem;
-        const configDir = yield* fs.makeTempDirectoryScoped();
-        let forkBoundary: string | undefined;
-        const harness = yield* makeWakeHarnessWithOptions({
-          environment: { CLAUDE_CONFIG_DIR: configDir },
-          freshQueueOnReopen: true,
-          forkSession: ({ options }) =>
-            Effect.sync(() => {
-              forkBoundary = options.upToMessageId;
-              return { sessionId: "forked-session" };
-            }),
-          close: (sdkMessages) => Queue.shutdown(sdkMessages),
-        });
-        const now = yield* DateTime.now;
-        const mainUuid =
-          kind === "exact"
-            ? "e24a04a2-7981-436f-b48e-000000000001"
-            : "e24a04a2-7981-436f-b48e-64e9b3777081";
-        const streamUuid = !perBlock
-          ? mainUuid
-          : kind === "out-of-range"
-            ? "e24a04a2-7981-436f-b48e-00000000000a"
+  it.effect.each([
+    "ordinary",
+    "blocks",
+    "single-block",
+    "late",
+    "exact",
+    "ambiguous",
+    "missing",
+    "out-of-range",
+  ])("rolls back to the persisted main-thread assistant message (%s)", (kind) =>
+    Effect.gen(function* () {
+      const perBlock = kind !== "ordinary";
+      const delayed = kind === "late" || kind === "missing";
+      const fs = yield* FileSystem.FileSystem;
+      const configDir = yield* fs.makeTempDirectoryScoped();
+      let forkBoundary: string | undefined;
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+        freshQueueOnReopen: true,
+        forkSession: ({ options }) =>
+          Effect.sync(() => {
+            forkBoundary = options.upToMessageId;
+            return { sessionId: "forked-session" };
+          }),
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+      });
+      const now = yield* DateTime.now;
+      const mainUuid =
+        kind === "exact"
+          ? "e24a04a2-7981-436f-b48e-000000000001"
+          : "e24a04a2-7981-436f-b48e-64e9b3777081";
+      const streamUuid = !perBlock
+        ? mainUuid
+        : kind === "out-of-range"
+          ? "e24a04a2-7981-436f-b48e-00000000000a"
+          : kind === "single-block"
+            ? "e24a04a2-7981-436f-b48e-000000000000"
             : "e24a04a2-7981-436f-b48e-000000000001";
-        yield* fs.makeDirectory(`${configDir}/projects/p`, { recursive: true });
-        const transcriptPath = `${configDir}/projects/p/${WAKE_NATIVE_SESSION}.jsonl`;
-        const transcript =
-          [
-            {
-              type: "assistant",
-              uuid: mainUuid,
-              isSidechain: false,
-              message: {
-                content: [
-                  { type: "thinking", thinking: "Thinking." },
-                  { type: "text", text: "Delegating." },
-                ],
-              },
+      yield* fs.makeDirectory(`${configDir}/projects/p`, { recursive: true });
+      const transcriptPath = `${configDir}/projects/p/${WAKE_NATIVE_SESSION}.jsonl`;
+      const transcript =
+        [
+          {
+            type: "assistant",
+            uuid: mainUuid,
+            isSidechain: false,
+            message: {
+              content: [
+                ...(kind === "single-block" ? [] : [{ type: "thinking", thinking: "Thinking." }]),
+                { type: "text", text: "Delegating." },
+              ],
             },
-            {
-              type: "assistant",
-              uuid: "e24a04a2-7981-436f-b48e-aaaaaaaaaaaa",
-              isSidechain: kind !== "ambiguous" && kind !== "exact",
-              message: { content: [{}, {}] },
-            },
-            {
-              type: "assistant",
-              uuid: "eeeeeeee-7981-436f-b48e-64e9b3777081",
-              message: { content: [{ type: "text", text: "Reverted answer." }] },
-            },
-          ]
-            .map((entry) => JSON.stringify(entry))
-            .join("\n") + "\n";
-        if (!delayed) yield* fs.writeFileString(transcriptPath, transcript);
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-cursor-main"),
-            text: "Continue.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offerAll(harness.sdkMessages, [
-          makeAssistantTextFrame({ uuid: streamUuid, text: "Delegating." }),
-          makeAssistantErrorFrame({
-            uuid: "00000000-0000-4000-8000-000000000642",
-            error: undefined,
-            parentToolUseId: "toolu_subagent",
-          }),
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000643", result: "Done." }),
-        ]);
-        yield* Queue.take(harness.terminalReceipts);
-
-        const providerTurn = lastProviderTurn(harness.events);
-        assert.equal(
-          providerTurn.nativeTurnRef?.nativeId,
-          delayed || kind === "ambiguous" || kind === "out-of-range" ? streamUuid : mainUuid,
-        );
-        if (kind !== "missing") yield* fs.writeFileString(transcriptPath, transcript);
-        const storedTurn = {
-          ...providerTurn,
-          nativeTurnRef: {
-            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-            nativeId: streamUuid,
-            strength: "weak" as const,
           },
-        };
-        const rollback = harness.runtime.rollbackThread({
+          {
+            type: "assistant",
+            uuid: "e24a04a2-7981-436f-b48e-aaaaaaaaaaaa",
+            isSidechain: kind !== "ambiguous" && kind !== "exact",
+            message: { content: [{}, {}] },
+          },
+          {
+            type: "assistant",
+            uuid: "eeeeeeee-7981-436f-b48e-64e9b3777081",
+            message: { content: [{ type: "text", text: "Reverted answer." }] },
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n";
+      if (!delayed) yield* fs.writeFileString(transcriptPath, transcript);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
           providerThread: harness.providerThread,
-          target: {
-            type: "provider_turn",
-            checkpointId: CheckpointId.make("checkpoint-claude-cursor-main"),
-            appRunOrdinal: 1,
-            providerTurn: storedTurn,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-cursor-main"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantTextFrame({ uuid: streamUuid, text: "Delegating." }),
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000642",
+          error: undefined,
+          parentToolUseId: "toolu_subagent",
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000643", result: "Done." }),
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+
+      const providerTurn = lastProviderTurn(harness.events);
+      assert.equal(
+        providerTurn.nativeTurnRef?.nativeId,
+        delayed || kind === "ambiguous" || kind === "out-of-range" ? streamUuid : mainUuid,
+      );
+      if (kind !== "missing") yield* fs.writeFileString(transcriptPath, transcript);
+      const storedTurn = {
+        ...providerTurn,
+        nativeTurnRef: {
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeId: streamUuid,
+          strength: "weak" as const,
+        },
+      };
+      const rollback = harness.runtime.rollbackThread({
+        providerThread: harness.providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-claude-cursor-main"),
+          appRunOrdinal: 1,
+          providerTurn: storedTurn,
+        },
+        providerThreadTurns: [
+          providerTurn,
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-cursor-next"),
+            ordinal: 2,
           },
-          providerThreadTurns: [
-            providerTurn,
-            {
-              ...providerTurn,
-              id: ProviderTurnId.make("provider-turn-claude-cursor-next"),
-              ordinal: 2,
+        ],
+      });
+      if (kind === "ambiguous") {
+        const error = yield* Effect.flip(rollback);
+        assert.equal(error._tag, "ProviderAdapterRollbackThreadError");
+        assert.include(String(error.cause), "ambiguous Claude assistant message cursor");
+        return;
+      }
+      const rolledBack = yield* rollback;
+      const boundary = kind === "missing" || kind === "out-of-range" ? streamUuid : mainUuid;
+      assert.equal(rolledBack.providerThread.nativeConversationHeadRef?.nativeId, boundary);
+      yield* harness.runtime.forkThread({
+        sourceProviderThread: harness.providerThread,
+        targetThreadId: ThreadId.make("forked-thread"),
+        providerTurnId: storedTurn.id,
+        sourceProviderTurns: [storedTurn],
+      });
+      assert.equal(forkBoundary, boundary);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: {
+            ...rolledBack.providerThread,
+            nativeConversationHeadRef: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeId: streamUuid,
+              strength: "weak",
             },
-          ],
-        });
-        if (kind === "ambiguous") {
-          const error = yield* Effect.flip(rollback);
-          assert.equal(error._tag, "ProviderAdapterRollbackThreadError");
-          assert.include(String(error.cause), "ambiguous Claude assistant message cursor");
-          return;
-        }
-        const rolledBack = yield* rollback;
-        const boundary = kind === "missing" || kind === "out-of-range" ? streamUuid : mainUuid;
-        assert.equal(rolledBack.providerThread.nativeConversationHeadRef?.nativeId, boundary);
-        yield* harness.runtime.forkThread({
-          sourceProviderThread: harness.providerThread,
-          targetThreadId: ThreadId.make("forked-thread"),
-          providerTurnId: storedTurn.id,
-          sourceProviderTurns: [storedTurn],
-        });
-        assert.equal(forkBoundary, boundary);
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: {
-              ...rolledBack.providerThread,
-              nativeConversationHeadRef: {
-                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-                nativeId: streamUuid,
-                strength: "weak",
-              },
-            },
-            now,
-            attemptId: RunAttemptId.make("after-old-pinned-cursor"),
-            text: "Continue after the retained turn.",
-            attachments: [],
-            providerTurnOrdinal: 2,
-            nativeThreadHasTurns: true,
-          }),
-        );
-        assert.equal(harness.getOpenedOptions()?.resumeSessionAt, boundary);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+          },
+          now,
+          attemptId: RunAttemptId.make("after-old-pinned-cursor"),
+          text: "Continue after the retained turn.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          nativeThreadHasTurns: true,
+        }),
+      );
+      assert.equal(harness.getOpenedOptions()?.resumeSessionAt, boundary);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
   );
 
   it.effect("an interrupted turn after a rollback stops resuming at the rolled-back head", () =>
