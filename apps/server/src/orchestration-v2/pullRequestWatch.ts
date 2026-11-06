@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
+/** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, base, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
@@ -20,7 +20,8 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "behind"; readonly behindBy: number | null };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -39,7 +40,14 @@ export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    | "capabilities"
+    | "headSha"
+    | "checks"
+    | "mergeability"
+    | "viewer"
+    | "author"
+    | "baseComparison"
+    | "behindBy"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
@@ -186,6 +194,20 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
+  // Like a conflict, a push resets what was told. An unknown count still wakes once.
+  let behindBy = watch.behindBy;
+  if (watch.wakeOnBaseMove === true) {
+    const told = headMoved ? 0 : (watch.behindBy ?? 0);
+    behindBy = told;
+    if (detail.baseComparison === "behind") {
+      const count = detail.behindBy ?? null;
+      if ((count ?? 1) > told) changes.push({ kind: "behind", behindBy: count });
+      behindBy = count ?? Math.max(told, 1);
+    } else if (detail.baseComparison === "up-to-date") {
+      behindBy = 0;
+    }
+  }
+
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
@@ -205,6 +227,8 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      ...(watch.wakeOnBaseMove === undefined ? {} : { wakeOnBaseMove: watch.wakeOnBaseMove }),
+      ...(behindBy === undefined ? {} : { behindBy }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -267,6 +291,12 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "behind":
+      return [
+        change.behindBy === null
+          ? `- The branch is behind ${context.baseBranch}.`
+          : `- The branch is ${change.behindBy} ${change.behindBy === 1 ? "commit" : "commits"} behind ${context.baseBranch}.`,
+      ];
   }
 }
 
@@ -277,6 +307,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  behind: "base moved",
 };
 
 export function pullRequestWatchMessage(input: {

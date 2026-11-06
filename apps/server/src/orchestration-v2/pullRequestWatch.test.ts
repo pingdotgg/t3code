@@ -528,6 +528,64 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("reports the base moving once per move, only to a watch that asked", () => {
+    const opted = watch({ headSha: "aaaaaaaaaa", wakeOnBaseMove: true });
+    const behind = (behindBy?: number) =>
+      detail({
+        baseComparison: "behind",
+        ...(behindBy === undefined ? {} : { behindBy }),
+      });
+    const first = evaluatePullRequestWatch(opted, behind(2), noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "behind", behindBy: 2 }]);
+    assert.equal(first.next.behindBy, 2);
+    assert.isTrue(first.next.wakeOnBaseMove);
+    assert.equal(first.next.wakes, 0);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, behind(2), noRemarks).changes, []);
+    // Hosts can fail the comparison read, which says nothing about the base.
+    const unread = evaluatePullRequestWatch(first.next, detail(), noRemarks);
+    assert.equal(unread.next.behindBy, 2);
+    const unknown = detail({ baseComparison: "unknown" });
+    assert.equal(evaluatePullRequestWatch(first.next, unknown, noRemarks).next.behindBy, 2);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, behind(3), noRemarks).changes, [
+      { kind: "behind", behindBy: 3 },
+    ]);
+    // A push that leaves the branch behind is news for the new head.
+    const pushed = detail({ headSha: "bbbbbbbbbb", baseComparison: "behind", behindBy: 2 });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, pushed, noRemarks).changes, [
+      { kind: "behind", behindBy: 2 },
+    ]);
+    const current = evaluatePullRequestWatch(
+      first.next,
+      detail({ baseComparison: "up-to-date" }),
+      noRemarks,
+    );
+    assert.equal(current.next.behindBy, 0);
+    assert.deepEqual(evaluatePullRequestWatch(current.next, behind(), noRemarks).changes, [
+      { kind: "behind", behindBy: null },
+    ]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(watch(), behind(2), noRemarks),
+      evaluatePullRequestWatch(watch(), detail(), noRemarks),
+    );
+
+    const message = (behindBy: number | null) =>
+      pullRequestWatchMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        baseBranch: "main",
+        headSha: null,
+        report: { changes: [{ kind: "behind", behindBy }], next: opted, exhausted: false },
+      });
+    assert.include(message(3).text, "- The branch is 3 commits behind main.");
+    assert.include(message(1).text, "- The branch is 1 commit behind main.");
+    assert.include(message(null).text, "- The branch is behind main.");
+    assert.deepEqual(message(3).notification, {
+      source: { kind: "monitor" },
+      outcome: "updated",
+      summary: "#1: base moved",
+    });
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(
