@@ -99,10 +99,9 @@ function targetZone(state: LayoutDragState, target: LayoutDropTarget): Box | nul
 function intoTabs(state: LayoutDragState, target: LayoutDropTarget) {
   if (target.kind !== "into") return null;
   const tabs = state.panes.find((pane) => pane.paneId === target.paneId)?.tabs ?? [];
-  const sourceTabId = state.source.kind === "tab" ? state.source.tabId : null;
   return {
-    tabs: tabs.filter((tab) => tab.id !== sourceTabId),
-    reorder: tabs.some((tab) => tab.id === sourceTabId),
+    tabs: tabs.filter((tab) => tab.id !== state.movingTabId),
+    reorder: tabs.some((tab) => tab.id === state.movingTabId),
     index: target.index,
   };
 }
