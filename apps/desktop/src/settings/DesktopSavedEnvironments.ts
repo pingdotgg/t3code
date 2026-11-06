@@ -319,7 +319,7 @@ export const make = Effect.gen(function* () {
         (environment.platform === "darwin" || environment.platform === "linux")
       ) {
         const legacyResult = yield* legacySecretKey.decrypt(secretBytes);
-        if (Option.isSome(legacyResult)) {
+        if (Option.isSome(legacyResult) && !legacyResult.value.includes("\ufffd")) {
           yield* backupOnce(
             fileSystem,
             environment.savedEnvironmentRegistryPath,

@@ -137,13 +137,7 @@ function parseArgs(argv) {
     command === "plant" ? ".t3-learn" : ".ominax",
     "userdata",
   );
-  const stateDir =
-    values["state-dir"] ||
-    (command === "check" &&
-    platform !== "win32" &&
-    !NodeFS.existsSync(NodePath.dirname(defaultState))
-      ? NodePath.join(home, ".t3-learn", "userdata")
-      : defaultState);
+  const stateDir = values["state-dir"] || defaultState;
   return {
     command,
     platform,
@@ -169,9 +163,12 @@ function main(input) {
     }
     key = windowsKey(input.userData);
     if (key === null) {
-      NodeFS.writeFileSync(NodePath.join(input.stateDir, MARKER), "skipped\n");
-      console.log("skipped saved connection: Windows Local State does not exist yet");
-      return;
+      if (input.command === "plant") {
+        NodeFS.writeFileSync(NodePath.join(input.stateDir, MARKER), "skipped\n");
+        console.log("skipped saved connection: Windows Local State does not exist yet");
+        return;
+      }
+      throw new Error("Windows Local State is missing after the plant was not skipped");
     }
   }
   if (input.command === "plant") {
@@ -191,6 +188,19 @@ function main(input) {
   if (NodeFS.existsSync(NodePath.join(input.stateDir, MARKER))) {
     console.log("skipped saved connection check: Windows Local State was absent during plant");
     return;
+  }
+  if (input.platform === "linux") {
+    const currentHome = NodePath.dirname(input.stateDir);
+    const legacyHome = NodePath.join(NodePath.dirname(currentHome), ".t3-learn");
+    if (
+      !NodeFS.statSync(currentHome).isDirectory() ||
+      !NodeFS.lstatSync(legacyHome).isSymbolicLink()
+    ) {
+      throw new Error("OminaX home migration not found");
+    }
+    if (NodeFS.realpathSync(legacyHome) !== NodeFS.realpathSync(currentHome)) {
+      throw new Error("legacy T3 Learn home does not link to OminaX home");
+    }
   }
   const document = JSON.parse(NodeFS.readFileSync(file, "utf8"));
   const password =

@@ -443,6 +443,70 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const recoverQuarantinedCatalog = Effect.gen(function* () {
+    if (!(yield* encryptionAvailable)) return Option.none<string>();
+    const directory = path.dirname(catalogPath);
+    const prefix = `${path.basename(catalogPath)}.undecryptable-`;
+    const names = yield* fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+    const candidates = [
+      `${catalogPath}.pre-ominax`,
+      ...names
+        .filter((name) => name.startsWith(prefix))
+        .toSorted()
+        .reverse()
+        .map((name) => path.join(directory, name)),
+    ];
+    for (const candidate of candidates) {
+      const document = yield* readDocument(fileSystem, candidate).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (Option.isNone(document)) continue;
+      const encrypted = yield* decodeSecretBytes(candidate, document.value.encryptedCatalog).pipe(
+        Effect.option,
+      );
+      if (Option.isNone(encrypted)) continue;
+      const current = yield* Effect.exit(
+        safeStorage.decryptString(encrypted.value).pipe(Effect.flatMap(validateJson)),
+      );
+      if (Exit.isSuccess(current)) {
+        yield* writeCatalog(current.value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopConnectionCatalogStoreProtectionError({
+                operation: "encrypt-catalog",
+                catalogPath,
+                cause,
+              }),
+          ),
+        );
+        return Option.some(current.value);
+      }
+      if (
+        !environment.isDevelopment &&
+        (environment.platform === "darwin" || environment.platform === "linux")
+      ) {
+        const legacy = yield* legacySecretKey.decrypt(encrypted.value);
+        if (Option.isSome(legacy)) {
+          const valid = yield* validateJson(legacy.value).pipe(Effect.option);
+          if (Option.isSome(valid)) {
+            yield* writeCatalog(valid.value).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new DesktopConnectionCatalogStoreProtectionError({
+                    operation: "encrypt-catalog",
+                    catalogPath,
+                    cause,
+                  }),
+              ),
+            );
+            return Option.some(valid.value);
+          }
+        }
+      }
+    }
+    return Option.none<string>();
+  });
+
   const migrateLegacyCatalog = Effect.gen(function* () {
     if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
@@ -488,6 +552,8 @@ export const make = Effect.gen(function* () {
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
       if (Option.isNone(document)) {
+        const recovered = yield* recoverQuarantinedCatalog;
+        if (Option.isSome(recovered)) return recovered;
         return yield* migrateLegacyCatalog;
       }
       if (!(yield* encryptionAvailable)) {

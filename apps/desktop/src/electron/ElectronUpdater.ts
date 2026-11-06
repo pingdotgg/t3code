@@ -26,16 +26,24 @@ if ditto -x -k "$zip" "$staging/new"; then
   new=$(ls -d "$staging"/new/*.app 2>/dev/null | head -n 1)
   dest="$(dirname "$app")/$(basename "$new")"
   stale=
-  [ -n "$new" ] && [ "$dest" != "$app" ] && [ -e "$dest" ] && mv "$dest" "$staging/stale.app" && stale=1
-  if [ -n "$new" ] && mv "$app" "$staging/previous.app"; then
-    xattr -dr com.apple.quarantine "$new" 2>/dev/null
-    if mv "$new" "$dest"; then
-      app=$dest
-    else
-      mv "$staging/previous.app" "$app"
-      [ -n "$stale" ] && mv "$staging/stale.app" "$dest"
+    if [ -n "$new" ] && mv "$app" "$staging/previous.app"; then
+      if [ "$dest" != "$app" ] && [ -e "$dest" ]; then
+        if mv "$dest" "$staging/stale.app"; then
+          stale=1
+        else
+          mv "$staging/previous.app" "$app"
+        fi
+      fi
+      if [ ! -e "$app" ] && [ -n "$new" ] && { [ -z "$stale" ] || [ -e "$staging/stale.app" ]; }; then
+        xattr -dr com.apple.quarantine "$new" 2>/dev/null
+        if mv "$new" "$dest"; then
+          app=$dest
+        else
+          mv "$staging/previous.app" "$app"
+          [ -n "$stale" ] && mv "$staging/stale.app" "$dest"
+        fi
+      fi
     fi
-  fi
 fi
 [ -d "$app" ] && rm -rf "$staging"
 open "$app"

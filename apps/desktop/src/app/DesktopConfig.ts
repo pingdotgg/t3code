@@ -3,6 +3,7 @@ import { T3_LEARN_HOME_ENV, T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdent
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const trimNonEmptyOption = (value: string): Option.Option<string> => {
   const trimmed = value.trim();
@@ -11,6 +12,9 @@ const trimNonEmptyOption = (value: string): Option.Option<string> => {
 
 export const trimmedString = (name: string) =>
   Config.String(name).pipe(Config.option, Config.map(Option.flatMap(trimNonEmptyOption)));
+
+const trimmedNonEmpty = (name: string) =>
+  Config.schema(Schema.Trim.pipe(Schema.check(Schema.isNonEmpty())), name);
 
 const optionalBoolean = (name: string) =>
   Config.Boolean(name).pipe(Config.option, Config.map(Option.getOrElse(() => false)));
@@ -49,18 +53,10 @@ export const DesktopConfig = Config.all({
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
   t3Home: trimmedString("T3CODE_HOME"),
   // A packaged T3 Learn ignores T3CODE_HOME so an exported T3 Code home never becomes its own.
-  t3LearnHome: Config.all({
-    current: trimmedString(T3_LEARN_HOME_ENV),
-    legacy: trimmedString(T3_LEARN_LEGACY.homeEnv),
-  }).pipe(
-    Config.map(({ current, legacy }) =>
-      Option.fromUndefinedOr(
-        resolveT3LearnHomeFromEnv({
-          [T3_LEARN_HOME_ENV]: Option.getOrUndefined(current),
-          [T3_LEARN_LEGACY.homeEnv]: Option.getOrUndefined(legacy),
-        }),
-      ),
-    ),
+  t3LearnHome: trimmedNonEmpty(T3_LEARN_HOME_ENV).pipe(
+    Config.orElse(() => trimmedNonEmpty(T3_LEARN_LEGACY.homeEnv)),
+    Config.option,
+    Config.map(Option.flatMap(trimNonEmptyOption)),
   ),
   devServerUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("T3CODE_DESKTOP_APP_USER_MODEL_ID"),

@@ -304,7 +304,7 @@ describe("DesktopConnectionCatalogStore", () => {
         true,
       );
       yield* Ref.set(failDecrypt, false);
-      assert.deepStrictEqual(yield* store.get, Option.none());
+      assert.deepStrictEqual(yield* store.get, Option.some(validCatalog));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -355,6 +355,27 @@ describe("DesktopConnectionCatalogStore", () => {
       }),
       true,
       () => Effect.succeedSome(validCatalog),
+    ),
+  );
+
+  it.effect("does not accept legacy-key plaintext that fails catalog validation", () =>
+    withStore(
+      Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${environment.stateDir}/connection-catalog.json`,
+          JSON.stringify({
+            version: 1,
+            encryptedCatalog: Base64.encode(textEncoder.encode("legacy-encrypted")),
+          }),
+        );
+        assert.deepStrictEqual(yield* store.get, Option.none());
+      }),
+      true,
+      () => Effect.succeedSome("not a catalog"),
     ),
   );
 });

@@ -26,6 +26,12 @@ describe("DesktopEarlyElectronStartup", () => {
         executableTargets: ["/usr/bin/other-app"],
       }),
     );
+    assert.isTrue(
+      isOwnedLegacyLinuxDesktopEntry({
+        content: '[Desktop Entry]\nExec="/opt/ominax/t3learn" %U\n',
+        executableTargets: ["/opt/ominax/ominax"],
+      }),
+    );
   });
 
   it.each([

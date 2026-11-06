@@ -47,16 +47,16 @@ export const isOwnedLegacyLinuxDesktopEntry = (input: {
   const execLine = input.content.split("\n").find((line) => line.startsWith("Exec="));
   if (execLine === undefined) return false;
   const execTarget = execLine.slice("Exec=".length).trim();
-  return input.executableTargets.some(
-    (target) =>
-      execTarget === target ||
-      execTarget.startsWith(`${target} `) ||
-      execTarget.startsWith(`"${target}" `) ||
-      execTarget.startsWith(`"${target}"`),
-  );
+  const matches = (target: string) =>
+    execTarget === target ||
+    execTarget.startsWith(`${target} `) ||
+    execTarget.startsWith(`"${target}"`);
+  return input.executableTargets.some((target) => {
+    if (matches(target)) return true;
+    const directory = target.slice(0, target.lastIndexOf("/"));
+    return matches(`${directory}/${T3_LEARN_LEGACY.executableName}`);
+  });
 };
-
-export const legacyLinuxDesktopEntryName = T3_LEARN_LEGACY.linuxDesktopEntry;
 
 const EarlyDesktopSettingsJson = fromLenientJson(
   Schema.Struct({

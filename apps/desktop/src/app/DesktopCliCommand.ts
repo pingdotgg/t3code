@@ -176,10 +176,8 @@ export const make = Effect.gen(function* () {
         : Option.none<string>();
     }
     for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
-      for (const command of [T3_LEARN_COMMAND, T3_LEARN_LEGACY.command]) {
-        const link = path.join(directory, command);
-        if (yield* isOurLink(link)) return Option.some(link);
-      }
+      const link = path.join(directory, T3_LEARN_COMMAND);
+      if (yield* isOurLink(link)) return Option.some(link);
     }
     return Option.none<string>();
   });
@@ -193,11 +191,9 @@ export const make = Effect.gen(function* () {
     const shadowedBy = yield* foreignFirstOnPath;
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
     const first = yield* firstOnPath();
-    const legacyFirst = yield* firstOnPath(T3_LEARN_LEGACY.command);
     const onPath = windows
       ? Option.isSome(installed)
-      : (Option.isSome(first) && (yield* runsOurLauncher(first.value))) ||
-        (Option.isSome(legacyFirst) && (yield* runsOurLauncher(legacyFirst.value)));
+      : Option.isSome(first) && (yield* runsOurLauncher(first.value));
     return {
       supported: true,
       installedPath: Option.getOrNull(installed),
@@ -246,19 +242,6 @@ export const make = Effect.gen(function* () {
     }
     const onPath = pathEntries(env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);
-    for (const directory of candidates) {
-      const legacy = path.join(directory, T3_LEARN_LEGACY.command);
-      if (!(yield* isOurLink(legacy))) continue;
-      const target = yield* fs.readLink(legacy).pipe(Effect.option);
-      if (Option.getOrUndefined(target) === launcher) continue;
-      const staging = `${legacy}.${process.pid}.tmp`;
-      yield* fs
-        .symlink(launcher, staging)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${legacy}.`)));
-      yield* fs
-        .rename(staging, legacy)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${legacy}.`)));
-    }
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),

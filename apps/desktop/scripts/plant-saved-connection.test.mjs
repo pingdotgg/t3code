@@ -31,6 +31,8 @@ describe("plant-saved-connection", () => {
           { env },
         ),
       ).toThrow();
+      NodeFS.rmSync(NodePath.join(home, ".t3-learn"), { recursive: true, force: true });
+      NodeFS.symlinkSync(NodePath.join(home, ".ominax"), NodePath.join(home, ".t3-learn"));
       NodeFS.copyFileSync(
         NodePath.join(currentDir, "connection-catalog.json"),
         NodePath.join(currentDir, "connection-catalog.json.pre-ominax"),

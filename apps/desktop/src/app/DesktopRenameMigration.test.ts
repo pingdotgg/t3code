@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import {
   migrateDesktopRename,
@@ -98,12 +99,29 @@ it.effect("keeps an existing OminaX home and honors an explicit override", () =>
       explicitHome: Option.none(),
     });
     assert.equal(existing.homePath, current);
+    assert.equal(yield* fs.exists(path.join(root, ".t3-learn")), false);
 
     const configured = yield* runMigration({
       homeDirectory: root,
       explicitHome: Option.some(path.join(root, "configured")),
     });
     assert.equal(configured.homePath, path.join(root, "configured"));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("restores a legacy link only after a moved home loses it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "ominax-recover-" });
+    const legacy = path.join(root, ".t3-learn");
+    const current = path.join(root, ".ominax");
+    yield* fs.makeDirectory(legacy);
+    yield* fs.writeFileString(path.join(legacy, ".moved-from-t3learn"), "");
+    yield* fs.rename(legacy, current);
+    const result = yield* runMigration({ homeDirectory: root, explicitHome: Option.none() });
+    assert.equal(result.homePath, current);
+    assert.equal(yield* fs.readLink(legacy), current);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -122,5 +140,66 @@ it.effect("moves Electron user data and preserves the legacy link", () =>
 
     assert.equal(result, current);
     assert.equal(yield* fs.readLink(legacy), current);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not create a legacy user-data link for a fresh OminaX directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "ominax-profile-fresh-" });
+    const current = path.join(root, "ominax");
+    yield* fs.makeDirectory(current);
+    assert.equal(
+      yield* migrateElectronUserData({ appDataDirectory: root, platform: "linux" }),
+      current,
+    );
+    assert.equal(yield* fs.exists(path.join(root, "t3learn")), false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("restores a moved Electron user-data link after a crash", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "ominax-profile-recover-" });
+    const legacy = path.join(root, "t3learn");
+    const current = path.join(root, "ominax");
+    yield* fs.makeDirectory(legacy);
+    yield* fs.writeFileString(path.join(legacy, ".moved-from-t3learn"), "");
+    yield* fs.rename(legacy, current);
+    assert.equal(
+      yield* migrateElectronUserData({ appDataDirectory: root, platform: "linux" }),
+      current,
+    );
+    assert.equal(yield* fs.readLink(legacy), current);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("returns the new path when the link and rollback both fail", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "ominax-rollback-" });
+    const legacy = path.join(root, ".t3-learn");
+    const current = path.join(root, ".ominax");
+    yield* fs.makeDirectory(legacy);
+    const failure = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "rename",
+    });
+    const brokenFileSystem = {
+      ...fs,
+      symlink: () => Effect.fail(failure),
+      rename: (from: string, to: string) =>
+        from === current ? Effect.fail(failure) : fs.rename(from, to),
+    } satisfies FileSystem.FileSystem;
+    const result = yield* migrateDesktopRename({
+      homeDirectory: root,
+      explicitHome: Option.none(),
+      isHomeOwned: () => Effect.succeed(false),
+    }).pipe(Effect.provideService(FileSystem.FileSystem, brokenFileSystem));
+    assert.equal(result.homePath, current);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

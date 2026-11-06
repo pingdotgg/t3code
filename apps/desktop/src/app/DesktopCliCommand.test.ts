@@ -195,6 +195,38 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("repairs a legacy bundled shim and external t3-learn alias after upgrade", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const baseDir = path.join(home, ".ominax");
+      const oldShim = path.join(baseDir, "bin", "t3-learn");
+      const externalLegacy = path.join(home, ".local", "bin", "t3-learn");
+      yield* fs.makeDirectory(path.dirname(oldShim), { recursive: true });
+      yield* fs.writeFileString(
+        oldShim,
+        "#!/bin/sh\n# Written by T3 Learn: runs the desktop app's bundled t3 CLI.\n",
+        { mode: 0o755 },
+      );
+      yield* fs.makeDirectory(path.dirname(externalLegacy), { recursive: true });
+      yield* fs.symlink(oldShim, externalLegacy);
+      const command = yield* commandIn({
+        home,
+        baseDir,
+        env: { PATH: path.dirname(externalLegacy) },
+      });
+
+      expect((yield* command.state).installedPath).toBeNull();
+      const installed = yield* command.install;
+      const launcher = path.join(baseDir, "bin", "ominax");
+      expect(installed.installedPath).toBe(path.join(home, ".local", "bin", "ominax"));
+      expect(yield* fs.readLink(path.join(home, ".local", "bin", "t3-learn"))).toBe(launcher);
+      expect(yield* fs.readLink(oldShim)).toBe(launcher);
+      expect(yield* fs.readFileString(launcher)).toContain("Written by OminaX");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("leaves a foreign t3-learn alias untouched", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -188,6 +188,18 @@ export const install = Effect.gen(function* () {
           yield* fs.rename(staging, oldShimPath);
         }
       }
+    } else {
+      const oldExisting = yield* fs.readLink(oldShimPath).pipe(Effect.option);
+      if (Option.isSome(oldExisting) && oldExisting.value === shimPath) {
+        return Option.some(shimPath);
+      }
+      const oldFile = yield* fs.readFileString(oldShimPath).pipe(Effect.option);
+      if (Option.isSome(oldFile) && !isOurLauncher(oldFile.value)) {
+        yield* logWarning("leaving a t3 launcher the app did not write", { shimPath: oldShimPath });
+        return Option.some(shimPath);
+      }
+      yield* fs.remove(oldShimPath, { force: true }).pipe(Effect.ignore);
+      yield* fs.symlink(shimPath, oldShimPath);
     }
     return Option.some(shimPath);
   }).pipe(

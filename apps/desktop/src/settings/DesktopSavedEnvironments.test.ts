@@ -272,4 +272,24 @@ describe("DesktopSavedEnvironments", () => {
       },
     ),
   );
+
+  it.effect("rejects replacement characters from the legacy key", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("garbage")));
+        const error = yield* savedEnvironments
+          .getSecret(savedRegistryRecord.environmentId)
+          .pipe(Effect.flip);
+        assert.instanceOf(
+          error,
+          DesktopSavedEnvironments.DesktopSavedEnvironmentSecretProtectionError,
+        );
+      }),
+      {
+        decryptError: new Error("new key unavailable"),
+        legacyDecrypt: () => Effect.succeedSome("\ufffd"),
+      },
+    ),
+  );
 });

@@ -23,3 +23,10 @@ it.effect("uses T3LEARN_HOME when OMINAX_HOME is unset", () =>
     Effect.map((config) => assert.equal(Option.getOrNull(config.t3LearnHome), "/legacy-home")),
   ),
 );
+
+it.effect("trims homes and falls back when OMINAX_HOME is blank", () =>
+  DesktopConfig.pipe(
+    Effect.provide(layerTest({ OMINAX_HOME: "   ", T3LEARN_HOME: " /legacy-home " })),
+    Effect.map((config) => assert.equal(Option.getOrNull(config.t3LearnHome), "/legacy-home")),
+  ),
+);

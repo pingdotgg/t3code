@@ -43,6 +43,7 @@ const nativeHomeIsOwned = (legacyHome: string): boolean => {
 };
 
 const lstat = (fs: FileSystem.FileSystem, path: string) => fs.lstat(path).pipe(Effect.option);
+const MOVED_FROM_LEGACY_MARKER = ".moved-from-t3learn";
 
 const migrateDirectory = Effect.fn("desktop.renameMigration.migrateDirectory")(function* (input: {
   readonly fs: FileSystem.FileSystem;
@@ -55,7 +56,10 @@ const migrateDirectory = Effect.fn("desktop.renameMigration.migrateDirectory")(f
   if (Option.isSome(current)) {
     if (
       current.value.type === "Directory" &&
-      Option.isNone(yield* lstat(input.fs, input.legacyPath))
+      Option.isNone(yield* lstat(input.fs, input.legacyPath)) &&
+      Option.isSome(
+        yield* lstat(input.fs, NodePath.join(input.currentPath, MOVED_FROM_LEGACY_MARKER)),
+      )
     ) {
       yield* createLegacyLink(input).pipe(Effect.ignore);
     }
@@ -72,6 +76,8 @@ const migrateDirectory = Effect.fn("desktop.renameMigration.migrateDirectory")(f
     });
     return input.legacyPath;
   }
+
+  yield* input.fs.writeFileString(NodePath.join(input.legacyPath, MOVED_FROM_LEGACY_MARKER), "");
 
   const renamed = yield* Effect.exit(input.fs.rename(input.legacyPath, input.currentPath));
   if (Exit.isFailure(renamed)) {

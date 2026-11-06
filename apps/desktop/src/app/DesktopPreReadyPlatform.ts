@@ -16,6 +16,7 @@ import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import { T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdentity";
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -95,7 +96,7 @@ export const make = Effect.gen(function* () {
         NodeFS.mkdirSync(applicationsDir, { recursive: true });
         const legacyDesktopEntryPath = NodePath.posix.join(
           applicationsDir,
-          DesktopEarlyElectronStartup.legacyLinuxDesktopEntryName,
+          T3_LEARN_LEGACY.linuxDesktopEntry,
         );
         try {
           const legacyContent = NodeFS.readFileSync(legacyDesktopEntryPath, "utf8");

@@ -91,3 +91,20 @@ it("restores a stale renamed bundle when the new bundle swap aborts", () => {
   expect(NodeFS.existsSync(NodePath.join(stale, "stale"))).toBe(true);
   expect(NodeFS.existsSync(input.oldApp)).toBe(true);
 });
+
+it("restores the old and stale bundles when moving the old app fails", () => {
+  const input = fixture();
+  const stale = NodePath.join(input.root, "OminaX.app");
+  NodeFS.mkdirSync(stale, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(stale, "stale"), "stale");
+  NodeFS.writeFileSync(
+    NodePath.join(input.tools, "mv"),
+    '#!/bin/sh\ncase "$1:$2" in *"T3 Learn.app"*:*) exit 1;; esac\nexec /bin/mv "$@"\n',
+    { mode: 0o755 },
+  );
+  const { result, log } = run(input);
+  expect(result.status).toBe(0);
+  expect(NodeFS.existsSync(NodePath.join(input.oldApp, "old"))).toBe(true);
+  expect(NodeFS.existsSync(NodePath.join(stale, "stale"))).toBe(true);
+  expect(NodeFS.readFileSync(log, "utf8")).toBe(input.oldApp);
+});

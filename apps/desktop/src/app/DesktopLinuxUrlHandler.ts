@@ -79,10 +79,9 @@ const escapeUrlHandlerExecTarget = (value: string): string =>
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
-  readonly scheme: string | readonly string[];
+  readonly scheme: readonly string[];
   readonly iconPath?: string;
 }): string {
-  const schemes = typeof input.scheme === "string" ? [input.scheme] : input.scheme;
   return [
     "[Desktop Entry]",
     "Type=Application",
@@ -92,7 +91,7 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
-    `MimeType=${schemes.map((scheme) => `x-scheme-handler/${scheme};`).join("")}`,
+    `MimeType=${input.scheme.map((scheme) => `x-scheme-handler/${scheme};`).join("")}`,
     "",
   ].join("\n");
 }
