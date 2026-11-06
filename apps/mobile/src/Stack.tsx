@@ -589,22 +589,22 @@ const RootStackConfig = createWorkspaceStackNavigator({
     LinearTeam: createNativeStackScreen({
       screen: LinearTeamScreen,
       linking: LINEAR_LINK_PATHS.LinearTeam,
-      options: DETAIL_HEADER_OPTIONS,
+      options: pageRoute(),
     }),
     LinearProject: createNativeStackScreen({
       screen: LinearProjectScreen,
       linking: LINEAR_LINK_PATHS.LinearProject,
-      options: DETAIL_HEADER_OPTIONS,
+      options: pageRoute(),
     }),
     LinearMilestone: createNativeStackScreen({
       screen: LinearMilestoneScreen,
       linking: LINEAR_LINK_PATHS.LinearMilestone,
-      options: DETAIL_HEADER_OPTIONS,
+      options: pageRoute(),
     }),
     LinearIssue: createNativeStackScreen({
       screen: LinearIssueRouteScreen,
       linking: LINEAR_LINK_PATHS.LinearIssue,
-      options: DETAIL_HEADER_OPTIONS,
+      options: pageRoute(),
     }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,
@@ -747,21 +747,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     LinearProjectPicker: createNativeStackScreen({
       screen: LinearProjectPickerSheet,
-      options: {
-        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
-        ...HORIZONTAL_FORM_SHEET_OPTIONS,
-        sheetAllowedDetents: formSheetDetents(0.6),
-        sheetGrabberVisible: true,
-      },
+      options: sheetRoute({ detent: 0.6 }),
     }),
     LinearPipeline: createNativeStackScreen({
       screen: LinearPipelineSheet,
-      options: {
-        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
-        ...HORIZONTAL_FORM_SHEET_OPTIONS,
-        sheetAllowedDetents: formSheetDetents(0.9),
-        sheetGrabberVisible: true,
-      },
+      options: sheetRoute({ detent: 0.9 }),
     }),
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,

@@ -104,7 +104,7 @@ function LaunchSection({
         title="Link the pull request back"
         description={
           <>
-            Nothing to do here: Linear links a PR to its issue automatically when the branch name
+            Nothing to do: Linear links a PR to its issue automatically when the branch name
             contains the issue ID, like{" "}
             <code className="rounded bg-muted px-1 font-mono text-2xs">jan/att-612-rfid-apdu</code>.
             New worktrees use Linear&apos;s branch name to get this for free.
