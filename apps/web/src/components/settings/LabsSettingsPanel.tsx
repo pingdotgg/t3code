@@ -1,15 +1,21 @@
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
+import { managedCapabilityDenial } from "@t3tools/contracts";
+import { ToolCallVisibility } from "@t3tools/contracts/settings";
+import * as Schema from "effect/Schema";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
 export function LabsSettingsPanel() {
@@ -18,6 +24,7 @@ export function LabsSettingsPanel() {
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
+        <ToolCallVisibilityRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -69,6 +76,46 @@ function BoringSidebarMultilineRow() {
   );
 }
 
+const TOOL_CALL_VISIBILITY_LABELS: Record<ToolCallVisibility, string> = {
+  showAll: "Show all",
+  hideSuccessful: "Hide successful",
+  hideAll: "Hide all",
+  zen: "Zen",
+};
+
+const isToolCallVisibility = Schema.is(ToolCallVisibility);
+
+function ToolCallVisibilityRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("tool-call-visibility")}
+      description="Hide the commands, edits, and searches agents run, so a thread reads like a conversation. Hide successful keeps calls that fail. Zen also hides the agent's in-between messages and shows only final answers. Approvals, questions, and errors always show."
+      control={
+        <div className="w-full sm:w-40">
+          <Select
+            value={settings.toolCallVisibility}
+            onValueChange={(value) => {
+              if (isToolCallVisibility(value)) updateSettings({ toolCallVisibility: value });
+            }}
+          >
+            <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Tool calls in chat">
+              <SelectValue>{TOOL_CALL_VISIBILITY_LABELS[settings.toolCallVisibility]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="showAll">Show all</SelectItem>
+              <SelectItem value="hideSuccessful">Hide successful</SelectItem>
+              <SelectItem value="hideAll">Hide all</SelectItem>
+              <SelectItem value="zen">Zen</SelectItem>
+            </SelectPopup>
+          </Select>
+        </div>
+      }
+    />
+  );
+}
+
 /** Signed out of T3 Connect, the row offers to sign in instead of its switch. */
 function GuestLinksRowWithSignIn() {
   const { isSignedIn } = useAuth();
@@ -91,11 +138,22 @@ function GuestLinksRowWithSignIn() {
 function GuestLinksRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const scope = useOptionalSettingsScope();
+  const primaryPolicy = usePrimaryManagedPolicy();
+  // Guests arrive through T3 Connect, so a policy that turns Connect off turns this off too.
+  const connectDenial = firstManagedDenial(
+    scope
+      ? scope.connectedEnvironments.map((environment) => environment.serverConfig?.managedPolicy)
+      : [primaryPolicy],
+    (policy) => managedCapabilityDenial(policy, "connect"),
+  );
   return (
     <SettingsRow
       serverScoped
       {...searchableSetting("guest-links")}
       settingKeys={["guestSharingEnabled"]}
+      // Turning guest links off still works without T3 Connect.
+      managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
           Share a thread with a guest who watches it live in their browser and sends messages you
