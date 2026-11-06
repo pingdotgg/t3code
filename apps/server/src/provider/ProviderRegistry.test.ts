@@ -478,6 +478,8 @@ it.layer(
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+        // regression: #11873 a custom provider has no subscription to read, which is not a failure
+        assert.deepStrictEqual(status.usageLimits?.unavailable, { reason: "unsupported" });
       }),
     );
 

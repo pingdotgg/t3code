@@ -23,6 +23,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  type ServerProvider,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -45,6 +46,7 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -262,14 +264,17 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
         },
         snapshot: {
           refreshUsage: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
-          getSnapshot: Effect.die("unused"),
+          getSnapshot: Effect.sync(() => own as ServerProvider),
           refresh: Effect.die("unused"),
           resolveMaintenance: () => Effect.die("unused"),
           applyUsageLimits: () => Effect.die("unused"),
           streamChanges: Stream.empty,
         },
       };
+      let own: Partial<ServerProvider> | undefined;
       const lookups: ProviderInstanceId[] = [];
+      const hubLookups: string[] = [];
+      const hubResetAt = "2033-05-19T07:20:00.000Z";
       const instances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
         getInstance: (id) =>
           Effect.sync(() => {
@@ -292,7 +297,36 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           providerInstanceId: instance.instanceId,
           threadId: threadEvent.threadId,
         };
-        for (const failureClass of ["validation_error", "usage_limit"] as const) {
+        const unread = { checkedAt: now.toString(), windows: [] };
+        const cases = [
+          { failureClass: "validation_error", provider: undefined, resetAt: undefined },
+          {
+            failureClass: "usage_limit",
+            provider: {
+              auth: { status: "authenticated" },
+              usageLimits: { ...unread, unavailable: { reason: "probeFailed" } },
+            },
+            resetAt: undefined,
+          },
+          {
+            failureClass: "usage_limit",
+            provider: {
+              auth: { status: "authenticated", type: "customEndpoint" },
+              usageLimits: { ...unread, unavailable: { reason: "probeFailed" } },
+            },
+            resetAt: hubResetAt,
+          },
+          {
+            failureClass: "usage_limit",
+            provider: {
+              auth: { status: "unknown" },
+              usageLimits: { ...unread, unavailable: { reason: "unsupported" } },
+            },
+            resetAt: hubResetAt,
+          },
+        ] as const;
+        for (const [index, { failureClass, provider, resetAt }] of cases.entries()) {
+          own = provider;
           const stored = yield* ingestor.ingestNormalized({
             ...input,
             event: {
@@ -304,7 +338,7 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
               }),
               providerTurnId: idAllocator.derive.providerTurn({
                 driver: instance.driverKind,
-                nativeTurnId: failureClass,
+                nativeTurnId: String(index),
               }),
               runOrdinal: 1,
               failureItemOrdinal: 1,
@@ -318,10 +352,28 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           });
           assert.equal(stored.length, 1);
           if (failureClass === "validation_error") assert.deepEqual(lookups, []);
+          // regression: #26574 a proxied CLI drops the reset, so the hub's pool refill fills it
+          const item = stored[0]?.event;
+          assert.equal(
+            item?.type === "turn-item.updated" && item.payload.type === "error"
+              ? item.payload.failure.resetAt
+              : undefined,
+            resetAt,
+          );
         }
-        assert.deepEqual(lookups, [instance.instanceId]);
+        assert.deepEqual(lookups, Array(6).fill(instance.instanceId));
+        assert.deepEqual(hubLookups, [instance.driverKind, instance.driverKind]);
         yield* Deferred.await(refreshed);
-      }).pipe(Effect.provide(makeLayerTest(layerTestEventSink, instances)));
+      }).pipe(
+        Effect.provide(makeLayerTest(layerTestEventSink, instances)),
+        Effect.provideService(UsageLimitResetFallback, {
+          resetAt: (driver) =>
+            Effect.sync(() => {
+              hubLookups.push(driver);
+              return hubResetAt;
+            }),
+        }),
+      );
     }),
   ),
 );
