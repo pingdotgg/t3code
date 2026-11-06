@@ -44,6 +44,7 @@ import {
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -175,6 +176,12 @@ export interface ThreadManagementWaitInput {
    * completion delivery will wake it again, as a delegated task's result does.
    */
   readonly untilDelegatedWorkSettled?: boolean;
+  /**
+   * Instead wait for the next run after this one that a message able to start a finished
+   * child's follow-up work started, as a person's does and a monitor's or scheduled task's
+   * does not, returned as soon as it starts; on timeout, this one's latest.
+   */
+  readonly afterRunId?: RunId;
 }
 
 export interface ThreadManagementWaitResult {
@@ -528,6 +535,59 @@ export function latestRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+}
+
+const runBegan = (run: OrchestrationV2Run) =>
+  DateTime.toEpochMillis(run.startedAt ?? run.completedAt ?? run.requestedAt);
+
+/** Whether `run` began after `other`, by start time, then by ordinal. */
+const runBeganAfter = (run: OrchestrationV2Run, other: OrchestrationV2Run) =>
+  runBegan(run) === runBegan(other) ? run.ordinal > other.ordinal : runBegan(run) > runBegan(other);
+
+/**
+ * The run that started first after `after` did, other than `after` restarted; with `isNext`, the
+ * first it holds for, each passed run starting the search again. Queued runs can start out of
+ * ordinal order, so start time orders them; one that never started counts only if it failed
+ * trying, as it ended. A queued message removed or still held is no run yet.
+ */
+function laterRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  after: OrchestrationV2Run,
+  isNext: (run: OrchestrationV2Run) => boolean = () => true,
+): OrchestrationV2Run | undefined {
+  const continuations = new Map<RunId, Array<OrchestrationV2Run>>();
+  for (const run of runs) {
+    if (run.restartContinuationOfRunId === undefined) continue;
+    const siblings = continuations.get(run.restartContinuationOfRunId);
+    if (siblings === undefined) continuations.set(run.restartContinuationOfRunId, [run]);
+    else siblings.push(run);
+  }
+  const restartsOf = (run: OrchestrationV2Run) => {
+    const restarts = new Set<RunId>([run.id]);
+    const pending = [run];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      for (const continuation of continuations.get(next.id) ?? []) {
+        if (restarts.has(continuation.id)) continue;
+        restarts.add(continuation.id);
+        pending.push(continuation);
+      }
+    }
+    return restarts;
+  };
+  let previous = after;
+  let restarts = restartsOf(after);
+  const candidates = runs
+    .filter(
+      (run) => run.status !== "rolled_back" && (run.startedAt !== null || run.status === "failed"),
+    )
+    .toSorted((left, right) => runBegan(left) - runBegan(right) || left.ordinal - right.ordinal);
+  for (const run of candidates) {
+    if (restarts.has(run.id) || !runBeganAfter(run, previous)) continue;
+    if (isNext(run)) return run;
+    previous = run;
+    restarts = restartsOf(run);
+  }
+  return undefined;
 }
 
 function latestRestartContinuation(
@@ -902,6 +962,87 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
+  /** The user messages that started runs after `after`, read only when there are any. */
+  const messagesStartingRunsAfter = (
+    input: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+    runs: ReadonlyArray<OrchestrationV2Run>,
+    after: OrchestrationV2Run,
+  ) => {
+    const later = runs.filter((run) => runBeganAfter(run, after));
+    if (later.length === 0) return Effect.succeed([]);
+    return getProjectThreadRecords(input, ["messages"], {
+      messageRoles: ["user"],
+      messageIds: later.map((run) => run.userMessageId),
+    }).pipe(Effect.map(({ messages }) => messages));
+  };
+
+  // Runs inside waitForThread, which already traces it.
+  const waitForLaterRun = Effect.fnUntraced(function* (
+    input: ThreadManagementWaitInput,
+    afterRunId: RunId,
+    initialRuns: ReadonlyArray<OrchestrationV2Run>,
+    afterSequence: number,
+  ) {
+    const evaluate = Effect.fnUntraced(function* (runs: ReadonlyArray<OrchestrationV2Run>) {
+      const after = runs.find((candidate) => candidate.id === afterRunId);
+      if (after === undefined) {
+        return yield* new ThreadManagementRunNotFoundError({
+          threadId: input.threadId,
+          runId: afterRunId,
+        });
+      }
+      const messages = new Map(
+        (yield* messagesStartingRunsAfter(input, runs, after)).map((message) => [
+          message.id,
+          message,
+        ]),
+      );
+      const later = laterRun(runs, after, (run) => {
+        const message = messages.get(run.userMessageId);
+        return (
+          message !== undefined &&
+          Orchestrator.mayStartSubagentFollowup({
+            ...message,
+            restartContinuationOfRunId: run.restartContinuationOfRunId,
+          })
+        );
+      });
+      return {
+        threadId: input.threadId,
+        run: later ?? latestRestartContinuation(runs, after),
+        timedOut: later === undefined,
+      };
+    });
+    const initial = yield* evaluate(initialRuns);
+    if (!initial.timedOut) return initial;
+    const waited = yield* Stream.mergeAll(
+      (["run.updated", "thread.deleted"] as const).map((eventType) =>
+        orchestrator.streamStoredEventsFrom({ threadId: input.threadId, afterSequence, eventType }),
+      ),
+      { concurrency: "unbounded" },
+    ).pipe(
+      Stream.mapError(
+        (cause) =>
+          new ThreadManagementProjectionLoadError({
+            projectId: input.projectId,
+            threadId: input.threadId,
+            cause,
+          }),
+      ),
+      Stream.mapEffect(() =>
+        getProjectThreadRecords(input, ["runs"]).pipe(
+          Effect.flatMap((current) => evaluate(current.runs)),
+        ),
+      ),
+      Stream.filter((current) => !current.timedOut),
+      Stream.runHead,
+      Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
+    );
+    const found = Option.flatten(waited);
+    if (Option.isSome(found)) return found.value;
+    return yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs);
+  });
+
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
     "ThreadManagementService.waitForThread",
   )(function* (input) {
@@ -917,6 +1058,9 @@ const make = Effect.gen(function* () {
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
     const target = yield* getProjectThreadRecords(input, ["runs"]);
+    if (input.afterRunId !== undefined) {
+      return yield* waitForLaterRun(input, input.afterRunId, target.runs, afterSequence);
+    }
     const selectedRun =
       input.runId === undefined
         ? latestRun(target)
@@ -947,25 +1091,70 @@ const make = Effect.gen(function* () {
       return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
-    const delegatedWorkResult = Effect.gen(function* () {
+    /**
+     * The runs that answer for `selected`'s work: none from the first run after it that a message
+     * started, which is new work. A notification's run, as a delegated task's result waking the
+     * thread, continues it.
+     */
+    const ownWork = Effect.fnUntraced(function* (
+      runs: ReadonlyArray<OrchestrationV2Run>,
+      selected: OrchestrationV2Run,
+    ) {
+      const messages = yield* messagesStartingRunsAfter(input, runs, selected);
+      const byMessage = new Set(
+        messages.filter((message) => message.notification === undefined).map(({ id }) => id),
+      );
+      const bound = laterRun(runs, selected, (run) => byMessage.has(run.userMessageId));
+      return bound === undefined
+        ? runs
+        : runs.filter((run) => run.id !== bound.id && !runBeganAfter(run, bound));
+    });
+    const delegatedWorkResult = Effect.fnUntraced(function* (selected: OrchestrationV2Run) {
       const records = yield* getProjectThreadRecords(
         input,
         ["runs", "messages", "subagents", "providerThreads"],
         { messageRoles: ["user"], monitorNotificationsOnly: true },
       );
-      const progress = delegatedTaskProgress(records);
+      const runs = yield* ownWork(records.runs, selected);
+      const bounded = runs.length < records.runs.length;
+      const own = new Set(runs.map((run) => run.id));
+      // Past new work, only the tasks its own runs started count; background work names no run.
+      const progress = delegatedTaskProgress(
+        bounded
+          ? {
+              ...records,
+              runs,
+              subagents: records.subagents.filter(
+                (task) => task.runId !== null && own.has(task.runId),
+              ),
+              providerThreads: [],
+            }
+          : records,
+      );
       // A thread rolled back past all its work, with nothing left running, has no answer to wait for.
       if (
         progress.resultRun === undefined &&
-        records.runs.every((run) => isTerminalRunStatus(run.status))
+        runs.every((run) => isTerminalRunStatus(run.status))
       ) {
-        return latestRun(records);
+        return latestRun({ runs });
       }
-      if (progress.state !== "result_available") return undefined;
-      const pending = yield* orchestrator
-        .delegatedTaskResultPending(input.threadId)
-        .pipe(Effect.mapError(loadError));
-      return pending ? undefined : progress.resultRun;
+      if (progress.state !== "result_available" || progress.resultRun === undefined) {
+        return undefined;
+      }
+      const { resultRun } = progress;
+      const pending = yield* Effect.forEach(
+        runs.filter((run) => run.id === resultRun.id || runRanAfter(run, resultRun)),
+        orchestrator.restartContinuationPending,
+      );
+      if (pending.includes(true)) return undefined;
+      // A run waited on by id that is no result candidate, as a monitor's or one that failed to
+      // start, answers for itself over an earlier one; a rolled-back or unrun one never does.
+      return input.runId !== undefined &&
+        selected.status !== "rolled_back" &&
+        (selected.startedAt !== null || selected.status === "failed") &&
+        runRanAfter(selected, resultRun)
+        ? selected
+        : resultRun;
     });
     const evaluate = Effect.fn("orchestrationV2.threadManagement.evaluate")(function* (
       runs: ReadonlyArray<OrchestrationV2Run>,
@@ -974,7 +1163,7 @@ const make = Effect.gen(function* () {
       if (!current.settled || !untilDelegatedWorkSettled) {
         return { ...current, resultRun: undefined };
       }
-      const resultRun = yield* delegatedWorkResult;
+      const resultRun = yield* delegatedWorkResult(current.run);
       return { ...current, settled: resultRun !== undefined, resultRun };
     });
     const settledResult = (current: Effect.Success<ReturnType<typeof evaluate>>) => ({

@@ -352,6 +352,8 @@ export interface ProjectionRecordFilter {
   readonly contextTransferStatuses?: ReadonlyArray<OrchestrationV2ContextTransfer["status"]>;
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
+  /** Only remote delegated tasks on one of these threads in a linked environment. */
+  readonly subagentRemoteThreadIds?: ReadonlyArray<ThreadId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
@@ -572,7 +574,8 @@ export interface ProjectionStoreV2Shape {
   /**
    * Delegated tasks in a linked environment with work left for this one: no
    * result yet, or cancelled or stopped here without that stop reaching there,
-   * including a Stop after the task had its result.
+   * including a Stop after the task had its result, or a finished task whose
+   * thread there is still followed for a later run by a parent not deleted.
    */
   readonly getOpenRemoteDelegatedTasks: Effect.Effect<
     ReadonlyArray<{ readonly parentThreadId: ThreadId; readonly taskId: NodeId }>,
@@ -3433,6 +3436,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId}
               ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
               ${filter?.subagentRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
+              ${filter?.subagentRemoteThreadIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.remoteChild.threadId') IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRemoteThreadIds)}))`}
               ${
                 filter?.omitSettledSubagents !== undefined
                   ? sql`AND (${
@@ -6651,7 +6655,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readonly thread_id: string;
       readonly subagent_id: string;
     }>`
-      SELECT thread_id, subagent_id FROM orchestration_v2_projection_subagents
+      SELECT thread_id, subagent_id FROM orchestration_v2_projection_subagents AS subagent
       WHERE origin = 'app_owned'
         AND child_thread_id IS NULL
         AND json_type(payload_json, '$.remoteChild') = 'object'
@@ -6662,6 +6666,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_type(payload_json, '$.remoteChild.stoppedThere') IS NOT 'true'
           )
           OR json_type(payload_json, '$.remoteChild.stoppedThere') = 'false'
+          OR (
+            json_type(payload_json, '$.remoteChild.followsAfterRunId') = 'text'
+            AND EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_threads AS parent
+              WHERE parent.thread_id = subagent.thread_id AND parent.deleted_at IS NULL
+            )
+          )
         )
     `.pipe(
       Effect.map((rows) =>

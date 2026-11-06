@@ -8039,6 +8039,121 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
+  it.effect("a wait after a usage-limited run answers with its automatic resume", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = ThreadId.make("auto-resume-wait:thread");
+      const projectId = ProjectId.make("auto-resume-wait:project");
+      const now = yield* DateTime.now;
+      yield* seedProject({
+        projectId,
+        title: "Resume project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("auto-resume-wait:create"),
+        threadId,
+        projectId,
+        title: "Limited thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("auto-resume-wait:start"),
+        threadId,
+        messageId: MessageId.make("auto-resume-wait:start"),
+        text: "Start work.",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("auto-resume-wait:failed"),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...source, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make("auto-resume-wait:error"),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("auto-resume-wait:error"),
+              type: "error",
+              threadId,
+              runId: source.id,
+              nodeId: source.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Plan limit reached.",
+                code: "usageLimitExceeded",
+                retryable: null,
+                resetAt,
+              },
+            },
+          },
+        ],
+      });
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
+      yield* orchestrator.dispatch(limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now))!);
+      const armed = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
+      yield* TestClock.adjust("1 minute");
+      yield* orchestrator.dispatch(limitRecoveryCommand(armed, true, Date.parse(resetAt))!);
+      const resumed = (yield* orchestrator.getThreadProjection(threadId)).runs[1]!;
+      const resumedAt = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("auto-resume-wait:running"),
+            type: "run.updated",
+            threadId,
+            occurredAt: resumedAt,
+            payload: { ...resumed, status: "running", startedAt: resumedAt },
+          },
+        ],
+      });
+
+      const wait = yield* threadManagement
+        .waitForThread({ projectId, threadId, afterRunId: source.id, timeoutMs: 1_000 })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      const result = yield* Fiber.join(wait);
+      assert.deepEqual([result.timedOut, result.run?.id], [false, resumed.id]);
+    }),
+  );
+
   it.effect.each([
     "resume",
     "queued-resume",
