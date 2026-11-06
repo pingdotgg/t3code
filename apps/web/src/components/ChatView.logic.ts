@@ -1399,6 +1399,18 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
 export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
 
 /** How a composer send dispatches: where it runs and whether it waits behind other work. */
+/**
+ * Whether a sent message hands the composer's model pick back to the thread: only a new turn,
+ * which Nadir may route. A queued or steered send keeps the pick for the turn it waits for.
+ */
+export function releasesModelPickAfterSend(input: {
+  readonly nadirRouting: boolean;
+  readonly turnDispatchMode: ComposerDispatchMode;
+  readonly phase: SessionPhase;
+}): boolean {
+  return input.nadirRouting && input.turnDispatchMode === "auto" && input.phase !== "running";
+}
+
 export function planComposerTurn(input: {
   readonly messageText: string;
   readonly sendQueuesBehindSetup: boolean;

@@ -11,6 +11,7 @@ import {
   formatOutgoingPrompt,
   optimisticMessageAttachments,
   planComposerTurn,
+  releasesModelPickAfterSend,
   sendTitleFallbackLabels,
   snapshotComposerSend,
   withMessageContext,
@@ -1421,7 +1422,7 @@ export function useComposerSend(input: ComposerSendInput) {
       } else {
         turnStartSucceeded = true;
         // Nadir may run the turn on another model; the picker then shows the one that ran.
-        if (nadirRouting) {
+        if (releasesModelPickAfterSend({ nadirRouting, turnDispatchMode, phase })) {
           releaseModelPick(scopeThreadRef(environmentId, threadIdForSend), modelPickAtSend);
         }
         setKeepFullHistory(routeThreadKey, false);
