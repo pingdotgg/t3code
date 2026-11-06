@@ -205,7 +205,7 @@ const SETTINGS_SCREENS = {
   SettingsNativeTools: createNativeStackScreen({
     screen: SettingsNativeToolsRouteScreen,
     linking: "settings/tools",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "T3 tools" },
+    options: settingsPage("T3 tools"),
   }),
   SettingsProviderAccounts: createNativeStackScreen({
     screen: SettingsProviderAccountsRouteScreen,
