@@ -187,7 +187,7 @@ export function PullRequestMarkdownTextarea({
   const [highlight, setHighlight] = useState({ query: "", index: 0 });
 
   const trigger =
-    completionScope === null || caret === null
+    completionScope === null || caret === null || props.readOnly
       ? null
       : detectPullRequestComposerTrigger(value, caret);
   const open = trigger !== null && trigger.rangeStart !== dismissedAt;
