@@ -28,12 +28,11 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
-import {
-  useSettingsEnvironmentMenu,
-  SettingsEnvironmentFilterHeader,
-} from "./components/SettingsEnvironmentFilterHeader";
+import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
+import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
@@ -43,53 +42,74 @@ export function SettingsProviderAccountsRouteScreen() {
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
   return (
+    <SettingsScreen title="Providers" menus={[environmentMenu]}>
+      <ScreenScrollView
+        className="flex-1"
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+      >
+        {selectedTargets.length === 0 ? (
+          <Text className="text-foreground-muted">Select a connected environment.</Text>
+        ) : (
+          selectedTargets.map((environment) => (
+            <SettingsSection key={environment.environmentId} title={environment.label}>
+              {!permittedEnvironments.has(environment.environmentId) ? (
+                <View className="gap-1 p-4">
+                  <Text className="text-base text-foreground">Limited permissions</Text>
+                  <Text className="text-sm text-foreground-muted">
+                    {`This session can view ${environment.label}'s providers but can't change their settings.`}
+                  </Text>
+                </View>
+              ) : (
+                <EnvironmentProviders
+                  environment={environment}
+                  providers={managedProviders(environment, providersByEnvironment)}
+                />
+              )}
+            </SettingsSection>
+          ))
+        )}
+      </ScreenScrollView>
+    </SettingsScreen>
+  );
+}
+
+function EnvironmentProviders({
+  environment,
+  providers,
+}: {
+  readonly environment: SettingsTarget;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}) {
+  const accounts = providers.filter(canManageProvider);
+  // Claude has no in-app sign-in; each account is its own instance on a signed-in config folder.
+  const claudeAccounts = providers.filter(
+    (provider) => provider.driver === CLAUDE_DRIVER && !canManageProvider(provider),
+  );
+  const canAddClaude = isManagedDriverAllowed(
+    environment.serverConfig.managedPolicy,
+    CLAUDE_DRIVER,
+  );
+  return (
     <>
-      <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Providers" menus={[environmentMenu]}>
-        <ScreenScrollView
-          className="flex-1"
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerClassName="gap-6 px-5 pt-4"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        >
-          {selectedTargets.length === 0 ? (
-            <Text className="text-foreground-muted">Select a connected environment.</Text>
-          ) : (
-            selectedTargets.map((environment) => (
-              <SettingsSection key={environment.environmentId} title={environment.label}>
-                {!permittedEnvironments.has(environment.environmentId) ? (
-                  <View className="gap-1 p-4">
-                    <Text className="text-base text-foreground">Limited permissions</Text>
-                    <Text className="text-sm text-foreground-muted">
-                      {`This session can view ${environment.label}'s providers but can't change their settings.`}
-                    </Text>
-                  </View>
-                ) : (
-                  <>
-                    {managedProviders(environment, providersByEnvironment)
-                      .filter(canManageProvider)
-                      .map((provider, index) => (
-                        <ProviderAccount
-                          key={provider.instanceId}
-                          environment={environment}
-                          provider={provider}
-                          divider={index > 0}
-                        />
-                      ))}
-                    {!managedProviders(environment, providersByEnvironment).some(
-                      canManageProvider,
-                    ) ? (
-                      <Text className="p-4 text-foreground-muted">
-                        Configure a provider with in-app sign-in in web or desktop Settings.
-                      </Text>
-                    ) : null}
-                  </>
-                )}
-              </SettingsSection>
-            ))
-          )}
-        </ScreenScrollView>
-      </SettingsScreen>
+      {accounts.map((provider, index) => (
+        <ProviderAccount
+          key={provider.instanceId}
+          environment={environment}
+          provider={provider}
+          divider={index > 0}
+        />
+      ))}
+      {accounts.length === 0 ? (
+        <Text className="p-4 text-foreground-muted">
+          Configure a provider with in-app sign-in in web or desktop Settings.
+        </Text>
+      ) : null}
+      {claudeAccounts.map((provider) => (
+        <ClaudeAccount key={provider.instanceId} environment={environment} provider={provider} />
+      ))}
+      {canAddClaude ? <AddClaudeAccount environment={environment} /> : null}
     </>
   );
 }
