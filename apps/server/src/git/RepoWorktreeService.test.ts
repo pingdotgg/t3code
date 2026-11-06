@@ -882,16 +882,14 @@ describe("RepoWorktreeService", () => {
         assert.deepEqual((yield* readThread(detached)).repoWorktrees ?? [], []);
         assert.deepEqual((yield* readThread(unrelated)).repoWorktrees ?? [], []);
 
-        // A relabel read before that detach landed is refused and leaves it detached.
-        yield* threads
-          .dispatch({
-            type: "thread.repo-worktree.attach",
-            commandId: CommandId.make("relabel:after-detach"),
-            threadId: detached,
-            repoWorktree: { ...repoWorktree, branch: "feature/renamed" },
-            relabelOnly: true,
-          })
-          .pipe(Effect.ignore);
+        // A relabel read before that detach landed is a no-op and leaves it detached.
+        yield* threads.dispatch({
+          type: "thread.repo-worktree.attach",
+          commandId: CommandId.make("relabel:after-detach"),
+          threadId: detached,
+          repoWorktree: { ...repoWorktree, branch: "feature/renamed" },
+          relabelOnly: true,
+        });
         assert.deepEqual((yield* readThread(detached)).repoWorktrees ?? [], []);
       }),
     ),
