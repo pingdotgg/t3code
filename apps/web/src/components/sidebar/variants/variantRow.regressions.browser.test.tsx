@@ -86,6 +86,27 @@ it("keeps Settle reachable on a Detailed row showing answers", async () => {
   expect(document.activeElement).toBe(settle);
 });
 
+it("hides the time under Settle while Settle has keyboard focus", async () => {
+  await using screen = await render(
+    <div className="sidebar-row-look">
+      {row({
+        statusSlot: (content: ReactNode) => (
+          <span data-status-slot>
+            <span data-testid="time" style={{ transition: "none" }}>
+              {content}
+            </span>
+            <button type="button" aria-label="Settle thread" />
+          </span>
+        ),
+      })}
+    </div>,
+  );
+  const time = screen.getByTestId("time").element();
+  expect(getComputedStyle(time).opacity).toBe("1");
+  (screen.getByRole("button", { name: "Settle thread" }).element() as HTMLElement).focus();
+  expect(getComputedStyle(time).opacity).toBe("0");
+});
+
 it("counts Slim's workers with a static robot and a name", async () => {
   await using screen = await render(
     <div>
