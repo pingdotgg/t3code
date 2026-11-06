@@ -2576,13 +2576,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }, canRename?: boolean) => {
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }, fromSearch = false) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
         const threadKey = scopedThreadKey(threadRef);
         const selectionState = useThreadSelectionStore.getState();
-        if (selectionState.hasSelection() && selectionState.selectedThreadKeys.has(threadKey)) {
+        // Search results are not selectable rows, so they always act on their own thread.
+        if (
+          !fromSearch &&
+          selectionState.hasSelection() &&
+          selectionState.selectedThreadKeys.has(threadKey)
+        ) {
           await handleMultiSelectContextMenu(position);
           return;
         }
@@ -2643,7 +2648,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
-              canRename: canRename ?? true,
+              canRename: !fromSearch,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2878,7 +2883,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const handleSearchResultContextMenu = useStableCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) =>
-      handleThreadContextMenu(threadRef, position, false),
+      handleThreadContextMenu(threadRef, position, true),
   );
 
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
