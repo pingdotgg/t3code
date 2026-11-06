@@ -1,5 +1,9 @@
 import { Button } from "../../components/ui/Button";
-import { AuthSettingsWriteScope, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  isManagedSettingPath,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -17,10 +21,16 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { resolveMobileSettingsTargets, uniformMobileSetting } from "./settings-scoped-server";
+import {
+  managedSettingReason,
+  resolveMobileSettingsTargets,
+  uniformMobileSetting,
+} from "./settings-scoped-server";
 
 export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -34,6 +44,7 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <ToolCallVisibilitySection />
         <BetaSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
@@ -98,6 +109,8 @@ export function AutoSettleSettingsRows(props: {
   );
 
   const disabled = !canWriteSettings || props.pending;
+  const disabledFor = (...keys: string[]) =>
+    disabled || managedSettingReason(displayTargets, ...keys) !== undefined;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
 
   return (
@@ -107,15 +120,17 @@ export function AutoSettleSettingsRows(props: {
           <SettingsSwitchRow
             icon="clock"
             label="Resume after usage limits"
+            subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
-            disabled={disabled}
+            disabled={disabledFor("autoResumeLimitedThreads")}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
           />
           <SettingsSwitchRow
             icon="clock"
             label="Snooze until limits reset"
+            subtitle="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
-            disabled={disabled}
+            disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
@@ -125,14 +140,14 @@ export function AutoSettleSettingsRows(props: {
           icon="arrow.triangle.branch"
           label="Auto-settle merged threads"
           value={referenceSettings.sidebarAutoSettleOnMerge}
-          disabled={disabled}
+          disabled={disabledFor("sidebarAutoSettleOnMerge")}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
         <SettingsSwitchRow
           icon="clock"
           label="Auto-settle inactive threads"
           value={afterDays !== null}
-          disabled={disabled}
+          disabled={disabledFor("sidebarAutoSettleAfterDays")}
           onValueChange={(value) =>
             writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
           }
@@ -143,7 +158,7 @@ export function AutoSettleSettingsRows(props: {
             <Text className="flex-1 text-foreground text-lg android:text-base">Inactive days</Text>
             <AutoSettleDaysField
               value={afterDays}
-              disabled={disabled}
+              disabled={disabledFor("sidebarAutoSettleAfterDays")}
               onValueChange={(value) => writeToAll({ sidebarAutoSettleAfterDays: value })}
             />
           </View>
@@ -159,7 +174,7 @@ export function AutoSettleSettingsRows(props: {
             <Button
               label="Apply auto-settle defaults"
               tone="secondary"
-              disabled={disabled}
+              disabled={disabledFor("sidebarAutoSettleOnMerge", "sidebarAutoSettleAfterDays")}
               onPress={() => writeToAll(autoSettlePatch)}
             />
           </View>
@@ -230,25 +245,69 @@ function BetaSettingsSection() {
   return (
     <View className="gap-3">
       <SettingsSection title="Beta: Linked environments">
-        {supported.map((environment) => (
-          <SettingsSwitchRow
-            key={environment.environmentId}
-            icon="link"
-            label={environment.label}
-            value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
-            disabled={!writable.has(environment.environmentId)}
-            onValueChange={(value) =>
-              void updateSettings({
-                environmentId: environment.environmentId,
-                input: { patch: { linkedEnvironmentsEnabled: value } },
-              })
-            }
+        {supported.map((environment) => {
+          const policy = environment.serverConfig?.managedPolicy;
+          const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
+          return (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon="link"
+              label={environment.label}
+              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
+              disabled={managed || !writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: { patch: { linkedEnvironmentsEnabled: value } },
+                })
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
+        machine. While off, nothing new starts over a link; running tasks finish.
+      </Text>
+    </View>
+  );
+}
+
+const TOOL_CALL_VISIBILITY_OPTIONS: ReadonlyArray<{
+  readonly value: ToolCallVisibility;
+  readonly label: string;
+}> = [
+  { value: "showAll", label: "Show all" },
+  { value: "hideSuccessful", label: "Hide successful" },
+  { value: "hideAll", label: "Hide all" },
+  { value: "zen", label: "Zen" },
+];
+
+function ToolCallVisibilitySection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const selected = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.toolCallVisibility ?? "showAll")
+    : null;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta: Tool calls in chat">
+        {TOOL_CALL_VISIBILITY_OPTIONS.map((option, index) => (
+          <ListChoiceRow
+            key={option.value}
+            label={option.label}
+            selected={selected === option.value}
+            separated={index > 0}
+            disabled={selected === null}
+            onPress={() => savePreferences({ toolCallVisibility: option.value })}
           />
         ))}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
-        machine. While it is off, nothing new starts over a link; tasks already running finish.
+        Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows
+        only final answers. Approvals, questions, and errors always show.
       </Text>
     </View>
   );

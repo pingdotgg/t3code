@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -93,6 +94,21 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
+export function toSystemLocaleTag(identifier: string, hourCycle?: "h12" | "h23"): string {
+  const [base = "", keywords = ""] = identifier.split("@");
+  const languageTag = base.replace(/_/g, "-");
+  // Intl ignores rg extensions, so the macOS region override must replace the region subtag.
+  const region = /(?:^|;)rg=([a-z]{2}|\d{3})zzzz(?:;|$)/i.exec(keywords)?.[1]?.toUpperCase();
+  try {
+    return new Intl.Locale(languageTag, {
+      ...(region ? { region } : {}),
+      ...(hourCycle ? { hourCycle } : {}),
+    }).toString();
+  } catch {
+    return languageTag;
+  }
+}
+
 /** @public */
 export const make = ElectronApp.of({
   metadata: Effect.gen(function* () {
@@ -122,8 +138,23 @@ export const make = ElectronApp.of({
     };
   }),
   name: Effect.sync(() => Electron.app.name),
-  // NSLocale returns en_GB-style tags; Intl requires hyphens.
-  systemLocale: Effect.sync(() => Electron.app.getSystemLocale().replace(/_/g, "-")),
+  systemLocale: Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    let identifier = Electron.app.getSystemLocale();
+    let hourCycle: "h12" | "h23" | undefined;
+    if (platform === "linux") {
+      const env = yield* HostProcess.Environment;
+      const timeLocale = (env.LC_ALL || env.LC_TIME || env.LANG)?.split(".")[0];
+      if (timeLocale && timeLocale !== "C" && timeLocale !== "POSIX") identifier = timeLocale;
+    } else if (platform === "darwin") {
+      if (Electron.systemPreferences.getUserDefault("AppleICUForce24HourTime", "boolean")) {
+        hourCycle = "h23";
+      } else if (Electron.systemPreferences.getUserDefault("AppleICUForce12HourTime", "boolean")) {
+        hourCycle = "h12";
+      }
+    }
+    return toSystemLocaleTag(identifier, hourCycle);
+  }),
   whenReady: Effect.gen(function* () {
     const isPackaged = Electron.app.isPackaged;
     yield* Effect.tryPromise({

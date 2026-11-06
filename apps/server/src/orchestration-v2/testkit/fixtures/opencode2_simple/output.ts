@@ -41,6 +41,7 @@ export function assertOpenCode2SimpleOutput(
     cachedInputTokens: 489,
     outputTokens: 113 + 147,
     reasoningTokens: 147,
+    models: ["opencode/space-bunny-free"],
   });
   assert.deepInclude(providerTurn?.tokenUsage, {
     usedTokens: 8701 + 489 + 113,
