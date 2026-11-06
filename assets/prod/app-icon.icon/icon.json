@@ -1,31 +1,14 @@
 {
   "fill": {
-    "solid": "display-p3:0.18596,0.40930,0.28211,1.00000"
+    "solid": "display-p3:0.09815,0.07931,0.24853,1.00000"
   },
   "groups": [
     {
       "layers": [
         {
           "glass": false,
-          "image-name": "cap.svg",
-          "name": "Cap",
-          "position": {
-            "scale": 8,
-            "translation-in-points": [0, 0]
-          }
-        },
-        {
-          "image-name": "text.svg",
-          "name": "Text",
-          "position": {
-            "scale": 5.9,
-            "translation-in-points": [-17.7, 3.54]
-          }
-        },
-        {
-          "glass": false,
-          "image-name": "underline.svg",
-          "name": "Underline",
+          "image-name": "nest.svg",
+          "name": "Nest",
           "position": {
             "scale": 8,
             "translation-in-points": [0, 0]

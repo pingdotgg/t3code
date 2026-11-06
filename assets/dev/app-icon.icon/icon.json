@@ -1,25 +1,16 @@
 {
   "fill": {
-    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "solid": "display-p3:0.09815,0.07931,0.24853,1.00000"
   },
   "groups": [
     {
       "layers": [
         {
-          "glass": true,
-          "image-name": "text.svg",
-          "name": "Text",
-          "position": {
-            "scale": 8.5,
-            "translation-in-points": [0, 0]
-          }
-        },
-        {
           "glass": false,
-          "image-name": "annotations.svg",
-          "name": "Annotations",
+          "image-name": "nest.svg",
+          "name": "Nest",
           "position": {
-            "scale": 8.5,
+            "scale": 8,
             "translation-in-points": [0, 0]
           }
         },
@@ -35,11 +26,11 @@
       ],
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.6
+        "opacity": 0.5
       },
       "translucency": {
         "enabled": true,
-        "value": 0.2
+        "value": 0.5
       }
     }
   ],

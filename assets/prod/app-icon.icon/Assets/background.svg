@@ -1,8 +1,8 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="board" x1="0" y1="0" x2="0" y2="128" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#18905A"/>
-      <stop offset="1" stop-color="#0D6A45"/>
+    <linearGradient id="nest-bg" x1="0" y1="0" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2B2170"/>
+      <stop offset="1" stop-color="#1A1442"/>
     </linearGradient>
     <clipPath id="frame">
       <rect width="128" height="128" rx="10"/>
@@ -10,6 +10,6 @@
   </defs>
 
   <g clip-path="url(#frame)">
-    <rect width="128" height="128" fill="url(#board)"/>
+    <rect width="128" height="128" fill="url(#nest-bg)"/>
   </g>
 </svg>
