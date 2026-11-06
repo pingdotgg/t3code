@@ -39,6 +39,7 @@ import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
@@ -132,7 +133,7 @@ function offerPageCopy({ text, host }: PreviewStreamCopyOffer) {
       children: "Copy",
       onClick: () => {
         toastManager.close(id);
-        void navigator.clipboard.writeText(text).catch(() => undefined);
+        void writeTextToClipboard(text).catch(() => undefined);
       },
     },
   });

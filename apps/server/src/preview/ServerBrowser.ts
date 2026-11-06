@@ -490,8 +490,10 @@ const CLIPBOARD_SCRIPT = `(() => {
       pending.data = event.detail;
   }, true);
   addEventListener("${CLIPBOARD_WRITE_EVENT}", (event) => {
-    if (!keying && canClickCopy() && typeof event.detail === "string")
+    if (!keying && canClickCopy() && typeof event.detail === "string") {
+      if (pending?.key === false) pending = null;
       record(event.detail, false);
+    }
   }, true);
   globalThis.takeCopy = (click) => {
     settle();

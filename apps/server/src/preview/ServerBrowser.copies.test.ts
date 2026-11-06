@@ -138,6 +138,72 @@ describe("server browser page copies", () => {
     },
   );
 
+  it.each([
+    { inside: false, data: true },
+    { inside: true, data: true },
+    { inside: true, data: false },
+  ])(
+    "keeps a newer writeText over a pending event (inside: $inside, data: $data)",
+    async ({ inside, data }) => {
+      await inPage(`
+        const writeLatest = () => navigator.clipboard.writeText("newest").then(() => {
+          document.body.dataset.latest = "yes";
+        });
+        document.getElementById("replace").onclick = function () {
+          document.execCommand(this.dataset.command);
+          if (!${inside}) writeLatest();
+        };
+        for (const type of ["copy", "cut"]) {
+          document.addEventListener(type, (event) => {
+            event.preventDefault();
+            if (${data}) event.clipboardData.setData("text/plain", "older");
+            if (${inside}) writeLatest();
+            event.stopImmediatePropagation();
+          }, true);
+        }
+      `);
+      for (const command of ["copy", "cut"]) {
+        await page.locator("#text").selectText();
+        await inPage(`
+          document.body.removeAttribute("data-latest");
+          document.getElementById("replace").dataset.command = "${command}";
+        `);
+        await page.locator("#replace").click();
+        expect(await takeCopy(true)).toBe("newest");
+        expect(await takeCopy(false)).toBe("");
+        await page.locator("body[data-latest=yes]").waitFor();
+        expect(await takeCopy(true)).toBe("");
+      }
+    },
+  );
+
+  it("keeps a pending key copy apart from a later page write", async () => {
+    await inPage(`
+      document.addEventListener("keydown", () => {
+        setTimeout(() => navigator.clipboard.writeText("later page write").then(() => {
+          document.body.dataset.latest = "yes";
+        }));
+      }, true);
+      document.addEventListener("copy", (event) => {
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", "key payload");
+        event.stopImmediatePropagation();
+      }, true);
+    `);
+    await page.locator("#plain").click();
+    await page.locator("#text").selectText();
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      key: "c",
+      code: "KeyC",
+      modifiers: 4,
+      commands: ["copy"],
+    });
+    await page.locator("body[data-latest=yes]").waitFor();
+    expect(await takeCopy(false)).toBe("key payload");
+    expect(await takeCopy(true)).toBe("later page write");
+  });
+
   it("keeps copies delegated from a child frame to its parent", async () => {
     await inPage(`
       globalThis.writeFromChild = async () => {
