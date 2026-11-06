@@ -53,7 +53,16 @@ export function writeSecretFieldValues(
 ): unknown {
   if (typeof original === "string") return values[0]?.[1] ?? "";
   if (isSecretReference(original)) return original;
-  return Object.fromEntries(values.map(([serverHost, value]) => [serverHost ?? "", value]));
+  const sources =
+    original !== null && typeof original === "object" && !Array.isArray(original)
+      ? Object.entries(original).flatMap(([serverHost, entry]) =>
+          isSecretReference(entry) ? [[serverHost.trim().toLowerCase(), entry] as const] : [],
+        )
+      : [];
+  return Object.fromEntries([
+    ...sources,
+    ...values.map(([serverHost, value]) => [serverHost ?? "", value] as const),
+  ]);
 }
 
 type SourceControlHostsSettings = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
@@ -88,13 +97,38 @@ export const resolveSourceControlHostSecrets = Effect.fn("SourceControlHost.reso
   },
 );
 
+const collectUsageLimitSecretReferences = (
+  sources: ServerSettings["usageLimitSources"],
+): ReadonlyArray<SecretReference> =>
+  Object.values(sources).flatMap(({ managementKey }) =>
+    isSecretReference(managementKey) ? [managementKey] : [],
+  );
+
+const collectDeviceHostSecretReferences = (
+  settings: Pick<ServerSettings, "easDeviceHosts" | "simlockDeviceHosts">,
+): ReadonlyArray<SecretReference> =>
+  [
+    ...settings.easDeviceHosts.map(({ accessToken }) => accessToken),
+    ...settings.simlockDeviceHosts.map(({ agentToken }) => agentToken),
+  ].filter(isSecretReference);
+
 /** Settings that cannot be read clear every cached secret, so a refresh never keeps a stale one. */
 export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")(function* <E>(
   resolver: SecretResolver.SecretResolver["Service"],
-  settings: Effect.Effect<Pick<ServerSettings, "sourceControlHosts">, E>,
+  settings: Effect.Effect<
+    Pick<
+      ServerSettings,
+      "sourceControlHosts" | "usageLimitSources" | "easDeviceHosts" | "simlockDeviceHosts"
+    >,
+    E
+  >,
 ) {
   const references = yield* settings.pipe(
-    Effect.map((current) => collectSourceControlHostSecretReferences(current.sourceControlHosts)),
+    Effect.map((current) => [
+      ...collectSourceControlHostSecretReferences(current.sourceControlHosts),
+      ...collectUsageLimitSecretReferences(current.usageLimitSources),
+      ...collectDeviceHostSecretReferences(current),
+    ]),
     Effect.orElseSucceed(() => undefined),
   );
   yield* resolver.invalidate(references);

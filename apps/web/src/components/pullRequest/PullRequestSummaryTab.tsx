@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -73,11 +74,20 @@ import {
 import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
+  descriptionDraftInForce,
+  settleDescriptionSave,
+  startDescriptionSave,
+  type DescriptionDraft,
 } from "@t3tools/client-runtime/pull-request-editing";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import {
+  type PullRequestMentionScope,
+  pullRequestMentionScope,
+} from "./PullRequestMarkdownTextarea";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
@@ -157,6 +167,7 @@ function reviewStateLabel(state: string): string {
 interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly mentionScope: PullRequestMentionScope | null;
   readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
@@ -181,6 +192,7 @@ function CommentBody({
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
+        mentionScope={editing.mentionScope}
         threadRef={editing.threadRef}
         label="Edit comment"
         saving={editing.saving}
@@ -489,8 +501,23 @@ export function PullRequestSummaryTab({
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
-  const [bodyScope, setBodyScope] = useState<string | null>(null);
-  const [bodySaving, setBodySaving] = useState(false);
+  const canUpdate = useAtomValue(pullRequestEnvironment.update.permissionAtom(environmentId));
+  const canEditDescription = canUpdate && canEditPullRequestChangeRequest(detail);
+  // The editor keeps the body it opened from, so a failed save cannot reset what was typed.
+  const [bodyScope, setBodyScope] = useState<{
+    readonly url: string;
+    readonly body: string;
+  } | null>(null);
+  const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
+  const descriptionDraftKept = descriptionDraftInForce(
+    descriptionDraft,
+    detail.url,
+    detail.observedAt,
+  );
+  if (descriptionDraftKept !== descriptionDraft) setDescriptionDraft(descriptionDraftKept);
+  const description = descriptionDraftKept?.body ?? detail.body;
+  const descriptionSaving = (descriptionDraftKept?.saves ?? 0) > 0;
+  const descriptionSavesRunning = useRef(0);
   // Hosts can reuse comment ids across pull requests.
   const [commentScope, setCommentScope] = useState<{
     readonly pullRequest: string;
@@ -499,22 +526,33 @@ export function PullRequestSummaryTab({
   const [commentSaving, setCommentSaving] = useState(false);
   const editingCommentId = commentScope?.pullRequest === detail.url ? commentScope.commentId : null;
 
-  const saveBody = async (body: string) => {
-    if (bodySaving) return;
-    setBodySaving(true);
+  // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
+  const saveDescription = async (body: string) => {
+    const key = detail.url;
+    setDescriptionDraft((draft) => startDescriptionSave(draft, detail, body));
+    descriptionSavesRunning.current += 1;
     const result = await update({ environmentId, input: { ...reference, body } });
-    setBodySaving(false);
-    if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the description" });
-      return;
-    }
-    setBodyScope(null);
-    onRefresh();
+    descriptionSavesRunning.current -= 1;
+    const saved = result._tag === "Success";
+    setDescriptionDraft((draft) => settleDescriptionSave(draft, key, saved));
+    if (!saved) toastManager.add({ type: "error", title: "Could not save the description" });
+    if (descriptionSavesRunning.current === 0) onRefresh();
+    return saved;
+  };
+  const saveBody = async (body: string) => {
+    if (descriptionSaving) return;
+    if (await saveDescription(body)) setBodyScope(null);
+  };
+  const toggleTask = ({ markerOffset, checked }: { markerOffset: number; checked: boolean }) => {
+    const body = setMarkdownTaskChecked(description, markerOffset, checked);
+    if (body !== description) void saveDescription(body);
   };
 
+  const mentionScope = pullRequestMentionScope(detail, environmentId, reference);
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
+    mentionScope,
     threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
@@ -758,16 +796,17 @@ export function PullRequestSummaryTab({
 
       <Section key={`description:${detail.url}`} title="Description" keepMounted>
         <div className="group">
-          {bodyScope === detail.url ? (
+          {bodyScope?.url === detail.url ? (
             <PullRequestMarkdownEditor
               allowEmpty
-              value={detail.body}
+              value={bodyScope.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
+              mentionScope={mentionScope}
               threadRef={threadRef}
               label={`${capitalizeTerm(terminology.singular)} description`}
               placeholder={`Describe this ${terminology.singular}`}
-              saving={bodySaving}
+              saving={descriptionSaving}
               onSave={(body) => void saveBody(body)}
               onCancel={() => setBodyScope(null)}
             />
@@ -775,15 +814,16 @@ export function PullRequestSummaryTab({
             <div className="flex items-start gap-1">
               <PullRequestMarkdown
                 className="min-w-0 flex-1"
-                text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
+                text={description.trim().length > 0 ? description : "_No description provided._"}
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 threadRef={threadRef}
+                onTaskListChange={canEditDescription ? toggleTask : undefined}
               />
-              {canEditPullRequestChangeRequest(detail) ? (
+              {canEditDescription ? (
                 <PullRequestEditButton
                   aria-label="Edit description"
-                  onClick={() => setBodyScope(detail.url)}
+                  onClick={() => setBodyScope({ url: detail.url, body: description })}
                 />
               ) : null}
             </div>
