@@ -93,6 +93,10 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+} from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -3151,6 +3155,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
+    readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
@@ -3210,6 +3215,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+        ...(options?.modelCatalog === undefined ? {} : { modelCatalog: options.modelCatalog }),
         environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
@@ -7946,12 +7952,116 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { autoCompactWindow: "200000", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "650000", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "650000", model: "uncatalogued-model", threshold: 617_000 },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      threshold: 467_000,
+    },
+    {
+      autoCompactWindow: "300000",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      threshold: 267_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      projectSettings: '{"autoCompactWindow":400000}',
+      threshold: 367_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings:
+        '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":450000}}}',
+      threshold: 417_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      projectSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":"auto"}}}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      launchArgs: `--settings '{"autoCompactWindow":350000}'`,
+      threshold: 317_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":"invalid"}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000,}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{/* invalid */ "autoCompactWindow":500000}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000,"modelSettings":null}',
+      threshold: 467_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      projectSettings: '{"autoCompactWindow":"auto"}',
+      threshold: 467_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      projectSettings: '{"autoCompactWindow":50000}',
+      threshold: 467_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings:
+        '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":50000}}}',
+      threshold: 467_000,
+    },
   ])(
     "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
-    ({ autoCompactWindow, model, threshold }) =>
+    ({ autoCompactWindow, model, threshold, userSettings, projectSettings, launchArgs }) =>
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-compact-" });
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-compact-" });
+        if (userSettings !== undefined) {
+          yield* fileSystem.writeFileString(path.join(home, "settings.json"), userSettings);
+        }
+        if (projectSettings !== undefined) {
+          yield* fileSystem.makeDirectory(path.join(project, ".claude"));
+          yield* fileSystem.writeFileString(
+            path.join(project, ".claude", "settings.json"),
+            projectSettings,
+          );
+        }
         const harness = yield* makeWakeHarnessWithOptions({
-          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow },
+          settings: {
+            ...DEFAULT_CLAUDE_SETTINGS,
+            autoCompactWindow,
+            homePath: home,
+            launchArgs: launchArgs ?? "",
+          },
         });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -7962,6 +8072,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "Continue.",
             attachments: [],
             modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              cwd: project,
+            }),
           }),
         );
         const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 };
@@ -8005,6 +8119,89 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("reports the settings directory of a reused Claude query", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const first = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-first-" });
+      const second = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-second-" });
+      for (const [directory, window] of [
+        [first, 150_000],
+        [second, 180_000],
+      ] as const) {
+        yield* fileSystem.makeDirectory(path.join(directory, ".claude"));
+        yield* fileSystem.writeFileString(
+          path.join(directory, ".claude", "settings.json"),
+          JSON.stringify({ autoCompactWindow: window }),
+        );
+      }
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+      });
+      let firstOptions: ReturnType<typeof harness.getOpenedOptions>;
+      for (const [ordinal, cwd] of [
+        [1, first],
+        [2, second],
+      ] as const) {
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-compact-cwd-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "Continue.",
+            attachments: [],
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              cwd,
+            }),
+          }),
+        );
+        if (ordinal === 1) firstOptions = harness.getOpenedOptions();
+        else assert.strictEqual(harness.getOpenedOptions(), firstOptions);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          usageSnapshotFrame(
+            `msg_cwd_${ordinal}`,
+            `00000000-0000-4000-8000-00000000080${ordinal}`,
+            {
+              ...zeroUsage,
+              input_tokens: 1_000,
+              output_tokens: 10,
+            },
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: `00000000-0000-4000-8000-00000000081${ordinal}`,
+            result: "Done.",
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      }
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage.autoCompactThreshold]
+            : [],
+        ),
+        [117_000, 117_000],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("shows a hook-dropped Claude prompt once and skips info-level lines", () =>
@@ -14892,44 +15089,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("sends Ultracode with any effort on a custom model", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarnessWithOptions({
-          settings: ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS,
-        });
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-custom-ultracode"),
-            text: "Plan the work.",
-            attachments: [],
-            modelSelection: {
-              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-              model: "claude-custom-tuned",
-              options: [
-                { id: "effort", value: "high" },
-                { id: "ultracode", value: true },
-              ],
-            },
-          }),
-        );
-        const options = harness.getOpenedOptions()!;
-        assert.equal(options.effort, "high");
-        assert.equal((options.settings as { ultracode?: boolean }).ultracode, true);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+  it.effect.each([
+    {
+      source: "custom model",
+      model: "claude-custom-tuned",
+      harness: { settings: ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS },
+    },
+    {
+      source: "downloaded catalog",
+      model: "claude-sonnet-5",
+      harness: {
+        modelCatalog: Effect.succeed({
+          models: BUNDLED_CLAUDE_MODEL_CATALOG.models.map((entry) =>
+            entry.model.slug === "claude-sonnet-5"
+              ? {
+                  ...entry,
+                  model: {
+                    ...entry.model,
+                    capabilities: {
+                      optionDescriptors: [
+                        ...(entry.model.capabilities?.optionDescriptors ?? []),
+                        { id: "ultracode", label: "Ultracode", type: "boolean" as const },
+                      ],
+                    },
+                  },
+                }
+              : entry,
+          ),
+        }),
+      },
+    },
+  ])(
+    "sends Ultracode with any effort on a model from the $source",
+    ({ harness: harnessOptions, model }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions(harnessOptions);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-custom-ultracode"),
+              text: "Plan the work.",
+              attachments: [],
+              modelSelection: {
+                instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+                model,
+                options: [
+                  { id: "effort", value: "high" },
+                  { id: "ultracode", value: true },
+                ],
+              },
+            }),
+          );
+          const options = harness.getOpenedOptions()!;
+          assert.equal(options.effort, "high");
+          assert.equal((options.settings as { ultracode?: boolean }).ultracode, true);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("resolves a subagent's model and effort against the instance's custom models", () =>
