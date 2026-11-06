@@ -103,16 +103,16 @@ export function VoiceInputSetup(props: {
         />
         <WizardPanel>
           {props.step === 0 ? (
-            <section className="space-y-3 text-sm">
+            <section className="space-y-3 text-body">
               {model ? (
-                <div className="space-y-3 rounded-lg border border-border/70 bg-card/60 p-3">
+                <div className="space-y-3 rounded-card surface-card p-3">
                   <div className="flex items-baseline justify-between gap-3">
-                    <h3 className="min-w-0 truncate font-medium">{model.name}</h3>
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    <h3 className="min-w-0 truncate text-label">{model.name}</h3>
+                    <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
                       {Math.round(model.size / 1024 / 1024)} MB
                     </span>
                   </div>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-meta text-muted-foreground">
                     {model.recommended && props.language
                       ? `Recommended for ${languageLabel(props.language)}. `
                       : ""}
@@ -133,7 +133,7 @@ export function VoiceInputSetup(props: {
                           style={{ width: `${progress ?? 0}%` }}
                         />
                       </div>
-                      <p className="text-xs text-muted-foreground tabular-nums">
+                      <p className="text-meta text-muted-foreground tabular-nums">
                         {model.state === "verifying"
                           ? "Verifying…"
                           : progress === null
@@ -149,14 +149,14 @@ export function VoiceInputSetup(props: {
                 </p>
               ) : null}
               {props.error ? (
-                <p role="alert" className="flex items-start gap-1.5 text-destructive">
+                <p role="alert" className="flex items-start gap-1.5 text-destructive-foreground">
                   <CircleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
                   {props.error}
                 </p>
               ) : null}
             </section>
           ) : (
-            <section className="space-y-2 text-sm">
+            <section className="space-y-2 text-body">
               <label className="sr-only" htmlFor="voice-setup-microphone">
                 Microphone
               </label>
@@ -214,12 +214,12 @@ export function VoiceInputSetup(props: {
                 </Button>
               </div>
               {selectedIsUnavailable ? (
-                <p className="text-xs text-destructive">
+                <p className="text-meta text-destructive-foreground">
                   That microphone is unplugged. Pick another one.
                 </p>
               ) : null}
               {microphoneError ? (
-                <p role="alert" className="text-xs text-muted-foreground">
+                <p role="alert" className="text-meta text-muted-foreground">
                   {microphoneError}
                 </p>
               ) : null}
