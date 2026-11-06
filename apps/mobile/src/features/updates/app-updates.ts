@@ -391,7 +391,7 @@ async function defaultFlushPendingWrites(): Promise<void> {
   const results = await Promise.allSettled([
     import("../../state/use-composer-drafts").then((drafts) => drafts.flushComposerDrafts()),
     import("../../state/thread-outbox").then((outbox) => outbox.flushThreadOutbox()),
-    import("../workspace/workspace-selection-store").then((workspace) =>
+    import("../layout/workspace/workspace-selection-store").then((workspace) =>
       workspace.saveWorkspaceSelections(),
     ),
   ]);
