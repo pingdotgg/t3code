@@ -236,7 +236,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 <CommandGroupLabel tone="muted">Pull requests</CommandGroupLabel>
                 <div
                   role="status"
-                  className="flex min-h-8 items-center gap-2.5 px-2.5 text-meta text-(--command-muted-foreground)"
+                  className="flex min-h-8 items-center gap-2.5 px-2.5 text-meta text-dim-foreground"
                 >
                   <Spinner aria-hidden className="size-[15px] shrink-0" />
                   <span className="min-w-0 truncate">Loading pull requests...</span>
@@ -266,14 +266,14 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           // so searching and no-match read as states of the same list.
           <div className="p-1.5">
             {props.triggerKind ? (
-              <div className="px-2.5 pt-2 pb-1 text-caption text-(--command-muted-foreground)">
+              <div className="px-2.5 pt-2 pb-1 text-caption text-dim-foreground">
                 {LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]}
               </div>
             ) : null}
             <div
               role="status"
               data-composer-command-menu-empty={props.isLoading ? "loading" : "no-match"}
-              className="flex min-h-8 items-center gap-2.5 px-2.5 text-meta text-(--command-muted-foreground)"
+              className="flex min-h-8 items-center gap-2.5 px-2.5 text-meta text-dim-foreground"
             >
               {props.isLoading ? (
                 <Spinner aria-hidden className="size-[15px] shrink-0" />
@@ -329,7 +329,7 @@ function ComposerMenuSurface({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "surface-popover kbd-in-popover flex min-h-0 w-full flex-col overflow-hidden rounded-card text-popover-foreground [--kbd-background:var(--kbd-fill)] [--command-muted-foreground:color-mix(in_oklab,var(--contrast-foreground)_75%,var(--contrast-muted-foreground))] [--kbd-foreground:var(--command-muted-foreground)] [--type-label:0.8125rem] [--type-meta:0.75rem] [--type-caption:0.6875rem]",
+        "surface-popover kbd-in-popover flex min-h-0 w-full flex-col overflow-hidden rounded-card text-popover-foreground [--kbd-background:var(--kbd-fill)] [--type-label:0.8125rem] [--type-meta:0.75rem] [--type-caption:0.6875rem]",
         className,
       )}
       {...props}
@@ -344,7 +344,7 @@ function ComposerMenuFooter(props: {
   return (
     <div
       data-slot="composer-menu-footer"
-      className="mx-1.5 mb-1.5 flex shrink-0 items-center gap-3 border-t border-divider px-2.5 pt-2 pb-1 font-normal text-caption text-(--command-muted-foreground) pointer-coarse:hidden"
+      className="mx-1.5 mb-1.5 flex shrink-0 items-center gap-3 border-t border-divider px-2.5 pt-2 pb-1 font-normal text-caption text-dim-foreground pointer-coarse:hidden"
     >
       {props.hints.map((hint) => (
         <span key={hint.label} className="inline-flex items-center gap-1.25">
@@ -368,7 +368,7 @@ function ComposerCommandItemIcon(props: {
   const { item } = props;
   const iconClassName = cn(
     "size-[15px] shrink-0",
-    props.isActive ? "text-foreground" : "text-(--command-muted-foreground)",
+    props.isActive ? "text-foreground" : "text-muted-foreground",
   );
   switch (item.type) {
     case "path":
@@ -460,7 +460,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left font-normal text-(--command-muted-foreground) text-meta">
+        <span className="min-w-0 flex-1 truncate text-left font-normal text-dim-foreground text-meta">
           {props.item.description}
           {props.item.environmentLabel ? (
             <span className="block">{props.item.environmentLabel}</span>
@@ -469,9 +469,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       </span>
 
       {props.item.metadata ? (
-        <span className="shrink-0 text-meta text-(--command-muted-foreground)">
-          {props.item.metadata}
-        </span>
+        <span className="shrink-0 text-meta text-dim-foreground">{props.item.metadata}</span>
       ) : null}
       {pullRequestPresentation ? (
         <Badge
