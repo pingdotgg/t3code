@@ -330,6 +330,29 @@ it("retries a failed transcription on the same chosen environment", async () => 
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
 
+it.each([
+  ["missing-model", 0],
+  ["ready", 1],
+  ["cloud", null],
+] as const)("setup-only with %s never starts the microphone", async (target, wizardStep) => {
+  setup({ destination: "env-a" });
+  if (target === "cloud") {
+    mocks.cloudVoiceCapable.add("env-a");
+    chooseAudioDestination({
+      kind: "cloud",
+      environmentId: EnvironmentId.make("env-a"),
+      provider: "openai",
+    });
+  } else {
+    mocks.modelState = target;
+  }
+  await using _screen = await render(<Probe />);
+  expect(mocks.voice.available).toBe(true);
+  await act(() => mocks.voice.start({ setupOnly: true }));
+  expect(mocks.microphoneRequests).toEqual([]);
+  expect(mocks.voice.setup.open ? mocks.voice.setup.step : null).toBe(wizardStep);
+});
+
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
   setup({ destination: "env-a" });
   mocks.modelState = "missing-model";
