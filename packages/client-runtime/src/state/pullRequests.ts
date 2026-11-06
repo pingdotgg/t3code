@@ -25,6 +25,7 @@ import {
   PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
@@ -179,6 +180,20 @@ function listAccepts(input: PullRequestListInput, state: string, isDraft: boolea
   );
 }
 
+const listedFields = [
+  "title",
+  "url",
+  "author",
+  "headBranch",
+  "baseBranch",
+  "state",
+  "isDraft",
+  "mergeability",
+  "updatedAt",
+  "updatedAtState",
+] as const;
+type ListedSummary = Pick<PullRequestSummary, (typeof listedFields)[number] | "observedAt">;
+
 /**
  * Listing rows with an action's reply applied, the same array when it changes none, and `refresh`
  * when the reply adds the pull request to a listing, which only a read can place.
@@ -187,7 +202,7 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
   input: PullRequestListInput,
   entries: ReadonlyArray<Entry>,
   reference: PullRequestRef,
-  reply: PullRequestSummary,
+  reply: ListedSummary,
 ): ReadonlyArray<Entry> | "refresh" {
   let found = false;
   let changed = false;
@@ -199,18 +214,7 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
     const { updatedAtState: _replaced, ...held } = entry;
     const next = {
       ...held,
-      ...pickDefined(reply, [
-        "title",
-        "url",
-        "author",
-        "headBranch",
-        "baseBranch",
-        "state",
-        "isDraft",
-        "mergeability",
-        "updatedAt",
-        "updatedAtState",
-      ]),
+      ...pickDefined(reply, listedFields),
     } as Entry;
     return listAccepts(input, next.state, next.isDraft) ? [next] : [];
   });
@@ -240,7 +244,7 @@ function patchListWithReply(
   input: PullRequestListInput,
   value: PullRequestListResult,
   reference: PullRequestRef,
-  reply: PullRequestSummary,
+  reply: ListedSummary,
 ): PullRequestListResult | "refresh" {
   const entries = patchPullRequestListEntries(input, value.entries, reference, reply);
   if (entries === "refresh") return entries;
@@ -723,26 +727,42 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   const readsInFlight = (registry: AtomRegistry.AtomRegistry): ReadonlySet<object> =>
     new Set(actionReplyReaders(registry).flatMap((reader) => reader.pendingRead(registry) ?? []));
   // The server's listing cache can answer with rows older than a detail read or an action's reply,
-  // so each list answer shows what these said until it holds newer.
+  // so for five minutes after one, each list answer shows what it said unless it holds newer.
+  const shownSummaryTtlMs = 5 * 60_000;
+  type ShownSummary = {
+    readonly reference: PullRequestRef;
+    readonly summary: ListedSummary;
+    readonly expiresAt: number;
+  };
   const shownSummaryAtoms = Atom.family((_environmentId: string) =>
-    Atom.make<ReadonlyMap<string, readonly [PullRequestRef, PullRequestSummary]>>(new Map()).pipe(
-      Atom.setIdleTTL(5 * 60_000),
+    Atom.make<ReadonlyMap<string, ShownSummary>>(new Map()).pipe(
+      Atom.setIdleTTL(shownSummaryTtlMs),
     ),
   );
+  const unexpired = (shown: ReadonlyMap<string, ShownSummary>, now: number) => {
+    const kept = [...shown].filter(([, held]) => held.expiresAt > now);
+    return kept.length === shown.size ? shown : new Map(kept);
+  };
   const retainSummary = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
     reference: PullRequestRef,
     summary: PullRequestSummary,
+    now: number,
   ) => {
     if (reference.expectedAccountId !== undefined) return;
     const { projectId, host, repository, number } = reference;
     const key = JSON.stringify([projectId, host?.toLowerCase(), repository.toLowerCase(), number]);
-    registry.update(shownSummaryAtoms(environmentId), (shown) => {
+    registry.update(shownSummaryAtoms(environmentId), (previous) => {
+      const shown = unexpired(previous, now);
       const held = shown.get(key);
-      return held !== undefined && isStalePullRequestReply(held[1], summary)
-        ? shown
-        : new Map(shown).set(key, [reference, summary]);
+      if (held !== undefined && isStalePullRequestReply(held.summary, summary)) return shown;
+      const listed = pickDefined(summary, [...listedFields, "observedAt"]) as ListedSummary;
+      return new Map(shown).set(key, {
+        reference,
+        summary: listed,
+        expiresAt: now + shownSummaryTtlMs,
+      });
     });
   };
   const withShownSummaries = (
@@ -750,14 +770,19 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     environmentId: EnvironmentId,
     input: PullRequestListInput,
     value: PullRequestListResult,
+    now: number,
   ) => {
-    let shown = value;
-    for (const [reference, summary] of registry.get(shownSummaryAtoms(environmentId)).values()) {
+    const atom = shownSummaryAtoms(environmentId);
+    const held = registry.get(atom);
+    const shown = unexpired(held, now);
+    if (shown !== held) registry.set(atom, shown);
+    let patched = value;
+    for (const { reference, summary } of shown.values()) {
       if (!listConcerns(input, reference)) continue;
-      const patched = patchListWithReply(input, shown, reference, summary);
-      if (patched !== "refresh") shown = patched;
+      const next = patchListWithReply(input, patched, reference, summary);
+      if (next !== "refresh") patched = next;
     }
-    return shown;
+    return patched;
   };
   const applyActionReply = Effect.fn("PullRequests.applyActionReply")(function* (
     registry: AtomRegistry.AtomRegistry,
@@ -766,7 +791,9 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     reply: PullRequestSummary | undefined,
     readsBeforeSend: ReadonlySet<object>,
   ) {
-    if (reply !== undefined) retainSummary(registry, environmentId, reference, reply);
+    if (reply !== undefined) {
+      retainSummary(registry, environmentId, reference, reply, yield* Clock.currentTimeMillis);
+    }
     for (const reader of actionReplyReaders(registry)) {
       yield* reader.apply(registry, environmentId, reference, reply, readsBeforeSend);
     }
@@ -783,7 +810,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     value: PullRequestDetail,
   ) {
     if (target.input.expectedAccountId !== undefined) return;
-    retainSummary(registry, target.environmentId, target.input, value);
+    const now = yield* Clock.currentTimeMillis;
+    retainSummary(registry, target.environmentId, target.input, value, now);
     for (const reader of actionReplyReaders(registry)) {
       yield* reader.observe?.(registry, target.environmentId, target.input, value) ?? Effect.void;
     }
@@ -819,7 +847,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           const value = yield* request(WS_METHODS.pullRequestsList, input);
           const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
           const registry = yield* AtomRegistry.AtomRegistry;
-          return withShownSummaries(registry, supervisor.target.environmentId, input, value);
+          const now = yield* Clock.currentTimeMillis;
+          return withShownSummaries(registry, supervisor.target.environmentId, input, value, now);
         }),
         staleTimeMs: 30_000,
         refreshTrigger: ({ environmentId, input }) =>

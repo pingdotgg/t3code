@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -598,6 +600,8 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
         PullRequestDiffLoader.PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
       ),
       Layer.succeed(EnvironmentQueryStore, queryStore),
+      // The test's clock, so how long a detail read shows in listings moves with `TestClock.adjust`.
+      Layer.succeed(Clock.Clock, yield* Clock.Clock),
     ),
   );
   const atoms = createPullRequestEnvironmentAtoms(runtime, onAnswer);
@@ -1371,6 +1375,16 @@ it.effect("keeps a detail read's date when a cached listing answers after it", (
       registry.refresh(all);
       expect((yield* settle(all)).entries).toMatchObject(shown);
 
+      // The detail read shows for five minutes, however often listings answer meanwhile.
+      yield* TestClock.adjust("4 minutes");
+      registry.refresh(all);
+      expect((yield* settle(all)).entries).toMatchObject(shown);
+      yield* TestClock.adjust("1 minute");
+      registry.refresh(all);
+      expect((yield* settle(all)).entries).toMatchObject([
+        { state: "open", updatedAt: cached.updatedAt, observedAt: 100 },
+      ]);
+
       // A listing that read the pull request since then replaces the detail read's fields.
       listed = { ...cached, updatedAt: "2026-10-27T12:00:00Z", observedAt: 400 };
       registry.refresh(all);
@@ -1378,7 +1392,7 @@ it.effect("keeps a detail read's date when a cached listing answers after it", (
       const reopened = [{ state: "open", updatedAt: "2026-10-27T12:00:00Z", observedAt: 400 }];
       expect((yield* settle(all)).entries).toMatchObject(reopened);
       expect((yield* settle(open)).entries).toMatchObject(reopened);
-      expect(reads.filter((read) => read.startsWith("list:"))).toHaveLength(7);
+      expect(reads.filter((read) => read.startsWith("list:"))).toHaveLength(9);
     }),
   ),
 );
