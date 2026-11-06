@@ -1054,6 +1054,9 @@ function PullRequestCodeTab({
       {annotation.metadata.draft && draft && canSelectLines ? (
         <div className="px-2.5 pt-1.5 pb-2">
           <DiffCommentAnnotation
+            environmentId={environmentId}
+            projectId={reference.projectId}
+            ownerKey={JSON.stringify([environmentId, reviewKey, draft])}
             kind="draft"
             rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
             text=""
