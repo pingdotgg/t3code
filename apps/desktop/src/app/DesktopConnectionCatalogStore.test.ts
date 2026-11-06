@@ -73,7 +73,7 @@ function layerFor(
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3LEARN_HOME: baseDir })),
+      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ OMINAX_HOME: baseDir })),
     ),
   );
   const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
@@ -298,17 +298,14 @@ describe("DesktopConnectionCatalogStore", () => {
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
       );
       assert.equal(error.operation, "decrypt-catalog");
-      assert.equal(
-        error.catalogPath,
-        path.join(baseDir, ".ominax", "userdata", "connection-catalog.json"),
-      );
+      assert.equal(error.catalogPath, path.join(baseDir, "userdata", "connection-catalog.json"));
       assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
       const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
       assert.instanceOf(decryptError.cause, Error);
       assert.equal(decryptError.cause.message, "invalid encrypted catalog");
       assert.equal(
         error.message,
-        `Desktop connection catalog protection failed during decrypt-catalog at ${path.join(baseDir, ".ominax", "userdata", "connection-catalog.json")}.`,
+        `Desktop connection catalog protection failed during decrypt-catalog at ${path.join(baseDir, "userdata", "connection-catalog.json")}.`,
       );
       assert.notEqual(error.message, decryptError.message);
       yield* Ref.set(failDecrypt, false);

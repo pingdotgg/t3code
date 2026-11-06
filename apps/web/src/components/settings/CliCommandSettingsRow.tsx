@@ -26,8 +26,7 @@ export function CliCommandSettingsRow() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title:
-              action === "install" ? "Could not install ominax" : "Could not remove ominax",
+            title: action === "install" ? "Could not install ominax" : "Could not remove ominax",
             description: error instanceof Error ? error.message : "Something went wrong.",
           }),
         );
