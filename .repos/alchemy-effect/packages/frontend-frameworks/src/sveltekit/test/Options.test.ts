@@ -62,9 +62,7 @@ describe("fromHarnessOptions", () => {
 
 describe("resolveExportTarget", () => {
   it("accepts a plain string target", () => {
-    expect(resolveExportTarget("./src/exports/vite/index.js")).toBe(
-      "./src/exports/vite/index.js",
-    );
+    expect(resolveExportTarget("./src/exports/vite/index.js")).toBe("./src/exports/vite/index.js");
   });
 
   it("picks the import condition (kit's ESM-only ./vite export)", () => {
@@ -77,16 +75,12 @@ describe("resolveExportTarget", () => {
   });
 
   it("falls back to default and resolves nested conditions", () => {
-    expect(
-      resolveExportTarget({ default: { import: "./dist/index.js" } }),
-    ).toBe("./dist/index.js");
+    expect(resolveExportTarget({ default: { import: "./dist/index.js" } })).toBe("./dist/index.js");
   });
 
   it("returns undefined for unusable entries", () => {
     expect(resolveExportTarget(undefined)).toBeUndefined();
-    expect(
-      resolveExportTarget({ types: "./types/index.d.ts" }),
-    ).toBeUndefined();
+    expect(resolveExportTarget({ types: "./types/index.d.ts" })).toBeUndefined();
     expect(resolveExportTarget(null)).toBeUndefined();
   });
 });
