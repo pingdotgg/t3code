@@ -1810,6 +1810,7 @@ function startAnnotation(
       }
     };
     visit(document);
+    const selectedBefore = selected.size;
     for (const [doc, dispose] of annotationDocuments) {
       if (reachable.has(doc)) continue;
       dispose();
@@ -1866,6 +1867,7 @@ function startAnnotation(
         });
       }
     }
+    if (selected.size !== selectedBefore) updateStatus();
     repaint();
   };
   refreshDocuments();
