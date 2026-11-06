@@ -357,7 +357,13 @@ const fileManagerRevealKindForPlatform = Effect.fn(
   return hasGraphicalLinuxSession(env) ? "files" : undefined;
 });
 
-function resolveWslFileManagerPath(target: string, distroName: string): string {
+export function resolveWslFileManagerPath(target: string, distroName: string): string {
+  const driveMatch = target.match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
+  if (driveMatch) {
+    const driveLetter = driveMatch[1]!.toUpperCase();
+    const rest = (driveMatch[2] ?? "").replace(/\/+$/, "").replaceAll("/", "\\");
+    return `${driveLetter}:\\${rest}`;
+  }
   const relativePath = target.replace(/^\/+/, "").replaceAll("/", "\\");
   return `\\\\wsl.localhost\\${distroName}${relativePath.length > 0 ? `\\${relativePath}` : ""}`;
 }

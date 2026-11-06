@@ -257,6 +257,18 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.each([
+  { target: "/mnt/c", expected: "C:\\" },
+  { target: "/mnt/c/", expected: "C:\\" },
+  { target: "/mnt/d/projects/my-app", expected: "D:\\projects\\my-app" },
+  { target: "/mnt/c/projects/my-app/file.ts", expected: "C:\\projects\\my-app\\file.ts" },
+  { target: "/mnt/custom_share", expected: "\\\\wsl.localhost\\Ubuntu-24.04\\mnt\\custom_share" },
+  { target: "/home/user/repo", expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo" },
+  { target: "/", expected: "\\\\wsl.localhost\\Ubuntu-24.04" },
+])("resolveWslFileManagerPath maps $target to $expected", ({ target, expected }) => {
+  assert.equal(ExternalLauncher.resolveWslFileManagerPath(target, "Ubuntu-24.04"), expected);
+});
+
 it.effect.skipIf(windowsHost)(
   "reveals a WSL file in Windows File Explorer through its UNC path",
   () =>
