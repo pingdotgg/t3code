@@ -58,6 +58,13 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each(["reply font", "response serif", "assistant typography"])(
+    "finds the reply font setting for %s",
+    (query) => {
+      expect(searchSettings(query).map((item) => item.id)).toContain("reply-font");
+    },
+  );
+
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);

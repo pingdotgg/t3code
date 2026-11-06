@@ -86,7 +86,7 @@ export function getThemeCardDefinition(theme: ThemeDefinition): ThemeCardDefinit
           canvas: colors.canvas,
           surface: colors.surface,
           accentSurface: colors.accentSurface,
-          accent: colors.accent,
+          accent: theme.id === "absolutely" ? colors.accentSurface : colors.accent,
           messageSurface: colors.messageSurface,
           messageAction: colors.messageAction,
         },

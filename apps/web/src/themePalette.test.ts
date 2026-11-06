@@ -8,6 +8,7 @@ import {
   applyThemePalette,
   contextChipVariables,
   getThemeColorsForMode,
+  getThemeDefinition,
   getThemeModes,
   getCustomThemes,
   getStandardThemeColors,
@@ -20,7 +21,9 @@ import {
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
+  themeAllowsSidebarArtwork,
   T3_CHAT_THEME,
+  ABSOLUTELY_THEME,
   GROVE_THEME,
   updateCustomTheme,
   updateThemeColorFamily,
@@ -42,6 +45,15 @@ function canonical(value: string): string {
   const color = toCanonicalThemeColor(value);
   if (!color) throw new Error(`Expected a theme color, received ${value}`);
   return color;
+}
+
+function expectThemeColors(
+  colors: Readonly<Record<string, string>>,
+  expected: Readonly<Record<string, string>>,
+): void {
+  for (const [role, value] of Object.entries(expected)) {
+    expect(asHex(colors[role]!)).toBe(value);
+  }
 }
 
 function contrastRatio(first: string, second: string): number {
@@ -287,6 +299,45 @@ describe("theme files", () => {
       canvas: canonical("#101827"),
       text: canonical("#eef5ff"),
     });
+  });
+
+  it("offers Absolutely in both appearances with readable neutral palettes and serif replies", () => {
+    expect(getThemeDefinition("absolutely")).toBe(ABSOLUTELY_THEME);
+    expect(getThemeModes(ABSOLUTELY_THEME)).toEqual(["light", "dark"]);
+    expect(ABSOLUTELY_THEME.label).toBe("Absolutely");
+    expect(ABSOLUTELY_THEME.typography).toBe("absolutely");
+    expect(themeAllowsSidebarArtwork("absolutely")).toBe(false);
+    expectThemeColors(ABSOLUTELY_THEME.colors, {
+      canvas: "#fcfcfb",
+      accent: "#184f95",
+      sidebar: "#fbfbf9",
+      surface: "#ffffff",
+      messageSurface: "#f0f0ef",
+      messageAction: "#0b0b0b",
+    });
+    expectThemeColors(ABSOLUTELY_THEME.variants!.dark!, {
+      canvas: "#151515",
+      accent: "#6da7ec",
+      sidebar: "#111111",
+      surface: "#1a1a19",
+      surfaceOverlay: "#20201f",
+      codeBackground: "#1b1b1a",
+      codeForeground: "#eaecf0",
+      accentSurface: "#313130",
+      accentSurfaceForeground: "#f0efec",
+    });
+    for (const appearance of ["light", "dark"] as const) {
+      const colors = getThemeColorsForMode(ABSOLUTELY_THEME, appearance)!;
+      for (const [foreground, background] of [
+        [colors.text, colors.canvas],
+        [colors.textMuted, colors.canvas],
+        [colors.messageForeground, colors.messageSurface],
+        [colors.messageActionForeground, colors.messageAction],
+        [colors.sidebarForeground, colors.sidebar],
+      ]) {
+        expect(contrastRatio(foreground!, background!)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 
   it("preserves valid imported-theme collections and drops malformed metadata", () => {
