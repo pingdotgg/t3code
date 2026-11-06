@@ -2,8 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
+  FILES_DIFF_PAGE_SIZE,
   LOCATION_CACHE_CAPACITY,
   make,
   MAX_DIFF_SPAWNS,
@@ -15,7 +17,7 @@ import {
   MAX_FILE_DIFF_EDITS,
   parseAzureDevOpsDiffCursor,
 } from "./azureDevOpsDiff.ts";
-import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
+import type { AzureDevOpsChangeEntry, AzureDevOpsFileDiff } from "./azureDevOpsPullRequestJson.ts";
 
 const ITERATION = { id: 3, headCommit: "head", mergeBaseCommit: "base" };
 
@@ -38,6 +40,16 @@ const PULL_REQUEST = {
   location: { project: "acme", repository: "web" },
   autoMergeEnabled: false,
 };
+
+/** Azure could not give a files diff, so a walk reads the iteration changes as it always did. */
+const filesDiffUnavailable = Effect.fail(
+  new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+    command: "az",
+    cwd: "/w",
+    operation: "listFilesDiff",
+    cause: "unavailable",
+  }),
+);
 
 function change(
   path: string,
@@ -71,6 +83,7 @@ const readSlice = (input: {
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
           getPullRequest: () => Effect.succeed(PULL_REQUEST),
           listIterations: () => Effect.succeed([ITERATION]),
+          listFilesDiff: () => filesDiffUnavailable,
           listIterationChanges: () =>
             Effect.succeed({
               changes: input.paths.map((path) =>
@@ -201,6 +214,7 @@ describe("getDiff reads", () => {
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
             listIterations: () => Effect.succeed([ITERATION]),
+            listFilesDiff: () => filesDiffUnavailable,
             listIterationChanges: () =>
               Effect.succeed({ changes: paths.map((path) => change(path)), truncated: false }),
             readItemContent: () =>
@@ -327,6 +341,7 @@ describe("what one diff slice spends", () => {
                 return { ...PULL_REQUEST, number: input.number };
               }),
             listIterations: () => Effect.succeed([ITERATION]),
+            listFilesDiff: () => filesDiffUnavailable,
             listIterationChanges: () =>
               Effect.succeed({ changes: [change("a.ts")], truncated: false }),
             readItemContent: () => Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
@@ -344,6 +359,271 @@ describe("what one diff slice spends", () => {
       }
 
       expect(readsOf.get(HOT)).toBe(1);
+    }),
+  );
+});
+
+/** A file Azure lists as new, with the blocks it gives for text that ends in a newline. */
+function newFile(path: string, lines: ReadonlyArray<string>): AzureDevOpsFileDiff {
+  return {
+    change: { path, oldPath: path, changeKind: "new", objectId: null, originalObjectId: null },
+    blocks: [
+      {
+        kind: "add",
+        oldStart: 0,
+        oldCount: 0,
+        newStart: 1,
+        newCount: lines.length + 1,
+        oldLines: [],
+        newLines: [...lines, ""],
+      },
+    ],
+  };
+}
+
+/** Azure lists the files of each page by path, whatever order the change holds them in. */
+const orderedByPath = (files: ReadonlyArray<AzureDevOpsFileDiff>) =>
+  files.toSorted((left, right) => (left.change.path < right.change.path ? -1 : 1));
+
+const lightFiles = (count: number) =>
+  Array.from({ length: count }, (_, at) =>
+    newFile(`src/file-${String(at).padStart(4, "0")}.ts`, ["x", "y"]),
+  );
+
+/** A provider whose files diff answers from `files`, a page at a time, as Azure does. */
+const filesDiffProvider = (input: {
+  readonly files: ReadonlyArray<AzureDevOpsFileDiff>;
+  readonly failure?: Effect.Effect<never, AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError>;
+  readonly iterations?: ReadonlyArray<typeof ITERATION>;
+}) =>
+  Effect.gen(function* () {
+    const asks: number[] = [];
+    const reads: string[] = [];
+    const counts = { iterationChanges: 0 };
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+          getPullRequest: () => Effect.succeed(PULL_REQUEST),
+          listIterations: () => Effect.succeed(input.iterations ?? [ITERATION]),
+          listFilesDiff: ({ skip, top }) => {
+            asks.push(skip);
+            if (input.failure !== undefined) return input.failure;
+            return Effect.succeed(orderedByPath(input.files.slice(skip, skip + top)));
+          },
+          listIterationChanges: () => {
+            counts.iterationChanges += 1;
+            return Effect.succeed({
+              changes: input.files.map((file) => file.change),
+              truncated: false,
+            });
+          },
+          readItemContent: (item) => {
+            reads.push(item.path);
+            const isOldSide = item.commit !== ITERATION.headCommit;
+            return Effect.succeed({
+              contents: side(isOldSide ? "old" : "new", 2, 4),
+              isBinary: false,
+            });
+          },
+        }),
+      ),
+    );
+    const diff = (cursor?: string) =>
+      provider.getDiff({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+    return { diff, asks, reads, counts };
+  });
+
+describe("getDiff from the files diff", () => {
+  it.effect("reads a page of files with one call and no file reads", () =>
+    Effect.gen(function* () {
+      const files = lightFiles(3);
+      const read = yield* filesDiffProvider({ files });
+
+      const slice = yield* read.diff();
+
+      expect(patchedPaths(slice.patch)).toEqual(files.map((file) => file.change.path));
+      expect(slice.patch).toContain("@@ -0,0 +1,2 @@\n+x\n+y\n");
+      expect(slice.truncated).toBe(false);
+      expect(slice.nextCursor).toBeNull();
+      expect(read.asks).toEqual([0]);
+      expect(read.reads).toEqual([]);
+      expect(read.counts.iterationChanges).toBe(0);
+    }),
+  );
+
+  it.effect.each([{ count: 2 * FILES_DIFF_PAGE_SIZE }, { count: 2 * FILES_DIFF_PAGE_SIZE + 1 }])(
+    "walks a list of $count files a page to a slice, ending without calling it truncated",
+    ({ count }) =>
+      Effect.gen(function* () {
+        const files = lightFiles(count);
+        const read = yield* filesDiffProvider({ files });
+
+        const paths: string[] = [];
+        let cursor: string | undefined;
+        do {
+          const slice = yield* read.diff(cursor);
+          paths.push(...patchedPaths(slice.patch));
+          expect(slice.truncated).toBe(false);
+          cursor = slice.nextCursor ?? undefined;
+        } while (cursor !== undefined);
+
+        expect(paths).toEqual(files.map((file) => file.change.path));
+        expect(read.asks).toEqual([0, FILES_DIFF_PAGE_SIZE, 2 * FILES_DIFF_PAGE_SIZE]);
+        expect(read.reads).toEqual([]);
+      }),
+  );
+
+  it.effect("reads a page once for the slices that stop inside it", () =>
+    Effect.gen(function* () {
+      const lines = Array.from({ length: 100 }, (_, line) => `${line} ${"z".repeat(1_300)}`);
+      const files = Array.from({ length: 60 }, (_, at) =>
+        newFile(`src/file-${String(at).padStart(4, "0")}.ts`, lines),
+      );
+      const read = yield* filesDiffProvider({ files });
+
+      const paths: string[] = [];
+      let slices = 0;
+      let cursor: string | undefined;
+      do {
+        const slice = yield* read.diff(cursor);
+        paths.push(...patchedPaths(slice.patch));
+        cursor = slice.nextCursor ?? undefined;
+        slices += 1;
+      } while (cursor !== undefined);
+
+      expect(paths).toEqual(files.map((file) => file.change.path));
+      expect(slices).toBeGreaterThan(2);
+      expect(read.asks).toEqual([0, FILES_DIFF_PAGE_SIZE]);
+    }),
+  );
+
+  it.effect("resumes inside a page from the page's start, where Azure's order for it holds", () =>
+    Effect.gen(function* () {
+      const files = lightFiles(2 * FILES_DIFF_PAGE_SIZE).toReversed();
+      const read = yield* filesDiffProvider({ files });
+      const page = orderedByPath(files.slice(0, FILES_DIFF_PAGE_SIZE));
+
+      const slice = yield* read.diff(`${ITERATION.id}:17:d`);
+
+      expect(patchedPaths(slice.patch)).toEqual(page.slice(17).map((file) => file.change.path));
+      expect(slice.nextCursor).toBe(`${ITERATION.id}:${FILES_DIFF_PAGE_SIZE}:d`);
+      expect(read.asks).toEqual([0]);
+    }),
+  );
+
+  it.effect("carries nothing of a walk whose pull request took another push", () =>
+    Effect.gen(function* () {
+      const read = yield* filesDiffProvider({
+        files: lightFiles(3),
+        iterations: [{ ...ITERATION, id: ITERATION.id + 1 }],
+      });
+
+      const slice = yield* read.diff(`${ITERATION.id}:2:d`);
+
+      expect(slice).toEqual({ patch: "", truncated: true, nextCursor: null });
+    }),
+  );
+
+  it.effect("reads the long way a file whose blocks it cannot trust", () =>
+    Effect.gen(function* () {
+      const files = [
+        newFile("a.ts", ["x"]),
+        { ...newFile("b.ts", ["x"]), blocks: null },
+        newFile("c.ts", ["x"]),
+      ];
+      const read = yield* filesDiffProvider({ files });
+
+      const slice = yield* read.diff();
+
+      expect(patchedPaths(slice.patch)).toEqual(["a.ts", "b.ts", "c.ts"]);
+      expect(new Set(read.reads)).toEqual(new Set(["b.ts"]));
+      expect(slice.patch.match(/^@@ /gmu)).toHaveLength(3);
+    }),
+  );
+
+  it.effect.each([
+    { name: "Azure lists no files", files: [] as ReadonlyArray<AzureDevOpsFileDiff> },
+    {
+      name: "Azure cannot give the files diff",
+      files: lightFiles(2),
+      failure: filesDiffUnavailable,
+    },
+  ])("reads the iteration changes when $name", ({ name: _name, ...input }) =>
+    Effect.gen(function* () {
+      const read = yield* filesDiffProvider(input);
+
+      const slice = yield* read.diff();
+
+      expect(read.counts.iterationChanges).toBe(1);
+      expect(read.asks).toEqual([0]);
+      expect(slice.nextCursor).toBeNull();
+    }),
+  );
+
+  it.effect("takes a cursor from before the files diff for the iteration changes", () =>
+    Effect.gen(function* () {
+      const read = yield* filesDiffProvider({ files: lightFiles(3) });
+
+      const slice = yield* read.diff(`${ITERATION.id}:1`);
+
+      expect(patchedPaths(slice.patch)).toEqual(["src/file-0001.ts", "src/file-0002.ts"]);
+      expect(read.asks).toEqual([]);
+      expect(read.counts.iterationChanges).toBe(1);
+    }),
+  );
+
+  it.effect("skips a page of a walk under way that cannot be read, and says so", () =>
+    Effect.gen(function* () {
+      const read = yield* filesDiffProvider({
+        files: lightFiles(3 * FILES_DIFF_PAGE_SIZE),
+        failure: filesDiffUnavailable,
+      });
+
+      const slice = yield* read.diff(`${ITERATION.id}:${FILES_DIFF_PAGE_SIZE}:d`);
+
+      expect(slice).toEqual({
+        patch: "",
+        truncated: true,
+        nextCursor: `${ITERATION.id}:${2 * FILES_DIFF_PAGE_SIZE}:d`,
+      });
+      expect(read.counts.iterationChanges).toBe(0);
+    }),
+  );
+
+  it.effect("fails a walk under way when its next page cannot be asked for", () =>
+    Effect.gen(function* () {
+      const read = yield* filesDiffProvider({
+        files: lightFiles(3 * FILES_DIFF_PAGE_SIZE),
+        failure: Effect.fail(
+          new AzureDevOpsCli.AzureDevOpsCliRateLimitError({
+            operation: "execute",
+            command: "az",
+            cwd: "/w",
+            argumentCount: 0,
+            cause: "slow down",
+          }),
+        ),
+      });
+
+      const error = yield* Effect.flip(read.diff(`${ITERATION.id}:${FILES_DIFF_PAGE_SIZE}:d`));
+
+      expect(error.cause).toMatchObject({ _tag: "AzureDevOpsCliRateLimitError" });
+    }),
+  );
+
+  it.effect("ends a walk as truncated when the page it was part-way through has shrunk", () =>
+    Effect.gen(function* () {
+      const read = yield* filesDiffProvider({ files: lightFiles(20) });
+
+      const slice = yield* read.diff(`${ITERATION.id}:30:d`);
+
+      expect(slice).toEqual({ patch: "", truncated: true, nextCursor: null });
     }),
   );
 });

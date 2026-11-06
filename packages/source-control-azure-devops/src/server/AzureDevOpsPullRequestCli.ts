@@ -13,6 +13,7 @@ import type {
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import {
+  decodeFilesDiffJson,
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
@@ -21,6 +22,7 @@ import {
   decodeThreadsJson,
   decodeViewerJson,
   type AzureDevOpsChangeEntry,
+  type AzureDevOpsFileDiff,
   type AzureDevOpsItemContent,
   type AzureDevOpsIteration,
   type AzureDevOpsPullRequest,
@@ -103,7 +105,14 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsViewerUnavailableError;
 
 const REST_API_VERSION = "7.1";
+/**
+ * The pull request files diff is registered as a preview. The extension rejects `7.2-preview.1`
+ * (it parses the version as a float) and Azure rejects a plain `7.2`, so only this spelling works.
+ */
+const FILES_DIFF_API_VERSION = "7.2-preview";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+/** A page of diffs carries line text, which `az` prints with the escapes of a JSON string. */
+const FILES_DIFF_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 /** A 2,000-file page exceeds the default 1 MiB output budget. */
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 /** JSON escaping and base64 can exceed the decoded file's size. */
@@ -183,6 +192,15 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly path: string;
       readonly commit: string;
     }) => Effect.Effect<AzureDevOpsItemContent, AzureDevOpsPullRequestCliError>;
+
+    /** The latest iteration's files and diff blocks in one call, `top` files from `skip`. */
+    readonly listFilesDiff: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly top: number;
+      readonly skip: number;
+    }) => Effect.Effect<ReadonlyArray<AzureDevOpsFileDiff>, AzureDevOpsPullRequestCliError>;
 
     readonly runPullRequestAction: (input: {
       readonly cwd: string;
@@ -296,8 +314,11 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly operation: string;
     readonly resource: string;
+    readonly apiVersion?: string;
     readonly routeParameters: ReadonlyArray<string>;
     readonly queryParameters?: ReadonlyArray<string>;
+    /** A JMESPath query applied to the result before it is printed. */
+    readonly query?: string;
     readonly maxOutputBytes?: number;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
   }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
@@ -313,12 +334,13 @@ export const make = Effect.gen(function* () {
         "--resource",
         input.resource,
         "--api-version",
-        REST_API_VERSION,
+        input.apiVersion ?? REST_API_VERSION,
         "--route-parameters",
         ...input.routeParameters,
         ...(input.queryParameters === undefined
           ? []
           : ["--query-parameters", ...input.queryParameters]),
+        ...(input.query === undefined ? [] : ["--query", input.query]),
       ],
     }).pipe(
       Effect.flatMap((result) => {
@@ -614,6 +636,21 @@ export const make = Effect.gen(function* () {
         ],
         maxOutputBytes: ITEM_CONTENT_MAX_OUTPUT_BYTES,
         decode: decodeItemContentJson,
+      });
+    }),
+
+    listFilesDiff: Effect.fn("AzureDevOpsPullRequestCli.listFilesDiff")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "listFilesDiff",
+        resource: "pullRequestFilesDiff",
+        apiVersion: FILES_DIFF_API_VERSION,
+        routeParameters: pullRequestRoute(input),
+        queryParameters: [`$top=${input.top}`, `$skip=${input.skip}`],
+        // The page as a string of JSON text, which `az` prints in ASCII whatever the code page.
+        query: "to_string(@)",
+        maxOutputBytes: FILES_DIFF_MAX_OUTPUT_BYTES,
+        decode: decodeFilesDiffJson,
       });
     }),
 
