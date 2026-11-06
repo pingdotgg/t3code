@@ -9,7 +9,7 @@ import { useT } from "~/hooks/useI18n";
 const MAX_FONT_BYTES = 10 * 1024 * 1024;
 
 async function readFont(src: string, signal: AbortSignal) {
-  const t = useT();
+  const t = translateNow;
   const response = await fetch(src, { signal });
   if (!response.ok) throw new Error(t("review.extra.the.font.could.not.be.loaded"));
   if (Number(response.headers.get("content-length")) > MAX_FONT_BYTES)

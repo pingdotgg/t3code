@@ -46,7 +46,7 @@ function HighlightedFuzzyText(props: {
 }
 
 function getEmptyStateMessage(query: string, error: string | null, isPending: boolean): string {
-  const t = useT();
+  const t = translateNow;
   if (error) return error;
   const isSearching = query.trim().length > 0;
   if (isPending)

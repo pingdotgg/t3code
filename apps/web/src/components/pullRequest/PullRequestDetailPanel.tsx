@@ -205,7 +205,7 @@ const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
 
 function reportCheckoutCommandError(error: Error) {
-  const t = useT();
+  const t = translateNow;
   toastManager.add({
     type: "error",
     title: t("review.extra.could.not.copy.checkout.command"),

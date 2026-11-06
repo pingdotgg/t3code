@@ -17,8 +17,9 @@ import { getClientSettings, subscribeClientSettings } from "./clientSettingsStor
 const systemLanguage =
   (typeof window === "undefined"
     ? undefined
-    : window.desktopBridge?.getPreferredSystemLanguages()[0]) ??
-  (typeof navigator === "undefined" ? "en" : navigator.language);
+    : window.desktopBridge?.getPreferredSystemLanguages?.()[0]) ??
+  (typeof navigator === "undefined" ? undefined : navigator.language) ??
+  "en";
 
 export function getUiLocale(): UiLocale {
   return resolveUiLocale(getClientSettings().uiLanguage, systemLanguage);

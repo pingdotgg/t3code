@@ -13,7 +13,7 @@ const WordDocument = lazy(() => import("./office/WordDocument"));
 const Spreadsheet = lazy(() => import("./office/Spreadsheet"));
 const Presentation = lazy(() => import("./office/Presentation"));
 async function readOfficeFile(src: string, signal: AbortSignal) {
-  const t = useT();
+  const t = translateNow;
   const response = await fetch(src, { signal });
   if (!response.ok) throw new Error(t("review.extra.the.file.could.not.be.loaded.close.it"));
   if (Number(response.headers.get("content-length")) > OFFICE_PREVIEW_MAX_BYTES)

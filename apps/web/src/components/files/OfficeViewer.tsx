@@ -48,7 +48,7 @@ type Workbook = Extract<OfficeWorkerResult, { type: "ods" }>;
 const OpenXmlOfficeViewer = lazy(() => import("./OpenXmlOfficeViewer"));
 
 async function readOfficeFile(src: string, signal: AbortSignal) {
-  const t = useT();
+  const t = translateNow;
   const response = await fetch(src, { signal });
   if (!response.ok) throw new Error(t("review.extra.the.file.could.not.be.loaded.close.it"));
   if (Number(response.headers.get("content-length")) > OFFICE_PREVIEW_MAX_BYTES)
