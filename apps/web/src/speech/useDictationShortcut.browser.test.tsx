@@ -46,6 +46,21 @@ it("leaves the browser shortcut alone when dictation is off", async () => {
   expect(speech.start).not.toHaveBeenCalled();
 });
 
+it("leaves the chord to a T3 Learn side chat that has focus", async () => {
+  const speech = actions(true);
+  await using screen = await render(
+    <>
+      <Probe speech={speech} />
+      <div data-side-chat-panel>
+        <textarea aria-label="Side chat" />
+      </div>
+    </>,
+  );
+  (screen.getByRole("textbox", { name: "Side chat" }).element() as HTMLElement).focus();
+  expect(press()).toBe(true);
+  expect(speech.start).not.toHaveBeenCalled();
+});
+
 it("stops on a new press when the OS omitted keyup, but ignores autorepeat", async () => {
   const speech = actions(true);
   await using screen = await render(<Probe speech={speech} />);

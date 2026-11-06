@@ -3,6 +3,7 @@ import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useRef, type RefObject } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { SIDE_CHAT_PANEL_SELECTOR } from "../components/chat/composerFocusRedirect";
 import { useClientSettings } from "../hooks/useSettings";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -57,6 +58,8 @@ function ownsShortcut(id: symbol) {
     entries.find(([, read]) => read().ownsFocus?.()) ??
     entries.find(([, read]) => read().targetRef?.current?.contains(document.activeElement));
   if (focused) return focused[0] === id;
+  // T3 Learn's side-chat panel has its own composer; the lesson's must not take its keys.
+  if (document.activeElement?.closest(SIDE_CHAT_PANEL_SELECTOR)) return false;
   return entries.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
 }
 
