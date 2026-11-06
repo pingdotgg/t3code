@@ -176,7 +176,7 @@ export function AssistantCitationChip({
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
-              // Keep voice setup alive while its dialog replaces the comment popover.
+              // The editor stays mounted while its voice setup dialog replaces the popover.
               keepMounted
               {...composerFloatingLayerProps}
               side="top"
