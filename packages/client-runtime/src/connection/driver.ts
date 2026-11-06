@@ -27,12 +27,8 @@ import {
 } from "./routes.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import {
-  executeEnvironmentHttpRequest,
-  makeEnvironmentHttpApiGroupClient,
-  makeEnvironmentHttpApiUrlBuilder,
-} from "../rpc/http.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
 export type ConnectionDriverProgress =
@@ -256,29 +252,19 @@ export const make = Effect.gen(function* () {
   const sessionGrant = Effect.fn("ConnectionDriver.sessionGrant")(
     function* (prepared: PreparedConnection) {
       yield* Effect.annotateCurrentSpan("connection.target.kind", prepared.target._tag);
-      const authorization = prepared.httpAuthorization;
-      if (authorization === null) return Option.none<RouteGrant>();
-      const url = makeEnvironmentHttpApiUrlBuilder(prepared.httpBaseUrl).auth.session();
-      const headers =
-        authorization._tag === "Bearer"
-          ? { authorization: `Bearer ${authorization.token}` }
-          : Option.isNone(signer)
-            ? undefined
-            : {
-                authorization: `DPoP ${authorization.accessToken}`,
-                dpop: yield* signer.value.createProof({
-                  method: "GET",
-                  url,
-                  accessToken: authorization.accessToken,
-                }),
-              };
-      if (headers === undefined) return Option.none<RouteGrant>();
-      const client = yield* makeEnvironmentHttpApiGroupClient(prepared.httpBaseUrl, "auth");
-      const session = yield* executeEnvironmentHttpRequest(
-        url,
-        GRANT_CHECK_TIMEOUT_MS,
-        client.session({ headers }),
-      );
+      if (prepared.httpAuthorization === null) return Option.none<RouteGrant>();
+      const session = yield* executeAuthenticatedEnvironmentHttpRequest({
+        prepared,
+        signer,
+        remoteAuthorization: Option.some(remote),
+        group: "auth",
+        method: "GET",
+        url: (urls) => urls.session(),
+        timeoutMs: GRANT_CHECK_TIMEOUT_MS,
+        request: ({ client, headers }) => client.session({ headers }),
+        // This endpoint returns 200 with authenticated:false for expired credentials.
+        isUnauthorizedResponse: (response) => !response.authenticated,
+      });
       return routeGrantFromSession(session);
     },
     Effect.orElseSucceed(() => Option.none<RouteGrant>()),

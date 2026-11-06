@@ -1745,7 +1745,59 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect("moves back to the LAN route when the network changes and it answers again", () =>
+  it.effect.each([
+    { grants: "no grants", lanGrant: undefined, relayGrant: undefined },
+    { grants: "an equal grant", lanGrant: STANDARD_GRANT, relayGrant: STANDARD_GRANT },
+  ])(
+    "moves back to the LAN route when the network changes and it answers again, with $grants",
+    ({ lanGrant, relayGrant }) =>
+      Effect.gen(function* () {
+        const lanReachable = yield* Ref.make(false);
+        const harness = yield* makeHarness({
+          checkRoute: (route) =>
+            route.target._tag === "BearerConnectionTarget"
+              ? Ref.get(lanReachable).pipe(
+                  Effect.map((reachable) => (reachable ? "answered" : "silent")),
+                )
+              : Effect.succeed("unchecked"),
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          grant: (target) =>
+            target._tag === "RelayConnectionTarget"
+              ? Effect.succeed(Option.fromUndefinedOr(relayGrant))
+              : Ref.get(lanReachable).pipe(
+                  Effect.map((reachable) =>
+                    reachable ? Option.fromUndefinedOr(lanGrant) : Option.none(),
+                  ),
+                ),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 1,
+        );
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "RelayConnectionTarget",
+        );
+
+        yield* Ref.set(lanReachable, true);
+        yield* harness.setNetworkStatus("unknown");
+        yield* harness.setNetworkStatus("online");
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2,
+        );
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "BearerConnectionTarget",
+        );
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      }),
+  );
+
+  it.effect("stays on a T3 Connect route when the recovered LAN route grants less", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);
       const harness = yield* makeHarness({
@@ -1756,6 +1808,12 @@ describe("EnvironmentSupervisor routes", () => {
               )
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        grant: (target) =>
+          target._tag === "RelayConnectionTarget"
+            ? Effect.succeedSome(STANDARD_GRANT)
+            : Ref.get(lanReachable).pipe(
+                Effect.map((reachable) => (reachable ? Option.some(LEGACY_GRANT) : Option.none())),
+              ),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
         initiallyDesired: true,
@@ -1765,22 +1823,20 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 1,
       );
+      yield* Ref.set(lanReachable, true);
+      yield* harness.wake("network-changed");
+      for (let minute = 0; minute < 3; minute += 1) {
+        yield* TestClock.adjust("60 seconds");
+      }
+
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
         "RelayConnectionTarget",
       );
-
-      yield* Ref.set(lanReachable, true);
-      yield* harness.setNetworkStatus("unknown");
-      yield* harness.setNetworkStatus("online");
-
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2,
-      );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
-      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
     }),
   );
 
@@ -2020,6 +2076,55 @@ describe("EnvironmentSupervisor routes", () => {
       }),
   );
 
+  it.effect(
+    "asks again for a grant the host could not report, backing off until the network changes",
+    () =>
+      Effect.gen(function* () {
+        const lanGrantChecks = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          checkRoute: (route) =>
+            Effect.succeed(
+              route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
+            ),
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          grant: (target) =>
+            target._tag === "RelayConnectionTarget"
+              ? Effect.succeedSome(STANDARD_GRANT)
+              : Ref.updateAndGet(lanGrantChecks, (count) => count + 1).pipe(
+                  Effect.map((count) => (count <= 2 ? Option.none() : Option.some(LEGACY_GRANT))),
+                ),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 1,
+        );
+        // Asked on connecting, then again at 2 minutes and not before 6.
+        yield* TestClock.adjust("60 seconds");
+        expect(yield* Ref.get(lanGrantChecks)).toBe(1);
+        yield* TestClock.adjust("60 seconds");
+        expect(yield* Ref.get(lanGrantChecks)).toBe(2);
+        for (let minute = 0; minute < 3; minute += 1) {
+          yield* TestClock.adjust("60 seconds");
+        }
+        expect(yield* Ref.get(lanGrantChecks)).toBe(2);
+        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+
+        yield* harness.wake("network-changed");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2,
+        );
+        expect(yield* Ref.get(lanGrantChecks)).toBe(3);
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "RelayConnectionTarget",
+        );
+      }),
+  );
+
   it.effect.each([
     { relay: "an equal", lanGrant: LEGACY_GRANT, relayGrant: LEGACY_GRANT },
     { relay: "an incomparable", lanGrant: LEGACY_GRANT, relayGrant: FILES_ONLY_GRANT },
@@ -2027,32 +2132,27 @@ describe("EnvironmentSupervisor routes", () => {
     { relay: "a broader but unconfirmed", lanGrant: undefined, relayGrant: STANDARD_GRANT },
   ])("keeps a working LAN connection when T3 Connect has $relay grant", (grants) =>
     Effect.gen(function* () {
-      const asked = yield* Ref.make<ReadonlyArray<ConnectionTarget["_tag"]>>([]);
-      const settled = yield* Deferred.make<void>();
+      const relayChecks = yield* Ref.make(0);
       const harness = yield* makeHarness({
         checkRoute: (route) =>
           Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         grant: (target) =>
-          Ref.update(asked, (tags) => [...tags, target._tag]).pipe(
-            Effect.andThen(
-              // The grant that decides: T3 Connect's, or the LAN's when it is unknown.
-              target._tag === "RelayConnectionTarget" || grants.lanGrant === undefined
-                ? Deferred.succeed(settled, undefined)
-                : Effect.void,
-            ),
-            Effect.as(
-              Option.fromUndefinedOr(
-                target._tag === "RelayConnectionTarget" ? grants.relayGrant : grants.lanGrant,
-              ),
-            ),
-          ),
+          target._tag === "RelayConnectionTarget"
+            ? Ref.update(relayChecks, (count) => count + 1).pipe(
+                Effect.as(Option.fromUndefinedOr(grants.relayGrant)),
+              )
+            : Effect.succeed(Option.fromUndefinedOr(grants.lanGrant)),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
-      yield* Deferred.await(settled);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* harness.wake("network-changed");
       for (let minute = 0; minute < 3; minute += 1) {
         yield* TestClock.adjust("60 seconds");
       }
@@ -2063,11 +2163,10 @@ describe("EnvironmentSupervisor routes", () => {
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
         "BearerConnectionTarget",
       );
-      const relayChecks = (yield* Ref.get(asked)).filter((tag) => tag === "RelayConnectionTarget");
-      // A known grant is not asked for again and an unavailable one only after a
-      // backoff. With the active grant unknown, T3 Connect is never asked.
-      expect(relayChecks.length).toBe(
-        grants.lanGrant === undefined ? 0 : grants.relayGrant === undefined ? 2 : 1,
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      // A known grant is not asked for again, and an unavailable one only after a backoff.
+      expect(yield* Ref.get(relayChecks)).toBeLessThanOrEqual(
+        grants.relayGrant === undefined ? 2 : 1,
       );
     }),
   );

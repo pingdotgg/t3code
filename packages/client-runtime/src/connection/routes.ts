@@ -149,8 +149,12 @@ export function grantsEveryScope(grant: RouteGrant): boolean {
   return grant.size === AuthGrantScope.literals.length;
 }
 
+export function grantCovers(grant: RouteGrant, other: RouteGrant): boolean {
+  return [...other].every((scope) => grant.has(scope));
+}
+
 export function grantIsBroader(grant: RouteGrant, than: RouteGrant): boolean {
-  return grant.size > than.size && [...than].every((scope) => grant.has(scope));
+  return grant.size > than.size && grantCovers(grant, than);
 }
 
 /**
