@@ -1697,6 +1697,18 @@ function setClaudeLivePermissionMode(live: ClaudeLiveQueryContext, mode: Permiss
   );
 }
 
+// Turns follow the mode Claude accepted. A fallback to default forwards its approvals, so the
+// callback must ask for them even when the requested mode would not.
+function claudeEffectiveLiveQueryPolicy(live: ClaudeLiveQueryContext): ClaudeRuntimeQueryPolicy {
+  return live.openedPermissionMode === live.queryPolicy.permissionMode
+    ? live.queryPolicy
+    : {
+        ...live.queryPolicy,
+        permissionMode: live.openedPermissionMode,
+        installPermissionCallback: true,
+      };
+}
+
 // A delegated child is its own SDK session, so Claude Code gives it the main-conversation cache
 // TTL. When the user sets Claude's subagentPromptCacheTtl, the child follows it like a native
 // subagent would. An explicit CLAUDE_CODE_PROMPT_CACHE_TTL on the instance still wins.
@@ -10877,20 +10889,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Switch Plan and the permission mode live, so a background agent survives the change.
             // Record the mode Claude accepted, as the init frame does for a fresh process.
             if (existing.queryPolicy.permissionMode !== queryPolicy.permissionMode) {
-              const accepted = yield* setClaudeLivePermissionMode(
+              existing.permissionMode = yield* setClaudeLivePermissionMode(
                 existing,
                 queryPolicy.permissionMode,
               );
-              existing.permissionMode = accepted;
-              existing.openedPermissionMode = accepted;
-              // The default fallback forwards its approvals, so the callback must ask for them.
-              existing.queryPolicy =
-                accepted === queryPolicy.permissionMode
-                  ? queryPolicy
-                  : { ...queryPolicy, permissionMode: accepted, installPermissionCallback: true };
-            } else {
-              existing.queryPolicy = queryPolicy;
+              existing.openedPermissionMode = existing.permissionMode;
             }
+            existing.queryPolicy = queryPolicy;
             // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
             // Auto/default may reflect a policy restriction that forbids restoring bypass.
             if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
@@ -10898,6 +10903,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 existing,
                 existing.openedPermissionMode,
               );
+              existing.openedPermissionMode = existing.permissionMode;
             }
             return existing;
           }
@@ -11222,7 +11228,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               autoCompactWindow,
-              queryPolicy: querySession.queryPolicy,
+              queryPolicy: claudeEffectiveLiveQueryPolicy(querySession),
               nativeThreadId,
               nativeTurnId,
               nativeMessageCursor: null,

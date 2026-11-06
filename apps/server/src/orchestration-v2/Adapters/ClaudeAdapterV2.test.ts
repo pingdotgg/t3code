@@ -6023,6 +6023,90 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("asks for approvals after restoring Claude's own Plan falls back to default", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          setPermissionMode: (mode) =>
+            mode === "auto"
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "setPermissionMode",
+                    cause: new Error("auto mode is not available for this model"),
+                  }),
+                )
+              : Effect.void,
+        });
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-restore-plan:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "auto",
+              interactionMode: "default",
+              cwd: "/workspace",
+            }),
+          });
+        yield* harness.runtime.startTurn(turn(1));
+        // Claude enters Plan on its own, and the model no longer offers Auto to return to.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: null,
+            permissionMode: "plan",
+            uuid: "restore-enter-plan",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(turn(2));
+        assert.deepEqual(harness.permissionModeChanges, ["auto", "default"]);
+        const decision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "git status" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-after-restore",
+              requestId: "request-after-restore",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(Effect.map(() => ({ type: "decision" }) as const)),
+        );
+        assert.equal(first.type, "request");
+        if (first.type !== "request") return;
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: first.event.runtimeRequest.id,
+          decision: "decline",
+        });
+        yield* Fiber.join(decision);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("re-sends the model on the turn after a live selection change fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
