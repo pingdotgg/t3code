@@ -1844,6 +1844,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    ["th", "projects/acme%2Fweb/users?per_page=100"],
+    ["tho", "projects/acme%2Fweb/users?per_page=100&search=tho"],
+  ] as const)("searches project users only from three characters (%s)", ([search, path]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listProjectUsers({ cwd: "/w", repository: "acme/web", search });
+
+      expect(argsOfCall(0)[1]).toBe(path);
+    }),
+  );
+
   it.effect("reads who has access to the project and who is already on the merge request", () =>
     Effect.gen(function* () {
       mockedExecute
