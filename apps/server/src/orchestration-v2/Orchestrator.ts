@@ -12247,6 +12247,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const run of reached.values()) {
       yield* markStoppedRun({ command, events, thread: projection.thread, run, now });
     }
+    // With nothing left to interrupt, a native subagent still recorded as active (no live
+    // turn item) would hold this thread's delegated result forever, so Stop ends it.
+    const staleNative = (target === undefined ? projection.subagents : []).filter(
+      (subagent) =>
+        subagent.origin === "provider_native" &&
+        isOrchestrationV2WorkActive(subagent.status) &&
+        !projection.turnItems.some(
+          (item) => item.type === "subagent" && item.subagentId === subagent.id,
+        ),
+    );
+    if (staleNative.length > 0) {
+      const { nodes } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["nodes"])
+        .pipe(mapDispatchError(command));
+      for (const subagent of staleNative) {
+        const ended = yield* endOrphanedNativeSubagent({
+          projection: { nodes, subagents: projection.subagents, turnItems: projection.turnItems },
+          subagentId: subagent.id,
+          status: "interrupted",
+          now,
+          emitted: yield* Ref.get(events),
+          allocateEventId: () =>
+            idAllocator.allocate.event({
+              threadId: command.threadId,
+              commandId: command.commandId,
+            }),
+        }).pipe(mapDispatchError(command));
+        yield* Ref.update(events, (existing) => [...existing, ...ended]);
+      }
+    }
     yield* holdStoppedThread({ command, events, projection, cohortRunIds: [], now });
     yield* cancelIdleOrphans({ command, events, projection });
     yield* stopDelegatedTasks;
