@@ -35,10 +35,15 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
+import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   MISTRAL_VIBE_RATE_LIMITED,
   applyVibeHistoryPatch,
+  stripT3PromptInstructions,
+  vibeMcpServers,
   VIBE_PROVIDER,
   buildVibeSpawnInput,
   resolveVibeModelId,
@@ -217,6 +222,8 @@ interface AdapterState {
     | undefined;
   /** History entries by native id, so `history/entryUpdated` patches can be applied. */
   entries: Map<string, Record<string, unknown>>;
+  /** T3 instructions ride on the prompt, so send each block once per app-server session. */
+  instructionsDelivered: { orchestration: boolean; device: boolean };
   /** Maps a T3 runtime-request id to the native callback id answered via `callback/result`. */
   callbackByRequest: Map<
     RuntimeRequestId,
@@ -242,12 +249,21 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
 
   const openSessionInner = Effect.fn("VibeAdapterV2.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
   ) {
     const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
-    const spawn = buildVibeSpawnInput(options.settings, cwd, options.environment);
+    const spawn = buildVibeSpawnInput(
+      options.settings,
+      cwd,
+      withAgentDeviceEnvironment(
+        // Lets tools run from the agent's shell find their T3 thread, as Claude and Codex do.
+        { ...(options.environment ?? process.env), T3CODE_THREAD_ID: input.threadId },
+        yield* mcpSessions.read(input.threadId),
+      ),
+    );
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawn.command, [...spawn.args], {
@@ -393,6 +409,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       currentRun: undefined,
       entries: new Map(),
       callbackByRequest: new Map(),
+      instructionsDelivered: { orchestration: false, device: false },
     };
 
     const sessionIdOf = () => state.thread?.nativeThreadRef?.nativeId ?? undefined;
@@ -708,7 +725,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       );
       const threadCwd = ensureInput.runtimePolicy.cwd ?? cwd;
       const nativeId = ensureInput.existingProviderThread?.nativeThreadRef?.nativeId ?? undefined;
+      const mcpSession = yield* mcpSessions.read(ensureInput.threadId);
       const agentConfig = {
+        mcpServers: vibeMcpServers(mcpSession),
         cwd: threadCwd,
         headless: true,
         trustWorkspace: options.settings.trustWorkspace,
@@ -810,13 +829,28 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           ),
         ),
       );
+      const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+      const hasDeviceTools = mcpSession?.capabilities?.has("device") === true;
+      const promptText = t3OrchestrationPrompt({
+        prompt: turnInput.message.text,
+        hasT3Mcp: mcpSession !== undefined,
+        hasDeviceTools,
+        orchestrationDelivered: state.instructionsDelivered.orchestration,
+        deviceInstructionsDelivered: state.instructionsDelivered.device,
+      });
       yield* Effect.mapError(
         client.sessionTurnEnqueue({
           sessionId: nativeSessionId,
-          entries: [{ role: "user", content: [{ type: "text", text: turnInput.message.text }] }],
+          entries: [{ role: "user", content: [{ type: "text", text: promptText }] }],
         }),
         protocolError,
       );
+      if (mcpSession !== undefined) {
+        state.instructionsDelivered = {
+          orchestration: true,
+          device: state.instructionsDelivered.device || hasDeviceTools,
+        };
+      }
       yield* updateThread({ status: "active" });
     });
 
@@ -971,9 +1005,10 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         const now = yield* DateTime.now;
         const messages: OrchestrationV2ConversationMessage[] = [];
         for (const entry of historyEntries) {
-          const text = entryText(entry);
-          if (!text) continue;
           const role = str(entry["role"]) === "user" ? "user" : "assistant";
+          const text =
+            role === "user" ? stripT3PromptInstructions(entryText(entry)) : entryText(entry);
+          if (!text) continue;
           const nativeItemId = str(entry["id"]) ?? `entry-${messages.length}`;
           messages.push({
             createdBy: "agent",
@@ -1181,4 +1216,5 @@ export type VibeAdapterV2Env =
   | Path.Path
   | SecureRandom.SecureRandom
   | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;

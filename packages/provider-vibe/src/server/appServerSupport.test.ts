@@ -1,11 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import * as Schema from "effect/Schema";
+import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import { VibeSettings } from "../settings.ts";
 import {
   DEFAULT_VIBE_MODEL,
   applyVibeHistoryPatch,
+  stripT3PromptInstructions,
+  vibeMcpServers,
   VIBE_DEFAULT_BINARY,
   buildVibeEnvironment,
   buildVibeSpawnInput,
@@ -124,5 +127,35 @@ describe("applyVibeHistoryPatch", () => {
       { type: "text", text: "b" },
       { type: "text", text: "c" },
     ]);
+  });
+});
+
+describe("vibeMcpServers", () => {
+  it("passes the thread's T3 MCP endpoint as an authorized streamable-http server", () => {
+    expect(vibeMcpServers(undefined)).toEqual([]);
+    expect(
+      vibeMcpServers({ endpoint: "http://127.0.0.1:1/mcp", authorizationHeader: "Bearer t" }),
+    ).toEqual([
+      {
+        transport: "streamable-http",
+        name: "t3-code",
+        url: "http://127.0.0.1:1/mcp",
+        headers: { Authorization: "Bearer t" },
+      },
+    ]);
+  });
+});
+
+describe("stripT3PromptInstructions", () => {
+  it("recovers the user's text from T3's prompt envelope and leaves plain text alone", () => {
+    const prompt = t3OrchestrationPrompt({
+      prompt: "fix the bug\n\nplease",
+      hasT3Mcp: true,
+      hasDeviceTools: true,
+      orchestrationDelivered: false,
+      deviceInstructionsDelivered: false,
+    });
+    expect(stripT3PromptInstructions(prompt)).toBe("fix the bug\n\nplease");
+    expect(stripT3PromptInstructions("plain")).toBe("plain");
   });
 });

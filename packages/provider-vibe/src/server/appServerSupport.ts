@@ -1,3 +1,4 @@
+import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import {
   type ProviderInteractionMode,
   ProviderDriverKind,
@@ -69,6 +70,30 @@ export function applyVibeHistoryPatch(
     } else record[key] = value;
   }
   return result;
+}
+
+/** T3's per-thread MCP endpoint as a Vibe session MCP server, so Vibe agents get T3's tools. */
+export function vibeMcpServers(
+  session: Pick<McpProviderSessionConfig, "endpoint" | "authorizationHeader"> | undefined,
+) {
+  return session === undefined
+    ? []
+    : [
+        {
+          transport: "streamable-http" as const,
+          name: "t3-code",
+          url: session.endpoint,
+          headers: { Authorization: session.authorizationHeader },
+        },
+      ];
+}
+
+const T3_PROMPT_ENVELOPE =
+  /^<t3_code_orchestration_instructions>[\s\S]*?<\/t3_code_orchestration_instructions>\n\n<user_request>\n([\s\S]*)\n<\/user_request>$/;
+
+/** Vibe stores the prompt as sent; replayed user messages drop T3's instruction envelope. */
+export function stripT3PromptInstructions(text: string): string {
+  return T3_PROMPT_ENVELOPE.exec(text)?.[1] ?? text;
 }
 
 export const DEFAULT_VIBE_MODEL = "mistral-medium-3.5";
