@@ -26,7 +26,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { FolderX, Unlink2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 
-import { BrowserSettingsReadError } from "../browser/openFileInPreview";
+import { isBrowserSettingsReadError } from "../browser/openFileInPreview";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { type ComposerImageAttachment, useComposerDraftStore } from "../composerDraftStore";
 import { useDiffPanelStore } from "../diffPanelStore";
@@ -307,7 +307,7 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
         }).then((result) => {
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
           const error = squashAtomCommandFailure(result);
-          if (error instanceof BrowserSettingsReadError) {
+          if (isBrowserSettingsReadError(error)) {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
