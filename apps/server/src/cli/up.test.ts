@@ -18,7 +18,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
-import { connectEnabled, planRoutes, upCommand } from "./up.ts";
+import { connectEnabled, planRoutes, statusCommand, upCommand } from "./up.ts";
 
 const none = Option.none<boolean>();
 
@@ -163,6 +163,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
     readonly fails?: boolean;
+    readonly reportStatus?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
@@ -266,6 +267,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       envAfter: "T3CODE_LAN=false\n",
     },
     {
+      label: "another home's service supplies no local network default",
+      installed: true,
+      status: { current: false, otherBaseDir: "/srv/t3 home" },
+      reportStatus: true,
+      env: "",
+      args: ["--json"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
+    },
+    {
       label: "no service manager still records the choice",
       installed: false,
       status: { supported: false },
@@ -284,7 +296,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       restarts: 0,
       envAfter: "T3CODE_LAN=true\n",
     },
-  ])("restarts the service only when it must: $label", (input) =>
+  ])("keeps service changes and access settings consistent: $label", (input) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-test-" });
@@ -337,11 +349,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       );
 
       if (input.answer !== undefined) yield* asTerminal;
-      const { exit, lines } = yield* Command.runWith(upCommand, { version: packageJson.version })([
-        "--base-dir",
-        baseDir,
-        ...input.args,
-      ]).pipe(
+      const run = input.reportStatus
+        ? Command.runWith(statusCommand, { version: packageJson.version })
+        : Command.runWith(upCommand, { version: packageJson.version });
+      const { exit, lines } = yield* run(["--base-dir", baseDir, ...input.args]).pipe(
         Effect.provideService(HostProcess.Environment, {}),
         input.answer === undefined
           ? (effect) => effect
@@ -359,6 +370,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       );
       if (input.prints !== undefined) {
         expect(lines.join("\n")).toContain(input.prints.replace("<baseDir>", baseDir));
+      }
+      if (input.reportStatus) {
+        expect(JSON.parse(lines.join("\n"))).toMatchObject({
+          service: { otherBaseDir: "/srv/t3 home" },
+          lan: { enabled: false, inheritedDefault: false },
+        });
       }
       expect(exit._tag).toBe(
         input.restartFails === true || input.fails === true ? "Failure" : "Success",
