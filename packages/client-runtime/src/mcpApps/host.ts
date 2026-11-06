@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off - The bridge runs in the client, outside an Effect runtime.
 import { MCP_APP_PROTOCOL_VERSION, type McpAppReference } from "@t3tools/shared/mcpApp";
+import { MAX_TOOL_OUTPUT_IMAGES, readToolOutputImage } from "@t3tools/shared/toolOutput";
 import * as Base64 from "effect/encoding/Base64";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
@@ -101,6 +102,8 @@ export interface McpAppHostOptions {
   readonly downloadFile: (files: ReadonlyArray<McpAppDownload>) => Promise<void>;
   readonly onRequestTeardown: () => void;
   readonly onSizeChanged: (size: { readonly width?: number; readonly height?: number }) => void;
+  /** Bytes of the stored result's image at this tool-output-image index; item detail omits them. */
+  readonly loadToolOutputImage: (index: number) => Promise<Uint8Array | undefined>;
 }
 
 export interface McpAppHost {
@@ -146,6 +149,33 @@ function normalizeMcpAppToolResult(result: McpAppCallToolResult): McpAppCallTool
   };
 }
 
+/** Fills image markers that lack bytes, in tool-output-image order; one that fails to load stays a marker. */
+export function hydrateMcpAppToolResultImages(
+  result: McpAppCallToolResult,
+  load: (index: number) => Promise<Uint8Array | undefined>,
+): Promise<McpAppCallToolResult> | undefined {
+  if (!Array.isArray(result.content)) return undefined;
+  let index = 0;
+  let loading = false;
+  const content = result.content.map((block): unknown => {
+    const image = readToolOutputImage(block);
+    if (image === null || index >= MAX_TOOL_OUTPUT_IMAGES) return block;
+    const at = index++;
+    if (image.data !== undefined) return block;
+    loading = true;
+    return load(at).then(
+      (bytes) =>
+        bytes === undefined
+          ? block
+          : { type: "image", data: Base64.encode(bytes), mimeType: image.mimeType },
+      () => block,
+    );
+  });
+  return loading
+    ? Promise.all(content).then((blocks) => ({ ...result, content: blocks }))
+    : undefined;
+}
+
 const errorMessage = (error: unknown) =>
   isMcpAppHostRefusal(error)
     ? error.message
@@ -174,15 +204,24 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const fail = (id: JsonRpcId, code: number, message: string) =>
     post({ jsonrpc: "2.0", id, error: { code, message } });
 
+  const sendToolResult = (result: McpAppCallToolResult) => {
+    const hydrating = hydrateMcpAppToolResultImages(result, options.loadToolOutputImage);
+    if (hydrating === undefined) {
+      notify("ui/notifications/tool-result", normalizeMcpAppToolResult(result));
+      return;
+    }
+    void hydrating.then((hydrated) =>
+      notify("ui/notifications/tool-result", normalizeMcpAppToolResult(hydrated)),
+    );
+  };
+
   const sendToolCall = () => {
     if (!initialized || toolCall === undefined || toolCallSent) return;
     toolCallSent = true;
     notify("ui/notifications/tool-input", {
       arguments: Predicate.isObject(toolCall.arguments) ? toolCall.arguments : {},
     });
-    if (toolCall.result !== undefined) {
-      notify("ui/notifications/tool-result", normalizeMcpAppToolResult(toolCall.result));
-    }
+    if (toolCall.result !== undefined) sendToolResult(toolCall.result);
   };
 
   const answer = (id: JsonRpcId, run: () => Promise<unknown>) => {
@@ -420,7 +459,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       if (toolCall.result !== undefined || call.result === undefined) return;
       // The app already has this call's input; it only needs the result.
       toolCall = { arguments: toolCall.arguments, result: call.result };
-      notify("ui/notifications/tool-result", normalizeMcpAppToolResult(call.result));
+      sendToolResult(call.result);
     },
     updateHostContext: () => {
       // The spec forbids messages before the app finishes initializing; it
