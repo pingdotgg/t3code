@@ -1,3 +1,4 @@
+import { Agent } from "@opencode/schema/agent";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeSqlite from "node:sqlite";
 
@@ -504,6 +505,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
+  agents: ReadonlyArray<Agent.Info> = [],
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -517,9 +519,13 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      return yield* checkOpenCodeProviderStatus(
+        settings,
+        cwd,
+        probe,
+        openCode2Models,
+        Effect.succeed(agents),
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
@@ -785,7 +791,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     ),
   );
 
-  it.effect("lists a local OpenCode 2 binary's models in Full access only, never via 1.x", () =>
+  it.effect("lists OpenCode 2 models and visible primary agents, never via 1.x", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";
       const snapshot = yield* checkProvider(
@@ -802,6 +808,16 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
           },
         ]),
+        [
+          Agent.Info.default(Agent.ID.make("build")),
+          {
+            ...Agent.Info.default(Agent.ID.make("researcher")),
+            name: Agent.Name.make("Researcher"),
+            mode: "all",
+          },
+          { ...Agent.Info.default(Agent.ID.make("hidden")), hidden: true },
+          { ...Agent.Info.default(Agent.ID.make("explore")), mode: "subagent" },
+        ],
       );
 
       NodeAssert.equal(snapshot.status, "ready");
@@ -822,6 +838,15 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         snapshot.models.map((model) => model.slug),
         ["opencode/big-pickle", "opencode/space-bunny-free"],
       );
+      for (const model of snapshot.models) {
+        const agent = model.capabilities?.optionDescriptors?.find(
+          (option) => option.id === "agent",
+        );
+        NodeAssert.deepEqual(agent?.type === "select" ? agent.options : [], [
+          { id: "build", label: "build", isDefault: true },
+          { id: "researcher", label: "Researcher" },
+        ]);
+      }
       const variant = snapshot.models.find((model) => model.slug === "opencode/space-bunny-free")
         ?.capabilities?.optionDescriptors?.[0];
       NodeAssert.deepEqual(

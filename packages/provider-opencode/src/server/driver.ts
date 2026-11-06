@@ -368,6 +368,19 @@ export const OpenCodeDriver: ProviderDriver<
           host.paths.cwd,
           runtimeProbe.refresh,
           loadOpenCode2Models,
+          openCode2Server.withConnection(({ client }) =>
+            client.agent.list({ location: { directory: host.paths.cwd } }).pipe(
+              Effect.map((response) => response.data),
+              Effect.mapError(
+                (cause) =>
+                  new OpenCodeRuntime.OpenCodeRuntimeError({
+                    operation: "agent.list",
+                    detail: "The OpenCode server could not list its agents.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
         ).pipe(
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
