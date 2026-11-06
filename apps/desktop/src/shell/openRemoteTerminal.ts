@@ -194,8 +194,14 @@ export const openRemoteTerminal = Effect.fn("desktop.openRemoteTerminal")(functi
   const destination = buildRemoteSshTerminalDestination(input.host, input.username);
   const remoteCommand = buildRemoteSshTerminalRemoteCommand(directory);
   const sshCommand = yield* resolveSshCommand;
-  // `--` ends option parsing so a destination that starts with `-` stays a hostname.
-  const sshArgs = ["-t", "--", destination, remoteCommand] as const;
+  // `-p` before `--`; `--` ends option parsing so a leading-dash destination stays a hostname.
+  const sshArgs = [
+    "-t",
+    ...(input.port === undefined ? [] : (["-p", String(input.port)] as const)),
+    "--",
+    destination,
+    remoteCommand,
+  ] as const;
 
   if (platform === "linux") {
     return yield* launchLinux(sshCommand, sshArgs, env).pipe(Effect.orElseSucceed(() => false));

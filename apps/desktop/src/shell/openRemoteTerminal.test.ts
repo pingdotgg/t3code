@@ -79,6 +79,25 @@ describe("openRemoteTerminal", () => {
     }),
   );
 
+  it.effect("passes -p before -- when the profile sets a non-default SSH port", () =>
+    Effect.gen(function* () {
+      const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const opened = yield* openRemoteTerminal({
+        host: "sol",
+        username: "theo",
+        port: 2222,
+        absolutePath: "/work/project",
+      }).pipe(
+        Effect.provide(Layer.merge(NodeServices.layer, captureSpawner(spawned))),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+      assert.isTrue(opened);
+      const script = spawned[0]?.args.join(" ") ?? "";
+      assert.match(script, /'ssh' '-t' '-p' '2222' '--' 'theo@sol'/);
+    }),
+  );
+
   it.effect("falls back to PowerShell Start-Process when Windows Terminal is missing", () =>
     Effect.gen(function* () {
       const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];

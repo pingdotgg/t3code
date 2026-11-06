@@ -95,6 +95,29 @@ describe("resolveRemoteOpenState", () => {
     );
   });
 
+  it("carries the profile SSH port into remote-links state for Terminal", () => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+      sshTarget: { alias: "sol", username: "theo", port: 2222 },
+      isDesktopRenderer: true,
+      remoteOpenTargets: [],
+    });
+    expect(state).toEqual({
+      mode: "remote-links",
+      host: { kind: "ssh-alias", host: "sol", username: "theo", port: 2222 },
+    });
+  });
+
+  it("omits a null profile SSH port so OpenSSH uses config / default 22", () => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+      sshTarget: { alias: "sol", username: null, port: null },
+      isDesktopRenderer: true,
+      remoteOpenTargets: [],
+    });
+    expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
+  });
+
   it.each([
     { alias: "server", username: "admin-user" },
     { alias: "admin-user@server", username: null },
