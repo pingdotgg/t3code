@@ -35,6 +35,12 @@ describe("parseJsonRpcLine", () => {
   });
 });
 
+/* Let queued fibers run until the in-memory pipes are drained. */
+const flushQueues = () =>
+  Effect.gen(function* () {
+    for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
+  });
+
 const encoder = new TextEncoder();
 const serverLine = (input: Queue.Queue<Uint8Array>, payload: unknown) =>
   Queue.offer(input, encoder.encode(`${JSON.stringify(payload)}\n`));
@@ -127,7 +133,7 @@ describe("VibeAppServerClient over in-memory stdio", () => {
 
         // Unknown method triggers the notification path on the fake server.
         yield* client.sessionDelete("s1");
-        yield* Effect.yieldNow;
+        yield* flushQueues();
         expect(notifications.some((n) => n.method === "turn/started")).toBe(true);
 
         // Pagination goes under `page`, and callback answers nest `{ callbackId, output }` in `result`.
@@ -138,7 +144,7 @@ describe("VibeAppServerClient over in-memory stdio", () => {
         yield* client
           .callbackResult({ sessionId: "s1", callbackId: "cb1", result: { outcome: "approved" } })
           .pipe(Effect.ignore);
-        yield* Effect.yieldNow;
+        yield* flushQueues();
         const historyReq = seenRequests.find((r) => r.method === "session/history/list");
         expect(historyReq?.params).toEqual({ sessionId: "s1", page: { limit: 5, cursor: "c1" } });
         const turnsReq = seenRequests.find((r) => r.method === "session/turns/list");

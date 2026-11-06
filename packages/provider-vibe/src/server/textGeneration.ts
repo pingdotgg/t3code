@@ -103,6 +103,8 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
             return reply ?? "";
           }),
       ).pipe(
+        // Scope the client so the app-server process is killed when the request ends.
+        Effect.scoped,
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.timeoutOption(VIBE_TEXT_GEN_TIMEOUT_MS),
         Effect.flatMap((option) =>

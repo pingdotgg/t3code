@@ -256,10 +256,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const random = yield* SecureRandom.SecureRandom;
 
+  // Fixed detail only: raw server text stays in `cause` and must not reach the UI.
   const protocolError = (cause: unknown) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
       driver: VIBE_PROVIDER,
-      detail: cause instanceof Error ? cause.message : String(cause),
+      detail: "Mistral Vibe app-server request failed.",
       cause,
     });
 
@@ -307,6 +308,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     ) {
       if (!state.thread) return;
       const role = str(entry["role"]);
+      // The enqueued user input is echoed back as a history entry; the app already owns that
+      // message, so re-projecting it would duplicate it. Only agent entries become messages.
+      if (role === "user") return;
       const text = entryText(entry);
       if (!text) return;
       const messageId = idAllocator.derive.messageFromProviderItem({
@@ -420,7 +424,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           const turn = asRecord(record["turn"]);
           const nativeTurnId = str(turn?.["id"]);
           if (!nativeTurnId || !state.thread) return;
-          const ordinal = (state.turnOrdinals.get(nativeTurnId) ?? state.turnOrdinals.size) + 1;
+          const ordinal = state.turnOrdinals.get(nativeTurnId) ?? state.turnOrdinals.size + 1;
           state.turnOrdinals.set(nativeTurnId, ordinal);
           const providerTurnId = idAllocator.derive.providerTurn({
             driver: VIBE_PROVIDER,
@@ -682,6 +686,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         runAttemptId: turnInput.attemptId,
         rootNodeId: turnInput.rootNodeId,
       };
+      // A rejected model write must not silently run the turn with the previous model.
       yield* Effect.mapError(
         client.configModelWrite({
           sessionId: nativeSessionId,
@@ -690,7 +695,16 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           sessionOnly: true,
         }),
         protocolError,
-      ).pipe(Effect.ignore);
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(
+            "Mistral Vibe rejected the model write; the turn keeps the session model.",
+            {
+              cause,
+            },
+          ),
+        ),
+      );
       yield* Effect.mapError(
         client.sessionTurnEnqueue({
           sessionId: nativeSessionId,
@@ -871,13 +885,41 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             checkpointId: rollbackInput.target.checkpointId,
           });
         }
-        const entryId = rollbackInput.target.providerTurn.nativeTurnRef?.nativeId;
-        if (entryId) {
-          yield* Effect.mapError(
-            client.request("session/rewind", { sessionId: nativeSessionId, entryId }),
-            protocolError,
-          ).pipe(Effect.ignore);
+        // session/rewind takes a history entry id, not a turn id: resolve the input entry of the target turn.
+        const targetTurnId = rollbackInput.target.providerTurn.nativeTurnRef?.nativeId;
+        if (!targetTurnId) {
+          return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
+            driver: VIBE_PROVIDER,
+            providerThreadId: rollbackInput.providerThread.id,
+            checkpointId: rollbackInput.target.checkpointId,
+          });
         }
+        const history = yield* Effect.mapError(
+          client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500 }),
+          protocolError,
+        );
+        const entryId = history.items
+          .map((item) => asRecord(item))
+          .find(
+            (entry) => str(entry?.["turnId"]) === targetTurnId && str(entry?.["role"]) === "user",
+          )?.["id"];
+        if (typeof entryId !== "string" || entryId.length === 0) {
+          return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
+            driver: VIBE_PROVIDER,
+            providerThreadId: rollbackInput.providerThread.id,
+            checkpointId: rollbackInput.target.checkpointId,
+          });
+        }
+        yield* Effect.mapError(
+          client.request("session/rewind", { sessionId: nativeSessionId, entryId }),
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterRollbackThreadError({
+              driver: VIBE_PROVIDER,
+              providerThreadId: rollbackInput.providerThread.id,
+              checkpointId: rollbackInput.target.checkpointId,
+              cause,
+            }),
+        );
         return yield* readThreadSnapshot({ providerThread: rollbackInput.providerThread });
       });
 
