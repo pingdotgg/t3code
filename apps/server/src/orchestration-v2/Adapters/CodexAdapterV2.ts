@@ -50,6 +50,7 @@ import {
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -490,9 +491,7 @@ function codexMcpToolOutput(
   const resultOutput =
     item.result === null || item.result === undefined
       ? undefined
-      : item.result.structuredContent !== null && item.result.structuredContent !== undefined
-        ? item.result.structuredContent
-        : item.result.content;
+      : mcpToolResultOutput(item.result);
 
   if (item.error === null || item.error === undefined) {
     return resultOutput;
@@ -1149,7 +1148,8 @@ function codexUsageLimitError(
 
 /**
  * ChatGPT sharing reports its own reason inside Codex's generic turn error, so
- * the code it names replaces Codex's, and clients pick a recovery from it.
+ * the code it names replaces Codex's, and clients pick a recovery from it. Its
+ * allowance limits get the usage-limit recovery; other sharing failures keep their class.
  */
 function withCodexManagedFailure(
   failure: OrchestrationV2ProviderFailure,
@@ -1158,7 +1158,22 @@ function withCodexManagedFailure(
   const managed = classifyCodexManagedError(nativeError);
   return managed === undefined
     ? failure
-    : { ...failure, message: managed.message, code: managed.code };
+    : {
+        ...failure,
+        message: managed.message,
+        code: managed.code,
+        ...(managed.usageLimit ? { class: "usage_limit" } : {}),
+      };
+}
+
+function failureResetAt(
+  failure: OrchestrationV2ProviderFailure,
+  snapshot: CodexRateLimitSnapshot | undefined,
+) {
+  // Sharing caps have no reset timestamp in the ordinary Codex allowance snapshot.
+  return classifyCodexManagedError(failure.code)?.usageLimit
+    ? null
+    : codexUsageLimitResetAt(snapshot);
 }
 
 interface ActiveCodexTurnContext {
@@ -1557,13 +1572,16 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
 export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers.ProviderEventLoggers
+  | ChildProcessSpawner.ChildProcessSpawner
+  | PortScanner.PortDiscovery
+  | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
@@ -1590,6 +1608,10 @@ export const layerAppServerClientFactory: Layer.Layer<
                 cause,
               }),
           ),
+        );
+        // Its shells carry each thread's T3CODE_THREAD_ID, so port discovery reads listeners' threads.
+        yield* Effect.acquireRelease(Effect.sync(portDiscovery.trackAgent), (release) =>
+          Effect.sync(release),
         );
         const protocolLogger = makeCodexAppServerProtocolLogger({
           nativeEventLogger,
@@ -1695,8 +1717,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const readMcpSession = (threadId: ThreadId | null) =>
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-    threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
+    threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
 
@@ -4475,8 +4496,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
             );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+            const snapshot = yield* Ref.get(rateLimitSnapshot);
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
+              const resetAt = failureResetAt(item.failure, snapshot);
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
                 ...item,
@@ -5821,7 +5843,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                        resetAt: failureResetAt(failure, yield* Ref.get(rateLimitSnapshot)),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -5861,7 +5883,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...event.failure,
                     resetAt:
                       event.failure.resetAt ??
-                      codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                      failureResetAt(event.failure, yield* Ref.get(rateLimitSnapshot)),
                   },
                 }
               : event;
@@ -7930,24 +7952,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (threadInput) {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
+              const fork = client.request("thread/fork", {
+                threadId,
+                ...(boundary.lastTurnId === undefined ? {} : { lastTurnId: boundary.lastTurnId }),
+                ...codexThreadRuntimeParams({
+                  threadId: threadInput.targetThreadId,
+                  mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
+                  ...(threadInput.modelSelection === undefined
+                    ? {}
+                    : { modelSelection: threadInput.modelSelection }),
+                  ...(threadInput.runtimePolicy === undefined
+                    ? {}
+                    : { runtimePolicy: threadInput.runtimePolicy }),
+                }),
+              });
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
-                  client.request("thread/fork", {
-                    threadId,
-                    ...(boundary.lastTurnId === undefined
-                      ? {}
-                      : { lastTurnId: boundary.lastTurnId }),
-                    ...codexThreadRuntimeParams({
-                      threadId: threadInput.targetThreadId,
-                      mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
-                      ...(threadInput.modelSelection === undefined
-                        ? {}
-                        : { modelSelection: threadInput.modelSelection }),
-                      ...(threadInput.runtimePolicy === undefined
-                        ? {}
-                        : { runtimePolicy: threadInput.runtimePolicy }),
+                  fork.pipe(
+                    Effect.catchTags({
+                      CodexAppServerRequestError: (cause) =>
+                        /\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(cause.errorMessage)
+                          ? client.raw
+                              .request("thread/unarchive", { threadId })
+                              .pipe(Effect.andThen(fork))
+                          : Effect.fail(cause),
                     }),
-                  }),
+                  ),
                 ),
                 Effect.mapError(
                   (cause) =>

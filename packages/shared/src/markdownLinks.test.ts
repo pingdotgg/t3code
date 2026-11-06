@@ -29,6 +29,12 @@ describe("inlineCodeFilePathCandidate", () => {
     ["share/man/ls.1", "share/man/ls.1"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
+    // regression: #30757 an agent's shortened path is not a file
+    ["/tmp/claude-1000/...", null],
+    ["/tmp/claude-1000/...:12", null],
+    ["/tmp/.../scratchpad/notes.md", null],
+    ["~/projects/…/notes.md", null],
+    ["src/.../main.ts", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
