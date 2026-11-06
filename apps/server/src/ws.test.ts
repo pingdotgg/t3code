@@ -24,6 +24,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
+  type VcsStatusLocalResult,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
@@ -34,6 +35,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
@@ -1421,6 +1423,112 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
     assert.deepEqual(
       [yield* Queue.take(refreshes), yield* Queue.take(refreshes)],
       ["identity /repo refresh=true", "status /repo"],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("a branch switch answers only after status subscribers can see the new branch", () =>
+  Effect.gen(function* () {
+    let checkedOut = "main";
+    const published = yield* Ref.make("main");
+    const refreshStarted = yield* Deferred.make<void>();
+    const statusAtResponse = yield* Queue.unbounded<string>();
+    const local: VcsStatusLocalResult = {
+      isRepo: true,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: "main",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    // A large repository's git status takes seconds after the checkout itself has finished.
+    const readAndPublishStatus = Effect.gen(function* () {
+      const refName = checkedOut;
+      yield* Deferred.succeed(refreshStarted, undefined);
+      yield* Effect.sleep("2 seconds");
+      yield* Ref.set(published, refName);
+      return { ...local, refName };
+    });
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
+        switchRef: (input) =>
+          Effect.sync(() => {
+            checkedOut = input.refName;
+            return { refName: input.refName };
+          }),
+      }),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+        refreshLocalStatus: () => readAndPublishStatus,
+        refreshStatus: () =>
+          readAndPublishStatus.pipe(
+            Effect.map((status) => ({
+              ...status,
+              hasUpstream: false,
+              aheadCount: 0,
+              behindCount: 0,
+              pr: null,
+            })),
+          ),
+      }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      // Runs as the response is produced, before any later fiber can publish status.
+      onFromServer: (response) =>
+        response._tag === "Exit"
+          ? Ref.get(published).pipe(Effect.flatMap((ref) => Queue.offer(statusAtResponse, ref)))
+          : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("switch-ref-test"),
+            subject: "switch-ref-test",
+            method: "browser-session-cookie",
+            scopes: [AuthSourceControlWriteScope],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.provide(services),
+          Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
+        ),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("switch"),
+      tag: WS_METHODS.vcsSwitchRef,
+      payload: { cwd: "/repo", refName: "feature" },
+      headers: Headers.empty,
+    });
+    yield* Deferred.await(refreshStarted);
+    yield* TestClock.adjust("2 seconds");
+    assert.equal(
+      yield* Queue.take(statusAtResponse),
+      "feature",
+      "vcsSwitchRef resolved while status subscribers still saw the previous branch",
     );
   }).pipe(
     Effect.provide(
