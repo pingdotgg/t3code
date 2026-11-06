@@ -1,5 +1,4 @@
 import { useActiveNewTask } from "../../state/active-new-task";
-import { ProjectLoomEntry } from "../loom/ProjectLoomEntry";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import {
@@ -609,9 +608,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
                 ListEmptyComponent={listEmpty}
-                ListHeaderComponent={
-                  <ProjectLoomEntry projects={projectScopes.flatMap((scope) => scope.projects)} />
-                }
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>
@@ -636,10 +632,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         }}
       >
         {listItems.length === 0 ? (
-          <View className="flex-1">
-            <ProjectLoomEntry projects={projectScopes.flatMap((scope) => scope.projects)} />
-            <View className="flex-1 items-center justify-center">{listEmpty}</View>
-          </View>
+          <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
@@ -668,9 +661,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
                 ListEmptyComponent={listEmpty}
-                ListHeaderComponent={
-                  <ProjectLoomEntry projects={projectScopes.flatMap((scope) => scope.projects)} />
-                }
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>

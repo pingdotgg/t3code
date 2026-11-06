@@ -15,10 +15,6 @@
       "types": "./src/projectCode/index.ts",
       "default": "./src/projectCode/index.ts"
     },
-    "./projectLoom": {
-      "types": "./src/projectLoom/index.ts",
-      "default": "./src/projectLoom/index.ts"
-    },
     "./conversationSummaries": {
       "types": "./src/conversationSummaries/index.ts",
       "default": "./src/conversationSummaries/index.ts"
