@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -62,9 +63,12 @@ import {
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
-  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
 );
 
 const SESSION_ID = "sess_abb5e0cf-d4a2-4360-9f03-2f8f0889a707";

@@ -111,7 +111,7 @@ export const acceptImmediateWebhookDedupe = Effect.fn(
 });
 
 const PendingTaskJson = Schema.fromJsonString(ScheduledTask);
-const encodePendingTask = Schema.encodeEffect(PendingTaskJson);
+export const encodePendingTask = Schema.encodeEffect(PendingTaskJson);
 export const decodePendingTask = Schema.decodeUnknownEffect(PendingTaskJson);
 const PendingRequestJson = Schema.fromJsonString(
   Schema.Struct({

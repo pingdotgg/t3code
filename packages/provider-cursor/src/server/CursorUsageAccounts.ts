@@ -5,7 +5,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -60,7 +60,7 @@ const make = Effect.gen(function* () {
   const accountReader = yield* CursorAccountReader.CursorAccountReader;
   const hostEnvironment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
 
   const cachePath = path.join(host.paths.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
   const caches = new Map<string, CursorAccountCache>();
@@ -215,9 +215,7 @@ const make = Effect.gen(function* () {
         : credential.kind === "apiKey"
           ? // A fingerprint, so a replaced key never reads the previous account's cache.
             `api-key:${Hex.encode(
-              yield* crypto
-                .digest("SHA-256", new TextEncoder().encode(credential.apiKey))
-                .pipe(Effect.orDie),
+              yield* digest.digest(Digest.sha256, new TextEncoder().encode(credential.apiKey)),
             )}`
           : "keychain";
     const nowMs = yield* Clock.currentTimeMillis;

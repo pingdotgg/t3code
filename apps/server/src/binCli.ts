@@ -1,6 +1,7 @@
 import { doctorCommand } from "./cli/doctor.ts";
 import { policyCommand } from "./cli/policy.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,6 +25,7 @@ import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/serve
 import { updateCommand } from "./cli/update.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
 import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
+import { speechWorkerCommand } from "./cli/speechWorker.ts";
 import { claudeHistoryCommand } from "./cli/claudeHistory.ts";
 import { sshHelperCommand } from "./cli/sshHelper.ts";
 import { serviceCommand } from "./cli/service.ts";
@@ -33,7 +35,7 @@ import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -90,6 +92,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       uninstallCommand,
       serviceLauncherCommand,
       claudeHistoryCommand,
+      speechWorkerCommand,
       sshHelperCommand,
 
       servicePreflightCommand,
