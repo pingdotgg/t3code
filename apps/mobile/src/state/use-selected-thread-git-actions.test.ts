@@ -53,7 +53,10 @@ vi.mock("./queries", () => ({
   useBranches: () => ({ data: { refs: state.cachedRefs }, refresh: () => {} }),
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
+vi.mock("./atom-registry", () => ({
+  appAtomRegistry: { get: () => AsyncResult.initial() },
+}));
+vi.mock("../components/ui/Dialog", () => ({ alert: () => {} }));
 vi.mock("./use-remote-environment-registry", () => ({
   environmentConnectedAtom: () => null,
   setPendingConnectionError: () => {},
@@ -84,6 +87,7 @@ vi.mock("./threads", () => ({
 vi.mock("./vcs", () => ({
   vcsEnvironment: {
     readRefs: state.readRefs,
+    status: () => null,
     refreshStatus: async () => {
       state.statusRefreshes += 1;
       return AsyncResult.success({ refName: state.branch });

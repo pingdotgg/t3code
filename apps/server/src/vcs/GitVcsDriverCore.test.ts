@@ -6808,6 +6808,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.notEqual(originMain.exitCode, 0);
       }),
     );
+
+    it.effect("asks which remote to push to when several remotes have no origin", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cwd = yield* makeTmpDir();
+        const forkRemote = yield* makeTmpDir("git-remote-");
+        const upstreamRemote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(forkRemote, ["init", "--bare"]);
+        yield* git(upstreamRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "fork", forkRemote]);
+        yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
+        yield* git(cwd, ["checkout", "-b", "feature/remote"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* driver.commit(cwd, "Add feature", "");
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.isTrue(status.hasOriginRemote);
+        assert.deepEqual(status.pushRemoteChoices, ["fork", "upstream"]);
+        const refused = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+        assert.include(refused.message, "Choose which remote");
+
+        // A push re-reads the cached remotes, so the configured default shows up after it.
+        yield* git(cwd, ["config", "remote.pushDefault", "fork"]);
+        yield* driver.pushCurrentBranch(cwd, null, { remoteName: "upstream" });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "upstream/feature/remote",
+        );
+        assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).pushRemoteChoices);
+      }),
+    );
   });
 });
 

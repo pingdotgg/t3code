@@ -133,6 +133,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+  /** Remote for a branch without an upstream, picked from `pushRemoteChoices`. */
+  pushRemote: Schema.optional(TrimmedNonEmptyStringSchema),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -220,6 +222,11 @@ const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,
+  /**
+   * Remotes to ask between before pushing a branch without an upstream: present only when
+   * there are several, none is `origin`, and `remote.pushDefault` names none of them.
+   */
+  pushRemoteChoices: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
   isDefaultRef: Schema.Boolean,
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,

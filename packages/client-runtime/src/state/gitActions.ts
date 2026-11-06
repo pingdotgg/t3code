@@ -40,7 +40,7 @@ export type DefaultBranchConfirmableAction =
 
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
-  "action" | "commitMessage" | "featureBranch" | "filePaths"
+  "action" | "commitMessage" | "featureBranch" | "filePaths" | "pushRemote"
 >;
 
 export function changeRequestTerminologyFor(
@@ -324,6 +324,18 @@ export function requiresDefaultBranchConfirmation(
     action === "commit_push" ||
     action === "commit_push_pr"
   );
+}
+
+/**
+ * The remotes to ask the user between before running `input`, or null when it pushes nowhere,
+ * already names a remote, or git knows where the branch goes.
+ */
+export function pushRemoteChoicesFor(
+  input: GitActionRequestInput,
+  gitStatus: Pick<VcsStatusResult, "hasUpstream" | "pushRemoteChoices"> | null,
+): ReadonlyArray<string> | null {
+  if (input.action === "commit" || input.pushRemote || !gitStatus?.pushRemoteChoices) return null;
+  return !gitStatus.hasUpstream || input.featureBranch ? gitStatus.pushRemoteChoices : null;
 }
 
 export function resolveDefaultBranchActionDialogCopy(input: {

@@ -5,6 +5,7 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   createVcsStatusRevalidationAtomFamily,
   type GitActionRequestInput,
+  pushRemoteChoicesFor,
   type VcsActionOperation,
   type VcsRef,
 } from "@t3tools/client-runtime/state/vcs";
@@ -25,6 +26,7 @@ import { useBranches } from "./queries";
 import { threadEnvironment } from "./threads";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
 import { uuidv4 } from "../lib/uuid";
+import * as Dialog from "../components/ui/Dialog";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import {
@@ -359,6 +361,35 @@ export function useSelectedThreadGitActions() {
   const onRunSelectedThreadGitAction = async (
     input: GitActionRequestInput,
   ): Promise<GitRunStackedActionResult | null> => {
+    // Every entry point lands here, after any default-branch confirmation.
+    const gitStatus =
+      selectedThread && selectedThreadCwd
+        ? AsyncResult.getOrElse(
+            appAtomRegistry.get(
+              vcsEnvironment.status({
+                environmentId: selectedThread.environmentId,
+                input: { cwd: selectedThreadCwd },
+              }),
+            ),
+            () => null,
+          )
+        : null;
+    const pushRemoteChoices = pushRemoteChoicesFor(input, gitStatus);
+    if (pushRemoteChoices) {
+      // Android shows at most three buttons; extra remotes fall off the end.
+      Dialog.alert(
+        "Push to which remote?",
+        "This repository has several remotes and none is named origin. The branch will track the one you choose.",
+        [
+          ...pushRemoteChoices.map((remoteName) => ({
+            text: remoteName,
+            onPress: () => void onRunSelectedThreadGitAction({ ...input, pushRemote: remoteName }),
+          })),
+          { text: "Cancel", style: "cancel" as const },
+        ],
+      );
+      return null;
+    }
     const actionId = uuidv4();
     return await runSelectedThreadGitMutation(
       "run_change_request",
@@ -370,6 +401,7 @@ export function useSelectedThreadGitActions() {
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+          ...(input.pushRemote ? { pushRemote: input.pushRemote } : {}),
           threadId: thread.id,
         });
         if (AsyncResult.isFailure(result)) {

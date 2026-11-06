@@ -111,7 +111,7 @@ const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
-const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
+const STATUS_REMOTES_CACHE_TTL = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -1576,23 +1576,47 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     },
   );
-  const primaryRemoteExistsCache = yield* Cache.makeWith(
+  // Whether any remote exists, and the push remotes to ask between when git would have to
+  // guess (see `pushRemoteChoices`). A branch's own `branch.<name>.pushRemote` is ignored.
+  const readStatusRemotes = (cwd: string, gitArgs: ReadonlyArray<string> = []) =>
+    Effect.all(
+      [
+        executeGit("GitVcsDriver.statusDetails.remotes", cwd, [...gitArgs, "remote"], {
+          allowNonZeroExit: true,
+        }),
+        executeGit(
+          "GitVcsDriver.statusDetails.remotePushDefault",
+          cwd,
+          [...gitArgs, "config", "--get", "remote.pushDefault"],
+          { allowNonZeroExit: true },
+        ),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(([remotes, pushDefault]) => {
+        const names = remotes.exitCode === 0 ? parseRemoteNamesInGitOrder(remotes.stdout) : [];
+        const needsChoice =
+          names.length > 1 &&
+          !names.includes("origin") &&
+          !names.includes(pushDefault.stdout.trim());
+        return { hasRemote: names.length > 0, ...(needsChoice ? { choices: names } : {}) };
+      }),
+    );
+  const NO_STATUS_REMOTES: { hasRemote: boolean; choices?: ReadonlyArray<string> } = {
+    hasRemote: false,
+  };
+  const remotesCache = yield* Cache.makeWith(
     (gitCommonDir: string) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fetchCwd =
           path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-        return yield* executeGit(
-          "GitVcsDriver.statusDetails.primaryRemoteExists",
-          fetchCwd,
-          ["--git-dir", gitCommonDir, "remote"],
-          { allowNonZeroExit: true },
-        ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim().length > 0));
+        return yield* readStatusRemotes(fetchCwd, ["--git-dir", gitCommonDir]);
       }),
     {
       capacity: 2_048,
       timeToLive: Exit.match({
-        onSuccess: () => STATUS_ORIGIN_EXISTS_CACHE_TTL,
+        onSuccess: () => STATUS_REMOTES_CACHE_TTL,
         onFailure: () => Duration.zero,
       }),
     },
@@ -1607,7 +1631,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : gitCommonDir;
       const cacheKey = commonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
-      yield* Cache.invalidate(primaryRemoteExistsCache, cacheKey);
+      yield* Cache.invalidate(remotesCache, cacheKey);
     },
   );
 
@@ -1795,6 +1819,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return pushDefaultRemote;
     }
 
+    // With several remotes and no `origin`, the first remote is a guess: clients ask the
+    // user (`pushRemoteChoices`) and pass the pick as `remoteName` instead.
+    const remoteNames: ReadonlyArray<string> = yield* listRemoteNames(cwd).pipe(
+      Effect.orElseSucceed(() => []),
+    );
+    if (remoteNames.length > 1 && !remoteNames.includes("origin")) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.resolvePushRemoteName",
+          cwd,
+          args: ["push"],
+        }),
+        detail: "Choose which remote to push this branch to.",
+      });
+    }
     return yield* resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
   });
 
@@ -2184,7 +2223,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
     // diff-index does not read status output, so both spawn together; a non-repository discards it.
-    const [statusResult, numstatResult, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
+    const [statusResult, numstatResult, defaultBranch, remotes] = yield* Effect.all(
       [
         readStatus,
         // Porcelain diff rewrites indexes despite GIT_OPTIONAL_LOCKS=0; plumbing with -M preserves rename detection.
@@ -2238,13 +2277,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
           : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
         statusCacheKey
-          ? Cache.get(primaryRemoteExistsCache, statusCacheKey).pipe(
-              Effect.orElseSucceed(() => false),
+          ? Cache.get(remotesCache, statusCacheKey).pipe(
+              Effect.orElseSucceed(() => NO_STATUS_REMOTES),
             )
-          : listRemoteNames(cwd).pipe(
-              Effect.map((remoteNames) => remoteNames.length > 0),
-              Effect.orElseSucceed(() => false),
-            ),
+          : readStatusRemotes(cwd).pipe(Effect.orElseSucceed(() => NO_STATUS_REMOTES)),
       ],
       { concurrency: "unbounded" },
     );
@@ -2372,7 +2408,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     return {
       isRepo: true,
-      hasOriginRemote: hasPrimaryRemote,
+      hasOriginRemote: remotes.hasRemote,
+      ...(remotes.choices ? { pushRemoteChoices: remotes.choices } : {}),
       isDefaultBranch,
       branch: refName,
       upstreamRef,
@@ -2429,6 +2466,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((details) => ({
         isRepo: details.isRepo,
         hasPrimaryRemote: details.hasOriginRemote,
+        ...(details.pushRemoteChoices ? { pushRemoteChoices: details.pushRemoteChoices } : {}),
         isDefaultRef: details.isDefaultBranch,
         refName: details.branch,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
