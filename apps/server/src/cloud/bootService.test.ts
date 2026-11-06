@@ -381,6 +381,55 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("keeps and restarts a legacy unit when its install is refused", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const installed = yield* service.install();
+      const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
+      yield* fs.rename(installed.unitPath, legacyPath);
+      yield* fs.writeFileString(
+        statePath,
+        JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.3",
+          update: {
+            id: "u",
+            fromVersion: "1.2.3",
+            targetVersion: "1.2.4",
+            dbPath: "/tmp/state.sqlite",
+            status: "pending",
+          },
+        }),
+      );
+      commands.length = 0;
+
+      const error = yield* (yield* makeService()).install().pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceUpdatePendingError");
+      expect(yield* fs.exists(legacyPath)).toBe(true);
+      expect(yield* fs.exists(installed.unitPath)).toBe(false);
+      expect(commands).toContain("systemctl --user restart t3learn.service");
+    }),
+  );
+
+  it.effect("install with start=false rewrites a legacy unit in place", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const installed = yield* service.install();
+      const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
+      yield* fs.rename(installed.unitPath, legacyPath);
+      commands.length = 0;
+
+      yield* (yield* makeService()).install({ start: false });
+      expect(yield* fs.exists(installed.unitPath)).toBe(false);
+      expect(yield* fs.readFileString(legacyPath)).toContain(
+        "T3_BOOT_SERVICE_UNIT=t3learn.service",
+      );
+      expect(commands.some((command) => command.includes("t3learn.service"))).toBe(false);
+    }),
+  );
+
   it.effect.each([
     "unset",
     "empty",

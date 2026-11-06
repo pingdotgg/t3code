@@ -909,30 +909,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ]);
       return { ...plan, handedOff: true };
     }
-    if (legacyInstalled) {
-      yield* runSteps(legacyManager!.deactivate);
-      const legacyDropIn = path.join(
-        path.dirname(legacyUnitPath),
-        `${LEGACY_BOOT_SERVICE_UNIT_FILE}.d`,
-        "90-t3learn-protect.conf",
-      );
-      yield* fs
-        .remove(legacyDropIn, { force: true })
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      yield* fs
-        .remove(path.dirname(legacyDropIn), { force: true })
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      yield* fs
-        .remove(legacyUnitPath)
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      yield* runSteps(legacyManager!.finalize);
-    }
+    // A started install moves a pre-rename unit to the new name; start=false rewrites it in place.
+    const migrate = legacyInstalled && start;
+    const targetUnitPath = legacyInstalled && !installed && !start ? legacyUnitPath : unitPath;
     if (installed && start) {
       yield* runSteps(manager.stop);
     }
+    if (migrate) {
+      yield* runSteps(legacyManager!.stop);
+    }
 
     yield* Effect.gen(function* () {
-      if (installed) {
+      if (installed || legacyInstalled) {
         const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
         if (Option.isSome(previousStateText)) {
           if (serviceStateHasPendingUpdate(previousStateText.value)) {
@@ -952,6 +940,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           }
         }
       }
+      if (migrate) {
+        yield* runSteps(legacyManager!.deactivate);
+        const legacyDropIn = path.join(
+          path.dirname(legacyUnitPath),
+          `${LEGACY_BOOT_SERVICE_UNIT_FILE}.d`,
+          "90-t3learn-protect.conf",
+        );
+        yield* fs.remove(legacyDropIn, { force: true });
+        yield* fs.remove(path.dirname(legacyDropIn), { force: true });
+        yield* fs.remove(legacyUnitPath);
+        yield* runSteps(legacyManager!.finalize);
+      }
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -969,14 +969,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
-      if (!start && installed) {
+      if (!start && (installed || legacyInstalled)) {
         // A concurrent remote update can overwrite launcher state; detect it before repointing the unit.
         const written = yield* fs.readFileString(statePath);
         if (serviceStateActiveVersion(written) !== input.cliVersion) {
           return yield* new BootServiceUpdatePendingError();
         }
       }
-      yield* writeDurably(unitPath, manager.render(plan));
+      yield* writeDurably(targetUnitPath, manager.render({ ...plan, unitPath: targetUnitPath }));
 
       if (start) {
         yield* runSteps(manager.activate);
@@ -987,7 +987,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
       ),
       Effect.tapError(() =>
-        installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        Effect.gen(function* () {
+          if (!start) return;
+          // Bring back whichever unit is still on disk, so a refused install leaves the server running.
+          if (migrate && (yield* fs.exists(legacyUnitPath))) {
+            return yield* runSteps(legacyManager!.restart);
+          }
+          if (installed) yield* runSteps(manager.restart);
+        }).pipe(Effect.ignore),
       ),
     );
     return plan;
