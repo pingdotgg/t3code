@@ -46,6 +46,7 @@ function createHarness(
   const created: Array<ReturnType<typeof createNativeRecorder>> = [];
   const statuses: Status[] = [];
   const recorder = createLazyVoiceRecorder({
+    getDestination: () => "local",
     create: () => {
       const native = createNativeRecorder(`file:///voice-${created.length}.m4a`);
       configure?.(native);
@@ -59,6 +60,32 @@ function createHarness(
 }
 
 describe("createLazyVoiceRecorder", () => {
+  it("switches between local live capture and an encoded file only for the next recording", async () => {
+    let destination: "local" | "environment" = "local";
+    const local = createNativeRecorder("file:///local.pcm");
+    const nextLocal = createNativeRecorder("file:///next-local.pcm");
+    const encoded = createNativeRecorder("file:///environment.m4a");
+    const localRecorders = [local, nextLocal];
+    const recorder = createLazyVoiceRecorder({
+      getDestination: () => destination,
+      create: (mode) => (mode === "local" ? localRecorders.shift()! : encoded),
+      onStatus: () => {},
+    });
+    await recorder.prepareToRecordAsync();
+    destination = "environment";
+    expect(recorder.uri).toBe(local.prepared);
+    await recorder.stop();
+    await recorder.prepareToRecordAsync();
+    expect(recorder.uri).toBe(encoded.prepared);
+    expect(local.release).toHaveBeenCalledOnce();
+    destination = "local";
+    await recorder.stop();
+    await recorder.prepareToRecordAsync();
+    expect(recorder.uri).toBe(nextLocal.prepared);
+    expect(encoded.release).toHaveBeenCalledOnce();
+    recorder.release();
+  });
+
   it("keeps the system input when none is preferred or the preferred one disconnects", async () => {
     const unpreferred = createHarness(() => null);
     await unpreferred.recorder.prepareToRecordAsync();

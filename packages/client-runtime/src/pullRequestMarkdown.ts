@@ -16,7 +16,8 @@ export type PullRequestBodySegment =
       readonly media: "video" | "image" | "unknown";
     };
 
-const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)$/u;
+// `.` stops at the `\r` of a CRLF body, which is how GitHub stores one written in its web editor.
+const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)\r?$/u;
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
@@ -162,4 +163,17 @@ export function changeRequestReferenceAutolinker(
   return find === undefined || repositoryUrl === undefined
     ? null
     : (text) => find(text, repositoryUrl);
+}
+
+/**
+ * Forges link uploads root-relative, as GitCafe's `/api/attachments/<id>`. In a change request
+ * body that always means the forge's origin, never a path on the machine rendering it.
+ */
+export function resolveChangeRequestMediaUrl(url: string, changeRequestUrl: string): string {
+  if (!/^\/(?![/\\])/u.test(url)) return url;
+  try {
+    return new URL(url, changeRequestUrl).href;
+  } catch {
+    return url;
+  }
 }
