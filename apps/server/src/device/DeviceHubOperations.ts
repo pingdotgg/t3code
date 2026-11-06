@@ -75,20 +75,18 @@ export const makeDeviceHubOperations = (options: {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
 
-  const requestFailed = (operation: string) => (cause: unknown) =>
-    new DeviceOperationError({ operation, reason: "request_failed", cause });
-
-  const fetchJson = <A, I>(
+  const fetchJson = Effect.fn("DeviceHubOperations.fetchJson")(function* <A, I>(
     request: HttpClientRequest.HttpClientRequest,
     schema: Schema.Codec<A, I>,
-  ) =>
-    httpClient
+  ) {
+    return yield* httpClient
       .execute(request)
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
         Effect.scoped,
       );
+  });
 
   const hubJson = <A, I>(
     request: HttpClientRequest.HttpClientRequest,
@@ -98,7 +96,9 @@ export const makeDeviceHubOperations = (options: {
   ) =>
     fetchJson(request, schema).pipe(
       Effect.timeout(timeout),
-      Effect.mapError(requestFailed(operation)),
+      Effect.mapError(
+        (cause) => new DeviceOperationError({ operation, reason: "request_failed", cause }),
+      ),
     );
 
   const postJson = (path: string, body: Record<string, string>, operation: string) =>
@@ -121,7 +121,9 @@ export const makeDeviceHubOperations = (options: {
       HttpClientRequest.get(`${origin}/api/devices`),
       HubDeviceList,
     ).pipe(
-      Effect.mapError(requestFailed("list")),
+      Effect.mapError(
+        (cause) => new DeviceOperationError({ operation: "list", reason: "request_failed", cause }),
+      ),
       Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
     );
     if (Option.isNone(listed)) {
