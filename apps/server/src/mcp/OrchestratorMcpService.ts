@@ -2382,6 +2382,9 @@ const make = Effect.gen(function* () {
             });
             return {
               providerInstanceId: provider.instanceId,
+              ...(provider.pool?.role === "pool"
+                ? { poolMemberInstanceIds: provider.pool.memberInstanceIds }
+                : {}),
               driverKind: provider.driver,
               displayName: provider.displayName ?? null,
               models: listed.map((model) => {
