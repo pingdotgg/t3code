@@ -1,5 +1,6 @@
 import {
   defaultInstanceIdForDriver,
+  type GracefulShutdownId,
   ProviderDriverKind,
   ServerProviderUpdateError,
   type ProviderInstanceId,
@@ -425,35 +426,23 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         const finish = (state: ServerProviderUpdateState) =>
           setUpdateState(state).pipe(Effect.map((providers) => ({ providers })));
         const startedAtRef = yield* Ref.make<string | null>(null);
-        // Environment-wide: the installer binary can be shared across accounts.
-        const drain = yield* gracefulShutdown
-          .beginAndAwait({
-            scope: { type: "environment" },
-            reason: "provider-update",
-          })
-          .pipe(
-            Effect.tap((result) =>
-              result.timedOut
-                ? Effect.logWarning(
-                    "Graceful shutdown timed out before provider update; continuing.",
-                    {
-                      providerInstanceId: instanceId,
-                      activeRunCount: result.activeRunCount,
-                    },
-                  )
-                : Effect.void,
-            ),
-            Effect.mapError(
-              (error) =>
-                new ServerProviderUpdateError({
-                  provider,
-                  reason:
-                    error instanceof Error
-                      ? error.message
-                      : "Could not drain agents before updating this provider.",
-                }),
-            ),
-          );
+        const drainShutdownIdRef = yield* Ref.make<GracefulShutdownId | null>(null);
+
+        const recordFailedUpdate = Effect.fn("ProviderMaintenanceRunner.recordFailedUpdate")(
+          function* (cause: Cause.Cause<unknown>) {
+            const failure = Cause.squash(cause);
+            const startedAt = yield* Ref.get(startedAtRef);
+            return yield* finish(
+              makeUpdateState({
+                status: "failed",
+                startedAt,
+                finishedAt: yield* nowIso,
+                message: failure instanceof Error ? failure.message : "Update command failed.",
+                output: null,
+              }),
+            );
+          },
+        );
 
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
           function* () {
@@ -564,6 +553,56 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }
             }
 
+            // Drain only when an install will run. Environment-wide: installer binary can be shared.
+            yield* setRunningMessage("Waiting for agents to finish before updating");
+            yield* gracefulShutdown
+              .beginAndAwait({
+                scope: { type: "environment" },
+                reason: "provider-update",
+              })
+              .pipe(
+                Effect.tap((result) => Ref.set(drainShutdownIdRef, result.shutdownId)),
+                Effect.tap((result) =>
+                  result.timedOut
+                    ? Effect.logWarning(
+                        "Graceful shutdown timed out before provider update; continuing.",
+                        {
+                          providerInstanceId: instanceId,
+                          activeRunCount: result.activeRunCount,
+                        },
+                      )
+                    : Effect.void,
+                ),
+                Effect.mapError(
+                  (error) =>
+                    new ServerProviderUpdateError({
+                      provider,
+                      reason:
+                        error instanceof Error
+                          ? error.message
+                          : "Could not drain agents before updating this provider.",
+                      cause: error,
+                    }),
+                ),
+              );
+
+            // Recheck ownership after the drain before running the installer.
+            const ready = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
+              instanceId,
+              provider,
+              { fresh: true },
+            );
+            if (!ready.update || ready.update.lockKey !== update.lockKey) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "Provider installation changed. Refresh and try again.",
+                }),
+              );
+            }
+
             yield* setRunningMessage(`Running ${describeCommand(command)}`);
             const result = yield* runMaintenanceCommand(command, setRunningMessage);
             const finishedAt = yield* nowIso;
@@ -638,26 +677,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           },
         );
 
-        const recordFailedUpdate = Effect.fn("ProviderMaintenanceRunner.recordFailedUpdate")(
-          function* (cause: Cause.Cause<unknown>) {
-            const failure = Cause.squash(cause);
-            const startedAt = yield* Ref.get(startedAtRef);
-            return yield* finish(
-              makeUpdateState({
-                status: "failed",
-                startedAt,
-                finishedAt: yield* nowIso,
-                message: failure instanceof Error ? failure.message : "Update command failed.",
-                output: null,
-              }),
-            );
-          },
-        );
-
         return yield* runCommandAndVerify().pipe(
           Effect.catchCause(recordFailedUpdate),
           Effect.ensuring(
-            gracefulShutdown.complete(drain.shutdownId).pipe(Effect.ignore({ log: true })),
+            Ref.get(drainShutdownIdRef).pipe(
+              Effect.flatMap((shutdownId) =>
+                shutdownId === null
+                  ? Effect.void
+                  : gracefulShutdown.complete(shutdownId).pipe(Effect.ignore({ log: true })),
+              ),
+            ),
           ),
         );
       },
@@ -676,6 +705,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             ? new ServerProviderUpdateError({
                 provider,
                 reason: error.reason,
+                ...(error.cause === undefined ? {} : { cause: error.cause }),
               })
             : error,
         ),

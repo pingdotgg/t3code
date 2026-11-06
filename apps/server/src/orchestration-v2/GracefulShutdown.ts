@@ -238,13 +238,6 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
 
   const beginAndAwait = Effect.fn("GracefulShutdown.beginAndAwait")(
     function* (input: GracefulShutdownInput) {
-      const existing = yield* gate.getState;
-      if (GracefulShutdownGate.isDrainActive(existing)) {
-        return yield* new GracefulShutdownError({
-          reason: "A graceful shutdown is already in progress.",
-        });
-      }
-
       const sequence = yield* Ref.getAndUpdate(shutdownSequence, (value) => value + 1);
       const started = yield* DateTime.now;
       const shutdownId =
@@ -275,7 +268,7 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
         }
       }
 
-      yield* gate.setState({
+      const admitted = yield* gate.tryBegin({
         phase: "draining",
         shutdownId,
         scope: input.scope,
@@ -286,6 +279,11 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
         saveWorkMessageIds,
         saveWorkThreadIds,
       });
+      if (!admitted) {
+        return yield* new GracefulShutdownError({
+          reason: "A graceful shutdown is already in progress.",
+        });
+      }
 
       const drainBody = Effect.gen(function* () {
         if (shouldPrompt) {
@@ -329,7 +327,7 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
           }
         });
 
-        const outcome = yield* Effect.race(
+        const outcome = yield* Effect.raceFirst(
           waitQuiesced,
           Effect.sleep(Duration.millis(timeoutMs)).pipe(Effect.as("timed_out" as const)),
         );

@@ -120,4 +120,35 @@ it.layer(layer)("GracefulShutdownGate", (it) => {
       );
     }),
   );
+
+  it.effect("tryBegin admits only one concurrent drain", () =>
+    Effect.gen(function* () {
+      const gate = yield* GracefulShutdownGate.GracefulShutdownGate;
+      yield* gate.clear;
+      const first = {
+        phase: "draining" as const,
+        shutdownId: "shutdown-first",
+        scope: { type: "environment" as const },
+        reason: "first",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        deadlineAt: "2026-01-01T00:02:00.000Z",
+        saveWorkPrompted: false,
+        saveWorkMessageIds: new Set<MessageId>(),
+        saveWorkThreadIds: new Set<ThreadId>(),
+      };
+      const second = {
+        ...first,
+        shutdownId: "shutdown-second",
+        reason: "second",
+      };
+
+      assert.isTrue(yield* gate.tryBegin(first));
+      assert.isFalse(yield* gate.tryBegin(second));
+      assert.strictEqual((yield* gate.getState).shutdownId, "shutdown-first");
+
+      yield* gate.clear;
+      assert.isTrue(yield* gate.tryBegin(second));
+      assert.strictEqual((yield* gate.getState).shutdownId, "shutdown-second");
+    }),
+  );
 });
