@@ -9,8 +9,18 @@ import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { markStartup, startupProfilingEnabled } from "./observability/startup";
 
+markStartup("entry-evaluated");
+markStartup("services-start");
 const router = startAppServices();
+markStartup("services-started");
+if (startupProfilingEnabled) {
+  const stopRecordingRoute = router.subscribe("onRendered", () => {
+    markStartup("route-rendered");
+    stopRecordingRoute();
+  });
+}
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
@@ -35,8 +45,11 @@ const managedAuthShellModule =
     : null;
 
 export const startup = Promise.all([
-  managedAuthShellModule?.then((module) => module.default) ?? null,
-  router.load(),
+  managedAuthShellModule?.then((module) => {
+    markStartup("auth-shell-loaded");
+    return module.default;
+  }) ?? null,
+  router.load().then(() => markStartup("router-loaded")),
 ])
   .then(([ManagedAuthShell]) => {
     // Route chunk failures resolve router.load() and surface later through the error boundary.
@@ -51,6 +64,7 @@ export const startup = Promise.all([
         )}
       </React.StrictMode>,
     );
+    markStartup("render-scheduled");
   })
   .catch((error: unknown) => {
     if (reloadScheduled) return;
