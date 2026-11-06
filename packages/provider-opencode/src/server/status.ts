@@ -149,7 +149,7 @@ function formatOpenCodeProbeError(input: {
 
 // The status check owns the span; keep handled failures visible without adding another span.
 const logDiscoveryFailure = Effect.fnUntraced(function* (input: {
-  readonly phase: "version" | "inventory" | "models";
+  readonly phase: "version" | "inventory" | "models" | "agents";
   readonly isExternalServer: boolean;
   readonly version?: string;
   readonly cause?: Cause.Cause<unknown>;
@@ -673,7 +673,17 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
       version,
     });
   }
-  const agents = yield* loadAgents.pipe(Effect.orElseSucceed(() => []));
+  const agents = yield* loadAgents.pipe(
+    Effect.tapError((error) =>
+      logDiscoveryFailure({
+        phase: "agents",
+        isExternalServer: settings.serverUrl.trim().length > 0,
+        version,
+        cause: Cause.fail(error),
+      }),
+    ),
+    Effect.orElseSucceed(() => []),
+  );
   const models = providerModelsFromSettings(
     markOpenCodeLegacy(
       result.value.map((model) => {
