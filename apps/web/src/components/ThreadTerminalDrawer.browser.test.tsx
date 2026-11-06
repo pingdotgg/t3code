@@ -143,6 +143,7 @@ function setup() {
     environmentId: EnvironmentId.make("environment-b"),
     threadId: ThreadId.make("thread-b"),
   };
+  fixture.terminalActionsStrip = false;
   fixture.statusByThreadId = new Map([
     [original.threadId, "exited"],
     [other.threadId, "running"],
@@ -252,12 +253,10 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
 
 it("reserves the actions strip only when the setting is on", async () => {
   const { other: threadRef } = setup();
-  fixture.terminalActionsStrip = false;
   await using off = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
   expect(off.container.querySelector(".pt-8")).toBeNull();
   await off.unmount();
   fixture.terminalActionsStrip = true;
   await using on = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
   expect(on.container.querySelector(".pt-8")).not.toBeNull();
-  fixture.terminalActionsStrip = false;
 });

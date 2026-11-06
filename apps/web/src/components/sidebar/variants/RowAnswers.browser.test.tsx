@@ -203,7 +203,8 @@ it("gives answers that do not fit a full line under the chip, terminal and Settl
   expect(box.right).toBeLessThanOrEqual(line.right + 0.5);
   expect(box.left).toBeGreaterThanOrEqual(line.left - 0.5);
   const middle = box.top + box.height / 2;
-  for (const offset of [-11.5, 11.5]) {
+  // A wrapped pill's area meets this one's at the 24px edge, and hit tests snap fractional rows.
+  for (const offset of [-11, 11]) {
     const hit = document.elementFromPoint(box.left + box.width / 2, middle + offset);
     expect(option.contains(hit)).toBe(true);
   }
