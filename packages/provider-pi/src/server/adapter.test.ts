@@ -3830,7 +3830,11 @@ describe("PiAdapterV2", () => {
               header: "Area",
               question: "Which area should we work on?",
               options: [
-                { label: "Docker/Compose", description: "Review or edit Compose projects" },
+                {
+                  label: "Docker/Compose",
+                  description: "Review or edit Compose projects",
+                  preview: "services:\n  web: {}",
+                },
                 { label: "Home Assistant", description: "Automations, dashboards or YAML" },
               ],
             },
@@ -3842,7 +3846,8 @@ describe("PiAdapterV2", () => {
         type: "extension_ui_request",
         id: "ui-ask",
         method: "select",
-        title: "[Area] Which area should we work on?",
+        title:
+          "[Area] Which area should we work on?\n\n--- 1. Docker/Compose preview ---\nservices:\n  web: {}",
         options: [
           dockerLine,
           "2. Home Assistant — Automations, dashboards or YAML",
@@ -3861,14 +3866,26 @@ describe("PiAdapterV2", () => {
         {
           header: question?.header,
           question: question?.question,
-          options: question?.options.map(({ label, description }) => ({ label, description })),
+          options: question?.options.map(({ label, description, preview }) => ({
+            label,
+            description,
+            preview,
+          })),
         },
         {
           header: "Area",
           question: "Which area should we work on?",
           options: [
-            { label: "Docker/Compose", description: "Review or edit Compose projects" },
-            { label: "Home Assistant", description: "Automations, dashboards or YAML" },
+            {
+              label: "Docker/Compose",
+              description: "Review or edit Compose projects",
+              preview: "services:\n  web: {}",
+            },
+            {
+              label: "Home Assistant",
+              description: "Automations, dashboards or YAML",
+              preview: undefined,
+            },
           ],
         },
       );

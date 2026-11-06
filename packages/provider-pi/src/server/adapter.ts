@@ -1562,7 +1562,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [piQuestion(nativeRequestId, method, title, event)],
+                questions: [
+                  (method === "select" && turn !== null
+                    ? piAskUserSingleSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
+                    : undefined) ?? piQuestion(nativeRequestId, method, title, event),
+                ],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -3588,6 +3592,61 @@ function piQuestion(
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
   };
+}
+
+/** The extension normalizes line terminators in each question field before building the dialog. */
+const rpivField = (input: unknown, key: string) =>
+  recordString(input, key)?.replace(/\r\n/g, "\n").replace(/\r/g, "");
+
+const rpivOptionLine = (option: unknown, index: number) =>
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- Matches the extension's option line format.
+  `${index + 1}. ${rpivField(option, "label")} — ${rpivField(option, "description")}`;
+
+/**
+ * @juicesharp/rpiv-ask-user-question asks a single-select question over RPC as a select of
+ * "N. label — description" lines plus a trailing "Type something." entry. Rebuild the question
+ * from the tool call's arguments; each option answers with its original line, which the extension
+ * maps back to that option.
+ */
+function piAskUserSingleSelectQuestion(
+  questionId: string,
+  title: string,
+  event: PiRpcRecord,
+  toolArgs: ReadonlyMap<string, unknown>,
+): OrchestrationV2UserInputQuestion | undefined {
+  const lines = event["options"];
+  if (!Array.isArray(lines) || lines.length < 2) return undefined;
+  for (const args of toolArgs.values()) {
+    const questions = recordField(args, "questions");
+    if (!Array.isArray(questions)) continue;
+    for (const question of questions) {
+      const text = rpivField(question, "question");
+      const header = rpivField(question, "header");
+      const options = recordField(question, "options");
+      if (recordField(question, "multiSelect") === true || !text?.trim()) continue;
+      if (!Array.isArray(options) || options.length !== lines.length - 1) continue;
+      if (!title.startsWith(`${header ? `[${header}] ` : ""}${text}`)) continue;
+      if (!options.every((option, index) => lines[index] === rpivOptionLine(option, index))) {
+        continue;
+      }
+      return {
+        id: questionId,
+        header: header?.trim() || "Question",
+        question: text.trim(),
+        options: options.map((option, index) => {
+          const label = rpivField(option, "label")?.trim() || `Option ${index + 1}`;
+          const preview = rpivField(option, "preview");
+          return {
+            label,
+            description: rpivField(option, "description")?.trim() || label,
+            value: rpivOptionLine(option, index),
+            ...(preview ? { preview } : {}),
+          };
+        }),
+      };
+    }
+  }
+  return undefined;
 }
 
 function piUiResponse(
