@@ -1,24 +1,139 @@
-import { assert, it } from "@effect/vitest";
-import * as NetService from "@t3tools/shared/Net";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { vi } from "vite-plus/test";
+import { assert, it } from "@effect/vitest";
+import { AuthSessionId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
-import * as Layer from "effect/Layer";
-import { Command } from "effect/cli";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as TestConsole from "effect/testing/TestConsole";
+import { Command } from "effect/cli";
+import { vi } from "vite-plus/test";
 
+import * as McpBridge from "../mcp/AcpMcpStdioBridge.ts";
+import {
+  makePersistedServerRuntimeState,
+  persistServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import {
   readLatestMessages,
-  type ThreadTools,
   threadCommand,
+  type ThreadTools,
   titleFromMessage,
   waitForRun,
 } from "./thread.ts";
 
+vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();
+  return {
+    ...actual,
+    layerRuntime: Layer.mock(actual.EnvironmentAuth)({
+      issueMcpClientSession: () =>
+        Effect.map(DateTime.now, (expiresAt) => ({
+          sessionId: AuthSessionId.make("test-session"),
+          token: "synthetic-token",
+          expiresAt,
+        })),
+      revokeSession: () => Effect.succeed(true),
+    }),
+  };
+});
+
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
+
+it.effect(
+  "start resolves home-relative project paths while preserving ids and relative paths",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-thread-project-path-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const home = path.join(root, "home");
+      const cwd = path.join(root, "current");
+      const workspaceRoot = path.join(home, "My Project");
+      const nestedRoot = path.join(workspaceRoot, "nested");
+      const baseDir = path.join(root, "state");
+      yield* fs.makeDirectory(nestedRoot, { recursive: true });
+      yield* fs.makeDirectory(cwd);
+      const projects = [
+        { id: ProjectId.make("current-project"), title: "Current", workspaceRoot: cwd },
+        { id: ProjectId.make("home-project"), title: "Home", workspaceRoot: home },
+        { id: ProjectId.make("intended-project"), title: "Intended", workspaceRoot },
+        { id: ProjectId.make("nested-project"), title: "Nested", workspaceRoot: nestedRoot },
+        { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
+      ];
+      yield* persistServerRuntimeState({
+        path: path.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3_773,
+        }),
+      });
+      using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
+        Effect.succeed({
+          call: (tool, args) => {
+            switch (tool) {
+              case "t3_project_list":
+                return Effect.succeed({ structuredContent: { projects, nextCursor: null } });
+              case "t3_thread_launch":
+                return Effect.succeed({
+                  structuredContent: { threadId, projectId: args.projectId, runId: null },
+                });
+              default:
+                return Effect.die(`unexpected ${tool} call`);
+            }
+          },
+        }),
+      );
+
+      for (const [identifier, expectedProjectId] of [
+        ["intended-project", "intended-project"],
+        ["~/literal-id", "~/literal-id"],
+        [workspaceRoot, "intended-project"],
+        [path.relative(cwd, workspaceRoot), "intended-project"],
+        [".", "current-project"],
+        ["~/My Project", "intended-project"],
+        ["~", "home-project"],
+        ["~/My Project/nested", "nested-project"],
+        ["~/My Project/missing", "intended-project"],
+      ] as const) {
+        yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+          "start",
+          identifier,
+          "Inspect this project",
+          "--json",
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(HostProcess.WorkingDirectory, cwd),
+        );
+        assert.strictEqual(
+          (yield* TestConsole.logLines).at(-1),
+          JSON.stringify({ threadId, projectId: expectedProjectId, runId: null }),
+          identifier,
+        );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          NetService.layer,
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+        ),
+      ),
+    ),
+);
 
 /** Answers each tool call with the next scripted response for that tool. */
 const scriptedTools = (script: Record<string, Array<unknown>>) => {
@@ -179,45 +294,50 @@ it("titles from a long first line without splitting an emoji", () => {
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
 
-const session = vi.hoisted(() => ({
+const session = {
   calls: [] as Array<{ tool: string; args: unknown }>,
   responses: {} as Record<string, unknown>,
-}));
+};
 
-vi.mock("../serverRuntimeState.ts", () => ({
-  readPersistedServerRuntimeState: () => Effect.succeedSome({ origin: "http://localhost:1" }),
-}));
-vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();
-  return {
-    ...original,
-    layerRuntime: Layer.succeed(original.EnvironmentAuth, {
-      issueMcpClientSession: () => Effect.succeed({ token: "test", sessionId: "test" }),
-      revokeSession: () => Effect.void,
-    } as unknown as typeof original.EnvironmentAuth.Service),
-  };
-});
-vi.mock("../mcp/AcpMcpStdioBridge.ts", () => ({
-  mcpToolSession: () =>
+/** Runs the thread CLI against scripted MCP responses and returns what it logged. */
+const runThreadCli = Effect.fn(function* (args: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-cli-" });
+  yield* persistServerRuntimeState({
+    path: path.join(baseDir, "userdata", "server-runtime.json"),
+    state: yield* makePersistedServerRuntimeState({
+      config: { host: "127.0.0.1", devUrl: undefined },
+      port: 3_773,
+    }),
+  });
+  using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
     Effect.succeed({
-      call: (tool: string, args: unknown) => {
-        session.calls.push({ tool, args });
+      call: (tool, toolArgs) => {
+        session.calls.push({ tool, args: toolArgs });
         return Effect.succeed({ structuredContent: session.responses[tool] });
       },
     }),
-}));
+  );
+  const output: Array<string> = [];
+  yield* Command.runWith(threadCommand, { version: "test" })([...args, "--base-dir", baseDir]).pipe(
+    Effect.provideService(Console.Console, {
+      ...console,
+      log: (value) => output.push(String(value)),
+    }),
+  );
+  return output;
+}, Effect.scoped);
+
+const cliLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NetService.layer,
+  ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+);
 
 it.effect("send forwards non-restarting modes and preserves queue state in JSON and text", () =>
   Effect.gen(function* () {
-    const output: Array<string> = [];
-    const run = (args: Array<string>) =>
-      Command.runWith(threadCommand, { version: "test" })(args).pipe(
-        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer)),
-        Effect.provideService(Console.Console, {
-          ...console,
-          log: (value) => output.push(String(value)),
-        }),
-      );
     for (const mode of [undefined, "queue", "auto", "steer"]) {
       for (const queueHeld of [true, false, undefined]) {
         session.calls = [];
@@ -231,16 +351,14 @@ it.effect("send forwards non-restarting modes and preserves queue state in JSON 
         };
         session.responses = { t3_thread_send: sent };
         const args = ["send", threadId, "hello", ...(mode === undefined ? [] : ["--mode", mode])];
-        output.length = 0;
-        yield* run([...args, "--json"]);
+        const json = yield* runThreadCli([...args, "--json"]);
         assert.deepStrictEqual(session.calls, [
           { tool: "t3_thread_send", args: { threadId, message: "hello", mode: mode ?? "queue" } },
         ]);
-        assert.deepStrictEqual(JSON.parse(output[0]!), sent);
-        output.length = 0;
-        yield* run(args);
+        assert.deepStrictEqual(JSON.parse(json[0]!), sent);
+        const text = yield* runThreadCli(args);
         assert.strictEqual(
-          output[0],
+          text[0],
           queueHeld === true
             ? "Queued (held; not eligible for dispatch)."
             : queueHeld === false
@@ -250,9 +368,9 @@ it.effect("send forwards non-restarting modes and preserves queue state in JSON 
       }
     }
     session.calls = [];
-    yield* run(["send", threadId, "hello", "--mode", "restart"]).pipe(Effect.flip);
+    yield* runThreadCli(["send", threadId, "hello", "--mode", "restart"]).pipe(Effect.flip);
     assert.deepStrictEqual(session.calls, []);
-  }),
+  }).pipe(Effect.provide(cliLayer)),
 );
 
 it.effect(
@@ -304,28 +422,18 @@ it.effect(
       session.responses = {
         t3_thread_read: { thread, recentRuns, items: [], nextPosition: null, hasMore: false },
       };
-      const output: Array<string> = [];
-      const run = (args: Array<string>) =>
-        Command.runWith(threadCommand, { version: "test" })(args).pipe(
-          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer)),
-          Effect.provideService(Console.Console, {
-            ...console,
-            log: (value) => output.push(String(value)),
-          }),
-        );
-      yield* run(["show", threadId, "--json"]);
-      assert.deepStrictEqual(JSON.parse(output[0]!), { thread, recentRuns, messages: [] });
+      const json = yield* runThreadCli(["show", threadId, "--json"]);
+      assert.deepStrictEqual(JSON.parse(json[0]!), { thread, recentRuns, messages: [] });
       assert.deepStrictEqual(session.calls[0]?.args, {
         threadId,
         limit: 1,
         runLimit: 50,
       });
-      output.length = 0;
-      yield* run(["show", threadId]);
-      assert.deepStrictEqual(output.slice(2), [
+      const text = yield* runThreadCli(["show", threadId]);
+      assert.deepStrictEqual(text.slice(2), [
         "Run 1 run-0: queued (held; not eligible for dispatch).",
         "Run 2 run-1: queued (not held).",
         "Run 3 run-2: queued (hold state unknown).",
       ]);
-    }),
+    }).pipe(Effect.provide(cliLayer)),
 );

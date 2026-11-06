@@ -1,28 +1,12 @@
-// Relative import (not `@/` alias) so this file runs under both Bun and Node
-// without a paths-aware loader. This fixture is excluded from the test
-// project's typecheck (see tsconfig.test.json) because the relative path
-// crosses composite-project boundaries.
-import * as Context from "effect/Context";
+import { fileURLToPath } from "node:url";
+// Relative imports let the fixture run under both Bun and Node.
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { launch } from "../../../src/Local/RpcServer.ts";
+import { makeEcho } from "./rpc-echo.ts";
 
-/**
- * Minimal test fixture for `RpcServer.launch`. Registers a single service
- * keyed by `"Test.Echo"` which is what the parent looks up via
- * `getProvider("Test.Echo")`.
- */
-export class TestEcho extends Context.Service<
-  TestEcho,
-  {
-    echo: (msg: string) => Effect.Effect<string>;
-    boom: () => Effect.Effect<never, { _tag: "Boom"; msg: string }>;
-  }
->()("Test.Echo") {}
+const TestEchoLive = makeEcho();
+export default TestEchoLive;
 
-const TestEchoLive = Layer.succeed(TestEcho, {
-  echo: (msg) => Effect.succeed(`echo:${msg}`),
-  boom: () => Effect.fail({ _tag: "Boom" as const, msg: "kaboom" }),
-});
-
-launch(TestEchoLive);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  launch((group) => Effect.succeed(group.endsWith("#blocked") ? makeEcho(true) : TestEchoLive));
+}

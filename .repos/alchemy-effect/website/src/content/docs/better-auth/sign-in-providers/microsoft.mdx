@@ -88,7 +88,7 @@ This sign-in-only setup omits Graph photos and offline access. The provider defa
 Create `src/database.ts`:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const AuthDb = Cloudflare.D1.Database("AuthDb");
 ```
@@ -117,7 +117,7 @@ export const AuthLive = Auth.layer.pipe(
 Create `src/worker.ts`:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Auth } from "./auth.ts";
 import { AuthLive } from "./auth-layer.ts";
@@ -144,7 +144,7 @@ Use this as `alchemy.run.ts` for the walkthrough:
 
 ```typescript
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import AuthWorker from "./src/worker.ts";
 
