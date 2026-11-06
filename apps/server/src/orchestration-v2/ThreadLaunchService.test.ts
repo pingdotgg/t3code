@@ -1200,7 +1200,7 @@ it.effect("re-bases a scheduled task's stored main on the remote default branch"
     yield* Effect.gen(function* () {
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
       const threads = yield* ThreadManagement.ThreadManagementService;
-      // Unbound tasks saved before #27983 still launch every run on baseRef "main" (#16183).
+      // Unbound tasks saved before the base followed the default branch still record "main".
       const { task } = yield* tasks.upsert(
         scheduledTaskInput("scheduled-task:stale-base", projectId),
       );
