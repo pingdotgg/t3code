@@ -815,7 +815,7 @@ describe("one finding handed over on its own", () => {
     ],
   };
 
-  it("replaces an earlier ask instruction when fixing one or all findings", () => {
+  it("keeps the pull request chip free of ask instructions when a fix and an ask share a draft", () => {
     const metadata = { ...base, state: "open" as const, isDraft: false };
     const ask = buildAskAboutPullRequestHandoff(metadata);
     for (const fix of [
@@ -851,11 +851,15 @@ describe("one finding handed over on its own", () => {
         commentsTruncated: false,
       }),
     ]) {
-      const next = appendHandoff(ask, fix);
-      const contexts = next.reviewComments.filter((comment) => comment.pullRequest !== undefined);
-      expect(contexts).toHaveLength(1);
-      expect(contexts[0]?.text).not.toContain("Do not change any code");
-      expect(contexts[0]?.pullRequest).toEqual(metadata);
+      for (const next of [
+        appendHandoff(ask, fix),
+        appendHandoff({ prompt: fix.prompt, reviewComments: [...fix.reviewComments] }, ask),
+      ]) {
+        const contexts = next.reviewComments.filter((comment) => comment.pullRequest !== undefined);
+        expect(contexts).toHaveLength(1);
+        expect(contexts[0]?.text).not.toContain("Do not change any code");
+        expect(contexts[0]?.pullRequest).toEqual(metadata);
+      }
     }
   });
 
