@@ -2808,7 +2808,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const closeTabWindow = Effect.fn("PreviewManager.closeTabWindow")(function* (tabId: string) {
     const window = tabWindows.get(tabId);
-    if (!window || window.isDestroyed()) return;
+    if (!window || window.isDestroyed()) return yield* update(tabId, { detached: false });
     yield* attempt({ operation: "tabWindow.close", tabId }, () => window.close());
   });
 
@@ -2885,6 +2885,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         prepareWebview(contents).pipe(
           Effect.andThen(registerWebview(tabId, contents.id)),
           Effect.andThen(update(tabId, { detached: true })),
+          // A close that landed before this commit already cleared detached; undo our stale write.
+          Effect.andThen(
+            Effect.suspend(() =>
+              window.isDestroyed() ? update(tabId, { detached: false }) : Effect.void,
+            ),
+          ),
           Effect.catchCause((cause) =>
             Effect.logWarning("Preview tab window failed to register.", { tabId, cause }),
           ),
@@ -2892,6 +2898,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     });
     host.setWindowOpenHandler(() => ({ action: "deny" }));
+    // The preload exposes desktopBridge, so the window must never leave the app origin.
+    host.on("will-navigate", (event, url) => {
+      if (new URL(url).origin !== appUrl.origin) event.preventDefault();
+    });
     window.once("closed", () => {
       tabWindowHostIds.delete(hostId);
       if (tabWindows.get(tabId) === window) tabWindows.delete(tabId);

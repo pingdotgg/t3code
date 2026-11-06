@@ -939,7 +939,7 @@ export function PreviewView({
         pictureInPictureLabel={isPopoutWindow ? "Bring back to chat" : undefined}
         pictureInPicture={!isPopoutWindow && miniPlayerTabId === tabId}
         pictureInPictureDisabled={
-          isUnreachable || (!isServerTab && !desktopOverlay?.hasWebContents)
+          !isPopoutWindow && (isUnreachable || (!isServerTab && !desktopOverlay?.hasWebContents))
         }
         onPickElement={previewBridge && tabId && !isServerTab ? handlePickElement : undefined}
         pickActive={pickActive}
