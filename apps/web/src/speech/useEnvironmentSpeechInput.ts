@@ -323,11 +323,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       request === startRequestRef.current &&
       controllerRef.current === expectedController &&
       latestInputRef.current.ownerKey === expectedOwner;
-    let latestStatus: EnvironmentSpeechStatus;
-    pendingStartRef.current = request;
-    try {
-      latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
-      if (!stillCurrent()) return;
+    const waitForStatus = async () => {
+      let latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+      if (!stillCurrent()) return null;
       if (latestStatus.supported && latestStatus.state === "transcribing") {
         setQueuedStart({ prepared, request });
         // Remember the press and start when the previous stream drains,
@@ -335,12 +333,22 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         // Esc, cancel, or a draft change (stillCurrent) abandons the queue.
         while (latestStatus.supported && latestStatus.state === "transcribing") {
           await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
-          if (!stillCurrent()) return;
+          if (!stillCurrent()) return null;
           latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
-          if (!stillCurrent()) return;
+          if (!stillCurrent()) return null;
         }
       }
+      return latestStatus;
+    };
+    const clearPendingStart = () => {
+      if (pendingStartRef.current === request) pendingStartRef.current = null;
+    };
+    pendingStartRef.current = request;
+    let latestStatus: EnvironmentSpeechStatus | null;
+    try {
+      latestStatus = await waitForStatus();
     } catch (error) {
+      clearPendingStart();
       if (!stillCurrent()) return;
       toastManager.add({
         type: "error",
@@ -349,9 +357,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       setQueuedStart(null);
       return;
-    } finally {
-      if (pendingStartRef.current === request) pendingStartRef.current = null;
     }
+    clearPendingStart();
+    if (!latestStatus) return;
     setQueuedStart(null);
     if (!latestStatus.supported) return;
     setStatus({ prepared, value: latestStatus });
