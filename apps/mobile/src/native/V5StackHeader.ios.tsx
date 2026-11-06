@@ -10,7 +10,7 @@ import { isDuoDevice } from "../lib/device-type";
 import { useEnabledNavigationTabs } from "../features/workspace/navigation-tabs";
 import { nativeWorkspaceTabCount } from "../features/workspace/workspace-tabs-state";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
-import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
+import { useDeviceType, useNativeLayoutMetrics } from "./native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
 import { fitColumnVerticalBarItems, type HeaderItem } from "./vertical-bar-items";
 import {

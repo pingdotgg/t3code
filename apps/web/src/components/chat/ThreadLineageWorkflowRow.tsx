@@ -1,6 +1,7 @@
-import type {
-  SubagentWorkflowGroup,
-  RuntimeSubagent,
+import {
+  workflowMemberModelSelection,
+  type SubagentWorkflowGroup,
+  type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import { ChevronDownIcon, SquareIcon } from "lucide-react";
@@ -101,6 +102,7 @@ function WorkflowMemberRow({
             model={member.model}
             providerInstanceId={providerInstanceId}
             origin="provider_native"
+            modelSelection={workflowMemberModelSelection(member, providerInstanceId)}
             provider={provider}
             providers={providers}
             driver={driver}

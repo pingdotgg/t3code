@@ -13,7 +13,7 @@ Opening a page has two intents, and each has one action:
 - **Select** shows a thread or pull request as the workspace's only page, the
   way a list row does. Everything that selects (rows, the command palette,
   compose, notifications, deep links) uses
-  [`selectWorkspaceDetail`](../../apps/mobile/src/features/workspace/workspace-detail-selection.ts),
+  [`selectWorkspaceDetail`](../../apps/mobile/src/features/layout/workspace/workspace-detail-selection.ts),
   which the root stack's router handles. The resulting stack is the same on
   phones, collapsed splits, and expanded splits. Only route keys differ: the
   page already showing keeps its key, so the detail column updates in place
