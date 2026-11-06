@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Platform, View, type LayoutChangeEvent } from "react-native";
 
 import { useAdaptiveWorkspaceLayout } from "../../features/layout/adaptive-workspace-context";
+import { MOBILE_SHAPE } from "../../lib/designTokens";
 
 const SURFACE_CLASS_NAMES = {
   sheet: "bg-sheet-solid",
@@ -17,13 +18,13 @@ const SURFACE_CLASS_NAMES = {
 export function ScreenContent({
   children,
   surface = "sheet",
-  insetHorizontal,
+  insetHorizontal = true,
   fitToContents = false,
   onLayout,
 }: {
   readonly children: ReactNode;
   readonly surface?: keyof typeof SURFACE_CLASS_NAMES;
-  /** Keeps the card off the window edge. Defaults to on wherever the workspace is split. */
+  /** Keeps the card off the window edge. Defaults to on. */
   readonly insetHorizontal?: boolean;
   readonly fitToContents?: boolean;
   readonly onLayout?: (event: LayoutChangeEvent) => void;
@@ -42,14 +43,16 @@ export function ScreenContent({
   return (
     <View className={fitToContents ? "shrink bg-header" : "flex-1 bg-header"}>
       <View
-        className={`overflow-hidden rounded-t-[28px] ${SURFACE_CLASS_NAMES[surface]}`}
+        className={`overflow-hidden ${SURFACE_CLASS_NAMES[surface]}`}
         collapsable={false}
         onLayout={onLayout}
         style={{
           flexShrink: 1,
           flexGrow: fitToContents ? 0 : 1,
           flexBasis: fitToContents ? "auto" : 0,
-          marginHorizontal: (insetHorizontal ?? layout.usesSplitView) ? 4 : 0,
+          borderRadius: MOBILE_SHAPE.content,
+          marginHorizontal: insetHorizontal ? (layout.usesSplitView ? 4 : 8) : 0,
+          marginBottom: 8,
         }}
       >
         {children}

@@ -26,6 +26,7 @@ import { NativeThemeHost } from "./NativeThemeHost.android";
 import type { SplitButtonProps } from "./SplitButton.types";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useControlTheme } from "./useControlTheme";
+import { MOBILE_SHAPE } from "../../lib/designTokens";
 
 export function SplitButton(props: SplitButtonProps) {
   const { colors } = useControlTheme();
@@ -116,6 +117,8 @@ export function SplitButton(props: SplitButtonProps) {
             expanded={expanded && menuEnabled}
             onDismissRequest={() => setExpanded(false)}
             color={colors["--color-card-alt"]}
+            cornerRadius={MOBILE_SHAPE.menu * scale}
+            shadowElevation={8}
           >
             <DropdownMenu.Trigger>
               <Icon

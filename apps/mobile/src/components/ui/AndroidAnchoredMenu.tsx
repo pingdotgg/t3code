@@ -6,6 +6,7 @@ import { Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 
 import { useHardwareBack } from "../../lib/backHandler";
+import { MOBILE_SHAPE } from "../../lib/designTokens";
 import { deriveMenuHorizontalPlacement } from "../../lib/menu-placement";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
@@ -187,7 +188,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   left,
                   maxHeight,
                   width: menuWidth,
-                  borderRadius: 4 * scale,
+                  borderRadius: MOBILE_SHAPE.menu * scale,
                   ...(opensDown
                     ? { top: local.y + local.height + ANCHOR_GAP }
                     : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
@@ -197,7 +198,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
 
                 {/* The first item tap must act while the keyboard is open. */}
                 <ScrollView
-                  contentContainerStyle={{ paddingVertical: 7 * scale }}
+                  contentContainerStyle={{ paddingVertical: 8 * scale }}
                   bounces={false}
                   keyboardShouldPersistTaps="always"
                   showsVerticalScrollIndicator={false}
