@@ -8,6 +8,7 @@ import {
   type GatewayDriverSpawnResult,
   type GatewayDriverSpawnSpec,
   type GatewayDriverStatusSelector,
+  isRuntimeModeAbove,
   OpenShellDrainProgress,
   OpenShellFleetState,
   OpenShellFleetWorkerStatus,
@@ -15,6 +16,7 @@ import {
   OpenShellSharedCacheSettings,
   OpenShellWorkerClass,
   type OpenShellWorkerDefaults,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -55,7 +57,13 @@ const DEFAULT_MANAGED_BY = "t3-fleet";
 export class OpenShellGatewayDriverError extends Schema.TaggedError<OpenShellGatewayDriverError>()(
   "OpenShellGatewayDriverError",
   {
-    reason: Schema.Literals(["unknown_template", "unknown_worker", "pairing", "gateway"]),
+    reason: Schema.Literals([
+      "unknown_template",
+      "unknown_worker",
+      "pairing",
+      "gateway",
+      "runtime_mode_above_ceiling",
+    ]),
     message: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -190,6 +198,15 @@ const withDeadline = async <T>(promise: Promise<T>, timeoutMs: number): Promise<
     ),
   ]);
 
+export interface GatewayDriverSpawnOptionsWithCeiling extends GatewayDriverSpawnOptions {
+  /**
+   * The broadest worker policy this driver may apply (spec section 5.2); the
+   * caller's own ceiling. A requested mode above it fails typed before any
+   * gateway call, so a supervised caller cannot mint a permissive worker.
+   */
+  readonly runtimeModeCeiling?: RuntimeMode;
+}
+
 /** In-memory index; process restart loses it, so servers inject a durable one. */
 export const memoryFleetWorkerIndex = (): FleetWorkerIndex => {
   const rows = new Map<string, FleetWorkerRow>();
@@ -323,8 +340,15 @@ export class OpenShellGatewayDriver implements GatewayDriver {
    */
   async spawn(
     spec: GatewayDriverSpawnSpec,
-    options: GatewayDriverSpawnOptions = {},
+    options: GatewayDriverSpawnOptionsWithCeiling = {},
   ): Promise<GatewayDriverSpawnResult> {
+    const runtimeMode = spec.runtimeMode ?? "approval-required";
+    if (isRuntimeModeAbove(runtimeMode, options.runtimeModeCeiling)) {
+      throw new OpenShellGatewayDriverError({
+        reason: "runtime_mode_above_ceiling",
+        message: `Worker policy ${runtimeMode} is broader than this caller's ${options.runtimeModeCeiling} ceiling; no sandbox was created.`,
+      });
+    }
     const template = spec.template ?? this.settings?.defaultSandboxTemplate;
     if (template === undefined || template.trim() === "") {
       throw new OpenShellGatewayDriverError({
@@ -348,10 +372,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
 
     // Policy translation (spec section 5.2): the conservative default guards
     // against a caller that forgot the mode (see sandboxPolicyForRuntimeMode).
-    await this.client.setPolicy(
-      created.name,
-      sandboxPolicyForRuntimeMode(spec.runtimeMode ?? "approval-required"),
-    );
+    await this.client.setPolicy(created.name, sandboxPolicyForRuntimeMode(runtimeMode));
     const ready = await this.client.waitReady(created.name, IMAGE_PREP_TIMEOUT_SECS);
 
     if (this.registrar === undefined) {
