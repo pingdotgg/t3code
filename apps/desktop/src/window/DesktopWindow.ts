@@ -39,7 +39,6 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { isSameOriginRendererNavigation } from "./RendererNavigation.ts";
 
-export { isSameOriginRendererNavigation };
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
