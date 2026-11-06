@@ -47,6 +47,7 @@ export function ThreadDetailsUsage({
   providers,
   sources,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
+  const t = useT();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
   const report =
@@ -86,6 +87,7 @@ export function ThreadDetailsUsage({
 
 /** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
 export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
+  const t = useT();
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
     maxTokens !== null && usage.usedPercentage !== null

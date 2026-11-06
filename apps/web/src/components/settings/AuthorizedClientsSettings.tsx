@@ -620,6 +620,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   onRevokeOtherClients,
   delegatableScopes,
 }: AuthorizedClientsHeaderActionProps) {
+  const t = useT();
   const pairingDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "remoteClients");
   const createPairingCredential = useAtomCommand(authEnvironment.createPairingCredential, {
     reportFailure: false,

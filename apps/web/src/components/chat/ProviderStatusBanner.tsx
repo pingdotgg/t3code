@@ -35,6 +35,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RefreshIcon } from "../ui/refresh-icon";
+import { useT } from "../../hooks/useI18n";
 
 function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
@@ -128,6 +129,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
+  const t = useT();
   const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     label: t("settings.providers.panel.refreshStatus"),

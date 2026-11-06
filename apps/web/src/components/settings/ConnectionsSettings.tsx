@@ -250,6 +250,7 @@ function ConnectionsSettingsContent({
   readonly accessEnvironmentId: EnvironmentId | null;
   readonly accessEnvironmentPicker?: ReactNode;
 }) {
+  const t = useT();
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();

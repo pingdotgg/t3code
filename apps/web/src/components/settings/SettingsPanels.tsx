@@ -443,6 +443,7 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
+  const t = useT();
   const {
     theme,
     setTheme,

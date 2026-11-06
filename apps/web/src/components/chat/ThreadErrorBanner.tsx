@@ -21,10 +21,10 @@ export function copyAdminRequest() {
     () =>
       toastManager.add({
         type: "success",
-        title: t("chat.errorBanner.requestCopied"),
-        description: t("chat.errorBanner.sendToAdmin"),
+        title: translateNow("chat.errorBanner.requestCopied"),
+        description: translateNow("chat.errorBanner.sendToAdmin"),
       }),
-    () => toastManager.add({ type: "error", title: t("chat.errorBanner.couldNotCopy") }),
+    () => toastManager.add({ type: "error", title: translateNow("chat.errorBanner.couldNotCopy") }),
   );
 }
 
