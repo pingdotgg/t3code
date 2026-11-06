@@ -190,7 +190,7 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect.each(["auth-type", "first-sign-in", "first-discovery"] as const)(
+  it.effect.each(["auth-type", "first-sign-in", "first-discovery", "usage-credentials"] as const)(
     "resets usage on account transition: %s",
     (transition) =>
       Effect.scoped(
@@ -203,7 +203,9 @@ describe("makeManagedServerProvider", () => {
           const auth = yield* Ref.make<ServerProvider["auth"]>(
             transition === "auth-type"
               ? { ...signedIn, workspaceId: "ws-a" }
-              : { status: transition === "first-sign-in" ? "unauthenticated" : "unknown" },
+              : transition === "usage-credentials"
+                ? { ...signedIn, usageRefreshKey: "local-a" }
+                : { status: transition === "first-sign-in" ? "unauthenticated" : "unknown" },
           );
           const reads = yield* Ref.make(0);
           const limits = {
@@ -248,7 +250,11 @@ describe("makeManagedServerProvider", () => {
           }
           yield* Ref.set(
             auth,
-            transition === "auth-type" ? { status: "authenticated", type: "apiKey" } : signedIn,
+            transition === "auth-type"
+              ? { status: "authenticated", type: "apiKey" }
+              : transition === "usage-credentials"
+                ? { ...signedIn, usageRefreshKey: "local-b" }
+                : signedIn,
           );
           const switched = yield* provider.refresh;
           assert.strictEqual(switched.usageLimits, undefined);

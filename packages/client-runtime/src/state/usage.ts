@@ -144,6 +144,7 @@ export function usageRefreshAccountKey(
         provider.auth?.type,
         provider.auth?.email?.toLowerCase(),
         provider.auth?.workspaceId,
+        provider.auth?.usageRefreshKey,
       ]),
   ]);
 }

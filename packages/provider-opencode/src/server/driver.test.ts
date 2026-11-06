@@ -550,6 +550,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.strictEqual(serverStarts, starts);
         if (scenario.switchCredentials) {
           const previousAuth = recovered.auth;
+          assert.strictEqual(previousAuth.workspaceId, undefined);
           yield* TestClock.adjust("1 minute");
           currentKey = "replacement-go-key";
           replaceCredential(currentKey);
@@ -562,7 +563,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           yield* Fiber.join(health);
           const changed = yield* instance.snapshot.getSnapshot;
           assert.strictEqual(usageReads, expectedReads, "health discovery must not read quota");
-          assert.notStrictEqual(changed.auth.workspaceId, previousAuth.workspaceId);
+          assert.notStrictEqual(changed.auth.usageRefreshKey, previousAuth.usageRefreshKey);
           assert.deepStrictEqual(changed.usageLimits?.windows, []);
           assert.strictEqual(changed.usageLimits?.refreshAfter, undefined);
           yield* instance.snapshot.refreshUsage!;

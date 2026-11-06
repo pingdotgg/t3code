@@ -280,7 +280,7 @@ describe("pools", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
       instanceId: ProviderInstanceId.make("opencode"),
-      auth: { status: "authenticated" },
+      auth: { status: "authenticated", usageRefreshKey: "local-credentials-a" },
       usageLimits: {
         checkedAt,
         credentialFingerprint: "shared-go-key",
@@ -297,6 +297,7 @@ describe("pools", () => {
             providers: [
               {
                 ...go,
+                auth: { ...go.auth, usageRefreshKey: "local-credentials-b" },
                 usageLimits: {
                   ...go.usageLimits!,
                   checkedAt: "2026-09-03T11:30:00.000Z",

@@ -395,7 +395,7 @@ export const OpenCodeDriver: ProviderDriver<
         ...provider,
         // OpenCode 2 omits account identity; local key selection owns cached Go quotas.
         auth: credentialFingerprint
-          ? { ...provider.auth, workspaceId: credentialFingerprint }
+          ? { ...provider.auth, usageRefreshKey: credentialFingerprint }
           : provider.auth,
         usageLimits:
           usageLimits ??
