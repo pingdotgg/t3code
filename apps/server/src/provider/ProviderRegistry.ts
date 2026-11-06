@@ -3,9 +3,11 @@ import {
   isProviderWorkspaceSnapshotCurrent,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ModelSelection,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -62,6 +64,11 @@ export class ProviderRegistry extends Context.Service<
     readonly refreshUsage: (
       instanceId?: ProviderInstanceId,
       providers?: readonly ProviderDriverKind[],
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    readonly refreshUsageForModelSelection: (
+      primary: ModelSelection | null,
+      fallback: ModelSelection | null,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Unknown instance ids return the cached list without error. */
@@ -646,6 +653,20 @@ export const layer = Layer.effect(
       return yield* Ref.get(providersRef);
     });
 
+    const refreshUsageForModelSelection = Effect.fn(
+      "ProviderRegistry.refreshUsageForModelSelection",
+    )(function* (primary: ModelSelection | null, fallback: ModelSelection | null) {
+      if (!primary || !fallback) return yield* Ref.get(providersRef);
+      const providers = yield* refreshUsage(primary.instanceId);
+      return exhaustedUsageWindow(
+        providers.find((provider) => provider.instanceId === primary.instanceId),
+        DateTime.toEpochMillis(yield* DateTime.now),
+        primary.model,
+      )
+        ? yield* refreshUsage(fallback.instanceId)
+        : providers;
+    });
+
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
     const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(
       Option.none(),
@@ -1098,6 +1119,10 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
+      refreshUsageForModelSelection: (primary, fallback) =>
+        refreshUsageForModelSelection(primary, fallback).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+        ),
       refreshUsage: (instanceId, providers) =>
         refreshUsage(instanceId, providers).pipe(Effect.catchCause(recoverRefreshFailure)),
       refresh: (provider?: ProviderDriverKind) =>

@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -455,6 +456,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
     };
     const calls: ModelSelection[] = [];
     const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
+      let quotaRead = false;
       const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
       const snapshot: ServerProvider = {
         instanceId,
@@ -483,7 +485,18 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         continuationIdentity: { driverKind: driver, continuationKey: instanceId },
         displayName: undefined,
         enabled: true,
-        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+        snapshot: {
+          getSnapshot: Effect.sync(() =>
+            quotaRead ? snapshot : { ...snapshot, usageLimits: undefined },
+          ),
+          refreshUsage: Effect.sync(() => {
+            quotaRead = true;
+          }),
+          resolveMaintenance: () => Effect.die("unused"),
+          refresh: Effect.die("unused"),
+          streamChanges: Stream.empty,
+          applyUsageLimits: () => Effect.void,
+        },
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
         textGeneration: TextGeneration.TextGeneration.of({
           generateCommitMessage: () => Effect.die("unused"),

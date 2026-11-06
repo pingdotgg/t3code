@@ -5,12 +5,18 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 export const makeProcessProbe = Effect.gen(function* () {
-  const started = yield* Deferred.make<number>();
-  const exited = yield* Deferred.make<void>();
+  const started = yield* Deferred.make<number, Error>();
+  const exited = yield* Deferred.make<void, Error>();
   const sockets = new Set<NodeNet.Socket>();
   const server = NodeNet.createServer((socket) => {
     sockets.add(socket);
     let output = "";
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      // Windows resets the observation socket when the fixture is forcefully terminated.
+      if (error.code === "ECONNRESET") return;
+      Deferred.doneUnsafe(started, Effect.fail(error));
+      Deferred.doneUnsafe(exited, Effect.fail(error));
+    });
     socket.on("data", (chunk) => {
       output += chunk.toString();
       if (output.includes("\n")) {

@@ -1504,7 +1504,11 @@ it.layer(
     it.effect("invalidates model caches only for an explicit model refresh", () =>
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
-        const makeInstance = (name: string, driver = ProviderDriverKind.make("codex")) =>
+        const makeInstance = (
+          name: string,
+          driver = ProviderDriverKind.make("codex"),
+          exhausted = false,
+        ) =>
           Effect.gen(function* () {
             const instanceId = ProviderInstanceId.make(name);
             const provider = {
@@ -1519,6 +1523,12 @@ it.layer(
               models: [],
               slashCommands: [],
               skills: [],
+              usageLimits: {
+                checkedAt: "2026-06-10T00:00:00.000Z",
+                windows: exhausted
+                  ? [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }]
+                  : [],
+              },
             } as const satisfies ServerProvider;
             const invalidations = yield* Ref.make(0);
             const usageReads = yield* Ref.make(0);
@@ -1555,7 +1565,7 @@ it.layer(
             const takeMaintenanceReads = Ref.getAndSet(maintenanceReads, []);
             return { instance, invalidations, takeMaintenanceReads, usageReads };
           });
-        const first = yield* makeInstance("codex_first");
+        const first = yield* makeInstance("codex_first", ProviderDriverKind.make("codex"), true);
         const second = yield* makeInstance("codex_second");
         const other = yield* makeInstance("claude_other", ProviderDriverKind.make("claudeAgent"));
         const instances = [first.instance, second.instance, other.instance];
@@ -1597,6 +1607,19 @@ it.layer(
           assert.strictEqual(yield* Ref.get(first.usageReads), 1);
           assert.strictEqual(yield* Ref.get(second.usageReads), 1);
           assert.strictEqual(yield* Ref.get(other.usageReads), 0);
+          yield* registry.refreshUsageForModelSelection(
+            { instanceId: first.instance.instanceId, model: "gpt-6.1-sol" },
+            { instanceId: other.instance.instanceId, model: "claude-haiku-5-5" },
+          );
+          assert.strictEqual(yield* Ref.get(first.usageReads), 2);
+          assert.strictEqual(yield* Ref.get(second.usageReads), 1);
+          assert.strictEqual(yield* Ref.get(other.usageReads), 1);
+          yield* registry.refreshUsageForModelSelection(
+            { instanceId: second.instance.instanceId, model: "gpt-6.1-sol" },
+            { instanceId: other.instance.instanceId, model: "claude-haiku-5-5" },
+          );
+          assert.strictEqual(yield* Ref.get(second.usageReads), 2);
+          assert.strictEqual(yield* Ref.get(other.usageReads), 1);
 
           yield* registry.refreshInstance(first.instance.instanceId);
           yield* registry.refresh();

@@ -197,6 +197,7 @@ function makeRegistry(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshUsage: () => Ref.get(providersRef),
+      refreshUsageForModelSelection: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
       reloadSecretsAndRefresh: () => Ref.get(providersRef),
       refreshAfterUpdate: () => {

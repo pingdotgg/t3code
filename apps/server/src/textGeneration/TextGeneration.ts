@@ -80,11 +80,13 @@ export const make = Effect.gen(function* () {
       modelSelection: ModelSelection,
     ) => Effect.Effect<A, TextGenerationError>,
   ) {
-    const snapshots = yield* registry.listInstances.pipe(
-      Effect.flatMap((instances) =>
-        Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
-      ),
-    );
+    const instances = yield* registry.listInstances;
+    yield* (
+      instances.find((instance) => instance.instanceId === selection.instanceId)?.snapshot
+        .refreshUsage ?? Effect.void
+    ).pipe(Effect.ignore);
+    const readSnapshots = Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
+    let snapshots = yield* readSnapshots;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const limited = exhaustedUsageWindow(
       snapshots.find((provider) => provider.instanceId === selection.instanceId),
@@ -92,6 +94,14 @@ export const make = Effect.gen(function* () {
       selection.model,
     );
     if (limited) {
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) => instance.enabled && instance.instanceId !== selection.instanceId,
+        ),
+        (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
+        { concurrency: "unbounded", discard: true },
+      );
+      snapshots = yield* readSnapshots;
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
