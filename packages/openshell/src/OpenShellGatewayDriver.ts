@@ -554,8 +554,12 @@ export class OpenShellGatewayDriver implements GatewayDriver {
       await this.index.setState(environmentId, "draining", "drain still running");
       return { drainId: progress.drainId, progress, state: "draining" };
     }
+    // A failed drain must not leave its id behind: the next attempt gets a new
+    // generation, so copies it could not verify are never trusted again.
+    const resolvedDrainId =
+      outcome.state === "failed" ? nextGeneration(drainId, environmentId) : drainId;
     const progress: OpenShellDrainProgress = {
-      drainId,
+      drainId: resolvedDrainId,
       threads: outcome.threads,
       worktrees: outcome.worktrees,
       startedAt,
@@ -571,7 +575,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
       outcome.state === "draining" ? "draining" : "failed",
       outcome.state === "draining" ? "drain still running" : "drain failed",
     );
-    return { drainId, progress, state: outcome.state };
+    return { drainId: resolvedDrainId, progress, state: outcome.state };
   }
 
   /**

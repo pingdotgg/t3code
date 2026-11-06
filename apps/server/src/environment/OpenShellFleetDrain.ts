@@ -24,6 +24,13 @@ export class FleetDrainError extends Schema.TaggedError<FleetDrainError>()("Flee
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
+/** One stored thread copy plus the currency marker that decides trust on a retry. */
+export interface DrainSinkRecord {
+  readonly threadId: string;
+  readonly snapshotSequence: number | null;
+  readonly body: string;
+}
+
 /** Where a drain writes: one directory per run, one file per thread. */
 export interface DrainSink {
   readonly write: (input: {
@@ -31,12 +38,13 @@ export interface DrainSink {
     readonly drainId: string;
     readonly threadId: string;
     readonly body: string;
+    readonly snapshotSequence: number | null;
   }) => Effect.Effect<{ readonly bytes: number }, FleetDrainStepError>;
   readonly read: (input: {
     readonly environmentId: EnvironmentId;
     readonly drainId: string;
     readonly threadId: string;
-  }) => Effect.Effect<string | null, FleetDrainStepError>;
+  }) => Effect.Effect<DrainSinkRecord | null, FleetDrainStepError>;
 }
 
 /** Pushes one checkout and its checkpoint refs to the remote it already has. */
@@ -57,10 +65,18 @@ export interface DrainSource {
     },
     FleetDrainStepError
   >;
+  /** Cheap per-thread currency probe: the bounded read's snapshot sequence. */
+  readonly threadSequence: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: string;
+  }) => Effect.Effect<{ readonly snapshotSequence: number | null }, FleetDrainStepError>;
   readonly threadHistory: (input: {
     readonly environmentId: EnvironmentId;
     readonly threadId: string;
-  }) => Effect.Effect<{ readonly body: string }, FleetDrainStepError>;
+  }) => Effect.Effect<
+    { readonly body: string; readonly snapshotSequence: number | null },
+    FleetDrainStepError
+  >;
 }
 
 export interface DrainDependencies {
@@ -85,6 +101,15 @@ export interface DrainExecutorShape {
 const zero = () => ({ total: 0, acked: 0, failed: 0 });
 
 const reported = (outcome: FleetDrainOutcome): FleetDrainOutcome => outcome;
+
+/** The immediately preceding generation's id, or null for the first drain. */
+const previousDrainId = (drainId: string): string | null => {
+  const marker = drainId.lastIndexOf(":");
+  if (marker < 0) return null;
+  const generation = Number.parseInt(drainId.slice(marker + 1), 10);
+  if (!Number.isFinite(generation) || generation <= 1) return null;
+  return `${drainId.slice(0, marker)}:${generation - 1}`;
+};
 
 /**
  * Drains one worker. Every step is keyed by `drainId` and per item, so a retry
@@ -137,12 +162,24 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
       }
       threads.total += 1;
       const copied = yield* Effect.gen(function* () {
-        const already = yield* deps.sink.read({
-          environmentId: input.environmentId,
-          drainId: input.drainId,
-          threadId: thread.threadId,
-        });
-        if (already !== null) return true;
+        // A copy from the previous generation is trusted only while its currency
+        // marker still matches the live worker; otherwise the thread is re-copied.
+        const previous = previousDrainId(input.drainId);
+        const prior =
+          previous === null
+            ? null
+            : yield* deps.sink.read({
+                environmentId: input.environmentId,
+                drainId: previous,
+                threadId: thread.threadId,
+              });
+        if (prior !== null && prior.snapshotSequence !== null) {
+          const current = yield* deps.source.threadSequence({
+            environmentId: input.environmentId,
+            threadId: thread.threadId,
+          });
+          if (current.snapshotSequence === prior.snapshotSequence) return true;
+        }
         const history = yield* deps.source.threadHistory({
           environmentId: input.environmentId,
           threadId: thread.threadId,
@@ -152,6 +189,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
           drainId: input.drainId,
           threadId: thread.threadId,
           body: history.body,
+          snapshotSequence: history.snapshotSequence,
         });
         // Read it back: an ack means the bytes are here, not that a write was attempted.
         const back = yield* deps.sink.read({
@@ -159,7 +197,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
           drainId: input.drainId,
           threadId: thread.threadId,
         });
-        return back === history.body && written.bytes > 0;
+        return back !== null && back.body === history.body && written.bytes > 0;
       }).pipe(
         Effect.catch((cause) =>
           Effect.sync(() => {
