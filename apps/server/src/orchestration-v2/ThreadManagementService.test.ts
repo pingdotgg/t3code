@@ -559,30 +559,75 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
 );
 
 it.effect.each([
-  { status: "completed" as const, settles: true },
-  { status: "failed" as const, settles: false },
-  { status: "interrupted" as const, settles: false },
-])("settleAfterRun settles only when the run $status", ({ status, settles }) =>
+  { status: "completed" as const, followUp: "none", settles: true },
+  { status: "failed" as const, followUp: "none", settles: false },
+  { status: "interrupted" as const, followUp: "none", settles: false },
+  { status: "completed" as const, followUp: "notification", settles: true },
+  { status: "completed" as const, followUp: "delegated", settles: true },
+  { status: "completed" as const, followUp: "failed-notification", settles: false },
+  { status: "completed" as const, followUp: "held-notification", settles: true },
+  { status: "completed" as const, followUp: "user", settles: false },
+])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
     const threadId = ThreadId.make("thread:thread-management:settle-after-run");
     const runId = RunId.make("run:thread-management:settle-after-run");
+    const followUpId = RunId.make(`${runId}:follow-up`);
+    const subscribed = yield* Deferred.make<void>();
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const runs = [{ id: runId, ordinal: 1, status, userMessageId: MessageId.make("original") }];
+    const nextRun = {
+      id: followUpId,
+      ordinal: 2,
+      status: "running" as OrchestrationV2Run["status"],
+      userMessageId: MessageId.make("follow-up"),
+    };
     const dispatched: Array<string> = [];
+    // The notification starts after the completed run was observed, before settlement commits.
+    let raced = false;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () =>
+            Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.fromQueue(events)),
+            ),
           getThreadRecords: () =>
-            Effect.succeed({
-              thread: { id: threadId, projectId, deletedAt: null },
-              runs: [{ id: runId, status }],
-            } as unknown as OrchestrationV2ThreadProjection),
+            Effect.sync(
+              () =>
+                ({
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs: raced ? [...runs, nextRun] : runs,
+                  messages: [
+                    {
+                      id: nextRun.userMessageId,
+                      role: "user",
+                      ...(followUp.endsWith("notification") ? { notification: {} } : {}),
+                      ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
+                    },
+                  ],
+                }) as unknown as OrchestrationV2ThreadProjection,
+            ),
           dispatch: (command) =>
-            Effect.sync(() => {
-              dispatched.push(command.type);
-              return { sequence: 1, storedEvents: [] } as never;
+            Effect.suspend(() => {
+              if (followUp !== "none" && !raced) {
+                raced = true;
+                return Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "Thread is still running",
+                  }),
+                );
+              }
+              return Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: 1, storedEvents: [] } as never;
+              });
             }),
         }),
       ),
@@ -592,9 +637,24 @@ it.effect.each([
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
     );
-
-    yield* service.settleAfterRun({ projectId, threadId, runId });
-
+    const fiber = yield* service
+      .settleAfterRun({ projectId, threadId, runId })
+      .pipe(Effect.forkChild);
+    if (followUp !== "none") {
+      yield* Deferred.await(subscribed);
+      expect(dispatched).toEqual([]);
+      nextRun.status =
+        followUp === "failed-notification"
+          ? "failed"
+          : followUp === "held-notification"
+            ? "queued"
+            : "completed";
+      yield* Queue.offer(events, {
+        sequence: 1,
+        event: { type: "run.updated", threadId, payload: nextRun },
+      } as unknown as OrchestrationV2StoredEvent);
+    }
+    yield* Fiber.join(fiber);
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
   }),
 );

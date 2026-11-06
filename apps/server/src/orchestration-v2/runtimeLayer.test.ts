@@ -4859,11 +4859,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           });
         });
       yield* holdQueueAfterRestart("settle-automatic-restart");
+      const beforeSettle = yield* orchestrator.getThreadProjection(threadId);
+      const oldestRun = beforeSettle.runs.reduce((oldest, run) =>
+        run.ordinal < oldest.ordinal ? run : oldest,
+      );
+      const latestRun = beforeSettle.runs.reduce((latest, run) =>
+        run.ordinal > latest.ordinal ? run : latest,
+      );
+      const staleSettle = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("settle-automatic-stale"),
+          threadId,
+          expectedLatestRunId: oldestRun.id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(staleSettle._tag, "OrchestratorDispatchError");
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.settledAt);
 
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("settle-automatic-settle"),
         threadId,
+        expectedLatestRunId: latestRun.id,
       });
       const settled = yield* orchestrator.getThreadProjection(threadId);
       assert.isNotNull(settled.thread.settledAt);
