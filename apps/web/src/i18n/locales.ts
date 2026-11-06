@@ -36,12 +36,7 @@ export function resolveLocale(language: string, systemLocales: ReadonlyArray<str
   return DEFAULT_LOCALE;
 }
 
-let desktopSystemLocale: string | null | undefined;
-
+// Not desktopBridge.getSystemLocale(): that is the regional/time locale, not the UI language.
 export function readSystemLocales(): ReadonlyArray<string> {
-  // The desktop bridge call is a synchronous IPC round trip, so read it once.
-  if (desktopSystemLocale === undefined) {
-    desktopSystemLocale = window.desktopBridge?.getSystemLocale() ?? null;
-  }
-  return [...(desktopSystemLocale ? [desktopSystemLocale] : []), ...navigator.languages];
+  return navigator.languages;
 }
