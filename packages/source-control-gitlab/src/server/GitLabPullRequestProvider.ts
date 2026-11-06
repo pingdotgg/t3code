@@ -33,6 +33,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   search: true,
   reactions: true,
   mentions: true,
+  referenceSigils: ["#", "!"],
   // GitLab's viewed marks live in browser-local storage.
   viewedFiles: "environment",
   review: {
@@ -533,6 +534,17 @@ export const make = Effect.gen(function* () {
           search: input.query,
         })
         .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchProjectReferences({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+          sigil: input.sigil,
+        })
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
 
     setReviewerRequest: writing((input) =>
       cli
