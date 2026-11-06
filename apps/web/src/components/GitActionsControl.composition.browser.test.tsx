@@ -8,7 +8,8 @@ import { PublishRepositoryDialog } from "./GitActionsControl";
 
 const publish = vi.hoisted(() => ({ run: vi.fn() }));
 
-vi.mock("~/state/query", () => ({
+vi.mock("~/state/query", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useEnvironmentQuery: () => ({
     data: {
       versionControlSystems: [],

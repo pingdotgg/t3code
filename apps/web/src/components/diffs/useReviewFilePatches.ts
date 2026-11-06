@@ -44,6 +44,7 @@ export function useReviewFilePatches({
     environmentId,
     cwd,
     source?.kind,
+    source?.branchMode,
     source?.baseRef,
     source?.headRef,
     baseRef,
@@ -201,6 +202,12 @@ function reviewFileQueries({
                   cwd,
                   ...(baseRef ? { baseRef } : {}),
                   ...(source.kind === "commit" ? { commitSha: source.id } : {}),
+                  ...(source.branchMode ? { branchMode: source.branchMode } : {}),
+                  ...(source.kind === "branch-range" &&
+                  source.branchMode === "committed" &&
+                  source.headRef
+                    ? { headRef: source.headRef }
+                    : {}),
                   ignoreWhitespace,
                   file: {
                     path: file.path,

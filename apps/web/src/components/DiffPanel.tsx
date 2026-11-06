@@ -228,6 +228,7 @@ export default function DiffPanel({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
+    changesComparison: settings.changesComparison,
     timestampFormat: settings.timestampFormat,
     wordWrap: settings.wordWrap,
   }));
@@ -380,6 +381,9 @@ export default function DiffPanel({
           ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
           metadataOnly: true,
+          ...(settings.changesComparison === "committed"
+            ? { branchMode: "committed" as const }
+            : {}),
           ...(selectedCommitSha === null
             ? {
                 sourceKind:
@@ -432,7 +436,7 @@ export default function DiffPanel({
           ? "commit"
           : "branch-range"),
   );
-  const comparisonHeadRef = selectedGitSource?.headRef ?? gitStatusQuery.data?.refName ?? "HEAD";
+  const comparisonHeadRef = gitStatusQuery.data?.refName ?? "HEAD";
   const comparisonBaseRef =
     selectedGitSource?.baseRef ??
     selectedBaseRef ??
@@ -559,6 +563,7 @@ export default function DiffPanel({
           sourceKind: selectedGitSource.kind,
           baseRef: selectedGitSource.baseRef,
           headRef: selectedGitSource.headRef,
+          ...(selectedGitSource.branchMode ? { branchMode: selectedGitSource.branchMode } : {}),
           cacheKey: selectedGitSource.diffHash,
         })
       : undefined;
