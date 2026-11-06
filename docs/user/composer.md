@@ -206,8 +206,11 @@ switches hosts. Choose **This device** to revoke access and discard pending audi
 On Android, keep T3 Code open while recording and transcribing.
 
 On-device dictation may need a network connection to download a speech model the
-first time. After that it works offline for that language. Android transcribes on
-the device while you record and finishes after you stop. Recordings can be up to five
+first time. After that it works offline for that language. iPhone dictates in the
+first of your preferred languages (**Settings → General → Language & Region**)
+that Apple’s speech model supports. If none is supported, it tries the app’s
+language. Android transcribes on the device while you
+record and finishes after you stop. Recordings can be up to five
 minutes long. Canceling or an audio interruption discards the recording and
 preserves your existing draft. Navigating to another screen keeps dictation active;
 use the floating controls to finish or cancel. While recording, the screen stays
