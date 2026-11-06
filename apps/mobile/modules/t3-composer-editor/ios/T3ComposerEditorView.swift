@@ -447,7 +447,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var isReadOnly = false
   private var isApplyingControlledValue = false
   private var nativeEventCount = 0
-  private var lastEventWasPaste = false
+  // Count of the latest intercepted paste, so a flush can tell whether JS has received it.
+  private var lastPasteEventCount = 0
   private var hasControlledDocument = false
   private var resetGeneration = 0
   private var lastContentSize = CGSize.zero
@@ -500,7 +501,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       guard let self else { return }
       let selection = self.sourceSelection()
       self.nativeEventCount += 1
-      self.lastEventWasPaste = true
+      self.lastPasteEventCount = self.nativeEventCount
       var payload: [String: Any] = context
       payload["value"] = self.textView.serializedText()
       payload["eventCount"] = self.nativeEventCount
@@ -512,7 +513,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       guard let self else { return }
       let selection = self.sourceSelection()
       self.nativeEventCount += 1
-      self.lastEventWasPaste = true
+      self.lastPasteEventCount = self.nativeEventCount
       self.onComposerPasteText([
         "value": self.textView.serializedText(),
         "eventCount": self.nativeEventCount,
@@ -817,7 +818,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       "selection": ["start": selection.start, "end": selection.end],
       "eventCount": nativeEventCount,
       "resetGeneration": resetGeneration,
-      "isPaste": lastEventWasPaste,
+      "pasteEventCount": lastPasteEventCount,
     ]
   }
 
@@ -1160,7 +1161,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     revealSelectionAfterLayout()
     let selection = sourceSelection()
     nativeEventCount += 1
-    lastEventWasPaste = false
     onComposerChange([
       "value": value,
       "selection": ["start": selection.start, "end": selection.end],
@@ -1178,7 +1178,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let currentValue = textView.serializedText()
     let selection = sourceSelection()
     nativeEventCount += 1
-    lastEventWasPaste = false
     onComposerSelectionChange([
       "value": currentValue,
       "selection": ["start": selection.start, "end": selection.end],

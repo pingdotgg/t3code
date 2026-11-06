@@ -77,7 +77,7 @@ interface NativeComposerEditorRef {
     readonly selection: ComposerEditorSelection;
     readonly eventCount: number;
     readonly resetGeneration: number;
-    readonly isPaste: boolean;
+    readonly pasteEventCount: number;
   }>;
 }
 
@@ -314,8 +314,8 @@ export function ComposerEditor({
       const state = await Promise.resolve()
         .then(() => nativeRef.current?.readState())
         .catch(() => undefined);
-      // Acknowledging a paste's count here would get its own event, and the paste, rejected.
-      if (state && !state.isPaste) {
+      // Acknowledging past a paste JS has not received yet would get the paste rejected.
+      if (state && state.pasteEventCount <= mostRecentEventCountRef.current) {
         applyNativeChange(state);
       }
     },
