@@ -57,10 +57,12 @@ export function useCheckProviderUpdates() {
 
   // A repeat click must not start a second model rediscovery while one is running.
   return () => {
-    inFlight.current ??= check().finally(() => {
+    if (inFlight.current) return inFlight.current;
+    const running = check().finally(() => {
       inFlight.current = null;
     });
-    return inFlight.current;
+    inFlight.current = running;
+    return running;
   };
 }
 
