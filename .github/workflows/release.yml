@@ -565,22 +565,32 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
-      - uses: ./.github/actions/setup-apt-mirrors
+      # Older release refs lack build:desktop:bundle and use the full build,
+      # which compiles the Linux browser secret helper and needs libsecret.
+      - name: Check bundle-only build support
+        id: bundle_build
+        run: |
+          script="$(node -p "require('./package.json').scripts['build:desktop:bundle'] ? 'build:desktop:bundle' : 'build:desktop'")"
+          echo "script=$script" >> "$GITHUB_OUTPUT"
 
-      # @t3tools/desktop#build compiles the Linux browser secret helper on a
-      # Linux host before packing, and that needs libsecret headers.
+      - if: steps.bundle_build.outputs.script == 'build:desktop'
+        uses: ./.github/actions/setup-apt-mirrors
+
       - name: Install browser secret helper build libraries
+        if: steps.bundle_build.outputs.script == 'build:desktop'
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
-      # Runs t3#build (which depends on @t3tools/web#build) and
-      # @t3tools/desktop#build, so apps/server/dist holds the server bundle
-      # plus the web client and apps/desktop/dist-electron the Electron main.
+      # Runs t3#build (which depends on @t3tools/web#build) and the desktop
+      # bundle, so apps/server/dist holds the server bundle plus the web client
+      # and apps/desktop/dist-electron the Electron main. build:desktop:bundle
+      # skips the Linux browser secret helper, which this artifact does not
+      # carry; each Linux package job compiles its own per arch.
       # The release channel is already stable, nightly, or preview. Builds in
       # other repositories report "dev" telemetry.
       - name: Build JS bundle
         env:
           T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && needs.preflight.outputs.release_channel || 'dev' }}
-        run: vp run build:desktop
+        run: vp run ${{ steps.bundle_build.outputs.script }}
 
       # Two paths under apps/ so the artifact root is apps/; consumers download
       # into `apps` to restore both at their original locations.
