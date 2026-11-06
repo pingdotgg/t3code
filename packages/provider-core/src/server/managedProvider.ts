@@ -285,16 +285,24 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           );
           yield* restore(
             refreshSemaphore.withPermits(1)(
-              release.pipe(
-                Effect.andThen(input.invalidateUsageCache ?? Effect.void),
-                Effect.andThen(input.getSettings),
-                Effect.flatMap((settings) =>
-                  applySnapshotBase(settings, { forceRefresh: true }).pipe(
-                    Effect.provideService(UsagePolling, true),
-                  ),
-                ),
-                Effect.asVoid,
-              ),
+              Effect.gen(function* () {
+                yield* release;
+                const settings = yield* input.getSettings;
+                const current = (yield* Ref.get(snapshotStateRef)).snapshot;
+                if (
+                  (yield* Clock.currentTimeMillis) < usageRefreshAfter &&
+                  current.usageLimits?.unavailable?.reason !== "unsupported" &&
+                  !(yield* UsageAfterReset) &&
+                  !(yield* UsageAccountReset) &&
+                  !input.haveSettingsChanged(yield* Ref.get(settingsRef), settings)
+                ) {
+                  return;
+                }
+                yield* input.invalidateUsageCache ?? Effect.void;
+                yield* applySnapshotBase(settings, { forceRefresh: true }).pipe(
+                  Effect.provideService(UsagePolling, true),
+                );
+              }),
             ),
           ).pipe(
             Effect.onExit((exit) => release.pipe(Effect.andThen(Deferred.succeed(claim, exit)))),

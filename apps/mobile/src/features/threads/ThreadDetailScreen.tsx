@@ -975,6 +975,7 @@ function ThreadDetailBody(
       (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
     )?.driver,
     usageLimitsPanel !== null &&
+      (props.showContent ?? true) &&
       activeUserInputRequestId === null &&
       props.connectionStateLabel === "connected",
   );

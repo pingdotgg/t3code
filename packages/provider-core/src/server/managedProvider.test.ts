@@ -7,7 +7,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { UsagePolling } from "./usageLimits.ts";
+import { UsagePolling, UsageAfterReset, UsageAccountReset } from "./usageLimits.ts";
 import * as Cache from "effect/Cache";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -148,6 +148,7 @@ describe("makeManagedServerProvider", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const reads = yield* Ref.make(0);
+          const checks = yield* Ref.make(0);
           const provider = yield* makeManagedServerProvider({
             resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
             getSettings: Effect.succeed({ enabled: true }),
@@ -155,6 +156,7 @@ describe("makeManagedServerProvider", () => {
             haveSettingsChanged: () => false,
             initialSnapshot: () => Effect.succeed(initialSnapshot),
             checkProvider: Effect.gen(function* () {
+              yield* Ref.update(checks, (n) => n + 1);
               if (yield* UsagePolling) yield* Ref.update(reads, (n) => n + 1);
               return {
                 ...refreshedSnapshot,
@@ -170,7 +172,9 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* Ref.get(reads), 1);
           assert.strictEqual((yield* provider.getSnapshot).usageLimits?.refreshAfter, 300_000);
           yield* TestClock.adjust("4 minutes");
+          const beforeChecks = yield* Ref.get(checks);
           yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(checks), beforeChecks);
           assert.strictEqual(yield* Ref.get(reads), 1);
           assert.strictEqual((yield* provider.getSnapshot).usageLimits?.refreshAfter, 300_000);
           yield* TestClock.adjust("1 minute");
@@ -178,6 +182,10 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* Ref.get(reads), 1);
           yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true));
           assert.strictEqual(yield* Ref.get(reads), 2);
+          yield* provider.refreshUsage!.pipe(Effect.provideService(UsageAfterReset, true));
+          assert.strictEqual(yield* Ref.get(reads), 3);
+          yield* provider.refreshUsage!.pipe(Effect.provideService(UsageAccountReset, true));
+          assert.strictEqual(yield* Ref.get(reads), 4);
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
@@ -365,7 +373,7 @@ describe("makeManagedServerProvider", () => {
         yield* Fiber.join(queued);
         yield* Fiber.join(coalesced);
         assert.strictEqual(yield* Deferred.isDone(completed), true);
-        assert.strictEqual(yield* Ref.get(calls), 3);
+        assert.strictEqual(yield* Ref.get(calls), 2);
         assert.strictEqual((yield* provider.getSnapshot).usageLimits?.windows[0]?.usedPercent, 100);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
