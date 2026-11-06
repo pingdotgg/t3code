@@ -208,7 +208,7 @@ it("sizes a raw HTML image by width and height written with px units", async () 
         cwd={undefined}
         parseRawHtml
         text={
-          '### PR Review in progress <img src="/work/spinner.gif" alt="spinner" width="14px" height="14px" />'
+          '### PR Review in progress <img src="/work/spinner.gif" alt="spinner" width="14px" height="7px" />'
         }
       />
     </HostImageUrlContext>,
@@ -217,7 +217,8 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   await expect.element(image).toHaveAttribute("src", largeImage);
   const element = image.element() as HTMLImageElement;
   await element.decode();
-  expect(element.getBoundingClientRect().width).toBe(14);
+  const { width, height } = element.getBoundingClientRect();
+  expect({ width, height }).toEqual({ width: 14, height: 7 });
 });
 
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
