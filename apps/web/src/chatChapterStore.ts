@@ -28,6 +28,8 @@ interface ChatChapterStoreState {
   togglePin: (threadRef: ScopedThreadRef, message: ChapterMessage) => void;
   unpin: (threadRef: ScopedThreadRef, messageId: MessageId) => void;
   requestReveal: (threadRef: ScopedThreadRef, messageId: MessageId) => void;
+  /** Drops the request only if it is still the one with this nonce, so a newer request survives. */
+  clearReveal: (nonce: number) => void;
 }
 
 export interface ChapterMessage {
@@ -117,6 +119,8 @@ export const useChatChapterStore = create<ChatChapterStoreState>()(
               nonce: ++revealNonce,
             },
           })),
+        clearReveal: (nonce) =>
+          set((state) => (state.revealRequest?.nonce === nonce ? { revealRequest: null } : state)),
       };
     },
     {

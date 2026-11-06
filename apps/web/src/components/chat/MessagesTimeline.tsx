@@ -578,7 +578,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
-  const revealedMessageId = citationRequest?.citation.messageId ?? null;
+  const chapterReveal = useChatChapterStore((state) => state.revealRequest);
+  const clearChapterReveal = useChatChapterStore((state) => state.clearReveal);
+  // The store request is cleared once the scroll starts, but zen mode must keep the
+  // target row visible afterwards, so the target is remembered here for this thread.
+  const [revealedChapter, setRevealedChapter] = useState<{
+    threadKey: string;
+    messageId: MessageId;
+  } | null>(null);
+  if (
+    chapterReveal &&
+    chapterReveal.threadKey === routeThreadKey &&
+    (revealedChapter?.threadKey !== routeThreadKey ||
+      revealedChapter.messageId !== chapterReveal.messageId)
+  ) {
+    setRevealedChapter({ threadKey: routeThreadKey, messageId: chapterReveal.messageId });
+  }
+  const revealedMessageId =
+    citationRequest?.citation.messageId ??
+    (revealedChapter?.threadKey === routeThreadKey ? revealedChapter.messageId : null);
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -1212,7 +1230,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     contentInsetEndAdjustment,
   });
 
-  const chapterReveal = useChatChapterStore((state) => state.revealRequest);
   const handledChapterRevealRef = useRef<number | null>(null);
   const historyRequestedForChapterRef = useRef<{
     nonce: number;
@@ -1242,6 +1259,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
           runningRunId,
           isWorking,
           runlessWorkActive,
+          toolCallVisibility,
+          revealedMessageId,
         })
       ).get(chapterEntry.id);
       if (owningRunId) {
@@ -1301,8 +1320,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
       viewOffset: 96,
     });
+    // Clear the request so a remount does not scroll again over the remembered position.
+    clearChapterReveal(chapterReveal.nonce);
   }, [
     chapterReveal,
+    clearChapterReveal,
     historyControls,
     listRef,
     navigateTimeline,
