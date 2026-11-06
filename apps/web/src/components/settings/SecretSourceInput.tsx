@@ -125,6 +125,7 @@ function SecretCheckButton(props: {
   readonly environmentId: EnvironmentId;
   readonly secret: SecretReference;
   readonly label: string;
+  readonly disabled?: boolean | undefined;
 }) {
   const { environmentId, secret } = props;
   const supported = useAtomValue(
@@ -173,7 +174,7 @@ function SecretCheckButton(props: {
               type="button"
               size="icon-micro"
               variant="ghost-muted"
-              disabled={!canCheck || state?.status === "checking"}
+              disabled={props.disabled === true || !canCheck || state?.status === "checking"}
               onClick={() => void run()}
               aria-label={
                 state?.status === "failed"
@@ -303,6 +304,7 @@ export function SecretSourceInput({
               environmentId={environmentId}
               secret={secret}
               label={`Check ${label}`}
+              disabled={input.disabled}
             />
           ) : null}
         </div>
