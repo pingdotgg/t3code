@@ -96,8 +96,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   .annotate(Tool.Title, "Get orchestration capabilities")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
+  .annotate(Tool.Idempotent, true);
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
@@ -197,8 +196,7 @@ const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
   .annotate(Tool.Title, "List scheduled tasks")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
+  .annotate(Tool.Idempotent, true);
 
 const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   description:
@@ -251,8 +249,7 @@ const ThreadListTool = Tool.make("t3_thread_list", {
   .annotate(Tool.Title, "List T3 threads")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
+  .annotate(Tool.Idempotent, true);
 
 const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
@@ -311,8 +308,7 @@ const ThreadWaitTool = Tool.make("t3_thread_wait", {
   .annotate(Tool.Title, "Wait for a T3 thread")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
+  .annotate(Tool.Idempotent, true);
 
 const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   description:
