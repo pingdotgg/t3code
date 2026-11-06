@@ -225,7 +225,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
           <VoiceWaveform level={level} />
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
           <span
-            className="shrink-0 text-xs tabular-nums text-muted-foreground"
+            className="flex-1 shrink-0 text-xs tabular-nums text-muted-foreground"
             aria-label="Recording time"
           >
             {formatTime(elapsed)} / {formatTime(LOOPBACK_SECONDS)}
