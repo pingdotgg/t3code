@@ -10,48 +10,17 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 
-export interface ShortcutEventLike {
-  getModifierState?: (key: "AltGraph") => boolean;
-  type?: string;
-  code?: string;
-  key: string;
-  repeat?: boolean;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
-}
-
-export interface ShortcutModifierStateLike {
-  metaKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
-}
-
-export const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
-  Backquote: "`",
-  Backslash: "\\",
-  BracketLeft: "[",
-  BracketRight: "]",
-  Comma: ",",
-  Digit0: "0",
-  Digit1: "1",
-  Digit2: "2",
-  Digit3: "3",
-  Digit4: "4",
-  Digit5: "5",
-  Digit6: "6",
-  Digit7: "7",
-  Digit8: "8",
-  Digit9: "9",
-  Equal: "=",
-  Minus: "-",
-  Period: ".",
-  Quote: "'",
-  Semicolon: ";",
-  Slash: "/",
-};
+export {
+  EVENT_CODE_SHORTCUT_KEYS,
+  isMacPlatform,
+  matchesKeybindingShortcut,
+  matchesKeybindingShortcutModifiers,
+  normalizeEventKey,
+  resolveEventKeys,
+  shortcutKeyFromEvent,
+  type ShortcutEventLike,
+  type ShortcutModifierStateLike,
+} from "./keybindingMatching.ts";
 
 export const US_SHIFTED_TO_UNSHIFTED_KEYS: ReadonlyMap<string, string> = new Map([
   ["!", "1"],
@@ -76,65 +45,6 @@ export const US_SHIFTED_TO_UNSHIFTED_KEYS: ReadonlyMap<string, string> = new Map
   [">", "."],
   ["?", "/"],
 ]);
-
-export function isMacPlatform(platform: string): boolean {
-  return /mac|iphone|ipad|ipod/i.test(platform);
-}
-
-export function normalizeEventKey(key: string): string {
-  const normalized = key.toLowerCase();
-  if (normalized === "esc") return "escape";
-  return normalized;
-}
-
-export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
-  const layoutKey = normalizeEventKey(event.key);
-  if (/^[a-z]$/.test(layoutKey)) return layoutKey;
-  const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
-  return physicalKey ?? layoutKey;
-}
-
-export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
-  const layoutKey = normalizeEventKey(event.key);
-  const keys = new Set([layoutKey]);
-  const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
-  if (letterCode && !/^[a-z]$/.test(layoutKey)) {
-    keys.add(letterCode.toLowerCase());
-  }
-  keys.add(shortcutKeyFromEvent(event));
-  return keys;
-}
-
-export function matchesKeybindingShortcutModifiers(
-  event: ShortcutModifierStateLike,
-  shortcut: KeybindingShortcut,
-  platform: string,
-): boolean {
-  const useMetaForMod = isMacPlatform(platform);
-  const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
-  const expectedCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
-  return (
-    event.metaKey === expectedMeta &&
-    event.ctrlKey === expectedCtrl &&
-    event.shiftKey === shortcut.shiftKey &&
-    event.altKey === shortcut.altKey
-  );
-}
-
-export function matchesKeybindingShortcut(
-  event: ShortcutEventLike,
-  shortcut: KeybindingShortcut,
-  platform: string,
-): boolean {
-  if (
-    !isMacPlatform(platform) &&
-    event.getModifierState?.("AltGraph") &&
-    !/^[a-z0-9]$/i.test(event.key)
-  )
-    return false;
-  if (!matchesKeybindingShortcutModifiers(event, shortcut, platform)) return false;
-  return resolveEventKeys(event).has(shortcut.key);
-}
 
 type WhenToken =
   | { type: "identifier"; value: string }
@@ -162,18 +72,18 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+b", command: "threadPanel.toggle", when: "!terminalFocus" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
-  // cmd+shift+D splits a pane down; dictation is V for voice.
-  { key: "mod+alt+v", command: "composer.dictation", when: "!terminalFocus" },
+  { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
   // cmd+W closes the focused tab.
   { key: "mod+w", command: "tab.close", when: "!terminalFocus" },
   { key: "mod+shift+t", command: "view.reopenClosed" },
-  // Layout panes: cmd+D opens a new pane to the right, cmd+shift+D below.
-  // Inside a terminal the same keys split the terminal (above). The diff
-  // toggle gave up cmd+D; alt+cmd+B and the palette still open it.
+  // Layout panes: cmd+D opens a new pane to the right, alt+cmd+shift+D below.
+  // Inside a terminal cmd+D splits the terminal (above). The diff toggle gave
+  // up cmd+D; alt+cmd+B and the palette still open it. cmd+shift+D stays
+  // dictation outside a terminal.
   { key: "mod+d", command: "layout.splitRight", when: "!terminalFocus" },
-  { key: "mod+shift+d", command: "layout.splitDown", when: "!terminalFocus" },
+  { key: "mod+alt+shift+d", command: "layout.splitDown", when: "!terminalFocus" },
   { key: "mod+alt+f", command: "layout.fill" },
   // alt+cmd looks, ctrl+alt+cmd moves (niri's map). Off macOS mod is ctrl,
   // so arrows use alt+shift to focus and ctrl+alt+shift to move. H J K L
@@ -554,8 +464,6 @@ export const RETIRED_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   // cmd+W closes the focused tab, the side pane's surface first.
   { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
-  // cmd+shift+D splits a pane down; dictation moved to alt+cmd+V.
-  { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
   // cmd+T opens a new tab in the focused pane; surfaces are ordinary tabs now.
   { key: "mod+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
 ];
