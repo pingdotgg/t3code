@@ -23,28 +23,38 @@ type AudioChoice = typeof AudioChoice.Type;
 const savedKey = (id: string) => `${AUDIO_KEY}:saved:${id}`;
 const pendingGrant = (choice: AudioChoice) =>
   choice && "pending" in choice ? choice.pending : null;
-const activeGrant = (choice: AudioChoice, saved: boolean) =>
-  choice && "pending" in choice ? (saved ? choice.pending : choice.previous) : choice;
 const CleanupGrant = Schema.NullOr(Schema.String);
 const decodeChoice = Schema.decodeSync(Schema.fromJsonString(AudioChoice));
+const readChoice = () => readLocalStorageValue(AUDIO_KEY, null, AudioChoice);
 
-function isSaved(id: string | undefined) {
-  return !!id && window.localStorage.getItem(savedKey(id)) === "true";
+function readSaveMarker(id: string | undefined) {
+  try {
+    return id ? window.localStorage.getItem(savedKey(id)) : null;
+  } catch {
+    return undefined;
+  }
+}
+
+function activeGrant(choice: AudioChoice, marker: string | null | undefined) {
+  if (!choice || !("pending" in choice)) return choice;
+  // Only a confirmed missing marker means the previous grant still applies.
+  if (marker === null) return choice.previous;
+  return marker === "true" ? choice.pending : null;
 }
 
 export function useAudioGrant() {
   const [choice] = useLocalStorage(AUDIO_KEY, null, AudioChoice);
   const id = pendingGrant(choice)?.id;
-  const saved = useSyncExternalStore(
+  const marker = useSyncExternalStore(
     (notify) => (id ? subscribeLocalStorageKey(savedKey(id), notify) : () => {}),
-    () => isSaved(id),
-    () => false,
+    () => readSaveMarker(id),
+    () => undefined,
   );
-  return activeGrant(choice, saved);
+  return activeGrant(choice, marker);
 }
 
-function replaceChoice(choice: AudioChoice) {
-  const old = pendingGrant(readLocalStorageValue(AUDIO_KEY, null, AudioChoice));
+function replaceChoice(choice: AudioChoice, previous = readChoice()) {
+  const old = pendingGrant(previous);
   writeLocalStorageValue(AUDIO_KEY, choice, null, AudioChoice);
   if (old && pendingGrant(getLocalStorageItem(AUDIO_KEY, AudioChoice))?.id !== old.id)
     window.localStorage.removeItem(savedKey(old.id));
@@ -57,12 +67,15 @@ export function chooseAudioDestination(destination: VoiceTranscriptionDestinatio
 export function pendingCloudAudioChoice(
   destination: Extract<VoiceTranscriptionDestination, { kind: "cloud" }>,
 ) {
-  const choice = getLocalStorageItem(AUDIO_KEY, AudioChoice);
+  const choice = readChoice();
   const pending = { id: randomUUID(), destination };
-  replaceChoice({ pending, previous: activeGrant(choice, isSaved(pendingGrant(choice)?.id)) });
+  replaceChoice(
+    { pending, previous: activeGrant(choice, readSaveMarker(pendingGrant(choice)?.id)) },
+    choice,
+  );
   // A late response can acknowledge only its own choice, never write the destination another tab picked.
   return () => {
-    if (pendingGrant(getLocalStorageItem(AUDIO_KEY, AudioChoice))?.id === pending.id)
+    if (pendingGrant(readChoice())?.id === pending.id)
       writeLocalStorageValue(savedKey(pending.id), true, false, Schema.Boolean);
   };
 }
@@ -78,7 +91,7 @@ export function bindAudioGrant(id: string) {
         choice = raw ? decodeChoice(raw) : null;
         cachedRaw = raw;
       }
-      return activeGrant(choice, isSaved(pendingGrant(choice)?.id));
+      return activeGrant(choice, readSaveMarker(pendingGrant(choice)?.id));
     };
     const bound = current();
     if (bound?.id !== id) return () => false;

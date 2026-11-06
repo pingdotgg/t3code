@@ -394,6 +394,47 @@ it("revokes across windows even before the storage event and survives stale pref
   }
 });
 
+it("recovers from a corrupt choice without enabling cloud dictation before the save completes", async () => {
+  setup();
+  window.localStorage.setItem("t3code:voice-audio-grant:v1", "not-json");
+  const save = pendingCloudAudioChoice({
+    kind: "cloud",
+    environmentId: EnvironmentId.make("env-b"),
+    provider: "openai",
+  });
+  await using _screen = await render(<Probe />);
+  expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  await act(save);
+  expect(mocks.voice.transcriptionEnvironmentId).toBe("env-b");
+});
+
+it("uses neither destination when the cloud save marker cannot be read", async () => {
+  setup({ destination: "env-a" });
+  const key = "t3code:voice-audio-grant:v1";
+  const previous = JSON.parse(window.localStorage.getItem(key)!) as { id: string };
+  const canSendToPrevious = bindAudioGrant(previous.id);
+  const save = pendingCloudAudioChoice({
+    kind: "cloud",
+    environmentId: EnvironmentId.make("env-b"),
+    provider: "openai",
+  });
+  save();
+  const getItem = Storage.prototype.getItem;
+  using _blocked = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (
+    this: Storage,
+    k,
+  ) {
+    if (k.startsWith(`${key}:saved:`))
+      throw new DOMException("Storage is blocked", "SecurityError");
+    return getItem.call(this, k);
+  });
+  await using _screen = await render(<Probe />);
+  expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  expect(canSendToPrevious()).toBe(false);
+  await act(() => mocks.voice.start());
+  expectNoAudioSent();
+});
+
 it("cleans the transcript only after cleanup is separately enabled", async () => {
   setup({ destination: "env-a" });
   chooseTranscriptCleanup(true);
