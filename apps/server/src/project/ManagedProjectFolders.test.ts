@@ -430,6 +430,9 @@ it.effect("creates lesson projects under lessons with the requested id", () =>
         assert.isTrue(Option.exists(project, (owner) => owner.workspaceRoot.startsWith(folder)));
         // The losing concurrent call must not leave its folder behind.
         assert.equal((yield* fileSystem.readDirectory(path.join(baseDir, "lessons"))).length, 1);
+        const workspaceRoot = Option.getOrThrow(project).workspaceRoot;
+        assert.isTrue(yield* fileSystem.exists(path.join(workspaceRoot, "README.md")));
+        assert.isFalse(yield* fileSystem.exists(path.join(workspaceRoot, ".git")));
       }),
     ),
   ),

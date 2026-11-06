@@ -375,6 +375,18 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const writeScaffoldFiles = Effect.fn("ManagedProjectFolders.writeScaffoldFiles")(function* (
+    cwd: string,
+    name: string,
+  ) {
+    yield* fileSystem.writeFileString(path.join(cwd, "README.md"), namedProjectReadme(name));
+    yield* fileSystem.makeDirectory(path.join(cwd, "assets"));
+    yield* fileSystem.writeFileString(
+      path.join(cwd, "assets", "icon.svg"),
+      namedProjectIconSvg(name),
+    );
+  });
+
   const scaffoldRepository = Effect.fn("ManagedProjectFolders.scaffoldRepository")(function* (
     cwd: string,
     name: string,
@@ -389,12 +401,7 @@ const make = Effect.gen(function* () {
       args: ["init", `--initial-branch=${branch}`],
       timeoutMs: 10_000,
     });
-    yield* fileSystem.writeFileString(path.join(cwd, "README.md"), namedProjectReadme(name));
-    yield* fileSystem.makeDirectory(path.join(cwd, "assets"));
-    yield* fileSystem.writeFileString(
-      path.join(cwd, "assets", "icon.svg"),
-      namedProjectIconSvg(name),
-    );
+    yield* writeScaffoldFiles(cwd, name);
     // Force explicit filenames so global ignore rules cannot drop them, and keep
     // core.safecrlf=true from refusing the LF files under CRLF conversion.
     yield* git.execute({
@@ -425,7 +432,11 @@ const make = Effect.gen(function* () {
     const workspaceRoot = yield* claimNamedFolder(input.name, input.root);
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
     const prepared = yield* Effect.all([
-      scaffoldRepository(workspaceRoot, input.name).pipe(
+      // Lesson folders stay plain folders, never Git repositories.
+      (input.root === "lessons"
+        ? writeScaffoldFiles(workspaceRoot, input.name).pipe(Effect.as(undefined))
+        : scaffoldRepository(workspaceRoot, input.name)
+      ).pipe(
         Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
       ),
       input.projectId === undefined
