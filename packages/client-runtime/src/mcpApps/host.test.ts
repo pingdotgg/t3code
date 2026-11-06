@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { MAX_TOOL_OUTPUT_IMAGES } from "@t3tools/shared/toolOutput";
 
@@ -233,6 +233,35 @@ describe("makeMcpAppHost", () => {
       .filter((m) => m.id === 9 || m.method === "ui/notifications/tool-result")
       .map((m) => m.id ?? m.method);
     expect(order).toEqual(["ui/notifications/tool-result", 9]);
+  });
+
+  it("sends the screenshot marker and answers the app when an image load stalls", async () => {
+    const answered = Promise.withResolvers<void>();
+    const sent: Array<Record<string, unknown>> = [];
+    const { host } = setup({
+      post: (message) => {
+        const record = message as Record<string, unknown>;
+        sent.push(record);
+        if (record.id === 9) answered.resolve();
+      },
+      loadToolOutputImage: () => new Promise(() => undefined),
+    });
+    vi.useFakeTimers();
+    try {
+      host.setToolCall({
+        arguments: {},
+        result: { content: [{ type: "image", mimeType: "image/png" }] },
+      });
+      initialize(host);
+      host.receive({ jsonrpc: "2.0", id: 9, method: "resources/read", params: { uri: "ui://x" } });
+      await vi.advanceTimersByTimeAsync(15_000);
+      await answered.promise;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(sent.find((m) => m.method === "ui/notifications/tool-result")?.params).toEqual({
+      content: [{ type: "image", mimeType: "image/png" }],
+    });
   });
 
   it("accepts ui/message as one text block or the SDK's block array", async () => {

@@ -149,7 +149,17 @@ function normalizeMcpAppToolResult(result: McpAppCallToolResult): McpAppCallTool
   };
 }
 
-/** Fills image markers that lack bytes, in tool-output-image order; one that fails to load stays a marker. */
+const IMAGE_LOAD_TIMEOUT_MS = 15_000;
+
+function loadWithin(load: Promise<Uint8Array | undefined>): Promise<Uint8Array | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(resolve, IMAGE_LOAD_TIMEOUT_MS, undefined);
+  });
+  return Promise.race([load, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Fills image markers that lack bytes, in tool-output-image order; one that fails or stalls stays a marker. */
 export function hydrateMcpAppToolResultImages(
   result: McpAppCallToolResult,
   load: (index: number) => Promise<Uint8Array | undefined>,
@@ -166,7 +176,7 @@ export function hydrateMcpAppToolResultImages(
     if (image.data !== undefined) return block;
     loading = true;
     const { source: _source, ...rest } = block;
-    return load(at).then(
+    return loadWithin(load(at)).then(
       (bytes) =>
         bytes === undefined
           ? block
@@ -215,9 +225,11 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       notify("ui/notifications/tool-result", normalizeMcpAppToolResult(result));
       return;
     }
-    toolResultDelivered = hydrating.then((hydrated) =>
-      notify("ui/notifications/tool-result", normalizeMcpAppToolResult(hydrated)),
-    );
+    toolResultDelivered = hydrating
+      .then((hydrated) =>
+        notify("ui/notifications/tool-result", normalizeMcpAppToolResult(hydrated)),
+      )
+      .catch(() => undefined);
   };
 
   const sendToolCall = () => {
