@@ -38,8 +38,8 @@ export function extensionStatusBannerItem(
   if (statuses.length === 0) return null;
   return {
     id: "pi-extension-status",
-    variant: "plain",
-    icon: <span className="text-white">▸</span>,
+    variant: "default",
+    icon: <span>▸</span>,
     title: <output>{`Pi · ${statuses.map((status) => status.text).join(" · ")}`}</output>,
   };
 }
