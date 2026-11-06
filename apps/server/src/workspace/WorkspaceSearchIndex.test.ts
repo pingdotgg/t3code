@@ -47,10 +47,19 @@ it.live("bounds native image results without losing matches, ranking, or query c
     yield* fileSystem.makeDirectory(path.join(cwd, "other"));
     yield* fileSystem.makeDirectory(path.join(cwd, "assetss"));
     yield* fileSystem.makeDirectory(path.join(cwd, "assets/images"));
-    const imagePaths = PROJECT_FAVICON_EXTENSIONS.flatMap((extension) => [
-      `assets/logo${extension}`,
-      `other/logo${extension.toUpperCase()}`,
-    ]);
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".git/info/exclude"), "hidden/\n");
+    yield* fileSystem.makeDirectory(path.join(cwd, "hidden"));
+    yield* fileSystem.writeFileString(path.join(cwd, "hidden/logo.png"), "");
+    const imagePaths = [
+      ...PROJECT_FAVICON_EXTENSIONS.flatMap((extension) => [
+        `assets/logo${extension}`,
+        `other/logo${extension.toUpperCase()}`,
+      ]),
+      "assets/foo{bar}.png",
+      "assets/[id].png",
+    ];
     for (const relativePath of [
       ...Array.from({ length: 220 }, (_, index) => `assets/source-${index}.ts`),
       "assets/logo.ts",
@@ -103,6 +112,11 @@ it.live("bounds native image results without losing matches, ranking, or query c
       "/assets/images",
       "assets/images/",
       "logo *.svg !other",
+      "foo{bar}.png",
+      "[id].png",
+      "*.{png,svg}",
+      "hidden/",
+      "/hidden/",
     ]) {
       const ordinary = yield* searchIndex.search(query, 1000, "file");
       const expected = ordinary.entries.filter((entry) => isProjectFaviconPath(entry.path));
@@ -141,6 +155,14 @@ it.live("bounds native image results without losing matches, ranking, or query c
     }
     const largeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-image-rank-" });
     yield* fileSystem.makeDirectory(path.join(largeCwd, "x/logo"), { recursive: true });
+    yield* vcsProcess.run({
+      operation: "test.gitInit",
+      command: "git",
+      args: ["init"],
+      cwd: largeCwd,
+    });
+    yield* fileSystem.writeFileString(path.join(largeCwd, ".git/info/exclude"), "hidden.txt\n");
+    yield* fileSystem.writeFileString(path.join(largeCwd, "hidden.txt"), "");
     yield* fileSystem.makeDirectory(path.join(largeCwd, "a"));
     yield* fileSystem.makeDirectory(path.join(largeCwd, "b"));
     for (let index = 0; index < 14_998; index += 1) {
@@ -178,6 +200,28 @@ it.live("bounds native image results without losing matches, ranking, or query c
       );
     }
     expect((yield* searchIndex.search("", 1, "directory")).entries[0]?.kind).toBe("directory");
+    let materialized = 0;
+    fileSearch.mockImplementation((_query, options) => {
+      const count = Math.min(options?.pageSize ?? 100, 30_000);
+      materialized += count;
+      return {
+        ok: true,
+        value: {
+          ...nativeResult.value,
+          totalFiles: 30_000,
+          totalMatched: 30_000,
+          items: Array.from({ length: count }, (_, index) => ({
+            ...nativeResult.value.items[0],
+            relativePath: index === 29_999 ? "assets/late.png" : `assets/source-${index}.ts`,
+          })),
+        },
+      };
+    });
+    expect(yield* searchIndex.search("assets/", 200, "file", true)).toEqual({
+      entries: [],
+      truncated: true,
+    });
+    expect(materialized).toBeLessThanOrEqual(25_002);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
