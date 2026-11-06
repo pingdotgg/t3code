@@ -1,10 +1,8 @@
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { DraftThreadHeader } from "./DraftThreadHeader";
-import { threadHeaderAppearance } from "./thread-header-appearance";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
-import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { submittedThreadParams } from "./thread-route-state";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
 import { draftThreadShell } from "./draft-thread-shell";
@@ -18,6 +16,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   CommonActions,
@@ -370,6 +369,7 @@ export function NewTaskDraftScreen(props: {
     (hasImportedIncomingShare && !incomingShare) ||
     isIncomingShareUnavailable;
   const appliedInitialProjectKeyRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends the picker return once the project arrives, else replaces the route with the picker next frame
   useEffect(() => {
     if (isReturningToProjectPicker && requestedInitialProjectAvailable) {
       // oxlint-disable-next-line react/set-state-in-effect -- Ends the return-to-picker flow once the requested project arrives from the catalog.
@@ -396,6 +396,7 @@ export function NewTaskDraftScreen(props: {
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
   const initialPickerRef = useRef<"open" | "dismissed" | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the route or catalog project to the draft once projects load, or opens the picker in the navigator
   useEffect(() => {
     if (props.draftId) {
       return;
@@ -456,10 +457,15 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    const selection = resolveDraftProjectSelection(selectedProjectKey, projects, projectScopes, {
-      incomingShareId: props.incomingShareId,
-      pickerClosed: initialPickerRef.current === "open" && isFocused,
-    });
+    const selection = resolveDraftProjectSelection(
+      selectedProjectKey,
+      projects,
+      pickableProjectGroups(projectScopes),
+      {
+        incomingShareId: props.incomingShareId,
+        pickerClosed: initialPickerRef.current === "open" && isFocused,
+      },
+    );
     if (selection.kind === "preserve") {
       initialPickerRef.current = null;
       return;
@@ -495,6 +501,7 @@ export function NewTaskDraftScreen(props: {
   ]);
 
   const { loadBranches } = flow;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the selected project's branch list from the server once per project
   useEffect(() => {
     if (!selectedProject) {
       loadedBranchesProjectKeyRef.current = null;
@@ -622,6 +629,7 @@ export function NewTaskDraftScreen(props: {
       text: draft.text,
       records: draft.context?.records ?? [],
       environmentId: selectedProject.environmentId,
+      linkedEnvironments: flow.linkedEnvironments,
     })[0];
     if (strandedThread) {
       const owner =
@@ -841,21 +849,7 @@ export function NewTaskDraftScreen(props: {
 
   if (!flow.selectedModel) {
     return (
-      <ThreadScreenFallback
-        header={
-          <AppBar
-            title="New thread"
-            sidebar={false}
-            onBack={goBack}
-            options={{
-              ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
-              unstable_headerSubtitle: undefined,
-              unstable_headerRightItems: () => [],
-              unstable_headerToolbarItems: () => [],
-            }}
-          />
-        }
-      >
+      <ThreadScreenFallback header={<AppBar title="New thread" onBack={goBack} />}>
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
@@ -974,6 +968,7 @@ export function NewTaskDraftScreen(props: {
         onStopThread={() => {}}
         onResumeQueue={null}
         onSendMessage={handleStart}
+        offersSideChat={false}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
         onUpdateThreadInteractionMode={flow.planModeEnabled ? flow.setInteractionMode : undefined}

@@ -1,7 +1,10 @@
+import type { PluggableList } from "unified";
 import type { Root, RootContent } from "mdast";
-import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  resolveWorkEntryToolPresentation,
+  toolGroupAction,
+} from "@t3tools/client-runtime/work-log/presentation";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
-import { toolGroupAction } from "./MessagesTimeline.logic";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { type TimelineWorkEntry, type TimelineRow } from "./timelineRowContext";
 import { type WorkEntryIconName } from "./TimelineToolActivityIcon";
@@ -235,3 +238,6 @@ export function remarkThoughtPreview(fallback: string) {
       : [{ type: "text", value: fallback }];
   };
 }
+
+export const THOUGHT_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thought"]];
+export const THINKING_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thinking"]];

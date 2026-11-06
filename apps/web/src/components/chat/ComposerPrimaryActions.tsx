@@ -4,7 +4,7 @@ import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
@@ -36,9 +36,10 @@ interface ComposerPrimaryActionsProps {
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
+  /** Dictation is running; Send finishes it and submits once the transcript lands. */
+  voiceInputActive?: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
-  isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
@@ -91,9 +92,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
   promptHasText,
+  voiceInputActive = false,
   isSendBusy,
   sendDisabledReason,
-  isConnecting,
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
@@ -124,9 +125,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
-  const stageBackdropVariant = useSidebarStageBackdropVariant(
-    environmentIdentificationMode === "artwork",
-  );
+  const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <Tooltip key="interrupt">
@@ -190,8 +189,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           disabled={
             !canOperateThread ||
             isEnvironmentUnavailable ||
+            isSendDisabled ||
             pendingAction.isResponding ||
-            (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)
+            (!voiceInputActive &&
+              (pendingAction.isLastQuestion
+                ? !pendingAction.isComplete
+                : !pendingAction.canAdvance))
           }
         >
           {formatPendingPrimaryActionLabel({
@@ -212,9 +215,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           className={cn(messageActionPillClassName, "h-9 sm:h-8", compact ? "px-3" : "px-4")}
           {...pointerFocusProps}
-          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+          {isSendBusy ? "Sending..." : "Refine"}
         </button>
       );
     }
@@ -225,9 +228,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           className={cn(messageActionPillClassName, "h-9 rounded-r-none px-4 sm:h-8")}
           {...pointerFocusProps}
-          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+          {isSendBusy ? "Sending..." : "Implement"}
         </button>
         <Menu>
           <MenuTrigger
@@ -242,7 +245,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 onMouseDown={
                   preserveComposerFocusOnPointerDown ? (event) => event.preventDefault() : undefined
                 }
-                disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+                disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
               />
             }
           >
@@ -250,7 +253,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           </MenuTrigger>
           <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
             <MenuItem
-              disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+              disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
               onClick={() => {
                 if (canOperateThread) onImplementPlanInNewThread();
               }}
@@ -289,21 +292,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
-      (isConnecting
-        ? "Connecting"
-        : isPreparingWorktree
-          ? "Preparing worktree"
-          : isSendBusy
-            ? isEditingQueuedMessage
-              ? "Updating queued message"
-              : "Submitting message"
-            : null));
+      (isPreparingWorktree
+        ? "Preparing worktree"
+        : isSendBusy
+          ? isEditingQueuedMessage
+            ? "Updating queued message"
+            : "Submitting message"
+          : null));
   const submitTooltip =
     submitStatus ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
       : isRunning && !isEditingQueuedMessage && canSteer
-        ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
+        ? `Click to ${followUpBehavior}, ${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 
   const sendButton = (
@@ -320,7 +321,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       disabled={
         isSendBusy ||
         isSendDisabled ||
-        isConnecting ||
         isEnvironmentUnavailable ||
         (!hasSendableContent && !showResume)
       }
@@ -331,7 +331,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <StageBackdropButtonArt variant={stageBackdropVariant} />
         </span>
       ) : null}
-      {isConnecting || isSendBusy ? (
+      {isSendBusy ? (
         <Spinner size="sm" aria-hidden="true" />
       ) : showResume ? (
         <PlayIcon className="size-4 fill-current" aria-hidden="true" />
@@ -378,7 +378,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           }
         >
           <Minimize2Icon aria-hidden="true" />
-          {keepFullHistory ? "Keep" : "Compact"}
+          <span className="@max-[480px]/composer-surface:hidden">
+            {keepFullHistory ? "Keep" : "Compact"}
+          </span>
           <span className="text-muted-foreground">{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
