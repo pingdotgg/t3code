@@ -33,6 +33,7 @@ import type {
 import * as GitLabCli from "./GitLabCli.ts";
 import {
   AWARD_EMOJI_GRAPHQL_QUERY,
+  PIPELINE_STAGES_GRAPHQL_QUERY,
   decodeAwardEmojiJson,
   decodeBranchJson,
   decodeCommitDiffRefsJson,
@@ -52,6 +53,7 @@ import {
   decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodePipelineStageChecksJson,
   decodeProjectMergeCapabilitiesJson,
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
@@ -343,7 +345,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
-      /** `false` skips the trigger job read; the permission check before every write does. */
+      /** `false` skips the stage and trigger job reads, as write permission checks do. */
       readonly downstreamChecks?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
@@ -1255,6 +1257,25 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed((): ReadonlyArray<PullRequestCheck> => []),
     );
 
+  // Best-effort: stages that can't be read keep the merge request's single pipeline check.
+  const pipelineStageChecks = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+    readonly url: string;
+  }): Effect.Effect<ReadonlyArray<PullRequestCheck> | null> =>
+    URL.canParse(input.url)
+      ? graphqlRead({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "getPipelineStageChecks",
+          query: PIPELINE_STAGES_GRAPHQL_QUERY,
+          variables: { fullPath: input.repository, iid: String(input.number) },
+          decode: (raw) => decodePipelineStageChecksJson(raw, new URL(input.url).origin),
+        }).pipe(Effect.orElseSucceed(() => null))
+      : Effect.succeed(null);
+
   const projectUsers = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1848,6 +1869,9 @@ export const make = Effect.gen(function* () {
                 ),
               };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
+        // The stages already carry each trigger job's downstream pipeline.
+        const stages = yield* pipelineStageChecks({ ...input, url: detail.url });
+        if (stages !== null) return { ...detail, checks: stages };
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
           pipeline: detail.headPipeline,
