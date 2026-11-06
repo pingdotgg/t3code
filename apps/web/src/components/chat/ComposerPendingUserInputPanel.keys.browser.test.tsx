@@ -7,6 +7,7 @@ vi.mock(import("../ChatMarkdown"), () => ({
 }));
 
 import { render } from "../../../test/render";
+import { installSidebarTree, releaseSidebarRowFocus } from "../../lib/sidebarTree";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
 const renderPanel = async (voiceInputActive = false) => {
@@ -81,4 +82,70 @@ it("takes no keys while dictation runs", async () => {
   await userEvent.keyboard("2");
   expect(onToggleOption).not.toHaveBeenCalled();
   expect(optionKeyRef.current).toBeNull();
+});
+
+it("leaves digits to an interactive element outside the panel", async () => {
+  const { screen, onToggleOption } = await renderPanel();
+  await using _ = screen;
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  outside.focus();
+  await userEvent.keyboard("2");
+  expect(onToggleOption).not.toHaveBeenCalled();
+  outside.remove();
+});
+
+it("still picks with a digit while an option inside the panel has focus", async () => {
+  const { screen, onToggleOption } = await renderPanel();
+  await using _ = screen;
+  (screen.getByRole("button", { name: /CSV/ }).element() as HTMLElement).focus();
+  await userEvent.keyboard("2");
+  expect(onToggleOption).toHaveBeenCalledWith("format", "JSON");
+});
+
+it("leaves digits alone while a menu is open", async () => {
+  const { screen, onToggleOption } = await renderPanel();
+  await using _ = screen;
+  const menu = document.createElement("div");
+  menu.dataset.slot = "menu-popup";
+  menu.toggleAttribute("data-open", true);
+  document.body.append(menu);
+  await userEvent.keyboard("2");
+  expect(onToggleOption).not.toHaveBeenCalled();
+  menu.remove();
+});
+
+it("leaves digits to a secret request", async () => {
+  const { screen, onToggleOption } = await renderPanel();
+  await using _ = screen;
+  const secret = document.createElement("div");
+  secret.dataset.v2ItemType = "secret_request";
+  secret.tabIndex = 0;
+  document.body.append(secret);
+  secret.focus();
+  await userEvent.keyboard("2");
+  expect(onToggleOption).not.toHaveBeenCalled();
+  secret.remove();
+});
+
+it("picks after activating a real sidebar row that then lets go of focus", async () => {
+  const { screen, onToggleOption } = await renderPanel();
+  await using _ = screen;
+  const root = document.createElement("div");
+  const row = document.createElement("div");
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  row.dataset.sidebarRow = "env:thread";
+  row.addEventListener("click", releaseSidebarRowFocus);
+  root.append(row);
+  document.body.append(root);
+  const dispose = installSidebarTree(root);
+  row.focus();
+  await userEvent.keyboard("2");
+  expect(onToggleOption).not.toHaveBeenCalled();
+  row.click();
+  await userEvent.keyboard("2");
+  expect(onToggleOption).toHaveBeenCalledWith("format", "JSON");
+  dispose();
+  root.remove();
 });

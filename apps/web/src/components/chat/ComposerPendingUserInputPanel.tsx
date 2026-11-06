@@ -11,6 +11,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
+import { keyBelongsToFocusedControl } from "./composerFocusRedirect";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
@@ -185,6 +186,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       ) {
         return;
       }
+      const insidePanel =
+        target instanceof Element && target.closest("[data-pending-user-input-panel]") !== null;
+      if (!insidePanel && keyBelongsToFocusedControl(event)) return;
       const option = optionForKey(event.key);
       if (!option) return;
       event.preventDefault();
@@ -222,6 +226,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   return (
     <Collapsible
+      data-pending-user-input-panel
       dir={promptDirection}
       open={!isCollapsed}
       onOpenChange={(open) => {

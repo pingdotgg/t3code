@@ -1,4 +1,4 @@
-import { attachSidebarTree } from "../lib/sidebarTree";
+import { attachSidebarTree, releaseSidebarRowFocus } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
@@ -1478,6 +1478,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setSelectionAnchor(scopedThreadKey(threadRef));
     if (isMobile) {
       setOpenMobile(false);
+    }
+    // why: a question's number keys and type-to-focus both refuse keys aimed at a focused row.
+    if (threadByKeyRef.current.get(scopedThreadKey(threadRef))?.hasPendingUserInput) {
+      releaseSidebarRowFocus();
     }
     return router.navigate({
       to: "/$environmentId/$threadId",
