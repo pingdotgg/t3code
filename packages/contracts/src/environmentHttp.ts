@@ -43,6 +43,13 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "./environment.ts";
 import {
+  GracefulShutdownError,
+  GracefulShutdownId,
+  GracefulShutdownInput,
+  GracefulShutdownResult,
+  GracefulShutdownStatus,
+} from "./gracefulShutdown.ts";
+import {
   DpopFailureReason,
   AuthSessionId,
   ThreadId,
@@ -1004,6 +1011,33 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+class EnvironmentMaintainHttpApi extends HttpApiGroup.make("maintain")
+  .add(
+    HttpApiEndpoint.post("gracefulShutdown", "/api/maintain/graceful-shutdown", {
+      headers: OptionalBearerHeaders,
+      payload: GracefulShutdownInput,
+      success: GracefulShutdownResult,
+      error: [...EnvironmentScopedOperationErrors, GracefulShutdownError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("gracefulShutdownStatus", "/api/maintain/graceful-shutdown", {
+      headers: OptionalBearerHeaders,
+      success: GracefulShutdownStatus,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("gracefulShutdownComplete", "/api/maintain/graceful-shutdown/complete", {
+      headers: OptionalBearerHeaders,
+      payload: Schema.Struct({
+        shutdownId: Schema.optionalKey(GracefulShutdownId),
+      }),
+      success: Schema.Struct({}),
+      error: [...EnvironmentScopedOperationErrors, GracefulShutdownError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -1013,4 +1047,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentMaintainHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}

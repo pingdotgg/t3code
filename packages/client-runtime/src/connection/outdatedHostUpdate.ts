@@ -46,7 +46,7 @@ export class OutdatedHostUpdateError extends Schema.TaggedError<OutdatedHostUpda
   },
 ) {}
 
-export type OutdatedHostUpdateStage = "downloading" | "installing" | "resuming";
+export type OutdatedHostUpdateStage = "draining" | "downloading" | "installing" | "resuming";
 
 const reachOutdatedHost = Effect.fn("clientRuntime.connection.reachOutdatedHost")(function* (
   environmentId: EnvironmentId,

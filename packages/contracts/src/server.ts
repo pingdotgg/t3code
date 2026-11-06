@@ -933,7 +933,11 @@ export const DesktopUpdateCommitInput = Schema.Struct({
 });
 export type DesktopUpdateCommitInput = typeof DesktopUpdateCommitInput.Type;
 
-export const ServerSelfUpdateProgressStage = Schema.Literals(["downloading", "installing"]);
+export const ServerSelfUpdateProgressStage = Schema.Literals([
+  "draining",
+  "downloading",
+  "installing",
+]);
 export type ServerSelfUpdateProgressStage = typeof ServerSelfUpdateProgressStage.Type;
 
 export const ServerSelfUpdateProgressEvent = Schema.Union([

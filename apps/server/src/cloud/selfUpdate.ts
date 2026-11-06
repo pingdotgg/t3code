@@ -11,6 +11,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
@@ -29,6 +30,7 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as GracefulShutdown from "../orchestration-v2/GracefulShutdown.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
@@ -125,6 +127,7 @@ export function trackSwitchBlockReason(input: {
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
+  const gracefulShutdown = yield* GracefulShutdown.GracefulShutdown;
   const policy = yield* ManagedPolicy.ManagedPolicy;
   const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -172,6 +175,23 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       const unsafeCrossing = input.channel === undefined ? null : crossesTrackUnsafely(input);
       if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
       if (desktopAppUpdate.available) {
+        yield* reportProgress("draining");
+        yield* gracefulShutdown
+          .beginAndAwait({
+            scope: { type: "environment" },
+            reason: "server-update",
+          })
+          .pipe(
+            Effect.mapError((error) => failWith(error.reason, error)),
+            Effect.tap((result) =>
+              result.timedOut
+                ? Effect.logWarning(
+                    "Graceful shutdown timed out before desktop update; continuing.",
+                    { activeRunCount: result.activeRunCount },
+                  )
+                : Effect.void,
+            ),
+          );
         return yield* desktopAppUpdate.run(
           reportProgress,
           input.channel === undefined
@@ -200,6 +220,14 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     }
 
     return yield* Effect.gen(function* () {
+      yield* reportProgress("draining");
+      const drainFiber = yield* gracefulShutdown
+        .beginAndAwait({
+          scope: { type: "environment" },
+          reason: "server-update",
+        })
+        .pipe(Effect.forkChild);
+
       yield* reportProgress("downloading");
       const paths = yield* ensurePinnedRuntimeInstalled({
         baseDir: serverConfig.baseDir,
@@ -306,6 +334,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       );
 
       yield* reportProgress("installing");
+      const drainResult = yield* Fiber.join(drainFiber).pipe(
+        Effect.mapError((error) => failWith(error.reason, error)),
+      );
+      if (drainResult.timedOut) {
+        yield* Effect.logWarning(
+          "Graceful shutdown timed out before server update handoff; continuing.",
+          { activeRunCount: drainResult.activeRunCount },
+        );
+      }
       const updateId = yield* Effect.uninterruptible(
         launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
           Effect.mapError((error) =>

@@ -38,6 +38,7 @@ import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
+  draining: "Saving work…",
   downloading: "Downloading…",
   installing: "Downloading…",
   resuming: "Restarting…",

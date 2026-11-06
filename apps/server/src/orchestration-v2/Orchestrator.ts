@@ -132,6 +132,7 @@ import {
   isUndeliveredMailboxSteer,
 } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as GracefulShutdownGate from "./GracefulShutdownGate.ts";
 import {
   decideGuestMessageSend,
   guestShareAfterCancelledSend,
@@ -1150,6 +1151,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const gracefulShutdownGate = yield* GracefulShutdownGate.GracefulShutdownGate;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -1901,6 +1903,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (run) => run.id === options.queuedRunId && run.status === "queued",
             );
       if (storedQueuedRun === undefined) {
+        return;
+      }
+      if (
+        yield* gracefulShutdownGate.shouldQueueNewTurns({
+          threadId,
+          providerInstanceId: storedQueuedRun.providerInstanceId,
+          providerSessionIds: projection.providerSessions.map((session) => session.id),
+          messageId: storedQueuedRun.userMessageId,
+        })
+      ) {
         return;
       }
       const queuedMessage = projection.messages.find(
@@ -6058,6 +6070,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.dispatchMode,
       command.deliveryIntent,
     );
+    // Keep defer_start so workspace preparation still runs; prepared-run.release
+    // re-checks the gate before starting the provider turn.
+    if (
+      dispatchMode.type === "start_immediately" &&
+      (yield* gracefulShutdownGate.shouldQueueNewTurns({
+        threadId: command.threadId,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionIds: projection.providerSessions.map((session) => session.id),
+        messageId: command.messageId,
+      }))
+    ) {
+      dispatchMode = { type: "queue_after_active" };
+    }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -6080,6 +6105,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         dispatchMode = { type: "start_immediately" };
       }
+    }
+    if (
+      dispatchMode.type === "start_immediately" &&
+      (yield* gracefulShutdownGate.shouldQueueNewTurns({
+        threadId: command.threadId,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionIds: projection.providerSessions.map((session) => session.id),
+        messageId: command.messageId,
+      }))
+    ) {
+      dispatchMode = { type: "queue_after_active" };
     }
     // Stop leaves the run reading as running until its provider stops. A plain
     // send in that window queues behind the stopped queue instead of steering
@@ -14706,6 +14742,7 @@ export const layer: Layer.Layer<
   | ContextHandoffServiceV2
   | EffectOutbox.EffectOutboxV2
   | EventSinkV2
+  | GracefulShutdownGate.GracefulShutdownGate
   | IdAllocator.IdAllocatorV2
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2

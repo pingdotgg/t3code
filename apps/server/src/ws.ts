@@ -181,6 +181,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as GracefulShutdown from "./orchestration-v2/GracefulShutdown.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -1507,6 +1508,7 @@ export const layerWsRpc = (
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* ProviderInstallation.ProviderInstallation;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const gracefulShutdown = yield* GracefulShutdown.GracefulShutdown;
       const npmRelease = yield* NpmRelease.NpmRelease;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -2687,6 +2689,10 @@ export const layerWsRpc = (
           ServerSelfUpdate.updateProgressStream(serverSelfUpdate, input),
         [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
           serverSelfUpdate.commitDesktopUpdate(input.requestId),
+        [WS_METHODS.serverGracefulShutdown]: (input) => gracefulShutdown.beginAndAwait(input),
+        [WS_METHODS.serverGracefulShutdownStatus]: () => gracefulShutdown.status,
+        [WS_METHODS.serverGracefulShutdownComplete]: (input) =>
+          gracefulShutdown.complete(input.shutdownId).pipe(Effect.as({})),
         [WS_METHODS.serverUpsertKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {

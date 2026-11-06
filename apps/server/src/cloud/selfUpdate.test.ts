@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import type { ManagedPolicyDocument } from "@t3tools/contracts";
+import { GracefulShutdownId, type ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -17,11 +17,36 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as GracefulShutdown from "../orchestration-v2/GracefulShutdown.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
+
+const layerGracefulShutdownTest = Layer.succeed(
+  GracefulShutdown.GracefulShutdown,
+  GracefulShutdown.GracefulShutdown.of({
+    status: Effect.succeed({
+      phase: "idle",
+      activeRunCount: 0,
+      saveWorkPrompted: false,
+      saveWorkTurnCount: 0,
+    }),
+    beginAndAwait: () =>
+      Effect.succeed({
+        shutdownId: GracefulShutdownId.make("test-shutdown"),
+        phase: "quiesced",
+        scope: { type: "environment" },
+        timedOut: false,
+        activeRunCount: 0,
+        saveWorkPrompted: false,
+        saveWorkTurnCount: 0,
+        elapsedMs: 0,
+      }),
+    complete: () => Effect.void,
+  }),
+);
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
@@ -151,7 +176,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provide(
-      Layer.merge(
+      Layer.mergeAll(
+        layerGracefulShutdownTest,
         ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
         ManagedPolicy.layerTest(options.policy),
       ),
@@ -288,7 +314,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         Effect.sync(() => void stages.push(stage)),
       );
       expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
-      expect(stages).toEqual(["downloading", "installing"]);
+      expect(stages).toEqual(["draining", "downloading", "installing"]);
       expect(order).toEqual([]);
     }),
   );

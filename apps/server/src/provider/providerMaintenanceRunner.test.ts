@@ -1,5 +1,6 @@
 import { describe, it, assert } from "@effect/vitest";
 import {
+  GracefulShutdownId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -22,6 +23,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
+import * as GracefulShutdown from "../orchestration-v2/GracefulShutdown.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
@@ -254,6 +256,29 @@ const makeTestRunner = (
               refreshInBackground: Effect.void,
             }),
             latestVersions,
+            Layer.succeed(
+              GracefulShutdown.GracefulShutdown,
+              GracefulShutdown.GracefulShutdown.of({
+                status: Effect.succeed({
+                  phase: "idle",
+                  activeRunCount: 0,
+                  saveWorkPrompted: false,
+                  saveWorkTurnCount: 0,
+                }),
+                beginAndAwait: () =>
+                  Effect.succeed({
+                    shutdownId: GracefulShutdownId.make("test-shutdown"),
+                    phase: "quiesced",
+                    scope: { type: "environment" },
+                    timedOut: false,
+                    activeRunCount: 0,
+                    saveWorkPrompted: false,
+                    saveWorkTurnCount: 0,
+                    elapsedMs: 0,
+                  }),
+                complete: () => Effect.void,
+              }),
+            ),
           ),
         ),
       ),

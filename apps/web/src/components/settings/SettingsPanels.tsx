@@ -549,6 +549,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
       : []),
+    ...(settings.promptSaveWorkOnGracefulShutdown !==
+    DEFAULT_UNIFIED_SETTINGS.promptSaveWorkOnGracefulShutdown
+      ? ["Prompt save work on graceful shutdown"]
+      : []),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
@@ -669,6 +673,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      promptSaveWorkOnGracefulShutdown: DEFAULT_UNIFIED_SETTINGS.promptSaveWorkOnGracefulShutdown,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2019,6 +2024,38 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
               aria-label="Continue threads after restarts"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("prompt-save-work-on-graceful-shutdown")}
+          serverScoped
+          settingKeys={["promptSaveWorkOnGracefulShutdown"]}
+          description="Before a graceful shutdown or update, ask each active agent to commit, push if needed, and wrap up as a final turn."
+          resetAction={
+            hasServerTargets &&
+            settings.promptSaveWorkOnGracefulShutdown !==
+              DEFAULT_UNIFIED_SETTINGS.promptSaveWorkOnGracefulShutdown ? (
+              <SettingResetButton
+                label="prompt save work on graceful shutdown"
+                onClick={() =>
+                  updateSettings({
+                    promptSaveWorkOnGracefulShutdown:
+                      DEFAULT_UNIFIED_SETTINGS.promptSaveWorkOnGracefulShutdown,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["promptSaveWorkOnGracefulShutdown"]}
+              checked={settings.promptSaveWorkOnGracefulShutdown}
+              disabled={!hasServerTargets}
+              onCheckedChange={(checked) =>
+                updateSettings({ promptSaveWorkOnGracefulShutdown: Boolean(checked) })
+              }
+              aria-label="Prompt agents to save work before graceful shutdown"
             />
           }
         />

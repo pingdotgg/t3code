@@ -29,6 +29,7 @@ import {
   installCommand,
   offerCliInstall,
 } from "./cli/install.ts";
+import { shutdownCommand } from "./cli/shutdown.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
 import { runServiceLauncherCli } from "./cli/serviceLauncher.ts";
 import { speechWorkerCommand } from "./cli/speechWorker.ts";
@@ -96,6 +97,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       serviceCommand,
       updateCommand,
       installCommand,
+      shutdownCommand,
       uninstallCommand,
       // bin.ts runs the bare service invocation; this keeps flags and help working like other commands.
       Command.make("__service-launcher").pipe(
