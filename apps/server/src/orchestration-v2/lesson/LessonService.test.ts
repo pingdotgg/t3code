@@ -1,17 +1,21 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
   CommandId,
+  LessonCreateError,
   ModelSelection,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Option from "effect/Option";
 
+import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
@@ -21,6 +25,49 @@ import { buildLessonOpening } from "./LessonService.ts";
 import * as LessonModule from "./LessonService.ts";
 import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+
+const lessonInput = (commandId: CommandId, projectId?: ProjectId) => ({
+  ...(projectId === undefined ? {} : { projectId }),
+  commandId,
+  lesson: { topic: "topic", depth: "working" as const, purpose: "outcome" as const },
+  modelSelection,
+  runtimeMode: "full-access" as const,
+  interactionMode: "default" as const,
+  createdBy: "user" as const,
+  creationSource: "web" as const,
+});
+
+const lessonWorkspaceRoot = (baseDir: string, name: string) => `${baseDir}/lessons/${name}`;
+
+const failingLaunch = (commandId: CommandId) =>
+  Effect.fail(
+    new ThreadManagementProviderInstanceDisabledError({
+      projectId: ProjectId.make(`lesson-project:${commandId}`),
+      instanceId: modelSelection.instanceId,
+    }),
+  );
+
+const runFailedCreate = (
+  input: ReturnType<typeof lessonInput>,
+  options: {
+    readonly baseDir: string;
+    readonly folders: ManagedProjectFolders.ManagedProjectFolders["Service"];
+    readonly projects: ProjectService.ProjectService["Service"];
+  },
+) =>
+  Effect.gen(function* () {
+    const service = yield* LessonModule.LessonService;
+    return yield* service.create(input);
+  }).pipe(
+    Effect.provide(
+      lessonLayer(
+        () => Effect.die("unused"),
+        () => failingLaunch(input.commandId),
+        options,
+      ),
+    ),
+    Effect.flip,
+  );
 
 const sourceThreadId = ThreadId.make("thread:source");
 const targetProjectId = ProjectId.make("project:target");
@@ -35,6 +82,7 @@ const lessonLayer = (
   options?: {
     readonly folders?: ManagedProjectFolders.ManagedProjectFolders["Service"];
     readonly projects?: ProjectService.ProjectService["Service"];
+    readonly baseDir?: string;
   },
 ) =>
   LessonModule.layer.pipe(
@@ -64,6 +112,10 @@ const lessonLayer = (
               getById: () => Effect.succeedNone,
             } as unknown as ProjectService.ProjectService["Service"]),
         ),
+        ServerConfig.layerTest(process.cwd(), options?.baseDir ?? process.cwd()).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+        NodeServices.layer,
       ),
     ),
   );
@@ -184,6 +236,88 @@ it.effect.each(refusals)(
     }),
 );
 
+it.effect("cleans up a newly created lesson project when launch fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "lesson-create-" });
+    const deleted = yield* Ref.make<ReadonlyArray<ProjectService.ProjectDeleteInput>>([]);
+    const workspaceRoot = lessonWorkspaceRoot(baseDir, "topic");
+    const error = yield* runFailedCreate(lessonInput(CommandId.make("lesson:cleanup")), {
+      baseDir,
+      folders: {
+        createNamedProject: () =>
+          fs.makeDirectory(workspaceRoot, { recursive: true }).pipe(
+            Effect.as({
+              projectId: ProjectId.make("lesson-project:lesson:cleanup"),
+              workspaceRoot,
+            }),
+          ),
+      } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"],
+      projects: {
+        getById: () => Effect.succeedNone,
+        delete: (input) =>
+          Ref.update(deleted, (items) => [...items, input]).pipe(Effect.as({} as never)),
+      } as unknown as ProjectService.ProjectService["Service"],
+    });
+    assert.instanceOf(error, LessonCreateError);
+    assert.deepEqual(yield* Ref.get(deleted), [
+      {
+        commandId: CommandId.make("lesson-project-cleanup:lesson-project:lesson:cleanup"),
+        projectId: ProjectId.make("lesson-project:lesson:cleanup"),
+      },
+    ]);
+    assert.equal(yield* fs.exists(workspaceRoot), false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps the folder when deleting a failed lesson project fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "lesson-create-" });
+    const workspaceRoot = lessonWorkspaceRoot(baseDir, "topic");
+    const error = yield* runFailedCreate(lessonInput(CommandId.make("lesson:delete-fails")), {
+      baseDir,
+      folders: {
+        createNamedProject: () =>
+          fs.makeDirectory(workspaceRoot, { recursive: true }).pipe(
+            Effect.as({
+              projectId: ProjectId.make("lesson-project:lesson:delete-fails"),
+              workspaceRoot,
+            }),
+          ),
+      } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"],
+      projects: {
+        getById: () => Effect.succeedNone,
+        delete: () =>
+          Effect.fail(
+            new ProjectService.ProjectNotEmptyError({
+              projectId: ProjectId.make("lesson-project:lesson:delete-fails"),
+            }),
+          ),
+      } as unknown as ProjectService.ProjectService["Service"],
+    });
+    assert.instanceOf(error, LessonCreateError);
+    assert.equal(yield* fs.exists(workspaceRoot), true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not clean up a caller supplied project when launch fails", () =>
+  Effect.gen(function* () {
+    const deleted = yield* Ref.make(0);
+    const projectId = ProjectId.make("project:caller");
+    const error = yield* runFailedCreate(lessonInput(CommandId.make("lesson:caller"), projectId), {
+      baseDir: "/tmp",
+      folders: {} as ManagedProjectFolders.ManagedProjectFolders["Service"],
+      projects: {
+        getById: () => Effect.succeedNone,
+        delete: () => Ref.update(deleted, (count) => count + 1),
+      } as unknown as ProjectService.ProjectService["Service"],
+    });
+    assert.instanceOf(error, LessonCreateError);
+    assert.equal(yield* Ref.get(deleted), 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("creates its own project when projectId is absent, and reuses it on retry", () =>
   Effect.gen(function* () {
     const created = yield* Ref.make(0);
@@ -209,7 +343,7 @@ it.effect("creates its own project when projectId is absent, and reuses it on re
         createdBy: "user" as const,
         creationSource: "web" as const,
       };
-      const first = yield* service.create(input);
+      const first = yield* service.create(input).pipe(Effect.flip);
       const second = yield* service.create(input);
       return { first, second };
     }).pipe(
@@ -218,7 +352,9 @@ it.effect("creates its own project when projectId is absent, and reuses it on re
           () => Effect.die("unused"),
           (input) =>
             Effect.gen(function* () {
+              const count = (yield* Ref.get(launches)).length;
               yield* Ref.update(launches, (items) => [...items, input]);
+              if (count === 0) return yield* failingLaunch(commandId);
               return {
                 threadId: ThreadId.make(`thread:${(yield* Ref.get(launches)).length}`),
               } as ThreadLaunchService.ThreadLaunchResult;
@@ -233,7 +369,7 @@ it.effect("creates its own project when projectId is absent, and reuses it on re
                 Ref.update(createInputs, (items) => [...items, input]).pipe(
                   Effect.andThen(Ref.updateAndGet(created, (count) => count + 1)),
                   Effect.as({
-                    projectId: derivedProjectId,
+                    projectId: input.projectId ?? ProjectId.make("created:fresh"),
                     workspaceRoot: `/lessons/${input.name}`,
                   }),
                 ),
@@ -242,23 +378,30 @@ it.effect("creates its own project when projectId is absent, and reuses it on re
               getById: () =>
                 Ref.updateAndGet(lookups, (count) => count + 1).pipe(
                   Effect.map((count) =>
-                    count === 1 ? Option.none() : Option.some({ id: derivedProjectId } as never),
+                    count === 1
+                      ? Option.none()
+                      : Option.some({
+                          id: derivedProjectId,
+                          deletedAt: "2026-01-01T00:00:00.000Z",
+                        } as never),
                   ),
                 ),
+              delete: () => Effect.succeed({} as never),
             } as unknown as ProjectService.ProjectService["Service"],
           },
         ),
       ),
     );
-    assert.equal(result.first.threadId, ThreadId.make("thread:1"));
+    assert.instanceOf(result.first, LessonCreateError);
     assert.equal(result.second.threadId, ThreadId.make("thread:2"));
-    assert.equal(yield* Ref.get(created), 1);
+    assert.equal(yield* Ref.get(created), 2);
     assert.deepEqual(yield* Ref.get(createInputs), [
       { name: "A very useful topic", root: "lessons", projectId: derivedProjectId },
+      { name: "A very useful topic", root: "lessons" },
     ]);
     assert.deepEqual(
       (yield* Ref.get(launches)).map((input) => input.projectId),
-      [derivedProjectId, derivedProjectId],
+      [derivedProjectId, ProjectId.make("created:fresh")],
     );
   }),
 );
