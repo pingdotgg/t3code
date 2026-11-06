@@ -140,7 +140,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
         threads: zero(),
         worktrees: zero(),
         state: "failed",
-        finishedAt: yield* deps.now,
+        finishedAt: null,
       });
     }
     // A child that is still working writes after this snapshot, so copying now
@@ -151,7 +151,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
         threads: { total: stillWorking.length, acked: 0, failed: stillWorking.length },
         worktrees: zero(),
         state: "failed",
-        finishedAt: yield* deps.now,
+        finishedAt: null,
       });
     }
     for (const thread of shell.threads) {
