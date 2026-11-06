@@ -3673,7 +3673,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (command.type === "thread.settle") {
-      const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"]);
+      const projection = yield* loadProjectionForCommand(command, [
+        "runs",
+        "runtimeRequests",
+        "providerTurns",
+      ]);
       if (
         command.expectedLatestRunId !== undefined &&
         projection.runs.reduce<OrchestrationV2Run | undefined>(
@@ -3714,25 +3718,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      // Approvals still need a decision. A live question the turn is waiting on is
-      // dismissed unanswered and its turn stopped (with its delegated tasks, as
-      // Stop does), so Settle works mid-question.
-      const blockingRequestExists = pendingRequests.some(
+      // Approvals still need a decision. A live question the running turn is waiting
+      // on is dismissed unanswered and that turn stopped (with its delegated tasks,
+      // as Stop does), so Settle works mid-question.
+      const approvalExists = pendingRequests.some((request) => request.kind !== "user_input");
+      const unanswerableQuestionExists = pendingRequests.some(
         (request) =>
-          request.kind !== "user_input" || request.responseCapability.type === "not_resumable",
+          request.kind === "user_input" && request.responseCapability.type === "not_resumable",
       );
-      const stopsForQuestion =
-        runningRunExists &&
-        pendingRequests.some(
-          (request) => request.kind === "user_input" && request.responseCapability.type === "live",
-        );
-      const blocker = blockingRequestExists
+      // The run Stop interrupts, and its turns that the interrupt reaches.
+      const stopTarget = projection.runs.findLast((run) =>
+        ["preparing", "starting", "running"].includes(run.status),
+      );
+      const stoppedTurnIds = new Set(
+        stopTarget === undefined
+          ? []
+          : projection.providerTurns
+              .filter(
+                (turn) =>
+                  turn.status === "running" && turn.runAttemptId === stopTarget.activeAttemptId,
+              )
+              .map((turn) => turn.id),
+      );
+      const withdrawnByStop = (request: (typeof pendingRequests)[number]) =>
+        request.kind === "user_input" &&
+        request.responseCapability.type === "live" &&
+        request.providerTurnId !== null &&
+        stoppedTurnIds.has(request.providerTurnId);
+      const stopsForQuestion = pendingRequests.some(withdrawnByStop);
+      const blocker = approvalExists
         ? "is waiting on an approval. Answer it before settling."
-        : runningRunExists && !stopsForQuestion
-          ? "is still running. Stop it before settling."
-          : queuedMessageExists
-            ? "has a queued message. Send it or remove it from the queue before settling."
-            : null;
+        : unanswerableQuestionExists
+          ? "has a question that can no longer be answered. Stop it before settling."
+          : runningRunExists && !stopsForQuestion
+            ? "is still running. Stop it before settling."
+            : queuedMessageExists
+              ? "has a queued message. Send it or remove it from the queue before settling."
+              : null;
       if (blocker !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -3741,13 +3763,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      // Stop withdraws its turn's questions itself. Delivering the cancel too would
+      // reach Claude as an empty answer it could act on before the stop lands, so
+      // those deliveries are dropped; any other question still gets its cancel.
+      const droppedDeliveries = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
       for (const request of pendingRequests) {
-        // Stop withdraws a live question itself. Delivering the cancel too would
-        // reach Claude as an empty answer it could act on before the stop lands.
-        const deliveryEffects =
-          stopsForQuestion && request.responseCapability.type === "live"
-            ? yield* Ref.make<Array<PendingOrchestrationEffectV2>>([])
-            : effects;
+        const deliveryEffects = withdrawnByStop(request) ? droppedDeliveries : effects;
         yield* dispatchRuntimeRequestRespond(
           {
             type: "runtime-request.respond",
@@ -4579,7 +4600,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     // Archive and settle stop idle background work; serialized commands prevent starts racing detach.
-    // Settlement rejects active or blocked runs.
+    // Settlement rejects active or blocked runs, except a turn waiting on a live
+    // question, which it stops first.
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)

@@ -2045,7 +2045,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
 
   const seedLiveQuestion = Effect.fn("runtimeLayerTest.seedLiveQuestion")(function* (
     name: string,
-    options: { readonly approval?: boolean; readonly queuedMessage?: boolean } = {},
+    options: {
+      readonly approval?: boolean;
+      readonly queuedMessage?: boolean;
+      readonly unanswerable?: boolean;
+      /** "idle": the run and turn have ended; "otherTurn": the run runs but the question's turn ended. */
+      readonly turnState?: "idle" | "otherTurn";
+    } = {},
   ) {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const eventSink = yield* EventSink.EventSinkV2;
@@ -2099,13 +2105,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       runAttemptId: run.activeAttemptId,
       nativeTurnRef: null,
       ordinal: 1,
-      status: "running" as const,
+      status: options.turnState === undefined ? ("running" as const) : ("completed" as const),
       startedAt: now,
-      completedAt: null,
+      completedAt: options.turnState === undefined ? null : now,
     };
     const requestId = RuntimeRequestId.make(`${name}-request`);
     const approvalId = RuntimeRequestId.make(`${name}-approval`);
     const nodeId = NodeId.make(`${name}-node`);
+    const itemId = TurnItemId.make(`${name}-item`);
     const request = {
       id: requestId,
       nodeId,
@@ -2113,7 +2120,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       nativeRequestRef: null,
       kind: "user_input" as const,
       status: "pending" as const,
-      responseCapability: { type: "live" as const, providerSessionId: providerSession.id },
+      responseCapability:
+        options.unanswerable === true
+          ? { type: "not_resumable" as const, reason: "The provider session ended." }
+          : { type: "live" as const, providerSessionId: providerSession.id },
       createdAt: now,
       resolvedAt: null,
     };
@@ -2126,7 +2136,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           threadId,
           runId: run.id,
           occurredAt: now,
-          payload: { ...run, status: "running", startedAt: now },
+          payload:
+            options.turnState === "idle"
+              ? { ...run, status: "completed", startedAt: now, completedAt: now }
+              : { ...run, status: "running", startedAt: now },
         },
         {
           id: EventId.make(`${name}-session-event`),
@@ -2175,6 +2188,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           occurredAt: now,
           payload: request,
         },
+        {
+          id: EventId.make(`${name}-item-event`),
+          type: "turn-item.updated",
+          threadId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: itemId,
+            type: "user_input_request",
+            threadId,
+            runId: run.id,
+            nodeId,
+            providerThreadId: providerThread.id,
+            providerTurnId: providerTurn.id,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "waiting",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            requestId,
+            questions: [{ id: "choice", header: "Choice", question: "Continue?", options: [] }],
+          },
+        },
         ...(options.approval === true
           ? [
               {
@@ -2208,7 +2247,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         dispatchMode: { type: "queue_after_active" },
       });
     }
-    return { threadId, run, requestId };
+    return { threadId, run, requestId, nodeId, itemId };
   });
 
   it.effect("settles mid-question by withdrawing the question and stopping the turn", () =>
@@ -2216,7 +2255,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const { threadId, run, requestId } = yield* seedLiveQuestion("runtime-settle-live-question");
+      const { threadId, run, requestId, nodeId, itemId } = yield* seedLiveQuestion(
+        "runtime-settle-live-question",
+      );
       const settleCommandId = CommandId.make("runtime-settle-live-question-settle");
       yield* orchestrator.dispatch({ type: "thread.settle", commandId: settleCommandId, threadId });
 
@@ -2225,6 +2266,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const request = settled.runtimeRequests.find((candidate) => candidate.id === requestId);
       assert.equal(request?.status, "resolved");
       assert.equal(request?.decision, "cancel");
+      assert.isUndefined(request?.answers);
+      assert.equal(settled.nodes.find((node) => node.id === nodeId)?.status, "cancelled");
+      const card = settled.turnItems.find((item) => item.id === itemId);
+      assert.equal(card?.status, "cancelled");
+      assert.isFalse(card !== undefined && "questionAnswer" in card);
       assert.isTrue(
         settled.turnItems.some(
           (item) => item.type === "run_interrupt_request" && item.runId === run.id,
@@ -2260,29 +2306,69 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
-  it.effect("keeps Settle blocked by an approval or a queued message beside a question", () =>
+  it.effect(
+    "keeps Settle blocked by an approval, a queued message or an unanswerable question",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const cases = [
+          { name: "runtime-settle-question-approval", approval: true, blocker: /approval/ },
+          {
+            name: "runtime-settle-question-queued",
+            queuedMessage: true,
+            blocker: /queued message/,
+          },
+          {
+            name: "runtime-settle-question-unanswerable",
+            unanswerable: true,
+            blocker: /can no longer be answered/,
+          },
+          // Stop would not reach the question, so Settle must not swallow it.
+          {
+            name: "runtime-settle-question-other-turn",
+            turnState: "otherTurn" as const,
+            blocker: /still running/,
+          },
+        ];
+        for (const { name, blocker, ...options } of cases) {
+          const { threadId, requestId } = yield* seedLiveQuestion(name, options);
+          const settleCommandId = CommandId.make(`${name}-settle`);
+          const error = yield* orchestrator
+            .dispatch({ type: "thread.settle", commandId: settleCommandId, threadId })
+            .pipe(Effect.flip);
+          assert.match(String(error.cause), blocker);
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.notEqual(projection.thread.settledOverride, "settled");
+          assert.equal(
+            projection.runtimeRequests.find((candidate) => candidate.id === requestId)?.status,
+            "pending",
+          );
+          assert.deepEqual(yield* outbox.listByCommandId(settleCommandId), []);
+        }
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("delivers the cancel for a live question when no turn is left to stop", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const cases = [
-        { name: "runtime-settle-question-approval", approval: true, blocker: /approval/ },
-        { name: "runtime-settle-question-queued", queuedMessage: true, blocker: /queued message/ },
-      ];
-      for (const { name, blocker, ...options } of cases) {
-        const { threadId, requestId } = yield* seedLiveQuestion(name, options);
-        const settleCommandId = CommandId.make(`${name}-settle`);
-        const error = yield* orchestrator
-          .dispatch({ type: "thread.settle", commandId: settleCommandId, threadId })
-          .pipe(Effect.flip);
-        assert.match(String(error.cause), blocker);
-        const projection = yield* orchestrator.getThreadProjection(threadId);
-        assert.notEqual(projection.thread.settledOverride, "settled");
-        assert.equal(
-          projection.runtimeRequests.find((candidate) => candidate.id === requestId)?.status,
-          "pending",
-        );
-        assert.deepEqual(yield* outbox.listByCommandId(settleCommandId), []);
-      }
+      const { threadId, requestId } = yield* seedLiveQuestion("runtime-settle-idle-question", {
+        turnState: "idle",
+      });
+      const settleCommandId = CommandId.make("runtime-settle-idle-question-settle");
+      yield* orchestrator.dispatch({ type: "thread.settle", commandId: settleCommandId, threadId });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settled.thread.settledOverride, "settled");
+      assert.equal(
+        settled.runtimeRequests.find((candidate) => candidate.id === requestId)?.decision,
+        "cancel",
+      );
+      const effectTypes = (yield* outbox.listByCommandId(settleCommandId)).map(
+        (effect) => effect.request.type,
+      );
+      assert.include(effectTypes, "runtime-request.respond");
+      assert.notInclude(effectTypes, "provider-turn.interrupt");
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
