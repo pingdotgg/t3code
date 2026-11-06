@@ -1,8 +1,8 @@
 export {
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
+  MICROPHONE_PERMISSION_ERROR,
   voiceInputBlocksSubmission,
-  voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceInputPhase,
@@ -11,30 +11,25 @@ export {
   type VoiceRecorderStatus,
 } from "./controller.ts";
 export {
-  VoiceTranscriptionError,
-  throwIfVoiceTranscriptionAborted,
-  type PreparedVoiceTranscription,
-  type VoiceTranscriber,
-  type VoiceTranscriptionErrorCode,
-  type VoiceTranscriptionOptions,
-} from "./transcription.ts";
-export {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
-  postProcessEnvironmentTranscript,
-  prepareEnvironmentSpeechModel,
-  updateEnvironmentSpeechCustomWords,
-  updateEnvironmentSpeechModelDirectories,
-  updateEnvironmentSpeechFillerWordRemoval,
-  updateEnvironmentSpeechAcceleration,
-  updateEnvironmentSpeechModelUnloadTimeout,
-  updateEnvironmentSpeechLanguage,
-  updateEnvironmentSpeechTranslation,
   getEnvironmentSpeechStreamUrl,
+  postProcessEnvironmentTranscript,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
   transcribeEnvironmentPcm,
+  updateEnvironmentSpeechAcceleration,
+  updateEnvironmentSpeechModelUnloadTimeout,
 } from "./environment.ts";
 export { openSpeechStream } from "./stream.ts";
+export {
+  VoiceTranscriptionError,
+  throwIfVoiceTranscriptionAborted,
+  type PreparedVoiceTranscription,
+  type VoiceStreamingSession,
+  type VoiceTranscriber,
+  type VoiceTranscriptionErrorCode,
+  type VoiceTranscriptionOptions,
+} from "./transcription.ts";

@@ -208,6 +208,7 @@ function PullRequestRowImpl({
   statsRef,
   rail,
   onSelect,
+  onIntent,
   hostActions,
   onActed,
   closing = false,
@@ -229,6 +230,8 @@ function PullRequestRowImpl({
    */
   rail?: ReactNode;
   onSelect: (entry: PullRequestRowTarget) => void;
+  /** The row the pointer or focus rests on, or null when it leaves. */
+  onIntent?: (entry: PullRequestRowTarget | null) => void;
   hostActions: ReadonlySet<PullRequestAction>;
   onActed: (result: PullRequestSpeedActionResult) => void;
   closing?: boolean;
@@ -250,6 +253,14 @@ function PullRequestRowImpl({
         type="button"
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(entry)}
+        onPointerEnter={() => onIntent?.(entry)}
+        onPointerLeave={(event) => {
+          if (event.currentTarget !== document.activeElement) onIntent?.(null);
+        }}
+        onFocus={() => onIntent?.(entry)}
+        onBlur={(event) => {
+          if (!event.currentTarget.matches(":hover")) onIntent?.(null);
+        }}
         className={cn(
           PULL_REQUEST_ROW_CLASS,
           PAGE_ROW_CLASS,
