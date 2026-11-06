@@ -2924,7 +2924,7 @@ it.effect("preview_open reports a tab it shows as visible once the client attach
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("browser automation stays available without an open tab", () =>
+it.effect("browser automation stays available without an open tab", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
