@@ -55,6 +55,8 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
   apsEnvironment: Schema.optional(RelayApnsEnvironment),
   pushToken: Schema.optional(TrimmedNonEmptyString),
   pushToStartToken: Schema.optional(TrimmedNonEmptyString),
+  // Read-only capability for the native widget extension. Never used for app authentication.
+  widgetAccessToken: Schema.optional(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
   preferences: RelayAgentAwarenessPreferences,
 }).check(
   Schema.makeFilter((device) =>
@@ -63,7 +65,8 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
       : device.androidApiLevel !== undefined &&
         device.iosMajorVersion === undefined &&
         device.apsEnvironment === undefined &&
-        device.pushToStartToken === undefined,
+        device.pushToStartToken === undefined &&
+        device.widgetAccessToken === undefined,
   ),
 );
 export type RelayDeviceRegistrationRequest = typeof RelayDeviceRegistrationRequest.Type;
@@ -123,6 +126,7 @@ export const RelayAgentActivityState = Schema.Struct({
   threadTitle: TrimmedNonEmptyString,
   phase: RelayAgentAwarenessPhase,
   headline: TrimmedNonEmptyString,
+  retained: Schema.optional(Schema.Boolean),
   detail: Schema.optional(TrimmedNonEmptyString),
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
@@ -147,6 +151,9 @@ export const RelayAgentActivityAggregateState = Schema.Struct({
   title: TrimmedNonEmptyString,
   subtitle: TrimmedNonEmptyString,
   activeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  workingCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  attentionCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  totalCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   updatedAt: TrimmedNonEmptyString,
   activities: Schema.Array(RelayAgentActivityAggregateRow),
 });
@@ -263,11 +270,13 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   state: Schema.NullOr(RelayAgentActivityState),
+  replay: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
 
 export const RelayAgentActivityPublishRequest = Schema.Struct({
+  replay: Schema.optional(Schema.Boolean),
   state: Schema.NullOr(RelayAgentActivityState).annotate({
     description: "Current agent-awareness state, or null to remove the published state.",
   }),
@@ -944,6 +953,7 @@ export const RelayDeliveryKind = Schema.Literals([
   "live_activity_update",
   "live_activity_end",
   "push_notification",
+  "widget_refresh",
 ]);
 export type RelayDeliveryKind = typeof RelayDeliveryKind.Type;
 
@@ -1047,6 +1057,10 @@ export const RelayRegisterLiveActivityEndpoint = HttpApiEndpoint.post(
 
 export const RelayAgentActivitySnapshotResponse = Schema.Struct({
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
+  liveActivityAggregate: Schema.optional(Schema.NullOr(RelayAgentActivityAggregateState)),
+  environmentIds: Schema.optional(Schema.Array(EnvironmentId)),
+  // Absent on older relays, which may ignore an unknown query parameter.
+  excludedEnvironmentIds: Schema.optional(Schema.Array(EnvironmentId)),
 });
 export type RelayAgentActivitySnapshotResponse = typeof RelayAgentActivitySnapshotResponse.Type;
 
@@ -1054,6 +1068,9 @@ export const RelayAgentActivitySnapshotEndpoint = HttpApiEndpoint.get(
   "getAgentActivitySnapshot",
   "/v1/mobile/agent-activity",
   {
+    query: {
+      excludedEnvironmentIds: Schema.optional(Schema.ArrayEnsure(EnvironmentId)),
+    },
     headers: RelayDpopRequestHeaders,
     success: RelayAgentActivitySnapshotResponse,
     error: RelayAuthAndInternalErrors,
@@ -1080,6 +1097,22 @@ const RelayMobileGroup = HttpApiGroup.make("mobile")
   )
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")
   .middleware(RelayDpopClientAuth);
+
+const RelayWidgetGroup = HttpApiGroup.make("widget").add(
+  HttpApiEndpoint.get("refresh", "/v1/widget/agent-activity", {
+    headers: RelayBearerRequestHeaders,
+    query: {
+      pushToken: Schema.optional(Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{1,512})?$/))),
+    },
+    success: RelayAgentActivitySnapshotResponse,
+    error: RelayAuthAndInternalErrors,
+  }),
+  HttpApiEndpoint.delete("revoke", "/v1/widget/agent-activity", {
+    headers: RelayBearerRequestHeaders,
+    success: RelayOkResponse,
+    error: RelayAuthAndInternalErrors,
+  }),
+);
 
 const RelayClientGroup = HttpApiGroup.make("client")
   .add(
@@ -1313,6 +1346,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayHealthGroup,
     RelayMetadataGroup,
     RelayMobileGroup,
+    RelayWidgetGroup,
     RelayClientGroup,
     RelayTokenGroup,
     RelayDpopClientGroup,

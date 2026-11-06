@@ -199,7 +199,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
           supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
           // Embeds the layout so the gallery preview and a new widget render
           // before the app has run once; the app replaces it on publish.
-          initialLayout: "./src/widgets/AgentActivityWidget.tsx",
+          initialLayout: "./src/widgets/AgentActivity.tsx",
         },
       },
     ],
@@ -450,7 +450,9 @@ const config: ExpoConfig = {
     // Compile out the unused pedometer to avoid an iOS motion purpose string.
     ["expo-sensors", { motionPermission: false }],
     // Mods run in reverse order; expo-widgets must create and wipe the target before assets are added.
-    ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
+    ...(!isIosPersonalTeamBuild
+      ? ["./plugins/withWidgetLogoAsset.cjs", "./plugins/withAgentWidgetRefresh.cjs", widgetsPlugin]
+      : []),
     "./plugins/withAndroidNetworkSecurityConfig.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
     "./plugins/withAndroidInputBackground.cjs",

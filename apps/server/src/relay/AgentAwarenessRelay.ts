@@ -95,6 +95,8 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
     case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
@@ -107,8 +109,6 @@ function shouldPublishAgentAwarenessEvent(
     // Unsettling must not re-alert a dismissed result.
     case "thread.unsettled":
     case "thread.guest-share-updated":
-    case "thread.snoozed":
-    case "thread.unsnoozed":
     case "thread.auto-settle-set":
     case "thread.pinned":
     case "thread.unpinned":
@@ -261,6 +261,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   readonly threadId: ThreadId;
   readonly state: RelayAgentActivityState | null;
   readonly jti: string;
+  readonly replay?: boolean;
 }) {
   const now = yield* DateTime.now;
   const expiresAt = DateTime.add(now, { minutes: 5 });
@@ -274,6 +275,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
     environmentId: input.environmentId as RelayAgentActivityPublishProofPayload["environmentId"],
     threadId: input.threadId,
     state: input.state,
+    ...(input.replay ? { replay: true } : {}),
   } satisfies RelayAgentActivityPublishProofPayload;
   const signingKey = yield* EnvironmentSigningKey;
   return yield* signingKey.sign({ typ: RELAY_ACTIVITY_PUBLISH_TYP, payload });
@@ -316,6 +318,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly thread: Option.Option<AgentAwarenessThread>;
   readonly project: Option.Option<Project>;
+  readonly now: number;
   readonly pendingSubagentRequest: SubagentRequestAwareness | null;
 }): {
   readonly projectId: string | null;
@@ -344,6 +347,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     environmentId: input.environmentId,
     project: input.project.value,
     thread: input.thread.value,
+    now: input.now,
   };
   const state = projectThreadAwarenessV2({
     ...awarenessInput,
@@ -369,7 +373,7 @@ function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number)
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
-  readonly startedAt: number;
+  readonly now: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
   readonly threads: ReadonlyArray<AgentAwarenessThread>;
 }): ReadonlyArray<ThreadId> {
@@ -386,13 +390,9 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         environmentId: input.environmentId,
         project,
         thread,
+        now: input.now,
       });
-      return (
-        state !== null &&
-        (state.phase !== "completed" && state.phase !== "failed"
-          ? true
-          : terminalWorkSinceStart(thread, input.startedAt))
-      );
+      return state !== null;
     })
     .map((thread) => thread.id);
 }
@@ -408,6 +408,10 @@ export const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
+  const publishedTerminalWork = new Map<
+    ThreadId,
+    { phase: RelayAgentActivityState["phase"]; completedAt: number }
+  >();
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
   // Android keys alerts by phase and time, so a child's unchanged request keeps
   // its first alert time through parent renames, relinks and the parent's own requests.
@@ -477,6 +481,33 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
+  const snoozeWakeups = new Map<ThreadId, { deadline: number; timer: Fiber.Fiber<void> }>();
+  let enqueueSnoozeWakeup: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  const scheduleSnoozeWakeup = Effect.fn("AgentAwarenessRelay.scheduleSnoozeWakeup")(function* (
+    thread: AgentAwarenessThread,
+    nowMs: number,
+  ) {
+    const deadline = thread.snoozedUntil?.epochMilliseconds;
+    const previous = snoozeWakeups.get(thread.id);
+    const pending = deadline !== undefined && deadline > nowMs && thread.archivedAt === null;
+    if (pending && previous?.deadline === deadline) return;
+    snoozeWakeups.delete(thread.id);
+    if (previous) yield* Fiber.interrupt(previous.timer);
+    if (!pending) return;
+    // Expiry changes the projection without a domain event; startup must restore these timers too.
+    const timer = yield* Effect.sleep(deadline - nowMs).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          if (snoozeWakeups.get(thread.id)?.deadline !== deadline) return Effect.void;
+          snoozeWakeups.delete(thread.id);
+          return enqueueSnoozeWakeup(thread.id);
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
+    snoozeWakeups.set(thread.id, { deadline, timer });
+  });
+
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled;
     if (!publishAgentActivity) {
@@ -510,6 +541,7 @@ export const make = Effect.gen(function* () {
       readonly projectId: string | null;
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
+      readonly replay?: boolean;
     }) {
       if (cachedRelayClient === undefined) {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
@@ -520,6 +552,7 @@ export const make = Effect.gen(function* () {
         environmentId,
         threadId,
         state: input.state,
+        replay: input.replay ?? false,
         jti: yield* random.uuidV4(),
       }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
 
@@ -540,6 +573,7 @@ export const make = Effect.gen(function* () {
           },
           payload: {
             state: input.state,
+            ...(input.replay ? { replay: true } : {}),
             proof,
           },
         })
@@ -555,6 +589,9 @@ export const make = Effect.gen(function* () {
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = yield* readAwarenessThread(threadId);
+    if (threadShell !== null) {
+      yield* scheduleSnoozeWakeup(threadShell, (yield* DateTime.now).epochMilliseconds);
+    }
     yield* trackSubagentRequest(threadId, threadShell);
     if (
       threadShell !== null &&
@@ -575,19 +612,36 @@ export const make = Effect.gen(function* () {
       environmentId,
       thread,
       project,
+      now: (yield* DateTime.now).epochMilliseconds,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const completedAt = threadShell?.latestRunCompletedAt?.epochMilliseconds;
+    const previousTerminal = publishedTerminalWork.get(threadId);
+    const snoozeExpired =
+      threadShell?.snoozedUntil !== null &&
+      threadShell?.snoozedUntil !== undefined &&
+      threadShell.snoozedUntil.epochMilliseconds <= (yield* DateTime.now).epochMilliseconds;
+    const replay =
+      (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
+      ((snoozeExpired && !hasLivePublishedState(publishedStateByThread, threadId)) ||
+        (completedAt !== undefined &&
+          previousTerminal?.completedAt === completedAt &&
+          previousTerminal.phase === snapshot.state.phase) ||
+        (!publishedStateByThread.has(threadId) &&
+          Option.isSome(thread) &&
+          !terminalWorkSinceStart(thread.value, startedAt)));
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !hasLivePublishedState(publishedStateByThread, threadId)
-    ) {
-      if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
-    }
+      !replay &&
+      publishedStateByThread.has(threadId) &&
+      !hasLivePublishedState(publishedStateByThread, threadId) &&
+      (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt))
+    )
+      return;
     if (
       publishedStateByThread.get(threadId) === publishIdentity &&
-      // A held completion settled after an earlier clear still has to alert.
       !(snapshot.state === null && heldCompletions.has(threadId))
     ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
@@ -604,7 +658,11 @@ export const make = Effect.gen(function* () {
     // Confirm tombstones over live state to avoid removing active cards.
     // Confirm completion: a run can end moments before its continuation starts, and the relay
     // alerts on every move into completed.
-    const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
+    const requiresConfirmation =
+      (snapshot.state === null &&
+        (publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null) ||
+          heldCompletions.has(threadId))) ||
+      (snapshot.state?.phase === "completed" && !replay);
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
@@ -642,6 +700,7 @@ export const make = Effect.gen(function* () {
               environmentId,
               thread: Option.some({ ...thread.value, settledOverride: null }),
               project,
+              now: nowMs,
               pendingSubagentRequest: null,
             })
           : null;
@@ -652,6 +711,9 @@ export const make = Effect.gen(function* () {
           state: completion,
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
+        if (completedAt !== undefined) {
+          publishedTerminalWork.set(threadId, { phase: completion.phase, completedAt });
+        }
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
@@ -690,7 +752,14 @@ export const make = Effect.gen(function* () {
       projectId: snapshot.projectId,
       state,
       reason: snapshot.reason,
+      replay,
     }).pipe(withRelayClientTracing);
+    if (
+      completedAt !== undefined &&
+      (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed")
+    ) {
+      publishedTerminalWork.set(threadId, { phase: snapshot.state.phase, completedAt });
+    }
     if (state !== null && childRequestId !== undefined) {
       childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
     }
@@ -787,6 +856,7 @@ export const make = Effect.gen(function* () {
   const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
   const enqueueThreadPublish = (threadId: ThreadId) =>
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
+  enqueueSnoozeWakeup = enqueueThreadPublish;
   enqueueTopLevelPublish = enqueueThreadPublish;
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
@@ -844,6 +914,14 @@ export const make = Effect.gen(function* () {
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const projectSnapshot = yield* projects.snapshot;
     const activitySnapshot = yield* threads.getAgentAwarenessSnapshot();
+    const nowMs = (yield* DateTime.now).epochMilliseconds;
+    yield* Effect.forEach(
+      activitySnapshot.threads,
+      (thread) => scheduleSnoozeWakeup(thread, nowMs),
+      {
+        discard: true,
+      },
+    );
     // Live children aren't listed, but a waiting one makes its top-level thread wait.
     const liveChildren = yield* Effect.forEach(
       (yield* threads.listActiveShellIndex()).filter(
@@ -851,11 +929,19 @@ export const make = Effect.gen(function* () {
       ),
       (thread) => readAwarenessThread(thread.id),
     );
+    const candidates = [
+      ...activitySnapshot.threads,
+      ...liveChildren.filter((thread) => thread !== null),
+    ];
+    // Waiting children go first so a backfilled parent publishes their wait, not its completion.
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
-      startedAt,
+      now: nowMs,
       projects: projectSnapshot.projects,
-      threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
+      threads: [
+        ...candidates.filter(subagentAwaitsApproval),
+        ...candidates.filter((thread) => !subagentAwaitsApproval(thread)),
+      ],
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");

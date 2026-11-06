@@ -55,6 +55,7 @@ export interface AgentAwarenessState {
   readonly threadTitle: string;
   readonly phase: AgentAwarenessPhase;
   readonly headline: string;
+  readonly retained?: boolean;
   readonly detail?: string;
   readonly modelTitle: string;
   readonly updatedAt: string;
@@ -71,21 +72,28 @@ function buildAgentAwarenessDeepLink(input: {
 export interface ProjectThreadAwarenessV2Input {
   readonly environmentId: EnvironmentId;
   readonly project: Pick<Project, "title">;
-  readonly thread: Pick<
-    OrchestrationV2ThreadShell,
-    | "activityRunStatus"
-    | "id"
-    | "lineage"
-    | "latestRunBackgroundWake"
-    | "latestRunStopRequested"
-    | "modelSelection"
-    | "pendingBackgroundTasks"
-    | "pendingRuntimeRequest"
-    | "settledOverride"
-    | "status"
-    | "title"
-    | "updatedAt"
-  >;
+  readonly now?: number;
+  readonly thread: Partial<
+    Pick<
+      OrchestrationV2ThreadShell,
+      "archivedAt" | "snoozedUntil" | "snoozedAt" | "latestRunCompletedAt"
+    >
+  > &
+    Pick<
+      OrchestrationV2ThreadShell,
+      | "activityRunStatus"
+      | "id"
+      | "lineage"
+      | "latestRunBackgroundWake"
+      | "latestRunStopRequested"
+      | "modelSelection"
+      | "pendingBackgroundTasks"
+      | "pendingRuntimeRequest"
+      | "settledOverride"
+      | "status"
+      | "title"
+      | "updatedAt"
+    >;
   /** The approval a live subagent below this thread is waiting on. */
   readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
 }
@@ -94,8 +102,28 @@ export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (!isListedThreadLineage(thread.lineage)) return null;
+  if (!isListedThreadLineage(thread.lineage) || thread.archivedAt != null) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
+  if (
+    input.now !== undefined &&
+    thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) > input.now
+  ) {
+    const failedAfterSnooze =
+      (thread.activityRunStatus ?? thread.status) === "failed" &&
+      (thread.snoozedAt == null ||
+        (thread.latestRunCompletedAt != null &&
+          DateTime.toEpochMillis(thread.latestRunCompletedAt) >
+            DateTime.toEpochMillis(thread.snoozedAt)));
+    // Matches the app's snooze: approvals wake it, a question only if asked after snoozing.
+    const request = thread.pendingRuntimeRequest;
+    const requestWakes =
+      request != null &&
+      (request.kind !== "user_input" ||
+        thread.snoozedAt == null ||
+        DateTime.toEpochMillis(request.createdAt) > DateTime.toEpochMillis(thread.snoozedAt));
+    if (!requestWakes && subagentRequest === null && !failedAfterSnooze) return null;
+  }
   const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null);
   if (phase === null) {
     return null;
@@ -125,6 +153,7 @@ export function projectThreadAwarenessV2(
     threadTitle: thread.title,
     phase,
     headline: headlineForPhase(phase),
+    retained: true,
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
     // A child's request leaves the parent's own timestamp alone. Alerts are

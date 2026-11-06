@@ -10,7 +10,10 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
     (a, b) => activityPhasePriority(a.phase) - activityPhasePriority(b.phase),
   );
   const activeCount = aggregate?.activeCount ?? 0;
-  const attentionCount = rows.filter((row) => activityPhasePriority(row.phase) === 0).length;
+  const attentionCount =
+    aggregate?.attentionCount ??
+    rows.filter((row) => activityPhasePriority(row.phase) === 0).length;
+  const workingCount = aggregate?.workingCount ?? Math.max(0, activeCount - attentionCount);
   const failed = rows.some((row) => row.phase === "failed");
   const clean = (value: string) => value.replace(/\s+/g, " ").trim();
   const lines = rows.map((row) =>
@@ -19,7 +22,7 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
   const hero = rows[0];
   const title =
     activeCount > 0
-      ? `${activeCount} active agent${activeCount === 1 ? "" : "s"}${attentionCount ? ` · ${attentionCount} need${attentionCount === 1 ? "s" : ""} attention` : ""}`
+      ? `${workingCount} working${attentionCount ? ` · ${attentionCount} need${attentionCount === 1 ? "s" : ""} attention` : ""}`
       : failed
         ? "Agent work failed"
         : "Agent work completed";
@@ -37,6 +40,10 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
     activity_title: title,
     activity_phase: hero?.phase ?? "",
     activity_active_count: String(activeCount),
+    activity_working_count: String(workingCount),
+    ...(aggregate?.totalCount === undefined
+      ? {}
+      : { activity_total_count: String(aggregate.totalCount) }),
     activity_attention_count: String(attentionCount),
     activity_body: hero
       ? `${hero.status}: ${clean(hero.threadTitle)} · ${clean(hero.projectTitle)}`

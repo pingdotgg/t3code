@@ -45,6 +45,47 @@ describe("EnvironmentLinks", () => {
     );
   });
 
+  it.effect("includes widget-only recipients without broadening ordinary delivery", () => {
+    const queries: ReturnType<PgDialect["sqlToQuery"]>[] = [];
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: (condition: Parameters<PgDialect["sqlToQuery"]>[0]) => {
+            const query = new PgDialect().sqlToQuery(condition);
+            queries.push(query);
+            return Effect.succeed(
+              query.params.includes(true)
+                ? []
+                : [
+                    {
+                      userId: "widget-only",
+                      notificationsEnabled: false,
+                      liveActivitiesEnabled: false,
+                    },
+                  ],
+            );
+          },
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+    return Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      const key = { environmentId: "env", environmentPublicKey: "key" };
+      expect(yield* links.listDeliveryUsersForEnvironment(key)).toEqual([]);
+      expect(
+        yield* links.listDeliveryUsersForEnvironment({ ...key, includeDisabled: true }),
+      ).toEqual([
+        { userId: "widget-only", notificationsEnabled: false, liveActivitiesEnabled: false },
+      ]);
+      expect(queries[1]?.sql).toContain('"revoked_at" is null');
+      expect(queries[1]?.params).toEqual(["env", "key"]);
+    }).pipe(
+      Effect.provide(
+        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, db))),
+      ),
+    );
+  });
+
   it.effect("revokes only the active link owned by the requesting user", () => {
     const updateValues: Array<Record<string, unknown>> = [];
     const whereConditions: Array<unknown> = [];
