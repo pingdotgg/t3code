@@ -148,11 +148,15 @@ function WhatsNewDialog({
           />
         </WizardHeader>
         <WizardPanel>
-          <GuideClip key={guide.id} guide={guide} reducedMotion={reducedMotion} />
-          <DialogDescription render={<div />} aria-live="polite">
-            <h3 className="text-lg font-semibold tracking-tight text-foreground">{guide.title}</h3>
-            <p className="text-sm leading-relaxed text-muted-foreground">{guide.benefit}</p>
-          </DialogDescription>
+          <div className="space-y-4">
+            <GuideClip key={guide.id} guide={guide} reducedMotion={reducedMotion} />
+            <DialogDescription render={<div />} aria-live="polite">
+              <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                {guide.title}
+              </h3>
+              <p className="text-sm leading-relaxed text-muted-foreground">{guide.benefit}</p>
+            </DialogDescription>
+          </div>
         </WizardPanel>
         <WizardFooter
           leading={
