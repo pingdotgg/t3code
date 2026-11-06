@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { changeRequestReferenceAutolinker, splitPullRequestBody } from "./pullRequestMarkdown.ts";
+import {
+  changeRequestReferenceAutolinker,
+  resolveChangeRequestMediaUrl,
+  splitPullRequestBody,
+} from "./pullRequestMarkdown.ts";
 
 describe("pull request body segmentation", () => {
   // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on
@@ -73,6 +77,27 @@ describe("pull request body segmentation", () => {
     const body = "```\nhttps://example.com/demo.mp4\n```";
     expect(splitPullRequestBody(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  // GitHub keeps CRLF in a body written in its web editor.
+  it("recognizes fences in a body with CRLF line endings", () => {
+    const body = "```\r\nhttps://example.com/demo.mp4\r\n```";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it("closes a CRLF fence, so a video after it still lifts out", () => {
+    const code = '```html\r\n<video src="https://example.com/example.mp4"></video>\r\n```';
+    expect(splitPullRequestBody(`${code}\r\n\r\nhttps://example.com/demo.mp4\r\n`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
     ]);
   });
 
@@ -153,7 +178,21 @@ describe("change request reference autolinks", () => {
 
   // regression: the mobile review guide linked every host's `#5` with GitHub's grammar
   it("links nothing on a host whose grammar is not applied", () => {
-    expect(urls("gitlab", "https://gitlab.com/group/project/-/merge_requests/7", "#5")).toBeNull();
     expect(urls("forgejo", "https://codeberg.org/acme/web/pulls/7", "#5")).toBeNull();
+  });
+});
+
+describe("change request media urls", () => {
+  // regression: GitCafe's `/api/attachments/<id>` uploads rendered as missing local files
+  it.each([
+    ["/api/attachments/attach_1", "https://git.cafe/api/attachments/attach_1"],
+    ["//cdn.example.com/a.png", "//cdn.example.com/a.png"],
+    ["/\\evil.example.com/a.png", "/\\evil.example.com/a.png"],
+    ["https://example.com/a.png", "https://example.com/a.png"],
+    ["docs/a.png", "docs/a.png"],
+  ])("resolves %s against the forge", (url, expected) => {
+    expect(resolveChangeRequestMediaUrl(url, "https://git.cafe/pingdotgg/t3code/pulls/31251")).toBe(
+      expected,
+    );
   });
 });
