@@ -143,7 +143,7 @@ export function SecretProviderDialog({
                   }
                 />
                 {listedAccounts.length > 0 ? (
-                  <AutocompletePopup>
+                  <AutocompletePopup className="w-(--anchor-width)">
                     <AutocompleteList>
                       {listedAccounts.map((item) => (
                         <AutocompleteItem key={item.account} value={item}>
