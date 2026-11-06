@@ -78,6 +78,15 @@ class PnpmModulesManifestParseError extends Schema.TaggedError<PnpmModulesManife
   }
 }
 
+class WorktreeDirectoryReadError extends Schema.TaggedError<WorktreeDirectoryReadError>()(
+  "WorktreeDirectoryReadError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read a worktree directory.";
+  }
+}
+
 const DAY_MS = 86_400_000;
 // Give settle scripts time to open terminals that protect the worktree.
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
@@ -432,7 +441,10 @@ const make = Effect.gen(function* () {
         } else if (stat.type === "Directory") {
           const dirents =
             skipped !== null && (target === skipped || inside(skipped, target))
-              ? yield* Effect.tryPromise(() => NodeFSP.readdir(target, { withFileTypes: true }))
+              ? yield* Effect.tryPromise({
+                  try: () => NodeFSP.readdir(target, { withFileTypes: true }),
+                  catch: (cause) => new WorktreeDirectoryReadError({ cause }),
+                })
               : null;
           const names = dirents?.map((entry) => entry.name) ?? (yield* fs.readDirectory(target));
           const markers = inspectRepositories ? names.map((name) => name.toLowerCase()) : [];
