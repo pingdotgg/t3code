@@ -143,8 +143,10 @@ effectIt.effect(
       let stored = false;
       const reference = { provider: "work", reference: "op://Work/Voice/key" };
       const save = vi.fn();
+      const transcribe = vi.fn();
       const cloud = Layer.mock(CloudSpeech.CloudSpeech)({
         configured: Effect.sync(() => ({ openai: stored, xai: false })),
+        models: Effect.succeed([{ id: "acme/transcribe-1", name: "Acme Transcribe" }]),
         setKey: (provider, key) =>
           Effect.sync(() => {
             save(provider, key);
@@ -153,8 +155,10 @@ effectIt.effect(
               Redacted.isRedacted(key) &&
               Redacted.value(key) === "fixture";
           }),
-        transcribe: (provider) =>
-          Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" })),
+        transcribe: (provider, _pcm, _options, model) => {
+          transcribe(provider, model);
+          return Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" }));
+        },
       });
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
@@ -207,6 +211,23 @@ effectIt.effect(
         provider: "openai",
         reason: "rejected-key",
       });
+      expect(transcribe).toHaveBeenLastCalledWith("openai", undefined);
+      const catalog = yield* call("openrouter/models");
+      expect(yield* Effect.promise(() => catalog.json())).toEqual({
+        models: [{ id: "acme/transcribe-1", name: "Acme Transcribe" }],
+      });
+      const audio = {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: encodeSpeechPcmRequest(new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+      };
+      expect((yield* call("openrouter/transcribe?model=openrouter%2Fauto", audio)).status).toBe(
+        400,
+      );
+      expect((yield* call("openrouter/transcribe?model=acme%2Ftranscribe-1", audio)).status).toBe(
+        422,
+      );
+      expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
     }).pipe(Effect.scoped),
 );
 

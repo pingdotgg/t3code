@@ -4,6 +4,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
+  CloudSpeechModelId,
   CloudSpeechProvider,
   SettingsSecretValue,
   SpeechAcceleration,
@@ -79,6 +80,15 @@ export const getCloudSpeechKeys = (prepared: PreparedConnection) =>
     run: ({ client, headers }) => client.cloudKeys({ headers }),
   });
 
+export const getCloudSpeechModels = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.cloudModels(),
+    run: ({ client, headers }) => client.cloudModels({ headers }),
+  });
+
 export const requireCloudSpeechKey = (
   prepared: PreparedConnection,
   provider: CloudSpeechProvider,
@@ -120,18 +130,21 @@ export const transcribeCloudPcm = (
   pcm: Uint8Array,
   options: SpeechTranscriptionOptions,
   canSend: () => boolean,
-) =>
-  request({
+  model?: CloudSpeechModelId,
+) => {
+  const query = model === undefined ? {} : { model };
+  return request({
     group: "voice",
     prepared,
     method: "POST",
     canSend,
     timeoutMs: 130_000,
-    path: (urls) => urls.transcribeCloud({ params: { provider } }),
+    path: (urls) => urls.transcribeCloud({ params: { provider }, query }),
     run: ({ client, headers }) =>
       client.transcribeCloud({
         headers,
         params: { provider },
+        query,
         payload: encodeSpeechPcmRequest(pcm, options),
       }),
   }).pipe(
@@ -144,6 +157,7 @@ export const transcribeCloudPcm = (
         : error,
     ),
   );
+};
 
 export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
   let endpoint = prepared.httpBaseUrl;

@@ -208,6 +208,18 @@ it("keeps local as the default and never reuses consent for an offline or resele
       "/api/voice/cloud/xai/transcribe",
       "/api/voice/cloud/xai/transcribe",
     ]);
+    // OpenRouter without a model is no destination; with one, the exact id travels with the audio.
+    chooseVoiceDestination(host, "openrouter");
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();
+    chooseVoiceDestination(host, "openrouter", "acme/transcribe-1");
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json({ openai: true, xai: true, openrouter: true }))
+      .mockResolvedValueOnce(Response.json({ text: "routed" }));
+    const routed = await appAtomRegistry.get(voiceRouteAtom)!.transcriber!.prepare(options);
+    await expect(routed.transcribe("file:///voice.m4a", options)).resolves.toBe("routed");
+    const upload = new URL(String(mocks.fetch.mock.lastCall![0]));
+    expect(upload.pathname).toBe("/api/voice/cloud/openrouter/transcribe");
+    expect(upload.searchParams.get("model")).toBe("acme/transcribe-1");
     const failWrite = () => {
       throw new Error("Device storage is unavailable");
     };

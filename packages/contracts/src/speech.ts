@@ -7,15 +7,37 @@ export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
 );
 
-export const CloudSpeechProvider = Schema.Literals(["openai", "xai"]);
+export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter"]);
 export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
 export const CLOUD_SPEECH_LABELS = {
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",
+  openrouter: "OpenRouter",
 } as const;
-export const CLOUD_SPEECH_PROVIDER_NAMES = { openai: "OpenAI", xai: "xAI" } as const;
-export const CloudSpeechKeys = Schema.Record(CloudSpeechProvider, Schema.Boolean);
+export const CLOUD_SPEECH_PROVIDER_NAMES = {
+  openai: "OpenAI",
+  xai: "xAI",
+  openrouter: "OpenRouter",
+} as const;
+/** Servers that predate OpenRouter report only the first two providers. */
+export const CloudSpeechKeys = Schema.Struct({
+  openai: Schema.Boolean,
+  xai: Schema.Boolean,
+  openrouter: Schema.optionalKey(Schema.Boolean),
+});
 export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;
+
+/** An exact `author/model` slug. Router shortcuts such as `:nitro` or `openrouter/auto` are not models. */
+export const CloudSpeechModelId = Schema.String.check(
+  Schema.isMinLength(3),
+  Schema.isMaxLength(160),
+  Schema.isPattern(/^(?!openrouter\/)[a-z\d][a-z\d.-]*\/[a-z\d][a-z\d._-]*$/i),
+);
+export type CloudSpeechModelId = typeof CloudSpeechModelId.Type;
+export const CloudSpeechModel = Schema.Struct({ id: CloudSpeechModelId, name: Schema.String });
+export type CloudSpeechModel = typeof CloudSpeechModel.Type;
+export const CloudSpeechModels = Schema.Struct({ models: Schema.Array(CloudSpeechModel) });
+export type CloudSpeechModels = typeof CloudSpeechModels.Type;
 
 export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
   "CloudSpeechError",
@@ -26,6 +48,7 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
       "unreadable-key",
       "rejected-key",
       "rate-limit",
+      "model-unavailable",
       "unavailable",
     ]),
   },
@@ -42,6 +65,8 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
         return `${name} rejected this API key. Check its permissions and billing in Settings → Voice.`;
       case "rate-limit":
         return `${name} reached a usage limit. Check the account's quota or try again later.`;
+      case "model-unavailable":
+        return `${name} doesn’t offer the selected transcription model. Choose another model in Settings → Voice. No audio was sent to ${name}.`;
       case "unavailable":
         return `${name} couldn’t transcribe this recording. Try again later.`;
     }

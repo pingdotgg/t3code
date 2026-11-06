@@ -35,6 +35,17 @@ subscription is needed. Switch back to **This device** on mobile or **Off** on
 web and desktop to stop sharing. Removing the key stops that provider for everyone
 on the environment.
 
+**OpenRouter** works the same way but has no default model: pick one from its live
+speech-to-text catalog when you enable it, or later under **Manage OpenRouter**.
+The model choice is yours alone and needs no settings access, so anyone with
+dictation access can pick a different model without touching the saved key.
+OpenRouter chooses who runs the model. T3 requests zero data retention; your
+OpenRouter account can also allow safety retention. If no endpoint qualifies,
+dictation fails instead of switching models.
+Vocabulary hints are not sent to OpenRouter; dictionary spellings are applied
+after transcription. If OpenRouter stops listing your model, dictation stops
+until you choose another.
+
 ## Set up a model
 
 If you choose environment transcription, T3 Code offers to download the recommended

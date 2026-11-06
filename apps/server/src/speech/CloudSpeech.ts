@@ -1,6 +1,8 @@
 import {
   CloudSpeechApiKey,
   CloudSpeechError,
+  CloudSpeechModel,
+  CloudSpeechModelId,
   isSecretReference,
   type SecretReference,
   type ServerSettingsError,
@@ -26,8 +28,15 @@ import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
+  openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
 };
+const OPENROUTER_CATALOG_URL =
+  "https://openrouter.ai/api/v1/models?output_modalities=transcription";
 const isApiKey = Schema.is(CloudSpeechApiKey);
+const isModelId = Schema.is(CloudSpeechModelId);
+const OpenRouterCatalog = Schema.Struct({
+  data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
+});
 
 function wave(samples: Float32Array) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
@@ -51,12 +60,12 @@ function wave(samples: Float32Array) {
     const sample = samples[index]!;
     view.setInt16(44 + index * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
   }
-  return new Blob([buffer], { type: "audio/wav" });
+  return buffer;
 }
 
 function audioBody(
-  provider: CloudSpeechProvider,
-  audio: Blob,
+  provider: "openai" | "xai",
+  audio: ArrayBuffer,
   language: string,
   options: SpeechTranscriptionOptions,
 ) {
@@ -76,14 +85,25 @@ function audioBody(
     if (!options.speechSilenceFiltering) form.set("vad_threshold", "0");
   }
   // xAI ignores options that follow the file part.
-  form.set("file", audio, "dictation.wav");
+  form.set("file", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
   return HttpClientRequest.bodyFormData(form);
+}
+
+function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
+  return HttpClientRequest.bodyJsonUnsafe({
+    model,
+    input_audio: { data: Buffer.from(audio).toString("base64"), format: "wav" },
+    ...(language !== "auto" ? { language } : {}),
+    provider: { zdr: true },
+  });
 }
 
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
     readonly configured: Effect.Effect<CloudSpeechKeys, ServerSettingsError>;
+    /** OpenRouter's public transcription catalog, cached briefly on this server. */
+    readonly models: Effect.Effect<ReadonlyArray<CloudSpeechModel>, CloudSpeechError>;
     readonly setKey: (
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
@@ -92,6 +112,7 @@ export class CloudSpeech extends Context.Service<
       provider: CloudSpeechProvider,
       pcm: Uint8Array,
       options: SpeechTranscriptionOptions,
+      model?: string | undefined,
     ) => Effect.Effect<string, CloudSpeechError | SpeechInvalidAudioError | ServerSettingsError>;
   }
 >()("t3/speech/CloudSpeech") {}
@@ -106,7 +127,37 @@ export const layer = Layer.effect(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai }) => ({ openai: Boolean(openai), xai: Boolean(xai) })),
+      Effect.map(({ openai, xai, openrouter }) => ({
+        openai: Boolean(openai),
+        xai: Boolean(xai),
+        openrouter: Boolean(openrouter),
+      })),
+    );
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      http
+        .execute(request)
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+          Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+        );
+    const fetchCatalog = Effect.fn("CloudSpeech.catalog")(function* () {
+      const unavailable = () =>
+        new CloudSpeechError({ provider: "openrouter", reason: "unavailable" });
+      const response = yield* execute(HttpClientRequest.get(OPENROUTER_CATALOG_URL)).pipe(
+        Effect.mapError(unavailable),
+      );
+      if (response.status < 200 || response.status >= 300) return yield* unavailable();
+      const { data } = yield* HttpClientResponse.schemaBodyJson(OpenRouterCatalog)(response).pipe(
+        Effect.mapError(unavailable),
+      );
+      return data.flatMap(({ id, name }) =>
+        isModelId(id) ? [{ id, name: name?.trim() || id }] : [],
+      );
+    });
+    // The catalog is public, so the cache holds no credential or consent state.
+    const [models, invalidateModels] = yield* Effect.cachedInvalidateWithTTL(
+      fetchCatalog(),
+      "10 minutes",
     );
     const setKey = Effect.fn("CloudSpeech.setKey")(function* (
       provider: CloudSpeechProvider,
@@ -118,14 +169,25 @@ export const layer = Layer.effect(
         },
       });
     });
+    const listedModel = Effect.fn("CloudSpeech.listedModel")(function* (model: string) {
+      const listed = (catalog: ReadonlyArray<CloudSpeechModel>) =>
+        catalog.some((entry) => entry.id === model);
+      if (listed(yield* models)) return true;
+      // A model added since the last refresh should work; a delisted one must stop.
+      yield* invalidateModels;
+      return listed(yield* models);
+    });
     const transcribe = Effect.fn("CloudSpeech.transcribe")(
       function* (
         provider: CloudSpeechProvider,
         pcm: Uint8Array,
         options: SpeechTranscriptionOptions,
+        model?: string,
       ) {
         const source = (yield* credentials)[provider];
         if (!source) return yield* new CloudSpeechError({ provider, reason: "missing-key" });
+        if (provider === "openrouter" && (!model || !isModelId(model)))
+          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const samples = yield* Effect.try({
           try: () => decodeSpeechPcm(pcm),
           catch: () =>
@@ -135,6 +197,8 @@ export const layer = Layer.effect(
             }),
         });
         const language = effectiveSpeechLanguage(cloudSpeechLanguages, options.speechLanguage);
+        if (provider === "openrouter" && !(yield* listedModel(model!)))
+          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         // A vault that locked since the last recording must not authorize a new upload.
         if (isSecretReference(source)) yield* resolver.invalidate([source]);
         const unreadable = () => new CloudSpeechError({ provider, reason: "unreadable-key" });
@@ -142,18 +206,15 @@ export const layer = Layer.effect(
           Effect.mapError(unreadable),
         );
         if (!isApiKey(key)) return yield* unreadable();
+        const audio = wave(samples);
         const request = HttpClientRequest.post(endpoints[provider].url).pipe(
           HttpClientRequest.bearerToken(Redacted.make(key)),
-          audioBody(provider, wave(samples), language, options),
+          provider === "openrouter"
+            ? openRouterBody(model!, audio, language)
+            : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
-        const response = yield* http
-          .execute(request)
-          .pipe(
-            Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-            Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-            Effect.mapError(unavailable),
-          );
+        const response = yield* execute(request).pipe(Effect.mapError(unavailable));
         if (response.status < 200 || response.status >= 300)
           return yield* new CloudSpeechError({
             provider,
@@ -162,7 +223,9 @@ export const layer = Layer.effect(
                 ? "rate-limit"
                 : [401, 402, 403].includes(response.status)
                   ? "rejected-key"
-                  : "unavailable",
+                  : response.status === 404 && provider === "openrouter"
+                    ? "model-unavailable"
+                    : "unavailable",
           });
         const { text } = yield* HttpClientResponse.schemaBodyJson(
           EnvironmentSpeechTranscriptionResult,
@@ -182,6 +245,6 @@ export const layer = Layer.effect(
           }),
         ),
     );
-    return CloudSpeech.of({ configured, setKey, transcribe });
+    return CloudSpeech.of({ configured, models, setKey, transcribe });
   }),
 );

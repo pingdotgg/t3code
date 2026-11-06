@@ -36,6 +36,7 @@ import {
   MonitorIcon,
   MicOffIcon,
   MicIcon,
+  WaypointsIcon,
   RefreshCwIcon,
   StarIcon,
   SlidersHorizontalIcon,
@@ -120,6 +121,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 
 const OFF = "off";
 function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
+  if (provider === "openrouter") return <WaypointsIcon aria-hidden className="size-4" />;
   return (
     <ProviderInstanceIcon
       driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
@@ -1154,6 +1156,9 @@ export function VoiceSettingsPanel() {
   const cloudEnvironment = environments.find(
     (env) => env.environmentId === pendingCloud?.environmentId,
   );
+  // OpenRouter users without settings access still manage their own model choice.
+  const manageLabel =
+    destination.cloudProvider === "openrouter" ? "Manage OpenRouter" : "Manage key";
   const chosenEnvironment = environments.find(
     (environment) => environment.environmentId === destination.environmentId,
   );
@@ -1308,8 +1313,8 @@ export function VoiceSettingsPanel() {
                             : "Off"}
                         {destination.cloudProvider && (
                           <span className="text-muted-foreground">
-                            {" "}
-                            via {chosenEnvironment?.label ?? "unavailable environment"}
+                            {" via "}
+                            {chosenEnvironment?.label ?? "unavailable environment"}
                           </span>
                         )}
                       </span>
@@ -1363,30 +1368,32 @@ export function VoiceSettingsPanel() {
                   ) : null}
                 </SelectPopup>
               </Select>
-              {destination.cloudProvider && chosenEnvironment && canManageKey && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        type="button"
-                        variant="ghost"
-                        aria-label="Manage key"
-                        onClick={() => {
-                          if (destination.cloudProvider)
-                            setPendingCloud({
-                              provider: destination.cloudProvider,
-                              environmentId: chosenEnvironment.environmentId,
-                            });
-                        }}
-                      >
-                        <KeyRoundIcon aria-hidden className="size-4" />
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup>Manage key</TooltipPopup>
-                </Tooltip>
-              )}
+              {destination.cloudProvider &&
+                chosenEnvironment &&
+                (canManageKey || destination.cloudProvider === "openrouter") && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="icon-sm"
+                          type="button"
+                          variant="ghost"
+                          aria-label={manageLabel}
+                          onClick={() => {
+                            if (destination.cloudProvider)
+                              setPendingCloud({
+                                provider: destination.cloudProvider,
+                                environmentId: chosenEnvironment.environmentId,
+                              });
+                          }}
+                        >
+                          <KeyRoundIcon aria-hidden className="size-4" />
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup>{manageLabel}</TooltipPopup>
+                  </Tooltip>
+                )}
             </div>
           </div>
           {destination.environmentId && chosenUnsupported ? (
@@ -1515,7 +1522,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
           title="Clean up transcripts with a provider"
-          description="Sends the transcript and nearby draft text to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Cleanup sends text only and is off by default."
+          description="Sends the transcript and nearby draft text to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Sends text only; off by default."
           control={
             <Switch
               aria-label="Clean up transcripts with a provider"

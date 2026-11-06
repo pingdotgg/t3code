@@ -156,7 +156,9 @@ vi.mock("./browserVoiceInput", () => ({
             locale: "en",
             transcribe: async () => {
               mocks.transcribeCalls.push(
-                input.cloudProvider ? `${input.cloudProvider} via ${environmentId}` : environmentId,
+                input.cloudProvider
+                  ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
+                  : environmentId,
               );
               const next = mocks.transcripts.shift() ?? "dictated";
               if (next instanceof Error) throw next;
@@ -417,6 +419,29 @@ it("recovers from a corrupt choice without enabling cloud dictation before the s
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["xai via env-b"]);
+  expect(mocks.statusRequests).toEqual([]);
+});
+
+it("sends audio to OpenRouter only under a device grant naming the exact model", async () => {
+  setup();
+  mocks.cloudVoiceCapable.add("env-b");
+  const key = "t3code:voice-audio-grant:v1";
+  const destination = { kind: "cloud", environmentId: "env-b", provider: "openrouter" };
+  window.localStorage.setItem(key, JSON.stringify({ id: "no-model", destination }));
+  {
+    await using _screen = await render(<Probe />);
+    await act(() => mocks.voice.start());
+    expectNoAudioSent();
+  }
+  const model = "acme/transcribe-1";
+  window.localStorage.setItem(
+    key,
+    JSON.stringify({ id: "model", destination: { ...destination, model } }),
+  );
+  await using _screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual([`openrouter:${model} via env-b`]);
   expect(mocks.statusRequests).toEqual([]);
 });
 

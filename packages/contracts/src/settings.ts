@@ -53,7 +53,7 @@ import {
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
-  CloudSpeechProvider,
+  CloudSpeechModelId,
   SpeechAcceleration,
   SpeechCorrectionCue,
   SpeechCustomWords,
@@ -366,13 +366,22 @@ export type ModelPreferences = {
 export const VoiceShortcutMode = Schema.Literals(["auto", "hold", "toggle"]);
 export type VoiceShortcutMode = typeof VoiceShortcutMode.Type;
 
-/** Where this device sends microphone audio. A later backend adds its own kind here. */
+/**
+ * Where this device sends microphone audio. A cloud grant names the forwarding environment and
+ * the provider; an OpenRouter grant also names the exact model, since OpenRouter has no default.
+ */
 export const VoiceTranscriptionDestination = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("environment"), environmentId: EnvironmentId }),
   Schema.Struct({
     kind: Schema.Literal("cloud"),
     environmentId: EnvironmentId,
-    provider: CloudSpeechProvider,
+    provider: Schema.Literals(["openai", "xai"]),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("cloud"),
+    environmentId: EnvironmentId,
+    provider: Schema.Literal("openrouter"),
+    model: CloudSpeechModelId,
   }),
 ]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
@@ -1235,6 +1244,7 @@ const CloudSpeechCredential = SettingsSecretValue.pipe(
 export const CloudSpeechCredentials = Schema.Struct({
   openai: CloudSpeechCredential,
   xai: CloudSpeechCredential,
+  openrouter: CloudSpeechCredential,
 });
 
 export const ServerSettings = Schema.Struct({
@@ -1263,7 +1273,7 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
-    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "" })),
+    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
@@ -1688,6 +1698,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
       xai: Schema.optionalKey(SettingsSecretValue),
+      openrouter: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
   speechModelId: Schema.optionalKey(Schema.String),

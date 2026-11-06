@@ -43,6 +43,16 @@ It uses a separate, batch-only endpoint: changing a server key cannot upgrade
 an environment-local grant, and a cloud recording never uses the streaming
 socket or falls back to another provider or the environment's native model.
 
+OpenRouter routes to many upstreams, so its grant also names the exact model and
+the model travels with every upload as a query parameter. The server accepts only
+ids present in OpenRouter's public transcription catalog (`output_modalities=transcription`),
+which it caches for ten minutes and refreshes once before rejecting an unknown id;
+router aliases such as `openrouter/auto` or `:nitro` fail schema validation before
+that. Requests set `provider.zdr` and carry no `models` fallback list. OpenRouter
+applies the account's safety-retention policy when choosing an endpoint. The catalog
+holds no credential or consent state, which is why it may be cached while key
+presence is read fresh on every request.
+
 ## Server side
 
 The [speech service](../../apps/server/src/speech/SpeechService.ts) runs

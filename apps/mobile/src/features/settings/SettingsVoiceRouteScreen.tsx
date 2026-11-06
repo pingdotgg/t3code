@@ -274,7 +274,7 @@ export function SettingsVoiceRouteScreen() {
                 active={
                   grant?.destination.kind === "cloud" &&
                   grant.destination.environmentId === environment.environmentId
-                    ? grant.destination.provider
+                    ? grant.destination
                     : null
                 }
               />

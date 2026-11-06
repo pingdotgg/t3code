@@ -130,3 +130,98 @@ it("enables the chosen provider only after a successful setup and keeps its gran
     },
   );
 });
+
+it("OpenRouter needs an exact model, and changing it writes no credential", async () => {
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  chooseAudioDestination(null);
+  const writes: unknown[] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys")
+      return Promise.resolve(Response.json({ openai: false, xai: false, openrouter: true }));
+    if (url.pathname === "/api/voice/cloud/openrouter/models")
+      return Promise.resolve(
+        Response.json({
+          models: [
+            { id: "acme/transcribe-1", name: "Acme: Transcribe 1" },
+            { id: "other/listen-2", name: "Other: Listen 2" },
+          ],
+        }),
+      );
+    if (url.pathname === "/api/voice/cloud/openrouter/key")
+      return new Request(request, init).json().then((body) => {
+        writes.push(body);
+        return new Response(null, { status: 204 });
+      });
+    return fetch(request, init);
+  });
+  const grantKey = "t3code:voice-audio-grant:v1";
+  const grantModel = () => {
+    const raw = window.localStorage.getItem(grantKey);
+    const parsed = raw ? (JSON.parse(raw) as { destination?: { model?: string } }) : null;
+    return parsed?.destination?.model ?? null;
+  };
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          await destination.click();
+          await page.getByRole("option", { name: "OpenRouter via Laptop" }).click();
+          const dialog = page.getByRole("dialog");
+          const save = dialog.getByRole("button", { name: "Save and enable" });
+          await expect.element(save).toBeDisabled();
+          const picker = dialog.getByRole("combobox", { name: "OpenRouter model" });
+          await expect.element(picker).toBeVisible();
+          await picker.click();
+          await userEvent.keyboard("listen");
+          await expect.element(page.getByRole("option", { name: /Other: Listen 2/ })).toBeVisible();
+          await page.getByRole("option", { name: /Other: Listen 2/ }).click();
+          await expect.element(save).toBeEnabled();
+          const key = dialog.getByLabelText("OpenRouter API key", { exact: true });
+          await key.fill("op://not-a-literal-key");
+          await expect.element(save).toBeDisabled();
+          await key.fill("");
+          await save.click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          await expect.element(destination).toHaveTextContent("OpenRouter via Laptop");
+          expect(grantModel()).toBe("other/listen-2");
+          expect(writes).toEqual([]);
+          await screen.getByRole("button", { name: "Manage OpenRouter" }).click();
+          const current = dialog.getByRole("combobox", { name: "OpenRouter model" });
+          await expect.element(current).toHaveValue("Other: Listen 2");
+          await userEvent.clear(current);
+          await userEvent.type(current, "acme");
+          await page.getByRole("option", { name: /Acme: Transcribe 1/ }).click();
+          await dialog.getByRole("button", { name: "Save" }).click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          await expect.element(destination).toHaveTextContent("OpenRouter via Laptop");
+          expect(grantModel()).toBe("acme/transcribe-1");
+          expect(writes).toEqual([]);
+        },
+      );
+    },
+  );
+});

@@ -87,13 +87,25 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "cloudModels",
+        Effect.fn("environment.voice.cloudModels")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return { models: yield* cloud.models };
+        }),
+      )
+      .handle(
         "transcribeCloud",
         Effect.fn("environment.voice.transcribeCloud")(function* (args) {
           yield* guard(args.endpoint.name);
           const decoded = parseAudio(args.payload);
           if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
           const text = yield* cloud
-            .transcribe(args.params.provider, decoded.value.pcm, decoded.value.options)
+            .transcribe(
+              args.params.provider,
+              decoded.value.pcm,
+              decoded.value.options,
+              args.query.model,
+            )
             .pipe(
               Effect.catchTags({
                 ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
