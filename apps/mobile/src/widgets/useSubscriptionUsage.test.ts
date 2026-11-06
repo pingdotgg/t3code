@@ -33,8 +33,14 @@ vi.mock("../connection/catalog", async () => {
 
 vi.mock("../state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
+  const presentationsAtom = Atom.make(new Map<string, unknown>());
   return {
-    environmentPresentations: { presentationsAtom: Atom.make(new Map<string, unknown>()) },
+    environmentPresentations: {
+      presentationsAtom,
+      presentationAtom: Atom.family((id: string) =>
+        Atom.make((get) => get(presentationsAtom).get(id) ?? null),
+      ),
+    },
   };
 });
 
