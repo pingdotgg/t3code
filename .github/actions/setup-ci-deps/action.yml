@@ -123,10 +123,12 @@ runs:
         key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
 
     # A filtered install that started from the current full store adds nothing
-    # worth a second copy of it.
+    # worth a second copy of it. A stacked PR, based on a branch other than the
+    # default, saves a ~1 GB store only its own reruns can read, so it only restores.
     - name: Save pnpm store
       if: >-
         inputs.install == 'true' &&
+        (github.event_name != 'pull_request' || github.base_ref == github.event.repository.default_branch) &&
         steps.pnpm_cache.outputs.cache-hit != 'true' &&
         (steps.pnpm_store.outputs.namespace == 'full' ||
           steps.pnpm_cache.outputs.cache-matched-key != format('pnpm-full-v1-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json')))
