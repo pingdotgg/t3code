@@ -84,6 +84,10 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import {
+  type PullRequestMentionScope,
+  pullRequestMentionScope,
+} from "./PullRequestMarkdownTextarea";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
@@ -163,6 +167,7 @@ function reviewStateLabel(state: string): string {
 interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly mentionScope: PullRequestMentionScope | null;
   readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
@@ -187,6 +192,7 @@ function CommentBody({
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
+        mentionScope={editing.mentionScope}
         threadRef={editing.threadRef}
         label="Edit comment"
         saving={editing.saving}
@@ -542,9 +548,11 @@ export function PullRequestSummaryTab({
     if (body !== description) void saveDescription(body);
   };
 
+  const mentionScope = pullRequestMentionScope(detail, environmentId, reference);
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
+    mentionScope,
     threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
@@ -794,6 +802,7 @@ export function PullRequestSummaryTab({
               value={bodyScope.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
+              mentionScope={mentionScope}
               threadRef={threadRef}
               label={`${capitalizeTerm(terminology.singular)} description`}
               placeholder={`Describe this ${terminology.singular}`}
