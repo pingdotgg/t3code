@@ -1,5 +1,6 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type {
+  PlanId,
   ProviderApprovalDecision,
   RuntimeRequestId,
   WorktreeSetupSnapshot,
@@ -63,6 +64,10 @@ export interface TimelineRowSharedState {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onSendAppMessage: ((text: string) => Promise<void>) | undefined;
+  onBuildProposedPlan:
+    | ((plan: { readonly id: PlanId; readonly planMarkdown: string }) => Promise<boolean>)
+    | undefined;
+  isBuildingProposedPlan: boolean;
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
   findActive: boolean;

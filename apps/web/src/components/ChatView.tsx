@@ -28,7 +28,7 @@ import { useRightPanelActions } from "./chat/useRightPanelActions";
 import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useChatTerminalActions";
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
-import { useImplementPlanInNewThread } from "./chat/useProposedPlanSend";
+import { useBuildProposedPlan, useImplementPlanInNewThread } from "./chat/useProposedPlanSend";
 import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
@@ -2915,6 +2915,24 @@ export default function ChatView(props: ChatViewProps) {
     activeEnvironmentUnavailable,
     defaultRuntimeMode,
   });
+  const onBuildProposedPlan = useBuildProposedPlan({
+    environmentId,
+    routeThreadKey,
+    activeThread,
+    activeThreadBranch,
+    activeProposedPlan,
+    isServerThread,
+    isSendBusy,
+    composerRef,
+    beginLocalDispatch,
+    resetLocalDispatch,
+    runtimeMode,
+    localCheckoutBranchMismatch,
+    setOptimisticUserMessages,
+    setThreadError,
+    anchorNewTurn,
+    persistThreadSettingsForNextTurn,
+  });
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
@@ -2993,6 +3011,7 @@ export default function ChatView(props: ChatViewProps) {
     persistThreadSettingsForNextTurn,
   });
   const onImplementPlanInNewThreadStable = useStableCallback(onImplementPlanInNewThread);
+  const onBuildProposedPlanStable = useStableCallback(onBuildProposedPlan);
 
   const onWorktreeSetupWorkLocally = () => {
     if (!worktreeSetup || worktreeSetup.phase !== "running" || !draftId) {
@@ -3495,6 +3514,8 @@ export default function ChatView(props: ChatViewProps) {
                   onRevertToTurnCount={onRevertTimelineTurnStable}
                   onUseArtifactTemplate={insertArtifactTemplateStable}
                   onSendAppMessage={sendAppMessageStable}
+                  onBuildProposedPlan={onBuildProposedPlanStable}
+                  isBuildingProposedPlan={isSendBusy}
                   isRevertingCheckpoint={isRevertingCheckpoint}
                   onImageExpand={onExpandTimelineImageStable}
                   onFileOpen={openFileAttachmentStable}

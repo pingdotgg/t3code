@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type ModelSelection,
+  type PlanId,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -107,10 +108,12 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     text,
     context,
     interactionMode: nextInteractionMode,
+    sourcePlanId,
   }: {
     text: string;
     context?: ReturnType<typeof buildMessageContext>;
     interactionMode: "default" | "plan";
+    sourcePlanId?: PlanId;
   }) {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -132,6 +135,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       return false;
     }
 
+    const linkedPlanId = sourcePlanId ?? activeProposedPlan?.id;
     const threadIdForSend = activeThread.id;
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -197,11 +201,11 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
           titleSeed: activeThread.title,
           runtimeMode,
           interactionMode: nextInteractionMode,
-          ...(nextInteractionMode === "default" && activeProposedPlan
+          ...(nextInteractionMode === "default" && linkedPlanId
             ? {
                 sourceProposedPlan: {
                   threadId: activeThread.id,
-                  planId: activeProposedPlan.id,
+                  planId: linkedPlanId,
                 },
               }
             : {}),
@@ -231,6 +235,19 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     resetLocalDispatch();
     return false;
   };
+}
+
+/**
+ * Implements a proposed plan on this thread (Build). Resolves whether the turn started.
+ */
+export function useBuildProposedPlan(input: PlanFollowUpSendInput) {
+  const submitPlanFollowUp = usePlanFollowUpSend(input);
+  return async (plan: { readonly id: PlanId; readonly planMarkdown: string }) =>
+    submitPlanFollowUp({
+      text: buildPlanImplementationPrompt(plan.planMarkdown),
+      interactionMode: "default",
+      sourcePlanId: plan.id,
+    });
 }
 
 interface ImplementPlanInNewThreadInput extends PlanSendBase {

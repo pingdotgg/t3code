@@ -516,6 +516,8 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     return (
       <ProposedPlanCard
         environmentId={props.environmentId}
+        threadId={plan.threadId}
+        planId={plan.planId}
         workspaceRoot={props.workspaceRoot}
         markdown={plan.markdown}
         renderMarkdown={props.renderReasoning}

@@ -45,6 +45,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  canBuild = false,
+  isBuilding = false,
+  onBuild,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -52,6 +55,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  canBuild?: boolean;
+  isBuilding?: boolean;
+  onBuild?: (() => void) | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -178,12 +184,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               {isCopied ? "Copied!" : "Copy to clipboard"}
             </MenuItem>
             <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
-            <MenuItem
-              onClick={openSaveDialog}
-              disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
-            >
-              Save to workspace
-            </MenuItem>
           </MenuPopup>
         </Menu>
       </div>
@@ -228,6 +228,27 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               {expanded ? "Collapse plan" : "Expand plan"}
             </Button>
           </div>
+        ) : null}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          data-scroll-anchor-ignore
+          onClick={openSaveDialog}
+          disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
+        >
+          {isSavingToWorkspace ? "Saving..." : "Save to workspace"}
+        </Button>
+        {onBuild ? (
+          <Button
+            size="sm"
+            data-scroll-anchor-ignore
+            onClick={onBuild}
+            disabled={!canBuild || isBuilding}
+          >
+            {isBuilding ? "Building..." : "Build"}
+          </Button>
         ) : null}
       </div>
 
