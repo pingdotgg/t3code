@@ -1099,26 +1099,35 @@ function fakeOpenRouter(options: { models: string[]; transcript?: string; keySta
 
 const unstubFetch = Effect.sync(() => vi.unstubAllGlobals());
 
-it.effect("transcribes through OpenRouter once a key is saved, correcting like local models", () =>
+it.effect("keeps local models after a key is saved until a cloud model is chosen", () =>
   Effect.gen(function* () {
     const cloud = fakeOpenRouter({ models: ["a/one", "b/two"], transcript: "uhh, open t 3 code" });
     const speech = yield* SpeechService.SpeechService;
-    const status = yield* speech.saveCloudKey(" sk-or-secret-abcd ");
-    expect(status).toMatchObject({
+    const saved = yield* speech.saveCloudKey(" sk-or-secret-abcd ");
+    expect(saved).toMatchObject({
+      engine: "local",
+      cloud: { keyConfigured: true, keyHint: "abcd" },
+    });
+    expect(saved.supported && saved.cloud?.modelId).toBeFalsy();
+    expect(JSON.stringify(saved)).not.toContain("sk-or-secret");
+    expect(yield* speech.transcribe(pcm())).toBe("hello");
+    expect(cloud.transcriptions).toEqual([]);
+
+    expect(yield* speech.selectCloudModel("b/two")).toMatchObject({
       engine: "openrouter",
       supportsStreaming: false,
-      modelId: "a/one",
-      cloud: { keyConfigured: true, keyHint: "abcd", modelId: "a/one" },
+      modelId: "b/two",
+      cloud: { modelId: "b/two" },
     });
-    expect(JSON.stringify(status)).not.toContain("sk-or-secret");
+    expect((yield* speech.models).models.some((model) => model.active)).toBe(false);
     yield* speech.prepareModel;
     expect(yield* speech.transcribe(pcm())).toBe("open T3 Code");
-    expect(loadNative).not.toHaveBeenCalled();
+    expect(loadNative).toHaveBeenCalledOnce();
     expect(cloud.transcriptions).toEqual([
       {
         authorization: "Bearer sk-or-secret-abcd",
         body: expect.objectContaining({
-          model: "a/one",
+          model: "b/two",
           input_audio: { data: expect.any(String), format: "wav" },
         }),
       },
@@ -1126,38 +1135,42 @@ it.effect("transcribes through OpenRouter once a key is saved, correcting like l
   }).pipe(Effect.ensuring(unstubFetch), Effect.provide(customWordsLayer)),
 );
 
-it.effect("follows the live catalog when a chosen cloud model is delisted", () =>
-  Effect.gen(function* () {
-    const cloud = fakeOpenRouter({ models: ["a/one", "b/two"] });
-    const speech = yield* SpeechService.SpeechService;
-    yield* speech.saveCloudKey("sk-or-key");
-    expect(yield* speech.selectCloudModel("b/two")).toMatchObject({ modelId: "b/two" });
-    expect(yield* Effect.flip(speech.selectCloudModel("c/three"))).toMatchObject({
-      _tag: "SpeechModelNotFoundError",
-    });
-    cloud.options.models = ["a/one"];
-    yield* TestClock.adjust(10 * 60_000);
-    expect(yield* speech.status).toMatchObject({ modelId: "a/one" });
-    yield* speech.transcribe(pcm());
-    expect(cloud.transcriptions.at(-1)?.body).toMatchObject({ model: "a/one" });
-  }).pipe(Effect.ensuring(unstubFetch), Effect.provide(layer)),
-);
+it.effect(
+  "returns to local models when the cloud model is unselected, delisted, or the key removed",
+  () =>
+    Effect.gen(function* () {
+      const cloud = fakeOpenRouter({ models: ["a/one", "b/two"] });
+      const speech = yield* SpeechService.SpeechService;
+      expect(yield* Effect.flip(speech.selectCloudModel("a/one"))).toMatchObject({
+        failure: "key_invalid",
+      });
+      yield* speech.saveCloudKey("sk-or-key");
+      expect(yield* Effect.flip(speech.selectCloudModel("c/three"))).toMatchObject({
+        _tag: "SpeechModelNotFoundError",
+      });
 
-it.effect("returns to local models when the cloud key is removed", () =>
-  Effect.gen(function* () {
-    fakeOpenRouter({ models: ["a/one"] });
-    const speech = yield* SpeechService.SpeechService;
-    yield* speech.saveCloudKey("sk-or-key");
-    expect(yield* speech.removeCloudKey).toMatchObject({
-      engine: "local",
-      cloud: { keyConfigured: false },
-    });
-    expect(yield* Effect.flip(speech.updateEngine("openrouter"))).toMatchObject({
-      failure: "key_invalid",
-    });
-    expect(yield* speech.transcribe(pcm())).toBe("hello");
-    expect(loadNative).toHaveBeenCalledOnce();
-  }).pipe(Effect.ensuring(unstubFetch), Effect.provide(layer)),
+      yield* speech.selectCloudModel("a/one");
+      expect(yield* speech.updateEngine("local")).toMatchObject({ engine: "local" });
+      expect(yield* Effect.flip(speech.updateEngine("openrouter"))).toMatchObject({
+        _tag: "SpeechModelNotFoundError",
+      });
+
+      yield* speech.selectCloudModel("b/two");
+      expect(yield* speech.selectModel("test-model")).toMatchObject({ engine: "local" });
+
+      yield* speech.selectCloudModel("b/two");
+      cloud.options.models = ["a/one"];
+      yield* TestClock.adjust(10 * 60_000);
+      expect(yield* speech.status).toMatchObject({ engine: "local", modelId: "test-model" });
+
+      yield* speech.selectCloudModel("a/one");
+      expect(yield* speech.removeCloudKey).toMatchObject({
+        engine: "local",
+        cloud: { keyConfigured: false },
+      });
+      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(cloud.transcriptions).toEqual([]);
+    }).pipe(Effect.ensuring(unstubFetch), Effect.provide(layer)),
 );
 
 it.effect("does not save a key OpenRouter rejects", () =>

@@ -12,7 +12,6 @@ import {
   updateEnvironmentSpeechModelUnloadTimeout,
   updateEnvironmentSpeechLanguage,
   updateEnvironmentSpeechTranslation,
-  updateEnvironmentSpeechEngine,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
@@ -393,7 +392,7 @@ export function VoiceSettingsPanel() {
   const [languageSearch, setLanguageSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
   const [showAllModels, setShowAllModels] = useState(false);
-  // Choosing Cloud before a key exists shows the key form while local models keep working.
+  // Which list Transcription models shows; starts on wherever voice input runs now.
   const [sourceView, setSourceView] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
     readonly engine: SpeechEngine;
@@ -633,23 +632,9 @@ export function VoiceSettingsPanel() {
   const engine = supportedStatus?.engine ?? "local";
   const cloudActive = engine === "openrouter";
   const sourceShown = sourceView?.prepared === prepared ? sourceView.engine : engine;
+  // Only switches which list is shown; choosing a model is what changes where voice runs.
   const chooseSource = (next: SpeechEngine) => {
-    if (!prepared || !supportedStatus) return;
-    setSourceView({ prepared, engine: next });
-    const wanted = next === "openrouter" && !supportedStatus.cloud?.keyConfigured ? "local" : next;
-    if (wanted === engine) return;
-    setOperation("engine");
-    void runtime
-      .runPromise(updateEnvironmentSpeechEngine(prepared, wanted))
-      .then((value) => setStatus({ prepared, value }))
-      .catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not switch transcription models",
-          description: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => setOperation(null));
+    if (prepared) setSourceView({ prepared, engine: next });
   };
   const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort(
     compareLanguages,

@@ -395,18 +395,20 @@ export const make = Effect.gen(function* () {
   };
   const cachedCloudModels = () => cloudCatalog?.models;
 
-  /** The chosen model while OpenRouter still lists it, else the catalog's first model. */
-  const cloudModelFor = (
-    settings: SettingsSnapshot,
-    models: ReadonlyArray<EnvironmentSpeechCloudModel> | undefined,
-  ) => {
+  /**
+   * The cloud model in use: one the user chose, with a saved key, that OpenRouter still
+   * lists. Nothing is picked for the user, so without one voice input stays local.
+   */
+  const activeCloudModel = async (settings: SettingsSnapshot, key: string | undefined) => {
     const chosen = settings.speechCloudModelId;
-    if (!models) return chosen ? { id: chosen, name: chosen } : undefined;
-    return models.find((model) => model.id === chosen) ?? models[0];
+    if (settings.speechEngine !== "openrouter" || key === undefined || !chosen) return undefined;
+    const models = await loadCloudCatalog().catch(cachedCloudModels);
+    // An unreachable catalog keeps the choice rather than silently switching engines.
+    if (!models) return { id: chosen, name: chosen };
+    return models.find((model) => model.id === chosen);
   };
 
-  const cloudEngineActive = (settings: SettingsSnapshot, key: string | undefined) =>
-    settings.speechEngine === "openrouter" && key !== undefined;
+  const backToLocal = { speechEngine: "local", speechCloudModelId: "" } as const;
 
   const download = async (modelId: string, settings: SettingsSnapshot, signal = lifetime) => {
     const definition = getSpeechModel(modelId);
@@ -690,11 +692,7 @@ export const make = Effect.gen(function* () {
   ): Promise<EnvironmentSpeechStatus> => {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
-    const cloudActive = cloudEngineActive(settings, cloudKey);
-    const cloudModel = cloudModelFor(
-      settings,
-      cloudActive ? await loadCloudCatalog().catch(cachedCloudModels) : cachedCloudModels(),
-    );
+    const cloudModel = await activeCloudModel(settings, cloudKey);
     const cloud = {
       keyConfigured: cloudKey !== undefined,
       ...(cloudKey ? { keyHint: cloudKey.slice(-4) } : {}),
@@ -710,12 +708,12 @@ export const make = Effect.gen(function* () {
       modelDirectories: settings.speechModelDirectories,
       cloud,
     };
-    if (cloudActive) {
+    if (cloudModel) {
       return {
         supported: true,
         state: activeTranscriptions > 0 ? "transcribing" : "ready",
-        modelId: cloudModel?.id ?? "openrouter",
-        model: cloudModel?.name ?? "OpenRouter",
+        modelId: cloudModel.id,
+        model: cloudModel.name,
         size: 0,
         supportsStreaming: false,
         supportsTranslation: false,
@@ -745,8 +743,10 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const listModels = async (settings: SettingsSnapshot) => {
+  const listModels = async (settings: SettingsSnapshot, cloudKey: string | undefined) => {
     const selected = selectedModel(settings);
+    // While a cloud model is in use, no local model reads as the active one.
+    const cloudInUse = (await activeCloudModel(settings, cloudKey)) !== undefined;
     return {
       models: await Promise.all(
         SPEECH_MODELS.map(async (definition) => {
@@ -769,7 +769,7 @@ export const make = Effect.gen(function* () {
             supportsStreaming: definition.supportsStreaming,
             supportsLanguageDetection: definition.supportsLanguageDetection,
             supportsTranslation: definition.supportsTranslation,
-            active: ready && selected.id === definition.id,
+            active: ready && !cloudInUse && selected.id === definition.id,
             state: operation
               ? operation.verifying
                 ? ("verifying" as const)
@@ -789,6 +789,15 @@ export const make = Effect.gen(function* () {
     Effect.all([readSettings(operation), readCloudKey]).pipe(
       Effect.flatMap(([settings, cloudKey]) =>
         attempt(operation, () => currentStatus(settings, cloudKey)),
+      ),
+    );
+
+  const readEngine = (operation: string) =>
+    Effect.all([readSettings(operation), readCloudKey]).pipe(
+      Effect.flatMap(([settings, cloudKey]) =>
+        attempt(operation, () => activeCloudModel(settings, cloudKey)).pipe(
+          Effect.map((cloudModel) => ({ settings, cloudKey, cloudModel })),
+        ),
       ),
     );
 
@@ -816,6 +825,7 @@ export const make = Effect.gen(function* () {
     projectName: string | undefined,
     settings: SettingsSnapshot,
     apiKey: string,
+    cloudModel: { readonly id: string },
   ) {
     const pcm = yield* Effect.try({
       try: () => decodeSpeechPcm(pcmBytes),
@@ -825,13 +835,6 @@ export const make = Effect.gen(function* () {
       return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
     activeTranscriptions += 1;
     return yield* Effect.gen(function* () {
-      const prepareStartedAt = performance.now();
-      const cloudModel = cloudModelFor(
-        settings,
-        yield* attemptSpeech("cloud model listing", loadCloudCatalog),
-      );
-      if (!cloudModel) return yield* new SpeechModelNotFoundError({ modelId: "openrouter" });
-      const prepareDurationMs = performance.now() - prepareStartedAt;
       const inferenceStartedAt = performance.now();
       const language = settings.speechLanguage === "auto" ? undefined : settings.speechLanguage;
       const raw = yield* Effect.tryPromise({
@@ -855,7 +858,7 @@ export const make = Effect.gen(function* () {
           language,
         ),
         backend: `openrouter:${cloudModel.id}`,
-        prepareDurationMs,
+        prepareDurationMs: 0,
         inferenceDurationMs: performance.now() - inferenceStartedAt,
       };
     }).pipe(
@@ -869,7 +872,13 @@ export const make = Effect.gen(function* () {
 
   const statusEffect = freshStatus("status");
   const modelsEffect = readSettings("model listing").pipe(
-    Effect.flatMap((settings) => attempt("model listing", () => listModels(settings))),
+    Effect.flatMap((settings) =>
+      readCloudKey.pipe(
+        Effect.flatMap((cloudKey) =>
+          attempt("model listing", () => listModels(settings, cloudKey)),
+        ),
+      ),
+    ),
   );
 
   return SpeechService.of({
@@ -884,9 +893,9 @@ export const make = Effect.gen(function* () {
       Effect.scoped,
       Effect.mapError((cause) => new SpeechOperationError({ operation: "post-processing", cause })),
     ),
-    prepareModel: Effect.all([readSettings("model preparation"), readCloudKey]).pipe(
-      Effect.flatMap(([settings, cloudKey]) =>
-        cloudEngineActive(settings, cloudKey)
+    prepareModel: readEngine("model preparation").pipe(
+      Effect.flatMap(({ settings, cloudModel }) =>
+        cloudModel
           ? Effect.void
           : exclusiveEffect(
               "model preparation",
@@ -1088,7 +1097,9 @@ export const make = Effect.gen(function* () {
         loadedAcceleration = undefined;
         loading = undefined;
       }).pipe(
-        Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
+        Effect.andThen(
+          writeSettings("model selection", { speechModelId: modelId, ...backToLocal }),
+        ),
         Effect.andThen(freshStatus("model selection")),
       ),
     ),
@@ -1142,10 +1153,10 @@ export const make = Effect.gen(function* () {
       ),
     ),
     transcribe: Effect.fn("SpeechService.transcribe")((pcmBytes, projectName) =>
-      Effect.all([readSettings("transcription"), readCloudKey]).pipe(
-        Effect.flatMap(([settings, cloudKey]) =>
-          cloudKey !== undefined && cloudEngineActive(settings, cloudKey)
-            ? transcribeCloud(pcmBytes, projectName, settings, cloudKey)
+      readEngine("transcription").pipe(
+        Effect.flatMap(({ settings, cloudKey, cloudModel }) =>
+          cloudKey !== undefined && cloudModel
+            ? transcribeCloud(pcmBytes, projectName, settings, cloudKey, cloudModel)
             : exclusiveEffect(
                 "transcription",
                 Effect.gen(function* () {
@@ -1337,24 +1348,29 @@ export const make = Effect.gen(function* () {
         ),
       ),
     ),
+    // Cloud starts only by choosing a model; this is the way back to local models.
     updateEngine: Effect.fn("SpeechService.updateEngine")(function* (engine) {
-      // Cloud needs a key; saving one switches to cloud, so a missing key is a stale client.
-      if (engine === "openrouter" && (yield* readCloudKey) === undefined)
-        return yield* new OpenRouterSpeechError({
-          failure: "key_invalid",
-          detail: "Save an OpenRouter API key before using cloud transcription.",
-        });
-      yield* writeSettings("engine update", { speechEngine: engine });
+      if (engine === "openrouter")
+        return yield* new SpeechModelNotFoundError({ modelId: "openrouter" });
+      yield* writeSettings("engine update", backToLocal);
       return yield* freshStatus("engine update");
     }),
     cloudModels: attemptSpeech("cloud model listing", loadCloudCatalog).pipe(
       Effect.map((models) => ({ models })),
     ),
     selectCloudModel: Effect.fn("SpeechService.selectCloudModel")(function* (modelId) {
+      if ((yield* readCloudKey) === undefined)
+        return yield* new OpenRouterSpeechError({
+          failure: "key_invalid",
+          detail: "Save an OpenRouter API key before choosing a cloud model.",
+        });
       const models = yield* attemptSpeech("cloud model selection", loadCloudCatalog);
       if (!models.some((model) => model.id === modelId))
         return yield* new SpeechModelNotFoundError({ modelId });
-      yield* writeSettings("cloud model selection", { speechCloudModelId: modelId });
+      yield* writeSettings("cloud model selection", {
+        speechEngine: "openrouter",
+        speechCloudModelId: modelId,
+      });
       return yield* freshStatus("cloud model selection");
     }),
     saveCloudKey: Effect.fn("SpeechService.saveCloudKey")(function* (apiKey) {
@@ -1370,14 +1386,13 @@ export const make = Effect.gen(function* () {
             (cause) => new SpeechOperationError({ operation: "cloud key save", cause }),
           ),
         );
-      yield* writeSettings("cloud key save", { speechEngine: "openrouter" });
       return yield* freshStatus("cloud key save");
     }),
     removeCloudKey: secretStore.remove(CLOUD_KEY_SECRET).pipe(
       Effect.mapError(
         (cause) => new SpeechOperationError({ operation: "cloud key removal", cause }),
       ),
-      Effect.andThen(writeSettings("cloud key removal", { speechEngine: "local" })),
+      Effect.andThen(writeSettings("cloud key removal", backToLocal)),
       Effect.andThen(freshStatus("cloud key removal")),
     ),
   });

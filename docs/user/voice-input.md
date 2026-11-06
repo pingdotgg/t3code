@@ -35,13 +35,15 @@ so those models can't be deleted from Voice settings.
 Models marked Streaming transcribe while you speak, so the text is ready sooner
 after you stop. Other models transcribe after recording stops.
 
-To transcribe in the cloud instead, open Transcription models, choose **Cloud**,
-and save an OpenRouter API key. Voice input then uses OpenRouter's transcription
-models, listed with their prices, until you choose Local again. Recordings are
-sent to OpenRouter and the model's provider, and are billed to your OpenRouter
-account. The key is kept on the transcription environment and never shown again;
-delete it there to return to local models. Cloud models transcribe after
-recording stops, and the dictionary and filler-word removal still apply.
+To transcribe in the cloud instead, open Transcription models, switch to
+**Cloud**, and save an OpenRouter API key. Saving the key doesn't change
+anything yet: choose one of OpenRouter's transcription models, listed with
+their prices, to start using it. **Unselect** it, or choose a local model, to
+go back to local transcription. Recordings sent to a cloud model go to
+OpenRouter and the model's provider, and are billed to your OpenRouter account.
+The key is kept on the transcription environment and never shown again. Cloud
+models transcribe after recording stops, and the dictionary and filler-word
+removal still apply.
 
 In Voice settings, you can also choose the microphone used by this browser or
 app, switch between downloaded models, or remove models from the environment.

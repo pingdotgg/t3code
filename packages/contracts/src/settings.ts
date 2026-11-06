@@ -1360,7 +1360,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
   speechEngine: SpeechEngine.pipe(Schema.withDecodingDefault(Effect.succeed("local"))),
-  // Empty follows the catalog's first model, which may change as OpenRouter's list does.
+  // Empty until the user chooses a cloud model; nothing is picked for them.
   speechCloudModelId: Schema.Union([Schema.Literal(""), SpeechCloudModelId]).pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
   ),

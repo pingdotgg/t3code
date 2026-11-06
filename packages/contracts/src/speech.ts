@@ -101,7 +101,7 @@ export const EnvironmentSpeechCloud = Schema.Struct({
   keyConfigured: Schema.Boolean,
   /** The key's last characters, so a user can tell which key is saved. */
   keyHint: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8))),
-  /** The model cloud transcription uses, after falling back from a delisted choice. */
+  /** The cloud model in use: chosen by the user and still listed by OpenRouter. */
   modelId: Schema.optionalKey(SpeechCloudModelId),
 });
 export type EnvironmentSpeechCloud = typeof EnvironmentSpeechCloud.Type;

@@ -3,11 +3,12 @@ import {
   removeEnvironmentSpeechCloudKey,
   saveEnvironmentSpeechCloudKey,
   selectEnvironmentSpeechCloudModel,
+  updateEnvironmentSpeechEngine,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { EnvironmentSpeechCloudModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
 import {
-  CheckIcon,
+  ChevronDownIcon,
   ExternalLinkIcon,
   InfoIcon,
   KeyRoundIcon,
@@ -20,7 +21,9 @@ import { useEffect, useState } from "react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
+import { cn } from "../../lib/utils";
 import { speechCloudFailureMessage } from "../../speech/speechErrors";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
@@ -30,6 +33,7 @@ import { SettingsRow } from "./settingsLayout";
 import { formatSpeechCloudPrice } from "./speechCloudPricing";
 
 const OPENROUTER_KEYS_URL = "https://openrouter.ai/settings/keys";
+const SHORT_MODEL_LIST_SIZE = 6;
 
 type SupportedStatus = Extract<EnvironmentSpeechStatus, { supported: true }>;
 
@@ -45,12 +49,18 @@ function CloudModelRow(props: {
   readonly selected: boolean;
   readonly busy: boolean;
   readonly onSelect: () => void;
+  readonly onUnselect: () => void;
 }) {
   const { model } = props;
   const price = formatSpeechCloudPrice(model.pricing);
   return (
     <SettingsRow
-      title={model.name}
+      title={
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span>{model.name}</span>
+          {props.selected ? <Badge variant="secondary">Selected</Badge> : null}
+        </span>
+      }
       description={model.id}
       status={
         price ? (
@@ -81,9 +91,14 @@ function CloudModelRow(props: {
             </Popover>
           ) : null}
           {props.selected ? (
-            <Button size="sm" variant="secondary" disabled>
-              <CheckIcon className="size-3.5" />
-              Selected
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={props.busy}
+              aria-label={`Stop using ${model.name}`}
+              onClick={props.onUnselect}
+            >
+              Unselect
             </Button>
           ) : (
             <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onSelect}>
@@ -113,6 +128,7 @@ export function VoiceCloudSettings(props: {
     readonly failed: boolean;
   } | null>(null);
   const [modelSearch, setModelSearch] = useState("");
+  const [showAllModels, setShowAllModels] = useState(false);
 
   const loadCatalog = useStableCallback((connection: PreparedConnection) => {
     setCatalog({ prepared: connection, models: null, failed: false });
@@ -175,6 +191,10 @@ export function VoiceCloudSettings(props: {
     )
     // The selected model leads, like the local list; the rest keep the environment's order.
     .sort((a, b) => Number(b.id === selectedId) - Number(a.id === selectedId));
+  // Like the local list: a short list until expanded, and every match while searching.
+  const canShortenModels = !searchTerm && models.length > SHORT_MODEL_LIST_SIZE;
+  const visibleModels =
+    canShortenModels && !showAllModels ? models.slice(0, SHORT_MODEL_LIST_SIZE) : models;
 
   return (
     <>
@@ -184,8 +204,9 @@ export function VoiceCloudSettings(props: {
           keyConfigured ? (
             <>
               Saved on this environment, ending in{" "}
-              <span className="font-mono">{status.cloud?.keyHint}</span>. Recordings are sent to
-              OpenRouter and the model's provider.
+              <span className="font-mono">{status.cloud?.keyHint}</span>. Choose a model to
+              transcribe in the cloud; recordings are then sent to OpenRouter and the model's
+              provider.
             </>
           ) : (
             "Transcribe with OpenRouter's models. Recordings are sent to OpenRouter and the model's provider."
@@ -286,7 +307,7 @@ export function VoiceCloudSettings(props: {
           ) : models.length === 0 ? (
             <SettingsRow title="No models match your search." />
           ) : (
-            models.map((model) => (
+            visibleModels.map((model) => (
               <CloudModelRow
                 key={model.id}
                 model={model}
@@ -299,9 +320,36 @@ export function VoiceCloudSettings(props: {
                     "Could not select the model",
                   )
                 }
+                onUnselect={() =>
+                  void run(
+                    model.id,
+                    () => runtime.runPromise(updateEnvironmentSpeechEngine(prepared, "local")),
+                    "Could not unselect the model",
+                  )
+                }
               />
             ))
           )}
+          {currentCatalog?.models && canShortenModels ? (
+            <div className="px-3 py-2 sm:px-4">
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost-muted"
+                aria-expanded={showAllModels}
+                onClick={() => setShowAllModels((open) => !open)}
+              >
+                {showAllModels ? "Show fewer" : `Show all ${models.length} models`}
+                <ChevronDownIcon
+                  aria-hidden
+                  className={cn(
+                    "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+                    showAllModels && "rotate-180",
+                  )}
+                />
+              </Button>
+            </div>
+          ) : null}
         </>
       ) : null}
     </>
