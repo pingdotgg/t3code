@@ -5967,6 +5967,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.runtime.startTurn(turn(1, "plan"));
           const originalOptions = harness.getOpenedOptions();
           assert.equal(originalOptions?.permissionMode, "plan");
+          // Leaving Plan for Full access needs the bypass allowance from launch.
+          assert.equal(
+            originalOptions?.allowDangerouslySkipPermissions,
+            runtimeMode === "full-access" ? true : undefined,
+          );
           yield* harness.offerAndWait(wakeTaskStarted);
           yield* settle;
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
