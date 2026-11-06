@@ -64,7 +64,7 @@ const layerElectronDialog = ({ shownMessageBox }: MenuServices) =>
     pickFiles: () => Effect.succeed([]),
     showMessageBox: (options) =>
       (shownMessageBox ? Deferred.succeed(shownMessageBox, options) : Effect.void).pipe(
-        Effect.as({ response: 0, checkboxChecked: false }),
+        Effect.as({ response: options.cancelId ?? 0, checkboxChecked: false }),
       ),
     showErrorBox: () => Effect.void,
   } satisfies ElectronDialog.ElectronDialog["Service"]);
