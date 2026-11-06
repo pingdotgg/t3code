@@ -46,6 +46,8 @@ export class GracefulShutdownGate extends Context.Service<
   {
     readonly getState: Effect.Effect<GracefulShutdownGateState>;
     readonly setState: (state: GracefulShutdownGateState) => Effect.Effect<void>;
+    /** Atomically install drain state when idle; false if a drain is already active. */
+    readonly tryBegin: (state: GracefulShutdownGateState) => Effect.Effect<boolean>;
     readonly clear: Effect.Effect<void>;
     readonly isSaveWorkMessage: (messageId: MessageId) => Effect.Effect<boolean>;
     /** True when new turns for this thread must queue (steers still allowed). */
@@ -64,6 +66,11 @@ const make = Effect.fn("GracefulShutdownGate.make")(function* () {
 
   const getState = Ref.get(stateRef);
   const setState = (state: GracefulShutdownGateState) => Ref.set(stateRef, state);
+  const tryBegin = (state: GracefulShutdownGateState) =>
+    Ref.modify(stateRef, (current) => {
+      if (isDrainActive(current)) return [false, current] as const;
+      return [true, state] as const;
+    });
   const clear = Ref.set(stateRef, IDLE_STATE);
 
   const isSaveWorkMessage = Effect.fn("GracefulShutdownGate.isSaveWorkMessage")(function* (
@@ -114,6 +121,7 @@ const make = Effect.fn("GracefulShutdownGate.make")(function* () {
   return GracefulShutdownGate.of({
     getState,
     setState,
+    tryBegin,
     clear,
     isSaveWorkMessage,
     shouldQueueNewTurns,

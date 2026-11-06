@@ -827,12 +827,6 @@ function worktreeSetupPending(
   );
 }
 
-function nextQueuedRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
-): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
-}
-
 function followsCurrentConversation(
   message:
     | Pick<
@@ -1766,6 +1760,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  // Drain may skip blocked candidates; only save-work may bypass an earlier blocked run.
+  const selectStartableQueuedRun = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "messages" | "providerSessions" | "runs"
+    >,
+    queuedCandidates: ReadonlyArray<OrchestrationV2Run>,
+  ) {
+    let blockedCandidate = false;
+    for (const candidate of queuedCandidates) {
+      const candidateSelection = queuedRunModelSelection(projection, candidate);
+      if (
+        yield* gracefulShutdownGate.shouldQueueNewTurns({
+          threadId,
+          providerInstanceId: candidateSelection.instanceId,
+          providerSessionIds: projection.providerSessions.map((session) => session.id),
+          messageId: candidate.userMessageId,
+        })
+      ) {
+        blockedCandidate = true;
+        continue;
+      }
+      if (
+        blockedCandidate &&
+        !(yield* gracefulShutdownGate.isSaveWorkMessage(candidate.userMessageId))
+      ) {
+        continue;
+      }
+      return {
+        storedQueuedRun: candidate,
+        modelSelection: candidateSelection,
+      } as const;
+    }
+    return undefined;
+  });
+
   const failQueuedRunStart = Effect.fn("Orchestrator.failQueuedRunStart")(function* (
     threadId: ThreadId,
     cause: unknown,
@@ -1773,12 +1804,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
-      ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
+      ["runs", "nodes", "attempts", "providerThreads", "providerSessions", "turnItems", "messages"],
       { turnItemTypes: [], messageRoles: ["user"] },
     );
     const queuedRun =
       queuedRunId === undefined
-        ? nextQueuedRun(projection)
+        ? (yield* selectStartableQueuedRun(
+            threadId,
+            projection,
+            queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true),
+          ))?.storedQueuedRun
         : projection.runs.find((run) => run.id === queuedRunId && run.status === "queued");
     if (queuedRun === undefined) return;
     const now = yield* DateTime.now;
@@ -1906,27 +1941,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         selectedQueuedRun === undefined
           ? queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true)
           : [selectedQueuedRun];
-      let storedQueuedRun: (typeof queuedCandidates)[number] | undefined;
-      let modelSelection: ReturnType<typeof queuedRunModelSelection> | undefined;
-      for (const candidate of queuedCandidates) {
-        const candidateSelection = queuedRunModelSelection(projection, candidate);
-        if (
-          yield* gracefulShutdownGate.shouldQueueNewTurns({
-            threadId,
-            providerInstanceId: candidateSelection.instanceId,
-            providerSessionIds: projection.providerSessions.map((session) => session.id),
-            messageId: candidate.userMessageId,
-          })
-        ) {
-          continue;
-        }
-        storedQueuedRun = candidate;
-        modelSelection = candidateSelection;
-        break;
-      }
-      if (storedQueuedRun === undefined || modelSelection === undefined) {
+      const selected = yield* selectStartableQueuedRun(threadId, projection, queuedCandidates);
+      if (selected === undefined) {
         return;
       }
+      const { storedQueuedRun, modelSelection } = selected;
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );

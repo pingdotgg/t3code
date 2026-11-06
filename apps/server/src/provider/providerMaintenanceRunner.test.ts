@@ -241,6 +241,7 @@ const makeTestRunner = (
     })),
   },
   latestVersions: Layer.Layer<ProviderLatestVersions.ProviderLatestVersions> = ProviderLatestVersions.layer,
+  drainBegins?: Ref.Ref<number>,
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -266,16 +267,21 @@ const makeTestRunner = (
                   saveWorkTurnCount: 0,
                 }),
                 beginAndAwait: () =>
-                  Effect.succeed({
-                    shutdownId: GracefulShutdownId.make("test-shutdown"),
-                    phase: "quiesced",
-                    scope: { type: "environment" },
-                    timedOut: false,
-                    activeRunCount: 0,
-                    saveWorkPrompted: false,
-                    saveWorkTurnCount: 0,
-                    elapsedMs: 0,
-                  }),
+                  (drainBegins === undefined
+                    ? Effect.void
+                    : Ref.update(drainBegins, (count) => count + 1)
+                  ).pipe(
+                    Effect.as({
+                      shutdownId: GracefulShutdownId.make("test-shutdown"),
+                      phase: "quiesced" as const,
+                      scope: { type: "environment" as const },
+                      timedOut: false,
+                      activeRunCount: 0,
+                      saveWorkPrompted: false,
+                      saveWorkTurnCount: 0,
+                      elapsedMs: 0,
+                    }),
+                  ),
                 complete: () => Effect.void,
               }),
             ),
@@ -321,6 +327,7 @@ describe("providerMaintenanceRunner", () => {
         [
           ["queued", "Waiting for another provider update to finish."],
           ["running", "Checking for the latest version"],
+          ["running", "Waiting for agents to finish before updating"],
           ["running", "Running native-agent update"],
           ["running", "Verifying the installed version"],
           ["succeeded", "Provider updated."],
@@ -356,6 +363,7 @@ describe("providerMaintenanceRunner", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const refreshedInstanceIds: Array<ProviderInstanceId> = [];
     return Effect.gen(function* () {
+      const drainBegins = yield* Ref.make(0);
       const { registry, updateStatesRef, providersRef } = yield* makeRegistry({
         ...baseProvider,
         version: "2.1.309",
@@ -369,38 +377,44 @@ describe("providerMaintenanceRunner", () => {
           message: "Update available.",
         },
       });
-      const updater = yield* makeTestRunner({
-        ...registry,
-        refreshInstance: (instanceId) => {
-          refreshedInstanceIds.push(instanceId);
-          return Ref.updateAndGet(providersRef, (providers) =>
-            providers.map((provider) =>
-              provider.instanceId === instanceId
-                ? {
-                    ...provider,
-                    version: "2.1.310",
-                    ...probe,
-                    checkedAt: "2026-04-10T00:00:01.000Z",
-                  }
-                : provider,
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          refreshInstance: (instanceId) => {
+            refreshedInstanceIds.push(instanceId);
+            return Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) =>
+                provider.instanceId === instanceId
+                  ? {
+                      ...provider,
+                      version: "2.1.310",
+                      ...probe,
+                      checkedAt: "2026-04-10T00:00:01.000Z",
+                    }
+                  : provider,
+              ),
+            );
+          },
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed(
+              makeProviderMaintenanceCapabilities({
+                provider: CODEX_DRIVER,
+                packageName: "@anthropic-ai/claude-code",
+                updateExecutable: "claude",
+                updateArgs: ["update"],
+                updateLockKey: "claudeAgent-native",
+              }),
             ),
-          );
         },
-        getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed(
-            makeProviderMaintenanceCapabilities({
-              provider: CODEX_DRIVER,
-              packageName: "@anthropic-ai/claude-code",
-              updateExecutable: "claude",
-              updateArgs: ["update"],
-              updateLockKey: "claudeAgent-native",
-            }),
-          ),
-      });
+        undefined,
+        undefined,
+        drainBegins,
+      );
 
       const result = yield* updater.updateProvider(CODEX_DRIVER);
       assert.deepStrictEqual(refreshedInstanceIds, [CODEX_INSTANCE_ID]);
       assert.deepStrictEqual(calls, skip ? [] : [{ command: "claude", args: ["update"] }]);
+      assert.strictEqual(yield* Ref.get(drainBegins), skip ? 0 : 1);
       if (!skip) return;
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
       assert.strictEqual(result.providers[0]?.updateState?.message, "Already up to date.");
@@ -607,7 +621,7 @@ describe("providerMaintenanceRunner", () => {
       });
 
       yield* updater.updateProvider(CODEX_DRIVER);
-      assert.deepStrictEqual(fresh, [false, true, true]);
+      assert.deepStrictEqual(fresh, [false, true, true, true]);
       assert.deepStrictEqual(calls, [
         { command: "/opt/homebrew/bin/brew", args: ["upgrade", "--cask", "codex"] },
       ]);
