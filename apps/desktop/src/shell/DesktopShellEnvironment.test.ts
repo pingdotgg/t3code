@@ -509,6 +509,26 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
       assert.isTrue(prepared);
+
+      const shellAgent = envOutput({ PATH: "/usr/bin", SSH_AUTH_SOCK: "/tmp/secretive.sock" });
+      const launchdEnv: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.AbC123/Listeners",
+      };
+      yield* runShellEnvironment({
+        env: launchdEnv,
+        platform: "darwin",
+        handler: () => shellAgent,
+      });
+      assert.equal(launchdEnv.SSH_AUTH_SOCK, "/tmp/secretive.sock");
+
+      const forwardedEnv: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", SSH_AUTH_SOCK: "/tmp/fwd.sock" };
+      yield* runShellEnvironment({
+        env: forwardedEnv,
+        platform: "darwin",
+        handler: () => shellAgent,
+      });
+      assert.equal(forwardedEnv.SSH_AUTH_SOCK, "/tmp/fwd.sock");
     }),
   );
 
