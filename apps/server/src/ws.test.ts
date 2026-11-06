@@ -1360,6 +1360,7 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
     const exits = yield* Queue.unbounded<string>();
     const services = Layer.mergeAll(
       layerUnusedConfigRpcServices,
+      Layer.mock(LessonService.LessonService)({}),
       Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
         publishRepository: (input) =>
           Effect.fail(
