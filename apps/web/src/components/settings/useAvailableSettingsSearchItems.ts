@@ -28,6 +28,16 @@ export function useAvailableSettingsSearchItems() {
         hasServerConfig: environment.serverConfig !== null,
       }),
     ) === true;
+  // Matches FastCheckoutRow, which shows only when every connected machine supports it.
+  const fastCheckoutScope = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const hasFastWorktreeCheckoutEnvironment =
+    (fastCheckoutScope.length > 0 &&
+      fastCheckoutScope.every(
+        (environment) =>
+          environment.serverConfig?.environment.capabilities.fastWorktreeCheckout === true,
+      )) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -57,5 +67,6 @@ export function useAvailableSettingsSearchItems() {
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
+    hasFastWorktreeCheckoutEnvironment,
   });
 }
