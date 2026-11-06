@@ -41,6 +41,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  mentions: true,
   viewedFiles: "host",
   review: {
     inlineComment: true,
@@ -111,6 +112,7 @@ function gitHubProviderFailure(
       return { reason: "missing-tool" };
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
+    case "SettingsSecretUnresolvedError":
     case "GitHubApiAuthenticationError":
       return { reason: "unauthenticated" };
     case "GitHubApiRateLimitError":

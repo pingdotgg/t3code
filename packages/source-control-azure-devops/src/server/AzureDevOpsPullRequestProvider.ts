@@ -52,6 +52,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   // `az repos pr list` has no text filter.
   search: false,
   reactions: false,
+  mentions: false,
   review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
   // Reviewer candidates require separate identity/graph APIs and permissions.
   reviewers: { request: true, listCandidates: false },
@@ -110,6 +111,23 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
     reviewRequestLogins: pullRequest.reviewRequestLogins,
     // Azure keeps labels on work items rather than on the pull request.
     labels: [],
+  };
+}
+
+function toSummary(pullRequest: AzureDevOpsPullRequest): ProviderChangeRequestSummary {
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    author: pullRequest.author,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+    mergeability: pullRequest.mergeability,
+    closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+    mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+    updatedAt: pullRequest.updatedAt,
   };
 }
 
@@ -289,23 +307,9 @@ export const make = Effect.gen(function* () {
       ),
 
     getChangeRequestSummary: (input) =>
-      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
-        Effect.mapError(fail("getChangeRequestSummary")),
-        Effect.map((pullRequest): ProviderChangeRequestSummary => ({
-          number: pullRequest.number,
-          title: pullRequest.title,
-          url: pullRequest.url,
-          author: pullRequest.author,
-          headBranch: pullRequest.headBranch,
-          baseBranch: pullRequest.baseBranch,
-          state: pullRequest.state,
-          isDraft: pullRequest.isDraft,
-          mergeability: pullRequest.mergeability,
-          closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
-          mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
-          updatedAt: pullRequest.updatedAt,
-        })),
-      ),
+      cli
+        .getPullRequest({ cwd: input.cwd, number: input.number })
+        .pipe(Effect.mapError(fail("getChangeRequestSummary")), Effect.map(toSummary)),
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
@@ -535,7 +539,19 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(
+          Effect.mapError(fail("runAction")),
+          Effect.map(
+            (pullRequest) =>
+              pullRequest && {
+                ...toSummary(pullRequest),
+                autoMergeEnabled: pullRequest.autoMergeEnabled,
+                ...(pullRequest.autoMergeMethod === undefined
+                  ? {}
+                  : { autoMergeMethod: pullRequest.autoMergeMethod }),
+              },
+          ),
+        ),
 
     updateChangeRequest: (input) =>
       cli
