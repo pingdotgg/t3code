@@ -1,4 +1,6 @@
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import type { AccountView } from "@t3tools/vibe-app-server/client";
 import {
   clampPercent,
@@ -14,6 +16,18 @@ export const MISTRAL_USAGE_URL = "https://console.mistral.ai/usage";
  * reset timestamp. Accounts without a budget (API keys, self-hosted) report
  * unsupported plus a console link, like Codex's managed account.
  */
+/** The allowance renews monthly, so the window spans the calendar month before its reset. */
+function monthlyWindowDuration(resetAt: string | null | undefined) {
+  const end = resetAt ? DateTime.make(resetAt) : Option.none();
+  if (Option.isNone(end)) return {};
+  const start = DateTime.subtract(end.value, { months: 1 });
+  return {
+    windowDurationMins: Math.round(
+      (DateTime.toEpochMillis(end.value) - DateTime.toEpochMillis(start)) / 60_000,
+    ),
+  };
+}
+
 export function accountViewToUsageLimits(
   account: AccountView,
   checkedAt: string,
@@ -35,6 +49,7 @@ export function accountViewToUsageLimits(
     label: budget.paygEnabled === true ? "Monthly (pay-as-you-go)" : "Monthly",
     usedPercent: clampPercent(budget.usagePercentage),
     ...(budget.resetAt ? { resetsAt: budget.resetAt } : {}),
+    ...monthlyWindowDuration(budget.resetAt),
   };
   return makeUsageLimits({ checkedAt, windows: [window] });
 }
