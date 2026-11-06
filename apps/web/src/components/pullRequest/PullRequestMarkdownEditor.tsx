@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
-  type ProjectId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 
@@ -12,13 +11,16 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
-import { PullRequestMarkdownTextarea } from "./PullRequestMarkdownTextarea";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 
 export function PullRequestMarkdownEditor({
   value,
   cwd,
   environmentId,
-  completionProjectId,
+  completionScope,
   threadRef = null,
   placeholder,
   label,
@@ -31,7 +33,7 @@ export function PullRequestMarkdownEditor({
   readonly value: string;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
-  readonly completionProjectId: ProjectId | null;
+  readonly completionScope: PullRequestCompletionScope | null;
   readonly threadRef?: ScopedThreadRef | null;
   readonly placeholder?: string | undefined;
   readonly label: string;
@@ -108,9 +110,7 @@ export function PullRequestMarkdownEditor({
         <PullRequestMarkdownTextarea
           autoFocus
           disabled={saving}
-          completionScope={
-            completionProjectId === null ? null : { environmentId, projectId: completionProjectId }
-          }
+          completionScope={completionScope}
           value={draft}
           rows={6}
           placeholder={placeholder}

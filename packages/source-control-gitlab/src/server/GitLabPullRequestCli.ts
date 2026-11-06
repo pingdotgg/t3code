@@ -10,6 +10,7 @@ import type {
   PullRequestAction,
   PullRequestActor,
   PullRequestReferenceCandidate,
+  PullRequestReferenceSigil,
   PullRequestCheck,
   PullRequestComment,
   PullRequestCommit,
@@ -381,6 +382,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly search?: string | undefined;
+      readonly sigil?: PullRequestReferenceSigil | undefined;
     }) => Effect.Effect<
       {
         readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
@@ -579,13 +581,22 @@ function searchParams(search: string | undefined): ReadonlyArray<readonly [strin
   return trimmed.length === 0 ? [] : [["search", trimmed]];
 }
 
+// GitLab's user, issue and merge request searches answer nothing under three characters, so
+// shorter text reads the unsearched page, which the server narrows.
+function hostSearchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {
+  return (search?.trim().length ?? 0) >= 3 ? searchParams(search) : [];
+}
+
 const REFERENCE_PAGE_SIZE = 20;
 
 /**
  * Recently updated issues and merge requests, by title for text. Issue and MR search cannot match
  * a number, so a numeric query also asks for that iid of each.
  */
-export function referenceSearches(search: string | undefined): ReadonlyArray<{
+export function referenceSearches(
+  search: string | undefined,
+  sigil?: PullRequestReferenceSigil | undefined,
+): ReadonlyArray<{
   readonly kind: PullRequestReferenceCandidate["kind"];
   readonly params: ReadonlyArray<readonly [string, string]>;
 }> {
@@ -594,9 +605,16 @@ export function referenceSearches(search: string | undefined): ReadonlyArray<{
   const recent: ReadonlyArray<readonly [string, string]> = [
     ["order_by", "updated_at"],
     ["sort", "desc"],
-    ...(numeric || text.length === 0 ? [] : ([...searchParams(text), ["in", "title"]] as const)),
+    ...(numeric || hostSearchParams(text).length === 0
+      ? []
+      : ([...hostSearchParams(text), ["in", "title"]] as const)),
   ];
-  const kinds = ["issue", "change-request"] as const;
+  const kinds =
+    sigil === "#"
+      ? (["issue"] as const)
+      : sigil === "!"
+        ? (["change-request"] as const)
+        : (["issue", "change-request"] as const);
   return [
     ...(numeric ? kinds.map((kind) => ({ kind, params: [["iids[]", text]] as const })) : []),
     ...kinds.map((kind) => ({ kind, params: recent })),
@@ -1103,7 +1121,7 @@ export const make = Effect.gen(function* () {
       host: input.host,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
-        ...searchParams(input.search),
+        ...hostSearchParams(input.search),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -1688,7 +1706,7 @@ export const make = Effect.gen(function* () {
     searchProjectReferences: Effect.fn("GitLabPullRequestCli.searchProjectReferences")(
       function (input) {
         return Effect.forEach(
-          referenceSearches(input.search),
+          referenceSearches(input.search, input.sigil),
           ({ kind, params }) =>
             projectReferences({ ...input, kind, params }).pipe(
               // A project with issues turned off answers 403 for issues; its merge requests still

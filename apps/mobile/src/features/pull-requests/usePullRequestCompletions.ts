@@ -1,55 +1,21 @@
-import { useAtomValue } from "@effect/atom-react";
-import {
-  EnvironmentId,
-  ProjectId,
-  type PullRequestActor,
-  type PullRequestFilterOptionsInput,
-  type PullRequestReferenceCandidate,
-} from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import {
   debouncedPullRequestCompletionSearch,
   detectPullRequestComposerTrigger,
   insertPullRequestCompletion,
-  narrowPullRequestMentions,
-  narrowPullRequestReferences,
   pullRequestCompletionKey,
-  pullRequestCompletionSearch,
+  pullRequestCompletions,
+  type PullRequestCompletion,
+  type PullRequestCompletionSupport,
 } from "@t3tools/shared/pullRequestComposerTrigger";
-import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import type { TextInputSelectionChangeEvent } from "react-native";
 
 import { composerPullRequests } from "../../state/pull-requests";
+import { useEnvironmentQuery } from "../../state/query";
 import { useDebouncedValue } from "../../state/queries";
 
 const COMPLETION_SUGGESTION_LIMIT = 6;
-
-export type PullRequestCompletion =
-  | { readonly kind: "mention"; readonly token: string; readonly actor: PullRequestActor }
-  | {
-      readonly kind: "reference";
-      readonly token: string;
-      readonly candidate: PullRequestReferenceCandidate;
-    };
-
-const completionOptionsFamily = Atom.family((key: string) => {
-  const target: {
-    readonly environmentId: EnvironmentId;
-    readonly input: PullRequestFilterOptionsInput;
-  } | null = JSON.parse(key);
-  return Atom.make((get) => {
-    if (target === null) return { authors: [], references: [], waiting: false, failed: false };
-    const result = get(composerPullRequests.filterOptions(target));
-    const options = Option.getOrNull(AsyncResult.value(result));
-    return {
-      authors: options?.authors ?? ([] as ReadonlyArray<PullRequestActor>),
-      references: options?.references ?? ([] as ReadonlyArray<PullRequestReferenceCandidate>),
-      waiting: result.waiting,
-      failed: AsyncResult.isFailure(result),
-    };
-  });
-});
 
 /** Completes `@login`, `#123` and GitLab `!123` in a pull request text input. */
 export function usePullRequestCompletions(input: {
@@ -57,52 +23,48 @@ export function usePullRequestCompletions(input: {
   readonly projectId: string;
   readonly value: string;
   readonly onChangeValue: (value: string) => void;
-  readonly enabled?: boolean;
+  /** What the pull request's host completes (its `capabilities`); null where the field takes none. */
+  readonly support: PullRequestCompletionSupport | null;
 }) {
   const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
   // Set only right after an insertion, so the native input keeps its own caret otherwise.
   const [placed, setPlaced] = useState<{ start: number; end: number } | null>(null);
   const trigger =
-    input.enabled === false || selection === null || selection.start !== selection.end
+    input.support === null || selection === null || selection.start !== selection.end
       ? null
-      : detectPullRequestComposerTrigger(input.value, selection.start);
-  const search = trigger === null ? undefined : pullRequestCompletionSearch(trigger);
-  const sentKey = useDebouncedValue(pullRequestCompletionKey(trigger), 250);
+      : detectPullRequestComposerTrigger(input.value, selection.start, input.support);
+  const key = pullRequestCompletionKey(trigger);
+  const sentKey = useDebouncedValue(key, 250);
   const sent =
     trigger === null ? undefined : debouncedPullRequestCompletionSearch(trigger, sentKey);
-  const hosted = useAtomValue(
-    completionOptionsFamily(
-      JSON.stringify(
-        trigger === null
-          ? null
-          : {
-              environmentId: EnvironmentId.make(input.environmentId),
-              input: {
-                kind: trigger.kind === "mention" ? "authors" : "references",
-                projectId: ProjectId.make(input.projectId),
-                ...(sent ? { query: sent } : {}),
-              },
-            },
-      ),
-    ),
+  const hosted = useEnvironmentQuery(
+    trigger === null
+      ? null
+      : composerPullRequests.filterOptions({
+          environmentId: EnvironmentId.make(input.environmentId),
+          input:
+            trigger.kind === "mention"
+              ? {
+                  kind: "authors",
+                  projectId: ProjectId.make(input.projectId),
+                  ...(sent ? { query: sent } : {}),
+                }
+              : {
+                  kind: "references",
+                  projectId: ProjectId.make(input.projectId),
+                  sigil: trigger.sigil,
+                  ...(sent ? { query: sent } : {}),
+                },
+        }),
   );
   // Older answers stay useful while the debounced search catches up, narrowed to what is typed now.
-  const candidates: ReadonlyArray<PullRequestCompletion> =
-    trigger === null
-      ? []
-      : trigger.kind === "mention"
-        ? narrowPullRequestMentions(hosted.authors, trigger.query, COMPLETION_SUGGESTION_LIMIT).map(
-            (actor) => ({ kind: "mention", token: `@${actor.login}`, actor }),
-          )
-        : narrowPullRequestReferences(hosted.references, trigger, COMPLETION_SUGGESTION_LIMIT).map(
-            (candidate) => ({ kind: "reference", token: candidate.reference, candidate }),
-          );
+  const candidates = pullRequestCompletions(trigger, hosted.data, COMPLETION_SUGGESTION_LIMIT);
 
   return {
     kind: trigger?.kind ?? null,
     candidates,
-    isLoading: hosted.waiting || sent !== search,
-    failed: hosted.failed,
+    isLoading: hosted.isPending || sentKey !== key,
+    failed: hosted.error !== null,
     selection: placed ?? undefined,
     onSelectionChange: (event: TextInputSelectionChangeEvent) => {
       setSelection(event.nativeEvent.selection);

@@ -2593,7 +2593,7 @@ export const make = Effect.gen(function* () {
     }
     if (input.kind === "references") {
       const pages = yield* gather<PullRequestReferenceCandidate>((project) =>
-        project.api.searchRepositoryReferences?.(refOf(project)),
+        project.api.searchRepositoryReferences?.({ ...refOf(project), sigil: input.sigil }),
       );
       const { items, truncated } = rankFilterOptions(pages, {
         query: input.query,

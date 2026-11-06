@@ -1,17 +1,18 @@
 import type {
   EnvironmentId,
   ProjectId,
-  PullRequestActor,
+  PullRequestDetailView,
+  PullRequestRef,
   PullRequestReferenceCandidate,
 } from "@t3tools/contracts";
 import {
   debouncedPullRequestCompletionSearch,
   detectPullRequestComposerTrigger,
   insertPullRequestCompletion,
-  narrowPullRequestMentions,
-  narrowPullRequestReferences,
   pullRequestCompletionKey,
-  pullRequestCompletionSearch,
+  pullRequestCompletions,
+  type PullRequestCompletion,
+  type PullRequestCompletionSupport,
   type PullRequestComposerTrigger,
 } from "@t3tools/shared/pullRequestComposerTrigger";
 import { CircleCheckIcon, CircleDotIcon } from "lucide-react";
@@ -31,15 +32,20 @@ import { PullRequestActorAvatar, resolvePullRequestState } from "./pullRequestPr
 export interface PullRequestCompletionScope {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly support: PullRequestCompletionSupport;
 }
 
-type Completion =
-  | { readonly kind: "mention"; readonly token: string; readonly actor: PullRequestActor }
-  | {
-      readonly kind: "reference";
-      readonly token: string;
-      readonly candidate: PullRequestReferenceCandidate;
-    };
+/** Null on hosts that complete nothing, so no sigil opens a list that cannot fill. */
+export function pullRequestCompletionScope(
+  detail: Pick<PullRequestDetailView, "capabilities">,
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): PullRequestCompletionScope | null {
+  const { mentions, referenceSigils } = detail.capabilities;
+  return mentions === true || (referenceSigils?.length ?? 0) > 0
+    ? { environmentId, projectId: reference.projectId, support: { mentions, referenceSigils } }
+    : null;
+}
 // About a full list of suggestions. The popup fits itself to the space it opens into, so it never
 // flips once results grow it; the side is picked up front from the room a full list needs.
 const SUGGESTION_LIST_HEIGHT = 320;
@@ -57,11 +63,8 @@ function useCompletions(
   scope: PullRequestCompletionScope | null,
   trigger: PullRequestComposerTrigger | null,
 ) {
-  const search = trigger === null ? undefined : pullRequestCompletionSearch(trigger);
-  const sentKey = useDebouncedValue(
-    pullRequestCompletionKey(trigger),
-    COMPLETION_SEARCH_DEBOUNCE_MS,
-  );
+  const key = pullRequestCompletionKey(trigger);
+  const sentKey = useDebouncedValue(key, COMPLETION_SEARCH_DEBOUNCE_MS);
   const sent =
     trigger === null ? undefined : debouncedPullRequestCompletionSearch(trigger, sentKey);
   const hosted = usePullRequestFilterOptions(
@@ -70,28 +73,23 @@ function useCompletions(
       : [
           {
             environmentId: scope.environmentId,
-            input: {
-              kind: trigger.kind === "mention" ? "authors" : "references",
-              projectId: scope.projectId,
-              ...(sent ? { query: sent } : {}),
-            },
+            input:
+              trigger.kind === "mention"
+                ? { kind: "authors", projectId: scope.projectId, ...(sent ? { query: sent } : {}) }
+                : {
+                    kind: "references",
+                    projectId: scope.projectId,
+                    sigil: trigger.sigil,
+                    ...(sent ? { query: sent } : {}),
+                  },
           },
         ],
   );
   // Older answers stay useful while the debounced search catches up, narrowed to what is typed now.
-  const completions: ReadonlyArray<Completion> =
-    trigger === null
-      ? []
-      : trigger.kind === "mention"
-        ? narrowPullRequestMentions(hosted.authors, trigger.query, COMPLETION_SUGGESTION_LIMIT).map(
-            (actor) => ({ kind: "mention", token: `@${actor.login}`, actor }),
-          )
-        : narrowPullRequestReferences(hosted.references, trigger, COMPLETION_SUGGESTION_LIMIT).map(
-            (candidate) => ({ kind: "reference", token: candidate.reference, candidate }),
-          );
+  const completions = pullRequestCompletions(trigger, hosted, COMPLETION_SUGGESTION_LIMIT);
   return {
     completions,
-    isPending: hosted.isPending || sent !== search,
+    isPending: hosted.isPending || sentKey !== key,
     failed: hosted.error !== null,
   };
 }
@@ -120,7 +118,7 @@ function ReferenceStateIcon({ candidate }: { candidate: PullRequestReferenceCand
   );
 }
 
-function CompletionRow({ completion }: { completion: Completion }) {
+function CompletionRow({ completion }: { completion: PullRequestCompletion }) {
   if (completion.kind === "mention") {
     const { actor } = completion;
     return (
@@ -189,7 +187,7 @@ export function PullRequestMarkdownTextarea({
   const trigger =
     completionScope === null || caret === null || props.readOnly
       ? null
-      : detectPullRequestComposerTrigger(value, caret);
+      : detectPullRequestComposerTrigger(value, caret, completionScope.support);
   const open = trigger !== null && trigger.rangeStart !== dismissedAt;
   const {
     completions: candidates,
@@ -208,7 +206,7 @@ export function PullRequestMarkdownTextarea({
     setCaret(target.selectionStart === target.selectionEnd ? target.selectionStart : null);
   };
 
-  const select = (completion: Completion) => {
+  const select = (completion: PullRequestCompletion) => {
     if (trigger === null || element === null) return;
     const next = insertPullRequestCompletion(value, trigger, completion.token);
     flushSync(() => onValueChange(next.text));

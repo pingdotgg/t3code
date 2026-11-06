@@ -1321,6 +1321,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    ["th", "projects/acme%2Fweb/users?per_page=100"],
+    ["tho", "projects/acme%2Fweb/users?per_page=100&search=tho"],
+  ] as const)("searches project users only from three characters (%s)", ([search, path]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listProjectUsers({ cwd: "/w", repository: "acme/web", search });
+
+      expect(argsOfCall(0)[1]).toBe(path);
+    }),
+  );
+
   it.effect("reads who has access to the project and who is already on the merge request", () =>
     Effect.gen(function* () {
       mockedExecute
@@ -1666,5 +1680,16 @@ it("asks for a numeric reference's iid besides the recent issues and merge reque
   expect(GitLabPullRequestCli.referenceSearches("crash")).toEqual([
     { kind: "issue", params: [...recent, ["search", "crash"], ["in", "title"]] },
     { kind: "change-request", params: [...recent, ["search", "crash"], ["in", "title"]] },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches("cr")).toEqual([
+    { kind: "issue", params: recent },
+    { kind: "change-request", params: recent },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches("12", "!")).toEqual([
+    { kind: "change-request", params: [["iids[]", "12"]] },
+    { kind: "change-request", params: recent },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches(undefined, "#")).toEqual([
+    { kind: "issue", params: recent },
   ]);
 });

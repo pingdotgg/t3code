@@ -34,6 +34,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   stacks: true,
   stackActions: true,
   reactions: true,
+  mentions: true,
+  referenceSigils: [],
   labels: true,
   // Line comments go through GitCafe's review drafts, which arrive with revision fencing.
   review: {

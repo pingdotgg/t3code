@@ -1,21 +1,39 @@
+import type {
+  PullRequestActor,
+  PullRequestCapabilities,
+  PullRequestFilterOptions,
+  PullRequestReferenceCandidate,
+  PullRequestReferenceSigil,
+} from "@t3tools/contracts";
+
 import { replaceTextRange } from "./composerTrigger.ts";
 
-export interface PullRequestComposerTrigger {
-  readonly kind: "mention" | "reference";
-  /** `@` for a mention; `#` or `!` (GitLab merge requests) for a reference. */
-  readonly sigil: "@" | "#" | "!";
+export type PullRequestComposerTrigger = {
   readonly query: string;
   readonly rangeStart: number;
   readonly rangeEnd: number;
-}
+} & (
+  | { readonly kind: "mention"; readonly sigil: "@" }
+  | { readonly kind: "reference"; readonly sigil: PullRequestReferenceSigil }
+);
 
 // Mentions cover GitHub logins (letters, digits, hyphens) and GitLab usernames (also `_` and `.`).
 const TOKEN = /^(?:@([A-Za-z0-9_][A-Za-z0-9_.-]*)?|([#!])([\p{L}\p{N}_-]*))$/u;
 
-/** The `@login`, `#123` or `!123` being typed at the caret, when the caret sits at its end. */
+/** What a pull request's host can complete; absent fields complete nothing. */
+export type PullRequestCompletionSupport = Pick<
+  PullRequestCapabilities,
+  "mentions" | "referenceSigils"
+>;
+
+/**
+ * The `@login`, `#123` or `!123` being typed at the caret, when the caret sits at its end and the
+ * host completes that sigil.
+ */
 export function detectPullRequestComposerTrigger(
   text: string,
   cursor: number,
+  support: PullRequestCompletionSupport,
 ): PullRequestComposerTrigger | null {
   const end = Math.max(0, Math.min(text.length, cursor));
   const next = text[end];
@@ -25,9 +43,14 @@ export function detectPullRequestComposerTrigger(
   const match = TOKEN.exec(text.slice(start, end));
   if (!match) return null;
   const sigil = match[2];
-  return sigil === "#" || sigil === "!"
-    ? { kind: "reference", sigil, query: match[3] ?? "", rangeStart: start, rangeEnd: end }
-    : { kind: "mention", sigil: "@", query: match[1] ?? "", rangeStart: start, rangeEnd: end };
+  if (sigil === "#" || sigil === "!") {
+    return support.referenceSigils?.includes(sigil)
+      ? { kind: "reference", sigil, query: match[3] ?? "", rangeStart: start, rangeEnd: end }
+      : null;
+  }
+  return support.mentions === true
+    ? { kind: "mention", sigil: "@", query: match[1] ?? "", rangeStart: start, rangeEnd: end }
+    : null;
 }
 
 /** Replaces the trigger with `token` and leaves the caret past the space after it. */
@@ -44,37 +67,23 @@ export function insertPullRequestCompletion(
   return { ...inserted, cursor: inserted.cursor + 1 };
 }
 
-// GitLab's user, issue and merge request searches answer nothing below three characters, so
-// shorter text narrows the unsearched list locally instead. A number is looked up as typed.
-const MIN_HOST_SEARCH = 3;
-
-/** The search to send the host for what follows the trigger's sigil, if any. */
-export function pullRequestCompletionSearch(
-  trigger: Pick<PullRequestComposerTrigger, "kind" | "query">,
-): string | undefined {
-  const query = trigger.query.slice(0, 100);
-  if (trigger.kind === "reference" && /^\d+$/.test(query)) return query;
-  return query.length >= MIN_HOST_SEARCH ? query : undefined;
-}
-
-/** The key a debounce delays: the trigger's kind and its host search, or `null` with no trigger. */
+/** The key a debounce delays: the trigger's sigil and its host search, or `null` with no trigger. */
 export function pullRequestCompletionKey(
-  trigger: Pick<PullRequestComposerTrigger, "kind" | "query"> | null,
+  trigger: Pick<PullRequestComposerTrigger, "sigil" | "query"> | null,
 ): string | null {
-  return trigger === null ? null : `${trigger.kind}:${pullRequestCompletionSearch(trigger) ?? ""}`;
+  return trigger === null ? null : `${trigger.sigil}${trigger.query.slice(0, 100)}`;
 }
 
 /**
- * The search to send for `trigger` given a debounced key. Until a key for this kind settles, the
+ * The search to send for `trigger` given a debounced key. Until a key for this sigil settles, the
  * host is asked for its unsearched list, which narrows locally, so a burst of typing sends one query.
  */
 export function debouncedPullRequestCompletionSearch(
-  trigger: Pick<PullRequestComposerTrigger, "kind" | "query">,
+  trigger: Pick<PullRequestComposerTrigger, "sigil">,
   debouncedKey: string | null,
 ): string | undefined {
-  const prefix = `${trigger.kind}:`;
-  return debouncedKey?.startsWith(prefix)
-    ? debouncedKey.slice(prefix.length) || undefined
+  return debouncedKey?.startsWith(trigger.sigil)
+    ? debouncedKey.slice(trigger.sigil.length) || undefined
     : undefined;
 }
 
@@ -110,4 +119,32 @@ export function narrowPullRequestReferences<
           candidate.title.toLowerCase().includes(needle)),
     )
     .slice(0, limit);
+}
+
+export type PullRequestCompletion =
+  | { readonly kind: "mention"; readonly token: string; readonly actor: PullRequestActor }
+  | {
+      readonly kind: "reference";
+      readonly token: string;
+      readonly candidate: PullRequestReferenceCandidate;
+    };
+
+/** The host's options for `trigger`, narrowed to what is typed now. */
+export function pullRequestCompletions(
+  trigger: PullRequestComposerTrigger | null,
+  options: Pick<PullRequestFilterOptions, "authors" | "references"> | null,
+  limit: number,
+): ReadonlyArray<PullRequestCompletion> {
+  if (trigger === null) return [];
+  return trigger.kind === "mention"
+    ? narrowPullRequestMentions(options?.authors ?? [], trigger.query, limit).map((actor) => ({
+        kind: "mention",
+        token: `@${actor.login}`,
+        actor,
+      }))
+    : narrowPullRequestReferences(options?.references ?? [], trigger, limit).map((candidate) => ({
+        kind: "reference",
+        token: candidate.reference,
+        candidate,
+      }));
 }

@@ -62,6 +62,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     projectId: params.projectId,
     value: body,
     onChangeValue: setBody,
+    support: detail.data?.capabilities ?? null,
   });
   const [extra, setExtra] = useState<readonly PullRequestThreadComment[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>();

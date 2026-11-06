@@ -88,6 +88,7 @@ export function PullRequestReviewSheet({
     projectId: params.projectId,
     value: body,
     onChangeValue: setBody,
+    support: result.data?.capabilities ?? null,
   });
   const stale = store.draft.comments.some((comment) => comment.headSha !== result.data?.headSha);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");

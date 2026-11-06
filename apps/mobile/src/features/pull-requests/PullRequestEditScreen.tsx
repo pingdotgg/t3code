@@ -56,7 +56,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     projectId: params.projectId,
     value: value,
     onChangeValue: setDraft,
-    enabled: params.field !== "title",
+    support: params.field === "title" ? null : (pr?.capabilities ?? null),
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -6,6 +6,7 @@ import type {
   PullRequestStackHead,
   PullRequestActor,
   PullRequestReferenceCandidate,
+  PullRequestReferenceSigil,
   PullRequestBaseComparison,
   PullRequestCapabilities,
   PullRequestChecksState,
@@ -561,7 +562,10 @@ export interface PullRequestProviderApi {
    * `query` also finds that number exactly; other text matches titles as far as the host can.
    */
   readonly searchRepositoryReferences?: (
-    input: ProviderRepositoryRef & { readonly query?: string | undefined },
+    input: ProviderRepositoryRef & {
+      readonly query?: string | undefined;
+      readonly sigil?: PullRequestReferenceSigil | undefined;
+    },
   ) => Effect.Effect<
     ProviderFilterOptionPage<PullRequestReferenceCandidate>,
     PullRequestProviderError

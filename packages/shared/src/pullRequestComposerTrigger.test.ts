@@ -6,8 +6,9 @@ import {
   insertPullRequestCompletion,
   narrowPullRequestMentions,
   narrowPullRequestReferences,
-  pullRequestCompletionSearch,
 } from "./pullRequestComposerTrigger.ts";
+
+const GITLAB = { mentions: true, referenceSigils: ["#", "!"] } as const;
 
 describe("detectPullRequestComposerTrigger", () => {
   it.each([
@@ -21,7 +22,7 @@ describe("detectPullRequestComposerTrigger", () => {
     ["#crash", 0, "#", "crash"],
   ])("finds the trigger in %j", (text, rangeStart, sigil, query) => {
     const cursor = rangeStart + 1 + query.length;
-    expect(detectPullRequestComposerTrigger(text, cursor)).toEqual({
+    expect(detectPullRequestComposerTrigger(text, cursor, GITLAB)).toEqual({
       kind: sigil === "@" ? "mention" : "reference",
       sigil,
       query,
@@ -40,7 +41,16 @@ describe("detectPullRequestComposerTrigger", () => {
     ["![image", "![image".length],
     ["## Heading", 2],
   ])("ignores %j", (text, cursor) => {
-    expect(detectPullRequestComposerTrigger(text, cursor)).toBeNull();
+    expect(detectPullRequestComposerTrigger(text, cursor, GITLAB)).toBeNull();
+  });
+
+  it.each([
+    ["@ju", {}],
+    ["#12", { mentions: true }],
+    ["!important", { mentions: true, referenceSigils: ["#"] }],
+    ["#12", { mentions: true, referenceSigils: [] }],
+  ] as const)("ignores %j on a host that cannot complete it", (text, support) => {
+    expect(detectPullRequestComposerTrigger(text, text.length, support)).toBeNull();
   });
 });
 
@@ -49,7 +59,7 @@ describe("insertPullRequestCompletion", () => {
     "replaces the partial token and adds a space before %j",
     (suffix) => {
       const text = `thanks @ju${suffix}`;
-      const trigger = detectPullRequestComposerTrigger(text, "thanks @ju".length)!;
+      const trigger = detectPullRequestComposerTrigger(text, "thanks @ju".length, GITLAB)!;
       expect(insertPullRequestCompletion(text, trigger, "@julius")).toEqual({
         text: `thanks @julius ${suffix}`,
         cursor: "thanks @julius ".length,
@@ -59,36 +69,20 @@ describe("insertPullRequestCompletion", () => {
 
   it("reuses the space that already follows and moves past it", () => {
     const text = "#1 please look";
-    const trigger = detectPullRequestComposerTrigger(text, 2)!;
+    const trigger = detectPullRequestComposerTrigger(text, 2, GITLAB)!;
     const inserted = insertPullRequestCompletion(text, trigger, "#123");
     expect(inserted).toEqual({ text: "#123 please look", cursor: "#123 ".length });
-    expect(detectPullRequestComposerTrigger(inserted.text, inserted.cursor)).toBeNull();
-  });
-});
-
-describe("pullRequestCompletionSearch", () => {
-  it.each([
-    ["mention", "", undefined],
-    ["mention", "To", undefined],
-    ["mention", "12", undefined],
-    ["mention", "Ton", "Ton"],
-    ["reference", "", undefined],
-    ["reference", "1", "1"],
-    ["reference", "cr", undefined],
-    ["reference", "crash", "crash"],
-  ] as const)("sends a %s's %j to the host as %j", (kind, query, sent) => {
-    expect(pullRequestCompletionSearch({ kind, query })).toBe(sent);
+    expect(detectPullRequestComposerTrigger(inserted.text, inserted.cursor, GITLAB)).toBeNull();
   });
 });
 
 describe("debouncedPullRequestCompletionSearch", () => {
   it.each([
-    ["a settled search", { kind: "reference", query: "crash" }, "reference:crash", "crash"],
-    ["a settled short query", { kind: "reference", query: "zz" }, "reference:", undefined],
-    ["a settled bare sigil", { kind: "mention", query: "" }, "mention:", undefined],
-    ["a lagging search", { kind: "reference", query: "crash" }, "reference:cra", "cra"],
-    ["the other kind's key", { kind: "mention", query: "jul" }, "reference:12", undefined],
-    ["no key yet", { kind: "reference", query: "12" }, null, undefined],
+    ["a settled search", { sigil: "#" }, "#crash", "crash"],
+    ["a settled bare sigil", { sigil: "@" }, "@", undefined],
+    ["a lagging search", { sigil: "#" }, "#cra", "cra"],
+    ["the other sigil's key", { sigil: "!" }, "#12", undefined],
+    ["no key yet", { sigil: "#" }, null, undefined],
   ] as const)("sends %s as the host search", (_, trigger, key, sent) => {
     expect(debouncedPullRequestCompletionSearch(trigger, key)).toBe(sent);
   });

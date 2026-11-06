@@ -68,7 +68,11 @@ async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
       value={options?.value ?? "Original description"}
       cwd="/repo"
       environmentId={secondary}
-      completionProjectId={ProjectId.make("project")}
+      completionScope={{
+        environmentId: secondary,
+        projectId: ProjectId.make("project"),
+        support: { mentions: true, referenceSigils: ["#", "!"] },
+      }}
       label="Pull request description"
       saving={false}
       allowEmpty={options?.allowEmpty ?? false}
