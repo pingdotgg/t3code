@@ -2326,7 +2326,7 @@ describe("EnvironmentThreads", () => {
         synchronized(),
       ];
       const harness = yield* makeHarness({
-        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        cached: PROJECTION_WITH_QUESTION,
         completionMarker: true,
         streamFor: (subscription) =>
           subscription === 1
@@ -2358,7 +2358,7 @@ describe("EnvironmentThreads", () => {
     }).pipe(
       // The replaced attempt's items fill the switch buffer, and a small budget
       // lets the next attempt start while the consumer still drains them.
-      Effect.provideService(Scheduler.MaxOpsBeforeYield, 10),
+      Effect.provideService(Scheduler.MaxOpsBeforeYield, 5),
     ),
   );
 
