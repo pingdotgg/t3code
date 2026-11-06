@@ -34,6 +34,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
@@ -81,6 +82,10 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./provider/ProviderInstanceRegistryMutator.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
@@ -1344,6 +1349,186 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     ),
     Effect.scoped,
   ),
+);
+
+it.effect.each(["all", "single"] as const)(
+  "%s model refresh preserves cached models when an instance fails",
+  (target) =>
+    Effect.gen(function* () {
+      const driver = ProviderDriverKind.make("antigravity");
+      const firstId = ProviderInstanceId.make("antigravity_first");
+      const secondId = ProviderInstanceId.make("antigravity_second");
+      const thirdId = ProviderInstanceId.make("antigravity_third");
+      const thirdStarted = yield* Deferred.make<void>();
+      const activeRefreshes = yield* Ref.make(0);
+      const maxRefreshes = yield* Ref.make(0);
+      const model = (slug: string) => ({ slug, name: slug, isCustom: false, capabilities: null });
+      const makeInstance = Effect.fn("Test.makeModelRefreshInstance")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const snapshot = yield* Ref.make<ServerProvider>({
+          instanceId,
+          driver,
+          enabled: true,
+          installed: true,
+          version: "1.1.1",
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-25T00:00:00.000Z",
+          models: [model("cached-model")],
+          slashCommands: [],
+          skills: [],
+        });
+        return {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            getSnapshot: Ref.get(snapshot),
+            refresh: Ref.get(snapshot),
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          refreshModels: () =>
+            Effect.gen(function* () {
+              if (instanceId === firstId) {
+                return yield* new ProviderDriverError({
+                  driver,
+                  instanceId,
+                  detail: "Model refresh failed.",
+                });
+              }
+              const active = yield* Ref.updateAndGet(activeRefreshes, (count) => count + 1);
+              yield* Ref.update(maxRefreshes, (count) => Math.max(count, active));
+              yield* instanceId === secondId
+                ? Deferred.await(thirdStarted)
+                : Deferred.succeed(thirdStarted, undefined);
+              yield* Ref.update(snapshot, (provider) => ({
+                ...provider,
+                models: [model("refreshed-model")],
+              }));
+              yield* Ref.update(activeRefreshes, (count) => count - 1);
+            }),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+      });
+      const instances = [
+        yield* makeInstance(firstId),
+        yield* makeInstance(secondId),
+        yield* makeInstance(thirdId),
+      ];
+      const changes = yield* PubSub.unbounded<void>();
+      const instanceLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        listInstances: Effect.succeed(instances),
+        getInstance: (id) =>
+          Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: PubSub.subscribe(changes),
+      });
+      const registryLayer = ProviderRegistry.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            instanceLayer,
+            ModelManifest.layerTest,
+            Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({}),
+            Layer.mock(ProviderLatestVersions.ProviderLatestVersions)({}),
+          ),
+        ),
+      );
+      const responses =
+        yield* Queue.unbounded<
+          Exit.Exit<{ readonly providers: ReadonlyArray<ServerProvider> }, unknown>
+        >();
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        instanceLayer,
+        registryLayer,
+        Layer.mock(UsageLimitSources.UsageLimitSources)({ refresh: Effect.void }),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      );
+      const server = yield* RpcServer.makeNoSerialization(
+        RpcGroup.make(WsServerRefreshProvidersRpc),
+        {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Exit" ? Queue.offer(responses, response.exit) : Effect.void,
+        },
+      ).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("model-refresh-test"),
+              subject: "model-refresh-test",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+            { secretReferences: true },
+          ).pipe(Layer.provide(services)),
+        ),
+      );
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId("refresh-models"),
+        tag: WS_METHODS.serverRefreshProviders,
+        payload: { refreshModels: true, ...(target === "single" ? { instanceId: firstId } : {}) },
+        headers: Headers.empty,
+      });
+      const response = yield* Queue.take(responses);
+      if (target === "single") {
+        assert.equal(response._tag, "Failure");
+        if (response._tag === "Failure") {
+          assert.match(Cause.pretty(response.cause), /Model refresh failed/);
+        }
+        assert.equal(yield* Ref.get(maxRefreshes), 0);
+        return;
+      }
+      assert.equal(response._tag, "Success");
+      if (response._tag === "Success") {
+        assert.deepEqual(
+          Object.fromEntries(
+            response.value.providers.map((provider) => [
+              provider.instanceId,
+              provider.models.map((entry) => entry.slug),
+            ]),
+          ),
+          {
+            [firstId]: ["cached-model"],
+            [secondId]: ["refreshed-model"],
+            [thirdId]: ["refreshed-model"],
+          },
+        );
+        assert.equal(yield* Ref.get(maxRefreshes), 2);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.effect("a publish whose push fails still refreshes the new remote", () =>

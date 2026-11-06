@@ -2497,31 +2497,7 @@ export const layerWsRpc = (
                   ? providerRegistry.refreshInstance(input.instanceId)
                   : providerRegistry.refresh();
             if (input.refreshModels) {
-              const instances = yield* providerInstances.listInstances;
-              for (const instance of instances) {
-                if (
-                  !instance.refreshModels ||
-                  (input.instanceId !== undefined && input.instanceId !== instance.instanceId) ||
-                  !providers.some(
-                    (provider) =>
-                      provider.instanceId === instance.instanceId &&
-                      provider.enabled &&
-                      provider.installed,
-                  )
-                )
-                  continue;
-                yield* instance.refreshModels().pipe(
-                  Effect.mapError(
-                    (error) =>
-                      new ProviderSetupError({
-                        instanceId: instance.instanceId,
-                        operation: "refresh-models",
-                        detail: error.detail,
-                      }),
-                  ),
-                );
-                providers = yield* providerRegistry.refreshInstance(instance.instanceId);
-              }
+              providers = yield* providerRegistry.refreshModels(input.instanceId);
             }
             if (input.workspaceSnapshotsOnDemand !== true) return { providers };
             const commandProviders =
