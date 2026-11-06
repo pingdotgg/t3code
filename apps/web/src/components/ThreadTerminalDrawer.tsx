@@ -32,6 +32,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -635,14 +636,23 @@ function TerminalSessionViewport({
       input: { threadId, terminalId, data },
     }),
   );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
+  const resizeRetriedRef = useRef(false);
+  const resizeTerminal = useEffectEvent(async (cols: number, rows: number) => {
     if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
       return;
     }
-    return runTerminalResize({
+    const result = await runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
     });
+    // The surface only reports a new grid, so retry a failure once. Resend the current grid, not
+    // this one: a newer resize may already be queued behind it.
+    const retry =
+      result._tag === "Failure" &&
+      !Cause.hasInterruptsOnly(result.cause) &&
+      !resizeRetriedRef.current;
+    resizeRetriedRef.current = retry;
+    if (retry) terminalRef.current?.resendSize();
   });
   const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
