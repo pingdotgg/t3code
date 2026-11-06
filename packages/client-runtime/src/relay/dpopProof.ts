@@ -5,7 +5,7 @@ import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -18,10 +18,10 @@ import {
   ManagedRelayDpopSigner,
 } from "./managedRelay.ts";
 
-export class DpopProofError extends Data.TaggedError("DpopProofError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class DpopProofError extends Schema.TaggedError<DpopProofError>()("DpopProofError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 /** A P-256 proof key. `sign` returns the raw `r‖s` ES256 signature over the JWS signing input. */
 export interface DpopProofKey {
