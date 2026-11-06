@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Installs a T3 Learn release with its one-line installer on a macOS or Linux
+# Installs an OminaX release with its one-line installer on a macOS or Linux
 # runner and checks that it runs next to (or without) T3 Code:
-#   ominax-install-test.sh <fresh|next-to-t3-code|appimage> <version>
+#   ominax-install-test.sh <fresh|next-to-t3-code|appimage|service> <version>
 # Screenshots and logs land in $ARTIFACTS.
 set -euo pipefail
 
 scenario="$1"
 version="$2"
-repo="${GITHUB_REPOSITORY:-aabdel0181/t3-learn}"
+repo="${GITHUB_REPOSITORY:-aabdel0181/ominax}"
 artifacts="${ARTIFACTS:-$PWD/install-test}"
 mkdir -p "$artifacts"
 os="$(uname -s)"
@@ -20,7 +20,7 @@ fail() {
   exit 1
 }
 # Keep the app's logs with the screenshots when anything fails.
-trap 'status=$?; [ "$status" -eq 0 ] || cp -R "$HOME/.t3-learn/userdata/logs" "$artifacts/t3-learn-logs" 2>/dev/null || true' EXIT
+trap 'status=$?; [ "$status" -eq 0 ] || cp -R "$(if [ -d "$HOME/.ominax/userdata/logs" ]; then printf %s "$HOME/.ominax/userdata/logs"; else printf %s "$HOME/.t3-learn/userdata/logs"; fi)" "$artifacts/ominax-logs" 2>/dev/null || true' EXIT
 
 screenshot() {
   if [ "$os" = Darwin ]; then
@@ -32,6 +32,7 @@ screenshot() {
 
 # What you know, courses and the clip cache must survive updates and uninstalls like the database.
 learning="$HOME/.t3-learn/userdata"
+new_learning="$HOME/.ominax/userdata"
 plant_learning() {
   mkdir -p "$learning/courses/install-test/units" "$learning/visuals/install-test" "$artifacts/kept"
   printf '%s\n' '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' >"$learning/knowledge.json"
@@ -41,6 +42,7 @@ plant_learning() {
   cp -R "$learning/knowledge.json" "$learning/courses" "$learning/visuals" "$artifacts/kept/"
 }
 check_learning() {
+  if [ -d "$new_learning" ]; then learning="$new_learning"; fi
   for item in knowledge.json courses visuals; do
     diff -r "$artifacts/kept/$item" "$learning/$item" >/dev/null || fail "$1 changed or removed $item"
   done
@@ -71,6 +73,8 @@ if [ "$os" = Linux ]; then
   Xvfb :99 -screen 0 1440x900x24 >/dev/null 2>&1 &
   export DISPLAY=:99
 fi
+
+[ "$scenario" != service ] || [ "$os" = Linux ] || fail "service scenario only runs on Linux"
 
 t3code_version=""
 if [ "$scenario" = next-to-t3-code ]; then
@@ -121,22 +125,62 @@ if [ "$scenario" = fresh ]; then
       security unlock-keychain -p ci "$keychain"
       security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
       security default-keychain -d user -s "$keychain"
-      security add-generic-password -A -s "t3learn Safe Storage" -a "t3learn Key" -w "$(openssl rand -base64 24)" "$keychain"
-      security set-generic-password-partition-list -S "$partitions" -k ci -s "t3learn Safe Storage" "$keychain" >/dev/null
+      for key_name in "t3learn Safe Storage" "ominax Safe Storage"; do
+        security add-generic-password -A -s "$key_name" -a "${key_name% Safe Storage} Key" -w "$(openssl rand -base64 24)" "$keychain"
+        security set-generic-password-partition-list -S "$partitions" -k ci -s "$key_name" "$keychain" >/dev/null
+      done
     fi
     curl -fsSL "https://github.com/$repo/releases/download/v$previous/install.sh" |
-      env T3LEARN_VERSION="$previous" T3LEARN_FORMAT="$format" sh 2>&1 | tee "$artifacts/install-previous.log"
+      env OMINAX_VERSION="$previous" OMINAX_FORMAT="$format" T3LEARN_VERSION="$previous" T3LEARN_FORMAT="$format" sh 2>&1 | tee "$artifacts/install-previous.log"
     previous_running="$(wait_for_server "$HOME/.t3-learn" "$previous")"
     log "The previous release, $previous_running, is running"
     plant_learning
+    if [ -f apps/desktop/scripts/plant-saved-connection.mjs ]; then
+      node apps/desktop/scripts/plant-saved-connection.mjs plant
+    fi
     # The deb upgrade leaves the old app running, and the new one would lose the single-instance lock to it.
     if [ "$os" = Linux ]; then
-      pkill -u "$(id -u)" -x t3learn || true
+      for pid in $(pgrep -u "$(id -u)" -x t3learn || true); do kill "$pid" 2>/dev/null || true; done
       while pgrep -u "$(id -u)" -x t3learn >/dev/null; do sleep 1; done
     fi
   else
     log "No distinct previous promoted release; installing OminaX $version fresh"
   fi
+fi
+
+if [ "$scenario" = service ]; then
+  previous="$(gh release view -R "$repo" --json tagName -q .tagName 2>/dev/null | sed 's/^v//' || true)"
+  [ -n "$previous" ] && [ "$previous" != "$version" ] || fail "service scenario needs a distinct promoted N-1 release"
+  if ! loginctl enable-linger "$(id -un)" 2>/dev/null || ! systemctl --user is-system-running >/dev/null 2>&1; then
+    fail "user systemd is unavailable; service migration must not pass vacuously"
+  fi
+  service_root="$RUNNER_TEMP/ominax-service"
+  export HOME="$service_root"
+  mkdir -p "$HOME"
+  old_archive="$RUNNER_TEMP/t3-$previous-linux-x64.tar.gz"
+  gh release download "v$previous" -R "$repo" -p "t3-$previous-linux-x64.tar.gz" -D "$RUNNER_TEMP"
+  mkdir -p "$HOME/old"
+  tar -xzf "$old_archive" -C "$HOME/old"
+  old_cli="$(find "$HOME/old" -type f -name t3 -perm -u+x | head -n 1)"
+  [ -n "$old_cli" ] || fail "N-1 CLI archive did not contain t3"
+  "$old_cli" service install --base-dir "$HOME/.t3-learn"
+  systemctl --user is-active t3learn.service >/dev/null || fail "N-1 t3learn.service is not active"
+  new_archive="$RUNNER_TEMP/t3-$version-linux-x64.tar.gz"
+  gh release download "v$version" -R "$repo" -p "t3-$version-linux-x64.tar.gz" -D "$RUNNER_TEMP"
+  mkdir -p "$HOME/new"
+  tar -xzf "$new_archive" -C "$HOME/new"
+  new_cli="$(find "$HOME/new" -type f -name t3 -perm -u+x | head -n 1)"
+  [ -n "$new_cli" ] || fail "N CLI archive did not contain t3"
+  "$new_cli" update "$version" --yes --base-dir "$HOME/.t3-learn"
+  "$new_cli" service install --base-dir "$HOME/.t3-learn"
+  systemctl --user is-active ominax.service >/dev/null || fail "ominax.service is not active after migration"
+  if systemctl --user is-enabled t3learn.service >/dev/null 2>&1 || systemctl --user is-active t3learn.service >/dev/null 2>&1; then
+    fail "legacy t3learn.service remains after migration"
+  fi
+  systemctl --user disable t3learn.service >/dev/null 2>&1 || true
+  systemctl --user stop ominax.service >/dev/null 2>&1 || true
+  log "PASS"
+  exit 0
 fi
 
 if [ "$os" = Darwin ] && [ "$scenario" = fresh ] && [ -n "$previous" ] && [ "$previous" != "$version" ]; then
@@ -173,7 +217,7 @@ fi
 
 log "Installing OminaX $version"
 curl -fsSL "https://github.com/$repo/releases/download/v$version/install.sh" |
-  env T3LEARN_VERSION="$version" T3LEARN_FORMAT="$format" sh 2>&1 | tee "$artifacts/install.log"
+  env OMINAX_VERSION="$version" OMINAX_FORMAT="$format" sh 2>&1 | tee "$artifacts/install.log"
 
 learn_version="$(wait_for_server "$HOME/.t3-learn" "$version")"
 log "OminaX $learn_version is running"
@@ -181,19 +225,49 @@ sleep 5
 screenshot t3-learn
 if [ ! -d "$artifacts/kept" ]; then plant_learning; fi
 
+if [ -d "$HOME/.ominax" ] && [ -L "$HOME/.t3-learn" ]; then
+  [ "$(cd "$HOME/.t3-learn" && pwd -P)" = "$(cd "$HOME/.ominax" && pwd -P)" ] || fail "legacy data path does not link to ~/.ominax"
+else
+  fail "OminaX data folder migration did not leave ~/.t3-learn as a symlink"
+fi
+for launcher_name in ominax t3-learn; do
+  launcher=""
+  for candidate in "$HOME/.ominax/bin/$launcher_name" "$HOME/.local/bin/$launcher_name" "$HOME/bin/$launcher_name"; do
+    if [ -x "$candidate" ]; then launcher="$candidate"; break; fi
+  done
+  if [ -n "$launcher" ]; then
+    "$launcher" --version >/dev/null || fail "$launcher --version failed"
+  else
+    log "$launcher_name launcher is not reachable until Settings → About installs the CLI; skipping"
+  fi
+done
+check_learning "the install"
+if [ -f apps/desktop/scripts/plant-saved-connection.mjs ]; then
+  node apps/desktop/scripts/plant-saved-connection.mjs check
+else
+  log "saved-connection plant script is not present on this branch; secret check deferred"
+fi
+
 if [ "$os" = Darwin ]; then
   app="/Applications/OminaX.app"
-  [ -d "$app" ] || fail "$app is missing"
-  [ ! -d "/Applications/T3 Learn.app" ] || fail "the old T3 Learn app bundle is still installed"
+  [ -d "$app" ] || app="/Applications/T3 Learn.app"
+  [ -d "$app" ] || fail "the OminaX app bundle is missing"
   codesign --verify --deep "$app" || fail "the installed app's signature does not verify"
-  [ "$(defaults read "$app/Contents/Info.plist" CFBundleIdentifier)" = io.github.aabdel0181.t3learn ] ||
+  [ "$(defaults read "$app/Contents/Info.plist" CFBundleIdentifier)" = io.github.aabdel0181.ominax ] ||
     fail "unexpected bundle id"
+  [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$app/Contents/Info.plist")" = OminaX ] || fail "unexpected CFBundleName"
+  display_name="$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "$app/Contents/Info.plist" 2>/dev/null || true)"
+  [ -z "$display_name" ] || [ "$display_name" = OminaX ] || fail "unexpected CFBundleDisplayName"
 elif [ "$scenario" = appimage ]; then
-  [ -x "$HOME/.local/share/t3-learn/T3-Learn.AppImage" ] || fail "the AppImage is missing"
-  grep -q '^Exec=' "$HOME/.local/share/applications/t3learn.desktop" || fail "no desktop entry"
-  [ -s "$HOME/.local/share/icons/hicolor/512x512/apps/t3learn.png" ] || fail "no menu icon"
+  [ -x "$HOME/.local/share/ominax/OminaX.AppImage" ] || fail "the AppImage is missing"
+  grep -q '^Exec=' "$HOME/.local/share/applications/io.github.aabdel0181.OminaX.desktop" || fail "no desktop entry"
+  [ -s "$HOME/.local/share/icons/hicolor/512x512/apps/ominax.png" ] || fail "no menu icon"
+elif [ "$scenario" = service ]; then
+  :
 else
-  installed t3learn || fail "the t3learn package is not installed"
+  installed ominax || fail "the ominax package is not installed"
+  ! installed t3learn || fail "the old t3learn package is still installed"
+  [ -e /usr/share/applications/io.github.aabdel0181.OminaX.desktop ] || fail "the OminaX desktop entry is missing"
 fi
 
 if [ "$scenario" = next-to-t3-code ]; then
@@ -217,11 +291,11 @@ if [ "$os" = Darwin ]; then
   [ ! -d "/Applications/OminaX.app" ] || fail "the OminaX app is still installed"
   [ ! -d "/Applications/T3 Learn.app" ] || fail "the old T3 Learn app is still installed"
 elif [ "$scenario" = appimage ]; then
-  [ ! -e "$HOME/.local/share/t3-learn/T3-Learn.AppImage" ] || fail "the AppImage is still installed"
+  [ ! -e "$HOME/.local/share/ominax/OminaX.AppImage" ] || fail "the AppImage is still installed"
 else
-  ! installed t3learn || fail "the t3learn package is still installed"
+  ! installed ominax || fail "the ominax package is still installed"
 fi
-[ -d "$HOME/.t3-learn/userdata" ] || fail "uninstall removed OminaX's data"
+[ -d "$HOME/.ominax/userdata" ] || [ -L "$HOME/.t3-learn" ] || [ -d "$HOME/.t3-learn/userdata" ] || fail "uninstall removed OminaX's data"
 check_learning "uninstall"
 if [ "$scenario" = next-to-t3-code ]; then
   [ "$(wait_for_server "$HOME/.t3" "$t3code_version")" = "$t3code_version" ] || fail "T3 Code stopped after uninstalling OminaX"

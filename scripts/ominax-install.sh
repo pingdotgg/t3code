@@ -1,36 +1,45 @@
 #!/bin/sh
-# Installs the T3 Learn desktop app on macOS or Linux from the fork's latest
+# Installs the OminaX desktop app on macOS or Linux from the fork's latest
 # GitHub Release. Needs only sh, curl or wget, and sha256sum or shasum.
 #
-#   curl -fsSL https://github.com/aabdel0181/t3-learn/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/aabdel0181/ominax/releases/latest/download/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- --uninstall
 #
-# T3 Learn installs next to T3 Code and keeps its own data in ~/.t3-learn, so an
+# OminaX installs next to T3 Code and keeps its own data in ~/.ominax, so an
 # existing T3 Code install, its threads and its `t3` command stay as they are.
 #
 # Environment:
-#   T3LEARN_VERSION           exact version to install (default: the latest release)
-#   T3LEARN_FORMAT            Linux only: deb or appimage (default: deb where apt and
+#   OMINAX_VERSION            exact version to install (default: the latest release)
+#   OMINAX_FORMAT             Linux only: deb or appimage (default: deb where apt and
 #                             sudo are available, otherwise appimage)
-#   T3LEARN_NO_LAUNCH         set to 1 to install without opening the app
-#   T3LEARN_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
+#   OMINAX_NO_LAUNCH          set to 1 to install without opening the app
+#   OMINAX_RELEASE_BASE_URL   mirror for releases/download (default: GitHub)
+#   OMINAX_UNINSTALL           set to 1 to uninstall (also accepts --uninstall)
 set -eu
 
-repo="aabdel0181/t3-learn"
-base_url="${T3LEARN_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
+repo="aabdel0181/ominax"
+base_url="${OMINAX_RELEASE_BASE_URL:-${T3LEARN_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}}"
 app_name="OminaX"
 old_app_name="T3 Learn"
-bundle_id="io.github.aabdel0181.t3learn"
-data_dir="$HOME/.t3-learn"
+# The app before and after the OminaX rename (REL-45).
+bundle_ids="io.github.aabdel0181.ominax io.github.aabdel0181.t3learn"
+data_dir="$HOME/.ominax"
+legacy_data_dir="$HOME/.t3-learn"
 # The Linux executable, WM class and deb package, like upstream's t3code.
-exe=t3learn
-appimage_dir="$HOME/.local/share/t3-learn"
-appimage_path="${appimage_dir}/T3-Learn.AppImage"
-desktop_file="$HOME/.local/share/applications/${exe}.desktop"
+exe=ominax
+old_exe=t3learn
+appimage_dir="$HOME/.local/share/ominax"
+old_appimage_dir="$HOME/.local/share/t3-learn"
+appimage_path="${appimage_dir}/OminaX.AppImage"
+old_appimage_path="${old_appimage_dir}/T3-Learn.AppImage"
+desktop_file="$HOME/.local/share/applications/io.github.aabdel0181.OminaX.desktop"
+old_desktop_file="$HOME/.local/share/applications/${old_exe}.desktop"
+legacy_desktop_file="$HOME/.local/share/applications/io.github.aabdel0181.T3Learn.desktop"
 icon_file="$HOME/.local/share/icons/hicolor/512x512/apps/${exe}.png"
+old_icon_file="$HOME/.local/share/icons/hicolor/512x512/apps/${old_exe}.png"
 
 fail() {
-  printf '\nt3-learn install: %s\n' "$1" >&2
+  printf '\nominax install: %s\n' "$1" >&2
   exit 1
 }
 
@@ -111,8 +120,9 @@ deb_installed() {
 }
 
 remove_appimage() {
-  rm -f "$appimage_path" "$desktop_file" "$icon_file"
+  rm -f "$appimage_path" "$old_appimage_path" "$desktop_file" "$old_desktop_file" "$legacy_desktop_file" "$icon_file" "$old_icon_file"
   rmdir "$appimage_dir" 2>/dev/null || true
+  rmdir "$old_appimage_dir" 2>/dev/null || true
   command -v update-desktop-database >/dev/null 2>&1 &&
     update-desktop-database "$(dirname "$desktop_file")" >/dev/null 2>&1 || true
 }
@@ -122,7 +132,7 @@ uninstall() {
     dest="$(mac_app_dir)"
     for app in "${dest}/${app_name}.app" "${dest}/${old_app_name}.app"; do
       [ -d "$app" ] || continue
-      osascript -e "tell application id \"${bundle_id}\" to quit" >/dev/null 2>&1 || true
+      for id in $bundle_ids; do osascript -e "tell application id \"${id}\" to quit" >/dev/null 2>&1 || true; done
       rm -rf "$app"
       say "Removed ${app}."
     done
@@ -131,10 +141,21 @@ uninstall() {
       say "Removing the ${exe} package (sudo may ask for your password)..."
       sudo apt-get purge -y "$exe" >/dev/null
     fi
+    if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f '${Status}' "$old_exe" 2>/dev/null | grep -q 'install ok installed'; then
+      say "Removing the ${old_exe} package (sudo may ask for your password)..."
+      sudo apt-get purge -y "$old_exe" >/dev/null
+    fi
     remove_appimage
     say "Removed OminaX."
   fi
-  say "Your OminaX projects and settings are still in ${data_dir}; delete that folder to remove them too."
+  if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then
+    data_message="$data_dir"
+  elif [ -e "$legacy_data_dir" ] || [ -L "$legacy_data_dir" ]; then
+    data_message="$legacy_data_dir"
+  else
+    data_message="$data_dir"
+  fi
+  say "Your OminaX projects and settings are still in ${data_message}; delete that folder to remove them too."
   exit 0
 }
 
@@ -143,11 +164,12 @@ case "${1:-}" in
   "") ;;
   *) fail "unknown option $1 (the only option is --uninstall)" ;;
 esac
+[ "${OMINAX_UNINSTALL:-${T3LEARN_UNINSTALL:-}}" != 1 ] || uninstall
 
 printf '\n  %sOminaX%s %sinstaller%s\n\n' "$bold" "$reset" "$muted" "$reset" >&2
 
 if [ "$platform" = linux ]; then
-  format="${T3LEARN_FORMAT:-}"
+  format="${OMINAX_FORMAT:-${T3LEARN_FORMAT:-}}"
   if [ -z "$format" ]; then
     format=appimage
     # The .deb keeps Chromium's sandbox on Ubuntu, where AppImages run without it.
@@ -163,7 +185,7 @@ if [ "$platform" = linux ]; then
     appimage)
       [ "$arch" = x64 ] && pattern='(OminaX|T3-Learn)-.*-x86_64\.AppImage' || pattern='(OminaX|T3-Learn)-.*-arm64\.AppImage'
       ;;
-    *) fail "T3LEARN_FORMAT must be deb or appimage" ;;
+    *) fail "OMINAX_FORMAT must be deb or appimage" ;;
   esac
 else
   pattern="(OminaX|T3-Learn)-.*-${arch}\\.zip"
@@ -175,11 +197,12 @@ trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [ -n "${T3LEARN_VERSION:-}" ]; then
-  sums_url="${base_url}/v${T3LEARN_VERSION#v}/SHA256SUMS"
+version_input="${OMINAX_VERSION:-${T3LEARN_VERSION:-}}"
+if [ -n "$version_input" ]; then
+  sums_url="${base_url}/v${version_input#v}/SHA256SUMS"
 else
   sums_url="https://github.com/${repo}/releases/latest/download/SHA256SUMS"
-  [ -z "${T3LEARN_RELEASE_BASE_URL:-}" ] || sums_url="${base_url}/latest/SHA256SUMS"
+  [ -z "${OMINAX_RELEASE_BASE_URL:-${T3LEARN_RELEASE_BASE_URL:-}}" ] || sums_url="${base_url}/latest/SHA256SUMS"
 fi
 fetch_status=0
 fetch "$sums_url" quiet "$work/SHA256SUMS" || fetch_status=$?
@@ -203,13 +226,13 @@ step "Verifying the download..."
 [ "$(checksum "$work/$asset")" = "$expected" ] || fail "checksum mismatch for ${asset}; try again"
 
 launch=true
-[ "${T3LEARN_NO_LAUNCH:-}" != 1 ] || launch=false
+[ "${OMINAX_NO_LAUNCH:-${T3LEARN_NO_LAUNCH:-}}" != 1 ] || launch=false
 
 if [ "$platform" = mac ]; then
   dest="$(mac_app_dir)"
   if pgrep -f "${dest}/(${app_name}|${old_app_name})\.app/Contents/MacOS/" >/dev/null 2>&1; then
     step "Closing OminaX to update it..."
-    osascript -e "tell application id \"${bundle_id}\" to quit" >/dev/null 2>&1 || true
+    for id in $bundle_ids; do osascript -e "tell application id \"${id}\" to quit" >/dev/null 2>&1 || true; done
     tries=0
     while pgrep -f "${dest}/(${app_name}|${old_app_name})\.app/Contents/MacOS/" >/dev/null 2>&1; do
       tries=$((tries + 1))
@@ -237,6 +260,9 @@ elif [ "$format" = deb ]; then
   chmod 755 "$work"
   sudo apt-get install -y --allow-downgrades "$work/$asset" >/dev/null ||
     fail "apt could not install ${asset}"
+  if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f '${Status}' "$old_exe" 2>/dev/null | grep -q 'install ok installed'; then
+    sudo apt-get purge -y "$old_exe" >/dev/null || fail "could not remove the old ${old_exe} package"
+  fi
   # An earlier AppImage install would keep its menu entry ahead of the package's.
   remove_appimage
   if "$launch" && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
@@ -247,6 +273,8 @@ else
     say "The ${exe} package is also installed; remove it with: sudo apt-get purge ${exe}"
   fi
   step "Installing to ${appimage_dir}..."
+  rm -f "$old_appimage_path" "$old_desktop_file" "$legacy_desktop_file" "$old_icon_file"
+  rmdir "$old_appimage_dir" 2>/dev/null || true
   mkdir -p "$appimage_dir" "$(dirname "$desktop_file")" "$(dirname "$icon_file")"
   # The updater replaces the file in place, so the name carries no version.
   mv "$work/$asset" "$appimage_path"

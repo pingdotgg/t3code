@@ -323,7 +323,7 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      # The t3-learn command's update, service install and SSH remotes fetch these.
+      # The OminaX CLI's update, service install and SSH remotes fetch these.
       - name: Download all CLI archives
         uses: actions/download-artifact@v8
         with:
@@ -436,6 +436,7 @@ jobs:
           - { os: ubuntu-24.04, scenario: fresh }
           - { os: ubuntu-24.04, scenario: next-to-t3-code }
           - { os: ubuntu-24.04, scenario: appimage }
+          - { os: ubuntu-24.04, scenario: service }
           - { os: ubuntu-24.04-arm, scenario: fresh }
           - { os: windows-2025, scenario: fresh }
           - { os: windows-2025, scenario: next-to-t3-code }

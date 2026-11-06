@@ -110,10 +110,11 @@ describe("ssh tunnel scripts", () => {
 
   it("installs the remote runtime apart from T3 Code's, from T3 Learn's releases", () => {
     const script = SshTunnel.buildRemoteT3RunnerScript(ARCHIVE);
-    assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3-learn/runtime/versions/$T3_ARCHIVE_VERSION"');
+    assert.include(script, 'T3_SERVER_HOME="$(if [ -d "$HOME/.ominax" ]; then');
+    assert.include(script, 'T3_RUNTIME_DIR="$T3_SERVER_HOME/runtime/versions/$T3_ARCHIVE_VERSION"');
     assert.include(
       script,
-      "T3_RELEASE_BASE_URL='https://github.com/aabdel0181/t3-learn/releases/download'",
+      "T3_RELEASE_BASE_URL='https://github.com/aabdel0181/ominax/releases/download'",
     );
     assert.notInclude(script, "$HOME/.t3/");
   });
