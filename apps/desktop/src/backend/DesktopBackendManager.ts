@@ -312,7 +312,10 @@ const closeRun = (
     onNone: () => Effect.void,
     onSome: (fiber) => Fiber.await(fiber).pipe(Effect.asVoid),
   });
-  const close = Scope.close(run.scope, Exit.void).pipe(Effect.andThen(waitForFiber));
+  const close = Scope.close(run.scope, Exit.void).pipe(
+    Effect.withSpan("desktop.backendInstance.closeScope"),
+    Effect.andThen(waitForFiber.pipe(Effect.withSpan("desktop.backendInstance.awaitRun"))),
+  );
   const timeout = options?.timeout;
 
   if (!timeout) {
@@ -573,6 +576,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
   const exit = yield* handle.exitCode.pipe(
+    Effect.withSpan("desktop.backendProcess.awaitExit"),
     Effect.map((exitCode) => ({
       code: Option.some(exitCode),
       reason: `code=${exitCode}`,
@@ -608,6 +612,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   }).pipe(
     Effect.timeout(options.outputDrainTimeout ?? DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
     Effect.ignore,
+    Effect.withSpan("desktop.backendProcess.drainOutput"),
   );
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
