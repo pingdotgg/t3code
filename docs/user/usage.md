@@ -46,8 +46,8 @@ Use absolute paths or `~/` paths in the account's environment settings; relative
 depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
 sharing a history directory count once.
 
-Z.ai GLM usage comes from the turns T3 itself runs through the ACP Registry, recorded as each turn
-finishes. Use outside T3, or on environments you have not connected, does not appear, so Z.ai's own
+Z.ai GLM usage comes from the turns T3 itself runs through the ACP Registry's GLM agent, recorded as
+each turn finishes. GLM run as a local ACP command is not counted. Use outside T3, or on environments you have not connected, does not appear, so Z.ai's own
 dashboard can show more. Turns that fail or are interrupted may report partial or no usage.
 
 The server saves its first hostname in `<T3 home>/usage-host-id`, so a recreated container keeps
