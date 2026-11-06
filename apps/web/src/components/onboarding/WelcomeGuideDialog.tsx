@@ -88,34 +88,43 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
     shortcutLabelForCommand(keybindings, "sideChat.toggleMap"),
   );
   const [targetElement, setTargetElement] = useState<HTMLElement | null>(null);
+  // Remounting after a route change opens the fallback dialog above the page it moved to (Settings).
+  const [routedLookups, setRoutedLookups] = useState(0);
   const activeTarget = steps[step]?.target;
   const targetSelector = activeTarget?.selector;
   const targetRoute = activeTarget?.route;
 
-  // Target steps follow route changes and may not exist on narrow or differently configured UIs.
+  // Target steps follow route changes and may not exist, or sit offscreen, on some layouts. The last
+  // anchor stays until the next lookup settles, so moving between targets keeps the card up.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the target is DOM state outside React.
   useEffect(() => {
+    if (!targetSelector) return;
     let cancelled = false;
     const resolveTarget = async () => {
       if (targetRoute) await navigate({ to: targetRoute });
-      if (cancelled || !targetSelector) return;
+      if (cancelled) return;
       const element = document.querySelector<HTMLElement>(targetSelector);
-      if (!element) return;
-      element.scrollIntoView({ block: "center" });
+      element?.scrollIntoView({ block: "center" });
       // Covered (Settings over the sidebar) or off screen (collapsed sidebar): stay centred.
-      // The tour's own dialog and full-screen modal layers (backdrops) don't count as covering it.
-      const rect = element.getBoundingClientRect();
-      const top = document
-        .elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
-        .find((hit) => {
-          if (hit.closest("[data-tour-card]")) return false;
-          const box = hit.getBoundingClientRect();
-          const fullScreen = box.width >= window.innerWidth && box.height >= window.innerHeight;
-          return !fullScreen || hit.contains(element);
-        });
-      if (!top || !element.contains(top)) return;
-      element.setAttribute("data-tour-target", "true");
-      setTargetElement(element);
+      // The tour's own windows and full-screen modal layers (backdrops) don't count as covering it.
+      const rect = element?.getBoundingClientRect();
+      const top =
+        rect &&
+        document
+          .elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+          .find((hit) => {
+            if (hit.contains(element)) return true;
+            // The card's positioner wraps it, so look both up and down for the marker.
+            if (hit.closest("[data-tour-card]") || hit.querySelector("[data-tour-card]")) {
+              return false;
+            }
+            const box = hit.getBoundingClientRect();
+            return box.width < window.innerWidth || box.height < window.innerHeight;
+          });
+      const visible = element && top && element.contains(top) ? element : null;
+      visible?.setAttribute("data-tour-target", "true");
+      setTargetElement(visible);
+      if (targetRoute) setRoutedLookups((count) => count + 1);
     };
     void resolveTarget();
     return () => {
@@ -127,17 +136,32 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
   }, [navigate, targetRoute, targetSelector]);
 
   const last = step === steps.length - 1;
-  const resolvedTarget =
-    targetSelector && targetElement?.matches(targetSelector) ? targetElement : null;
+  const resolvedTarget = targetSelector ? targetElement : null;
   const showDialog = resolvedTarget === null;
 
-  const close = onClose;
-  const advance = () => setStep(step + 1);
-  const goBack = () => setStep(step - 1);
+  const goTo = (next: number) => {
+    // A stale anchor would carry the next target step's card until its lookup settles.
+    if (!steps[next]?.target) setTargetElement(null);
+    setStep(next);
+  };
+  const advance = () => goTo(step + 1);
+  const goBack = () => goTo(step - 1);
 
   const targetCard = resolvedTarget ? (
-    <Popover open onOpenChange={(open) => !open && close()}>
-      <PopoverPopup anchor={resolvedTarget} side="right" width="md" initialFocus={nextRef}>
+    // Only Esc ends the tour here; a stray click on the page should not.
+    <Popover
+      open
+      onOpenChange={(open, { reason }) => !open && reason === "escape-key" && onClose()}
+    >
+      <PopoverPopup
+        anchor={resolvedTarget}
+        side="right"
+        width="md"
+        initialFocus={nextRef}
+        padding="none"
+        aria-label={steps[step]?.title}
+        data-tour-card
+      >
         <div className="space-y-3 p-4">
           <p className="text-xs font-medium text-muted-foreground">
             {step + 1} of {steps.length}
@@ -152,7 +176,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
             ) : null}
           </div>
           <div className="flex items-center justify-between gap-2 pt-1">
-            <Button variant="ghost" className={last ? "invisible" : undefined} onClick={close}>
+            <Button variant="ghost" className={last ? "invisible" : undefined} onClick={onClose}>
               Skip
             </Button>
             <div className="flex gap-2">
@@ -163,7 +187,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
               >
                 Back
               </Button>
-              <Button ref={nextRef} onClick={last ? close : advance}>
+              <Button ref={nextRef} onClick={last ? onClose : advance}>
                 {last ? "Start learning" : "Next"}
               </Button>
             </div>
@@ -177,7 +201,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
     <>
       {targetCard}
       {showDialog ? (
-        <Dialog open onOpenChange={(open) => !open && close()}>
+        <Dialog key={routedLookups} open onOpenChange={(open) => !open && onClose()}>
           <WizardPopup size="wide" initialFocus={nextRef} data-tour-card>
             <WizardHeader
               title="Welcome guide"
@@ -187,7 +211,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
                 label="Guide progress"
                 steps={steps.map((item) => item.label)}
                 currentStep={step}
-                onStepChange={setStep}
+                onStepChange={goTo}
                 currentLabelOnly
               />
             </WizardHeader>
@@ -220,7 +244,11 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
             </WizardPanel>
             <WizardFooter
               leading={
-                <Button variant="ghost" className={last ? "invisible" : undefined} onClick={close}>
+                <Button
+                  variant="ghost"
+                  className={last ? "invisible" : undefined}
+                  onClick={onClose}
+                >
                   Skip
                 </Button>
               }
@@ -235,7 +263,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
               >
                 Back
               </Button>
-              <Button ref={nextRef} onClick={last ? close : advance}>
+              <Button ref={nextRef} onClick={last ? onClose : advance}>
                 {last ? "Start learning" : "Next"}
               </Button>
             </WizardFooter>

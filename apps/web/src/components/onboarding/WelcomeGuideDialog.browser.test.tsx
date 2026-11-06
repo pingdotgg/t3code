@@ -1,6 +1,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/reactivity";
+import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -76,21 +77,23 @@ function systemTime(now: string): Disposable {
 // A fresh registry per test, so the capability atom reads this test's environments.
 function mount({
   hostedStatic = false,
-  newLesson = false,
+  targets = null,
 }: {
   readonly hostedStatic?: boolean;
-  readonly newLesson?: boolean;
+  readonly targets?: ReactNode;
 } = {}) {
   return render(
     <RegistryContext.Provider value={AtomRegistry.make()}>
-      {newLesson ? (
-        <button aria-label="New lesson" data-testid="new-lesson">
-          New lesson
-        </button>
-      ) : null}
+      {targets}
       <WelcomeGuideHost hostedStatic={hostedStatic} />
     </RegistryContext.Provider>,
   );
+}
+
+function observe(onChange: () => void): Disposable {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.body, { childList: true, subtree: true });
+  return { [Symbol.dispose]: () => observer.disconnect() };
 }
 
 const guide = () => page.getByRole("dialog", { name: "Welcome guide" });
@@ -187,7 +190,13 @@ it("moves through the steps and records the visit when the learner finishes", as
 
 it("anchors a target step and removes its highlight when moving on", async () => {
   using _storage = setup();
-  await using _screen = await mount({ newLesson: true });
+  await using _screen = await mount({
+    targets: (
+      <button aria-label="New lesson" data-testid="new-lesson">
+        New lesson
+      </button>
+    ),
+  });
   // The modal guide hides the rest of the page from role queries.
   const newLesson = page.getByTestId("new-lesson");
 
@@ -195,6 +204,11 @@ it("anchors a target step and removes its highlight when moving on", async () =>
   await expect.element(newLesson).toHaveAttribute("data-tour-target", "true");
   await expect.element(heading("Start a new lesson")).toBeVisible();
   await expect.element(guide()).not.toBeInTheDocument();
+  await expect.element(button("Next")).toHaveFocus();
+  // Pressing the highlighted control is not a dismissal.
+  await userEvent.click(newLesson);
+  await expect.element(heading("Start a new lesson")).toBeVisible();
+  expect(storedSeenAt()).toBeNull();
 
   await userEvent.click(button("Next"));
   await expect.element(heading("Highlight what you don't get")).toBeVisible();
@@ -202,9 +216,44 @@ it("anchors a target step and removes its highlight when moving on", async () =>
   await expect.element(guide()).toBeVisible();
 });
 
-it("falls back to the centred dialog when a target is missing", async () => {
+it("keeps the card up between two target steps", async () => {
   using _storage = setup();
-  await using _screen = await mount();
+  await using _screen = await mount({
+    targets: (
+      <>
+        <section id="courses">Courses</section>
+        <section id="knowledge-map" data-testid="knowledge-map">
+          What you know
+        </section>
+      </>
+    ),
+  });
+  for (const _ of Array.from({ length: 7 })) await userEvent.click(button("Next"));
+  await expect.element(heading("Build a course")).toBeVisible();
+  await expect.element(guide()).not.toBeInTheDocument();
+
+  let dialogShown = false;
+  using _observer = observe(() => {
+    if (guide().query()) dialogShown = true;
+  });
+  await userEvent.click(button("Next"));
+  await expect
+    .element(page.getByTestId("knowledge-map"))
+    .toHaveAttribute("data-tour-target", "true");
+  expect(dialogShown).toBe(false);
+});
+
+it.each([
+  ["missing", null],
+  [
+    "offscreen",
+    <button key="n" aria-label="New lesson" style={{ position: "fixed", left: -1000 }}>
+      New lesson
+    </button>,
+  ],
+])("falls back to the centred dialog when a target is %s", async (_case, targets) => {
+  using _storage = setup();
+  await using _screen = await mount({ targets });
 
   await userEvent.click(button("Next"));
   await expect.element(heading("Start a new lesson")).toBeVisible();
