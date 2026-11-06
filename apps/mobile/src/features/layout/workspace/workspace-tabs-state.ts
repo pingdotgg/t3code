@@ -17,8 +17,15 @@ export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
 /** Settings, Chats and pull requests pair a list with a detail column; Usage is one page. */
-export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
-  return settingsOpen || tab === "threads" || tab === "pullRequests";
+export function workspaceUsesColumns(
+  tab: WorkspaceTab,
+  settingsOpen = false,
+  nativeColumns = true,
+) {
+  // Legacy sidebars host chats only; Settings needs the whole page to show its list and navigation.
+  //
+  // 兼容侧栏只承载聊天，设置需占用整页，才能显示设置列表及导航入口。
+  return settingsOpen ? nativeColumns : tab === "threads" || tab === "pullRequests";
 }
 
 export interface WorkspaceTabState {

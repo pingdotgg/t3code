@@ -113,7 +113,7 @@ import {
   workspaceTabColumns,
   workspaceTabNavigationState,
 } from "./workspace/workspace-tab-navigation";
-import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
+import { workspaceUsesColumns, type WorkspaceTab } from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
@@ -236,11 +236,18 @@ function AdaptiveWorkspaceLayoutContent(
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
-  // Settings and Usage occupy the workspace rather than a list/detail pair.
+  // Settings and Usage occupy the workspace; the legacy iPad sidebar used to stay over those pages.
+  //
+  // 设置和用量页面占用整个工作区，修正兼容 iPad 侧栏此前仍覆盖这些页面的问题。
   const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
   const safeAreaInsets = useSafeAreaInsets();
   const workspacePage =
-    Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
+    (Platform.OS === "android" &&
+      (androidSettingsOpen || workspace?.state.selectedTab === "usage")) ||
+    (Platform.OS === "ios" &&
+      !nativeWorkspace &&
+      workspace !== null &&
+      !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen, nativeWorkspace));
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
@@ -587,7 +594,12 @@ function AdaptiveWorkspaceLayoutContent(
       tab,
       currentWorkspaceSelections(),
       {
-        columns: workspaceTabColumns(Platform.OS, tab, options?.columns ?? layout.usesSplitView),
+        columns: workspaceTabColumns(
+          Platform.OS,
+          tab,
+          options?.columns ?? layout.usesSplitView,
+          nativeWorkspace,
+        ),
         check: workspaceSelectionCheck,
         overlays,
         seedPullRequest: withKnownPullRequestSummary,

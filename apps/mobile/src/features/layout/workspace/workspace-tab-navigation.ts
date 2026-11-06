@@ -21,7 +21,12 @@ export function workspaceTabColumns(
   platform: string,
   tab: WorkspaceTab | "settings",
   columns: boolean,
+  nativeColumns = true,
 ) {
+  // The fallback iPad sidebar only hosts chats; opening a Settings detail used to skip its list.
+  //
+  // 兼容分栏的侧栏只承载聊天；此前直接打开设置子页会跳过设置列表，导致入口不可用。
+  if (platform === "ios" && tab === "settings" && !nativeColumns) return false;
   return columns && (platform === "ios" || (platform === "android" && tab === "settings"));
 }
 
