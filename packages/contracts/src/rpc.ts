@@ -310,6 +310,13 @@ import {
   DeviceShutdownInput,
 } from "./device.ts";
 import {
+  GracefulShutdownError,
+  GracefulShutdownId,
+  GracefulShutdownInput,
+  GracefulShutdownResult,
+  GracefulShutdownStatus,
+} from "./gracefulShutdown.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -504,6 +511,9 @@ export const WS_METHODS = {
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
+  serverGracefulShutdown: "server.gracefulShutdown",
+  serverGracefulShutdownStatus: "server.gracefulShutdownStatus",
+  serverGracefulShutdownComplete: "server.gracefulShutdownComplete",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverRunStorageCleanup: "server.runStorageCleanup",
@@ -779,6 +789,26 @@ const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUp
   payload: DesktopUpdateCommitInput,
   success: ServerSelfUpdateResult,
   error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGracefulShutdownRpc = Rpc.make(WS_METHODS.serverGracefulShutdown, {
+  payload: GracefulShutdownInput,
+  success: GracefulShutdownResult,
+  error: Schema.Union([GracefulShutdownError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGracefulShutdownStatusRpc = Rpc.make(WS_METHODS.serverGracefulShutdownStatus, {
+  payload: Schema.Struct({}),
+  success: GracefulShutdownStatus,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerGracefulShutdownCompleteRpc = Rpc.make(WS_METHODS.serverGracefulShutdownComplete, {
+  payload: Schema.Struct({
+    shutdownId: Schema.optionalKey(GracefulShutdownId),
+  }),
+  success: Schema.Struct({}),
+  error: Schema.Union([GracefulShutdownError, EnvironmentAuthorizationError]),
 });
 
 const WsServerRunStorageCleanupRpc = Rpc.make(WS_METHODS.serverRunStorageCleanup, {
@@ -2023,6 +2053,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetNpmReleaseRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerCommitDesktopUpdateRpc,
+  WsServerGracefulShutdownRpc,
+  WsServerGracefulShutdownStatusRpc,
+  WsServerGracefulShutdownCompleteRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerRunStorageCleanupRpc,

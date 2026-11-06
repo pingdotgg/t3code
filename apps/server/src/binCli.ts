@@ -23,6 +23,7 @@ import { projectCommand } from "./cli/project.ts";
 import { threadCommand } from "./cli/thread.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
+import { shutdownCommand } from "./cli/shutdown.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
 import { runServiceLauncherCli } from "./cli/serviceLauncher.ts";
 import { speechWorkerCommand } from "./cli/speechWorker.ts";
@@ -89,6 +90,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       statusCommand,
       serviceCommand,
       updateCommand,
+      shutdownCommand,
       uninstallCommand,
       // bin.ts runs the bare service invocation; this keeps flags and help working like other commands.
       Command.make("__service-launcher").pipe(

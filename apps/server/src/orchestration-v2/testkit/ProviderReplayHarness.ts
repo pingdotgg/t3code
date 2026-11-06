@@ -32,6 +32,7 @@ import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
+import * as GracefulShutdownGate from "../GracefulShutdownGate.ts";
 import * as CommandReceiptStore from "../CommandReceiptStore.ts";
 import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
@@ -479,6 +480,7 @@ export function layerWithRegistry<Error>(
         layerCheckpointServiceProvided,
         CommandPolicy.layer,
         layerContextHandoffServiceProvided,
+        GracefulShutdownGate.layer,
         layerPersistence,
         layerProvidedRegistry,
         layerContinuationRequests,

@@ -726,6 +726,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "prompt-save-work-on-graceful-shutdown",
+    title: "Prompt save work on graceful shutdown",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: [
+      "commit push wrap up final turn drain update maintenance save work before restart",
+    ],
+  },
+  {
     id: "background-activity",
     title: "Background activity",
     to: "/settings/maintenance",

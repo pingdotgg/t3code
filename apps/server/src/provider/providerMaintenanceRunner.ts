@@ -23,6 +23,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeUtil from "node:util";
 
+import * as GracefulShutdown from "../orchestration-v2/GracefulShutdown.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -307,6 +308,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const gracefulShutdown = yield* GracefulShutdown.GracefulShutdown;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -423,6 +425,30 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         const finish = (state: ServerProviderUpdateState) =>
           setUpdateState(state).pipe(Effect.map((providers) => ({ providers })));
         const startedAtRef = yield* Ref.make<string | null>(null);
+        const drain = yield* gracefulShutdown
+          .beginAndAwait({
+            scope: { type: "provider", providerInstanceId: instanceId },
+            reason: "provider-update",
+          })
+          .pipe(
+            Effect.tap((result) =>
+              result.timedOut
+                ? Effect.logWarning(
+                    "Graceful shutdown timed out before provider update; continuing.",
+                    {
+                      providerInstanceId: instanceId,
+                      activeRunCount: result.activeRunCount,
+                    },
+                  )
+                : Effect.void,
+            ),
+            Effect.catch((error) =>
+              Effect.logWarning("Graceful shutdown before provider update failed; continuing.", {
+                providerInstanceId: instanceId,
+                error: String(error),
+              }).pipe(Effect.as(null)),
+            ),
+          );
 
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
           function* () {
@@ -623,7 +649,14 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           },
         );
 
-        return yield* runCommandAndVerify().pipe(Effect.catchCause(recordFailedUpdate));
+        return yield* runCommandAndVerify().pipe(
+          Effect.catchCause(recordFailedUpdate),
+          Effect.ensuring(
+            drain === null
+              ? Effect.void
+              : gracefulShutdown.complete(drain.shutdownId).pipe(Effect.ignore({ log: true })),
+          ),
+        );
       },
     );
 
