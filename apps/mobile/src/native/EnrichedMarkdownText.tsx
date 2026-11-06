@@ -11,14 +11,16 @@ import {
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
 } from "../lib/markdownDocument";
-import { isValidElement, useMemo, useState, type ReactNode } from "react";
+import { isValidElement, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, useWindowDimensions, View } from "react-native";
 import {
   EnrichedMarkdownText,
+  type MarkdownCodeBlock,
   type MarkdownImageBlock,
   type MarkdownLinkOccurrence,
   type MarkdownStyle,
 } from "react-native-enriched-markdown";
+import { MermaidCodeBlock } from "./MermaidCodeBlock";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -161,6 +163,35 @@ function enrichedStyle(
   };
 }
 
+/** Diagram and math fences, as web draws them. A fence streams as native code until it closes. */
+function codeBlockElement(
+  block: MarkdownCodeBlock,
+  textStyle: SelectableMarkdownTextProps["textStyle"],
+  markdownStyle: MarkdownStyle,
+  mathRenderingEnabled: boolean,
+): ReactElement | undefined {
+  if (!block.isComplete) return undefined;
+  if (block.language === "mermaid") {
+    return <MermaidCodeBlock code={block.code} textStyle={textStyle} />;
+  }
+  if (block.language === "math" && mathRenderingEnabled) {
+    return (
+      <EnrichedMarkdownText
+        // A blank line would end the paragraph, and so the math, early.
+        markdown={`$$\n${block.code.replace(/\n\s*\n/g, "\n").trim()}\n$$`}
+        markdownStyle={markdownStyle}
+        md4cFlags={{ latexMath: true }}
+        containerStyle={{ flexShrink: 1, minWidth: 0 }}
+        flavor="github"
+        selectable
+        selectionColor={textStyle.selectionColor}
+        selectionHandleColor={textStyle.selectionHandleColor}
+      />
+    );
+  }
+  return undefined;
+}
+
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
@@ -274,18 +305,20 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       linkVariants,
     };
   }, [props.textStyle, props.textAlign, themeAppearance, fontScale, linkVariants]);
-  const renderers = renderImage
-    ? {
-        image: (block: MarkdownImageBlock) => {
+  const renderers = {
+    image: renderImage
+      ? (block: MarkdownImageBlock) => {
           const element = renderImage({
             href: block.url,
             alt: block.altText || null,
             title: block.title || null,
           });
           return isValidElement(element) ? element : undefined;
-        },
-      }
-    : undefined;
+        }
+      : undefined,
+    code: (block: MarkdownCodeBlock) =>
+      codeBlockElement(block, props.textStyle, markdownStyle, mathRenderingEnabled),
+  };
   const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
   const renderMarkdown = (openAndroidMenu?: () => void) => {
     const onLinkLongPress =
