@@ -8,6 +8,8 @@ delete process.env.VP_RUN_NODE_CLIENT_PATH;
 
 export default defineConfig({
   site: "https://t3.codes",
+  // Vercel 308s `/path/` to `/path` (see vercel.ts), so every internal link and canonical uses one form.
+  trailingSlash: "never",
   server: {
     port: Number(process.env.PORT ?? 4173),
   },
