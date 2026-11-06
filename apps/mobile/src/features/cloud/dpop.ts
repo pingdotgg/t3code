@@ -90,11 +90,19 @@ function base64UrlToBytes(value: string): Uint8Array {
   return Result.getOrThrow(Base64Url.decode(value));
 }
 
+function coordinateBytes(value: string): Uint8Array {
+  const bytes = base64UrlToBytes(value);
+  if (bytes.length !== 32 || Base64Url.encode(bytes) !== value) {
+    throw new Error("DPoP key coordinate is not 32 canonical bytes.");
+  }
+  return bytes;
+}
+
 function uncompressedPublicKeyFromJwk(jwk: DpopPublicJwk): Uint8Array {
   const publicKey = new Uint8Array(65);
   publicKey[0] = 0x04;
-  publicKey.set(base64UrlToBytes(jwk.x), 1);
-  publicKey.set(base64UrlToBytes(jwk.y), 33);
+  publicKey.set(coordinateBytes(jwk.x), 1);
+  publicKey.set(coordinateBytes(jwk.y), 33);
   return publicKey;
 }
 
