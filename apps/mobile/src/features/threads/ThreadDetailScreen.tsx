@@ -1016,7 +1016,18 @@ function ThreadDetailBody(
         [],
       Date.now(),
     );
-    showUsageLimits(report);
+    // Never replace a panel opened for a newer context while this check was in flight.
+    setUsageLimitsPanel((current) =>
+      current !== null && current.key !== usageLimitsKey
+        ? current
+        : report === null
+          ? null
+          : {
+              key: usageLimitsKey,
+              threadKey: selectedThreadKey,
+              now: Date.parse(report.createdAt),
+            },
+    );
     return report === null ? "This provider does not currently report limits." : null;
   };
   const dismissUsageLimits = () => setUsageLimitsPanel(null);
