@@ -61,6 +61,35 @@ function readTraces(fileSystem: Partial<FileSystem.FileSystem>) {
 }
 
 describe("TraceDiagnostics", () => {
+  it("includes browser failures and interruptions in diagnostics", () => {
+    const diagnostics = aggregateLines(
+      [
+        { status: { code: "2", message: "Browser request failed" }, attributes: {} },
+        { status: { code: "0" }, attributes: { "effect.fiber.interrupted": true } },
+        { status: { code: "1", message: "Interrupted" }, attributes: {} },
+        { status: { code: "1" }, attributes: {} },
+      ].map((outcome, index) =>
+        JSON.stringify({
+          type: "otlp-span",
+          name: "browser.request",
+          traceId: `trace-${index}`,
+          spanId: `span-${index}`,
+          startTimeUnixNano: ns(index * 100),
+          endTimeUnixNano: ns(index * 100 + 10),
+          durationMs: 10,
+          ...outcome,
+        }),
+      ),
+    );
+
+    assert.equal(diagnostics.recordCount, 4);
+    assert.equal(diagnostics.failureCount, 1);
+    assert.equal(diagnostics.interruptionCount, 2);
+    assert.equal(diagnostics.topSpansByCount[0]?.failureCount, 1);
+    assert.equal(diagnostics.commonFailures[0]?.cause, "Browser request failed");
+    assert.equal(diagnostics.latestFailures[0]?.cause, "Browser request failed");
+  });
+
   it.effect("aggregates failures, slow spans, log levels, and parse errors", () =>
     Effect.sync(() => {
       const diagnostics = aggregateLines([

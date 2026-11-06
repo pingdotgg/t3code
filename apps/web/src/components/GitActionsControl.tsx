@@ -52,6 +52,7 @@ import {
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
+  resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
   resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
@@ -89,7 +90,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "../state/sourceControlActions";
-import { useThreadProjection, useQuietThreadShell } from "~/state/entities";
+import { useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -117,6 +118,8 @@ interface GitActionsControlProps {
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
   compact?: boolean;
+  showActions?: boolean;
+  showChanges?: boolean;
   onOpenChanges?: () => void;
 }
 
@@ -926,6 +929,8 @@ export default function GitActionsControl({
   activeThreadRef,
   draftId,
   compact = false,
+  showActions = true,
+  showChanges = true,
   onOpenChanges,
 }: GitActionsControlProps) {
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -954,7 +959,7 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
-  const activeServerThreadProjection = useThreadProjection(
+  const activeServerThreadProjection = useQuietThreadProjection(
     activeDraftThread !== null && activeServerThreadShell === null ? null : activeThreadRef,
   );
   const activeServerThread =
@@ -1044,7 +1049,13 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
+  const resolvedChangesTotals = resolveChangesTotals(gitStatusForActions);
+  const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
+  const changesBaseLabel = resolvedChangesTotals
+    ? resolvedChangesTotals.baseRef === null
+      ? "Uncommitted"
+      : `vs ${resolvedChangesTotals.baseRef}`
+    : null;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   // Changed-file paths are repository-relative, so they must resolve against
@@ -1114,8 +1125,8 @@ export default function GitActionsControl({
     gitActionProgress === null &&
     !gitStatusError &&
     quickAction.disabled &&
-    !changesTotals?.insertions &&
-    !changesTotals?.deletions;
+    !changesTotals.insertions &&
+    !changesTotals.deletions;
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -1476,7 +1487,7 @@ export default function GitActionsControl({
 
   return (
     <>
-      {!isRepo ? (
+      {!showActions ? null : !isRepo ? (
         <ThreadDetailsControl
           size="xs"
           variant="ghost"
@@ -1618,7 +1629,7 @@ export default function GitActionsControl({
         </div>
       )}
 
-      {isRepo && !quietEmptyDraft ? (
+      {showChanges && isRepo && !quietEmptyDraft ? (
         <ThreadDetailsControl
           type="button"
           variant="ghost"
@@ -1628,23 +1639,35 @@ export default function GitActionsControl({
           onClick={onOpenChanges}
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
+          <span className={cn("shrink-0", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
+          {changesBaseLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="pointer-events-auto min-w-0 truncate text-xs text-muted-foreground" />
+                }
+              >
+                {changesBaseLabel}
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-96 break-words">
+                {changesBaseLabel}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
             <span
               className={
-                changesTotals?.insertions
-                  ? "text-diff-addition-foreground"
-                  : "text-muted-foreground"
+                changesTotals.insertions ? "text-diff-addition-foreground" : "text-muted-foreground"
               }
             >
-              +{formatDiffCount(changesTotals?.insertions ?? 0)}
+              +{formatDiffCount(changesTotals.insertions)}
             </span>
             <span
               className={
-                changesTotals?.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
+                changesTotals.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
               }
             >
-              -{formatDiffCount(changesTotals?.deletions ?? 0)}
+              -{formatDiffCount(changesTotals.deletions)}
             </span>
           </span>
         </ThreadDetailsControl>
@@ -1826,13 +1849,16 @@ export default function GitActionsControl({
         </DialogPopup>
       </Dialog>
 
-      <PublishRepositoryDialog
-        open={isPublishDialogOpen}
-        onOpenChange={setIsPublishDialogOpen}
-        environmentId={activeEnvironmentId}
-        threadRef={activeThreadRef}
-        gitCwd={gitCwd}
-      />
+      {/* Its discovery query should stop when the Git actions row that opens it is hidden. */}
+      {showActions ? (
+        <PublishRepositoryDialog
+          open={isPublishDialogOpen}
+          onOpenChange={setIsPublishDialogOpen}
+          environmentId={activeEnvironmentId}
+          threadRef={activeThreadRef}
+          gitCwd={gitCwd}
+        />
+      ) : null}
 
       <Dialog
         open={pendingDefaultBranchAction !== null}

@@ -1,6 +1,5 @@
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -19,6 +18,7 @@ import {
   type PullRequestUpdateMethod,
   type PullRequestRef,
   type PullRequestReviewGuideStop,
+  type PullRequestSummary,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -49,8 +49,10 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
-import { writePullRequestTaskToComposer } from "./pullRequestComposerHandoff";
-import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
+import {
+  usePullRequestDefaultMergeMethodResolver,
+  writeHandoffToComposer,
+} from "./usePullRequestActions";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import { cn } from "~/lib/utils";
@@ -64,6 +66,7 @@ import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment, usePullRequestTurnRefresh } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
+import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import {
   capitalizeTerm,
@@ -103,6 +106,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
+import { pullRequestMarkdownPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -113,6 +117,8 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildPullRequestCommentContext,
+  buildPullRequestContext,
   buildResolveConflictsPrompt,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
@@ -133,6 +139,7 @@ import {
   isPullRequestConflicting,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
+  type PullRequestChatSubject,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
 } from "./pullRequestDetail.logic";
@@ -224,10 +231,15 @@ function resolvePullRequestReference(
 }
 
 function pullRequestMarkdownContext(
-  detail: Pick<PullRequestDetail, "provider" | "url"> | null,
+  detail: Pick<PullRequestDetail, "provider" | "url" | "repository"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
-  return { autolinks: changeRequestReferenceAutolinker(detail), threadRef };
+  return {
+    remarkPlugins: pullRequestMarkdownPlugins(detail),
+    lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
+    threadRef,
+    repository: detail?.repository ?? null,
+  };
 }
 
 function pullRequestStackReference(
@@ -275,7 +287,11 @@ export function PullRequestDetailPanel({
    * notification can switch it.
    */
   tabOnPage?: boolean;
-  onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
+  onActed?: (
+    action?: PullRequestAction,
+    phase?: "sent" | "done" | "failed",
+    reply?: PullRequestSummary,
+  ) => void;
   onClose?: () => void;
   context?: "page" | "thread";
   composerDraftTarget?: ScopedThreadRef | DraftId;
@@ -401,16 +417,16 @@ export function PullRequestDetailPanel({
     Partial<Record<PullRequestDetailTab, boolean>>
   >({});
   const condensed = condensedByTab[tab] ?? false;
-  const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLDivElement | null>>>({});
+  const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   // Fresh ref callbacks would detach and reattach every scroller on each render.
   const [scrollerRefs] = useState(() => ({
-    summary: (node: HTMLDivElement | null) => {
+    summary: (node: HTMLElement | null) => {
       scrollerByTab.current.summary = node;
     },
-    timeline: (node: HTMLDivElement | null) => {
+    timeline: (node: HTMLElement | null) => {
       scrollerByTab.current.timeline = node;
     },
-    code: (node: HTMLDivElement | null) => {
+    code: (node: HTMLElement | null) => {
       scrollerByTab.current.code = node;
     },
   }));
@@ -420,7 +436,7 @@ export function PullRequestDetailPanel({
   // so applying a delta afterward would compensate twice.
   const compensationRef = useRef<{
     tab: PullRequestDetailTab;
-    scroller: HTMLDivElement;
+    scroller: HTMLElement;
     target: number;
   } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the scroller's scrollTop before paint after the header condenses
@@ -537,6 +553,12 @@ export function PullRequestDetailPanel({
     stackPending: !nativeStackQuery.isFresh,
     stackError: nativeStackQuery.error,
   });
+  const stackOwnsMerge = supportsStackActions && nativeStack !== null;
+  const mergeBlockedReason = canMergeSinglePullRequest
+    ? null
+    : nativeStackQuery.error
+      ? "Couldn't check stack membership"
+      : "Checking stack membership…";
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
   const refreshDetail = () => {
@@ -674,9 +696,11 @@ export function PullRequestDetailPanel({
     if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
     } else {
-      refreshDetail();
+      // The action command already showed the reply in the detail or re-read it.
+      activityQuery.refresh();
+      nativeStackQuery.refresh();
     }
-    onActed?.(action, "done");
+    onActed?.(action, "done", result.value);
     return true;
   };
 
@@ -711,7 +735,6 @@ export function PullRequestDetailPanel({
   type ThreadTask = {
     prompt: string;
     reviewComments?: ReadonlyArray<ReviewCommentContext>;
-    append?: boolean;
   };
 
   const attachTarget = composerDraftTarget ?? null;
@@ -732,7 +755,6 @@ export function PullRequestDetailPanel({
     projectRef: ReturnType<typeof scopeProjectRef>,
     task: ThreadTask | null,
     opened?: { draftId: DraftId },
-    mode: "replace" | "append" = "replace",
   ): Promise<{ draftId: DraftId } | null> => {
     const session =
       opened ??
@@ -742,18 +764,18 @@ export function PullRequestDetailPanel({
       ));
     if (session === null) return null;
     if (task === null) return session;
-    writePullRequestTaskToComposer(session.draftId, task, mode);
+    writeHandoffToComposer(session.draftId, task);
     return session;
   };
 
   const startAsk = async (
     kind: string,
     task: ThreadTask,
-    options?: { readonly keepGuide?: boolean; readonly append?: boolean },
+    options?: { readonly keepGuide?: boolean },
   ) => {
     if (!detail || handoff !== null) return;
     if (attachTarget !== null) {
-      writePullRequestTaskToComposer(attachTarget, task, options?.append ? "append" : "replace");
+      writeHandoffToComposer(attachTarget, task);
       toastManager.add({
         type: "success",
         title: "Added to the composer",
@@ -766,12 +788,7 @@ export function PullRequestDetailPanel({
     }
     setHandoff(kind);
     const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
-    const opened = await openThreadWithTask(
-      projectRef,
-      task,
-      undefined,
-      options?.append ? "append" : "replace",
-    );
+    const opened = await openThreadWithTask(projectRef, task);
     setHandoff(null);
     if (opened !== null && options?.keepGuide === true) {
       const draft = useComposerDraftStore.getState().getDraftSession(opened.draftId);
@@ -814,7 +831,7 @@ export function PullRequestDetailPanel({
   ) => {
     if (!handoffSummary || handoff !== null) return;
     if (attachTarget !== null && task !== null) {
-      writePullRequestTaskToComposer(attachTarget, task);
+      writeHandoffToComposer(attachTarget, task);
       toastManager.add({
         type: "success",
         title: "Added to the composer",
@@ -995,8 +1012,45 @@ export function PullRequestDetailPanel({
         comment: selection.comment,
         request: selection.request,
       }),
-      { ...options, append: true },
+      options,
     );
+  };
+
+  /**
+   * Brings a remark into the composer beside this panel, with the pull request it belongs to,
+   * and nothing else: what to ask about it is the reader's to write. A remark on a line travels
+   * as its whole conversation, the way fixing one does.
+   */
+  const addCommentToChat = (subject: PullRequestChatSubject) => {
+    if (!detail || attachTarget === null) return;
+    const thread =
+      subject.kind === "comment"
+        ? detail.reviewThreads.find((candidate) =>
+            candidate.comments.some((comment) => comment.id === subject.comment.id),
+          )
+        : undefined;
+    const comment = buildPullRequestCommentContext(
+      detail,
+      thread === undefined ? subject : { kind: "thread", thread },
+    );
+    if (comment === null) return;
+    const store = useComposerDraftStore.getState();
+    const reference = buildPullRequestContext({
+      number: detail.number,
+      title: detail.title,
+      url: detail.url,
+      headBranch: detail.headBranch,
+      baseBranch: detail.baseBranch,
+      state: detail.state,
+      isDraft: detail.isDraft,
+    });
+    const hasReference = (store.getComposerDraft(attachTarget)?.reviewComments ?? []).some(
+      (existing) => existing.pullRequest?.url === detail.url,
+    );
+    // The active editor may be answering a provider question rather than editing this draft.
+    if (!hasReference) store.addReviewComment(attachTarget, reference, { insertAtCaret: false });
+    store.addReviewComment(attachTarget, comment, { insertAtCaret: false });
+    toastManager.add({ type: "success", title: "Added to the composer" });
   };
 
   const startCheckout = (mode: "worktree" | "local") => {
@@ -1014,6 +1068,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         finding,
       }),
     );
@@ -1029,6 +1085,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         reviewThreads: detail.reviewThreads,
         comments: detail.comments,
         checks: checksStale ? [] : detail.checks,
@@ -1097,9 +1155,9 @@ export function PullRequestDetailPanel({
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
         hasMergeMethod: allowedMergeMethods.length > 0,
-        canMerge: canMergeSinglePullRequest && can("merge"),
+        canMerge: !stackOwnsMerge && can("merge"),
         canMarkReady: can("ready"),
-        canEnableAutoMerge: canMergeSinglePullRequest && can("enable-auto-merge"),
+        canEnableAutoMerge: !stackOwnsMerge && can("enable-auto-merge"),
       })
     : null;
   const showsDraftToggle =
@@ -1183,7 +1241,7 @@ export function PullRequestDetailPanel({
   const resolveConflictsControl = (
     <PullRequestResolveConflictsButton
       handoff={handoff}
-      unavailable={attachTarget === null && checkoutRoot === null}
+      unavailable={attachTarget === null && (checkoutRoot === null || !canPrepareWorktree)}
       onResolve={startResolveConflicts}
     />
   );
@@ -1245,6 +1303,15 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
+              {context === "page" ? (
+                <PullRequestThreadLinks
+                  display="count"
+                  environmentId={environmentId}
+                  reference={reference}
+                  url={detail.url}
+                  threadRef={null}
+                />
+              ) : null}
               {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
@@ -1261,33 +1328,17 @@ export function PullRequestDetailPanel({
                   environmentId={environmentId}
                   onSelect={onSelectPullRequest}
                   mergeMethod={selectedMergeMethod}
-                  canMerge={
-                    nativeStackQuery.isFresh &&
-                    supportsStackActions &&
-                    can("merge") &&
-                    allowedMergeMethods.length > 0
-                  }
-                  canRebase={
-                    nativeStackQuery.isFresh &&
-                    supportsStackActions &&
-                    detail.viewerPermissions.stackRebase === true
-                  }
+                  stale={!nativeStackQuery.isFresh}
+                  canMerge={supportsStackActions && can("merge") && allowedMergeMethods.length > 0}
+                  canRebase={supportsStackActions && detail.viewerPermissions.stackRebase === true}
                   onActed={() => {
                     refreshDetail();
                     onActed?.();
                   }}
                 />
               ) : null}
-              {context === "page" ? (
-                <PullRequestThreadLinks
-                  display="count"
-                  environmentId={environmentId}
-                  reference={reference}
-                  url={detail.url}
-                  threadRef={null}
-                />
-              ) : null}
               <PullRequestPrimaryAction
+                mergeBlockedReason={mergeBlockedReason}
                 pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
                 autoMergeArmed={autoMergeArmed}
@@ -1339,6 +1390,8 @@ export function PullRequestDetailPanel({
                 onSelectMergeMethod={selectMergeMethod}
                 showsDeleteBranch={showsDeleteBranch}
                 environmentConnected={environmentConnected}
+                canWriteSourceControl={canWriteSourceControl}
+                onMaintainerEditsSaved={refreshDetail}
                 confirmDeleteBranch={confirmDeleteBranch}
                 pendingAction={pendingAction}
                 perform={perform}
@@ -1704,6 +1757,7 @@ export function PullRequestDetailPanel({
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                  {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
                 />
@@ -1725,6 +1779,7 @@ export function PullRequestDetailPanel({
                     detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
                   }
                   rangeComments={detail.capabilities.review.rangeComment === true}
+                  completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
                   onAskAboutLines={(comment, request) =>
                     addSelectionToAgent({ comment, request }, { keepGuide: true })
                   }
@@ -1760,6 +1815,7 @@ export function PullRequestDetailPanel({
                     reference={reference}
                     order={timelineOrder}
                     onOpenCommit={openCommit}
+                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}
                   />
                 )}
@@ -1783,6 +1839,7 @@ export function PullRequestDetailPanel({
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}
                     refreshToken={refreshToken}
                     backgroundRefreshToken={turnRefresh ?? 0}
