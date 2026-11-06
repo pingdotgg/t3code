@@ -567,29 +567,30 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
       const attachments = [...sendCtx.images, ...sendCtx.files];
-      sendInFlightRef.current = true;
-      try {
+      const startWithAttachments = async () => {
         const turnAttachments = await uploadSideChatAttachments(activeThread.id, attachments);
-        if (turnAttachments === null) return;
-        const started = await onSideChat(
+        if (turnAttachments === null) return false;
+        return onSideChat(
           sideChatFirstMessage({ prompt: sideChatCommand.prompt, attachments, turnAttachments }),
         );
-        const current = composerRef.current?.getSendContext();
-        // Clear only what was sent; the user may have edited the draft or left meanwhile.
-        if (
-          started &&
-          currentRouteThreadKeyRef.current === routeThreadKey &&
-          promptRef.current === promptAtSend &&
-          composerRef.current?.hasPendingAttachments() !== true &&
-          sameAttachmentIds(current ? [...current.images, ...current.files] : [], attachments)
-        ) {
-          promptRef.current = "";
-          clearComposerPromptAndImages(composerDraftTarget);
-          composerRef.current?.resetCursorState();
-          releaseDraftAttachments(attachments);
-        }
-      } finally {
+      };
+      sendInFlightRef.current = true;
+      const started = await startWithAttachments().finally(() => {
         sendInFlightRef.current = false;
+      });
+      const current = composerRef.current?.getSendContext();
+      // Clear only what was sent; the user may have edited the draft or left meanwhile.
+      if (
+        started &&
+        currentRouteThreadKeyRef.current === routeThreadKey &&
+        promptRef.current === promptAtSend &&
+        composerRef.current?.hasPendingAttachments() !== true &&
+        sameAttachmentIds(current ? [...current.images, ...current.files] : [], attachments)
+      ) {
+        promptRef.current = "";
+        clearComposerPromptAndImages(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        releaseDraftAttachments(attachments);
       }
       return;
     }
