@@ -6,6 +6,7 @@ import { VibeSettings } from "./settings.ts";
 export const vibeClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("vibe"),
   label: "Vibe",
+  featured: false,
   modelFamilies: ["Mistral ", "Devstral"],
   acpRegistryAgentIds: ["mistral-vibe"],
   settingsSchema: VibeSettings,
