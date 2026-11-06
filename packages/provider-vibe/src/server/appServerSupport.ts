@@ -7,9 +7,7 @@ import {
 import type { VibeSettings } from "../settings.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as Scope from "effect/Scope";
@@ -183,24 +181,6 @@ export function vibeAgentForRuntimeMode(
       return { agent: "accept-edits", autoApprove: true };
   }
 }
-
-export type VibeWorktreeInput = { readonly kind: "existing"; readonly cwd: string } | null;
-
-/**
- * Native worktree input: adopt the checkout the thread already owns. Only a linked
- * worktree carries a `.git` file; Vibe's `existing` request rejects anything else
- * (a main checkout, or a directory outside every repo like a No-project scratch
- * dir), and that rejection abandons the whole session setup. Those run in place.
- */
-export const vibeWorktreeInputForCwd = Effect.fn("vibeWorktreeInputForCwd")(function* (
-  cwd: string,
-): Effect.fn.Return<VibeWorktreeInput, never, FileSystem.FileSystem | Path.Path> {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const gitEntry = yield* fs.stat(path.join(cwd, ".git")).pipe(Effect.orElseSucceed(() => null));
-  if (gitEntry === null || gitEntry.type !== "File") return null;
-  return { kind: "existing", cwd };
-});
 
 export interface VibeAppServerHandle {
   readonly client: VibeAppServer.VibeAppServerClient["Service"];
