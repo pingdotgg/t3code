@@ -3139,8 +3139,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
-                WHERE thread_id = ${threadId}
-                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+                ${
+                  // The ordinal index would read every item of the thread to find these types.
+                  filter?.turnItemTypes === undefined
+                    ? sql``
+                    : sql`INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx`
+                }
+                WHERE ${filter?.turnItemTypes === undefined ? sql`thread_id = ${threadId}` : sql`(thread_id || '') = ${threadId}`}
+                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND (type || '') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
                   ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
@@ -3493,9 +3499,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_provider_threads
             WHERE (thread_id = ${threadId}
                OR owner_node_id IN (
-                 SELECT node_id
+                 SELECT node_id || ''
                  FROM orchestration_v2_projection_nodes
-                 WHERE thread_id = ${threadId}
+                 INDEXED BY orchestration_v2_projection_nodes_thread_node_idx
+                 WHERE (thread_id || '') = ${threadId}
                )
                OR provider_thread_id IN (
                  SELECT provider_thread_id
@@ -3732,7 +3739,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
             FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${threadId} AND type IN ('user_message', 'assistant_message')
+            INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
+            WHERE (thread_id || '') = ${threadId} AND (type || '') IN ('user_message', 'assistant_message')
               ${loadedMessageIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList(loadedMessageIds)}))`}
             GROUP BY json_extract(payload_json, '$.messageId')
           `;
@@ -6398,7 +6406,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           GROUP BY thread_id, run_id
         ) counts
-        LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = counts.run_id
+        -- The covering index answers each run from a compact page set instead of the runs table.
+        LEFT JOIN orchestration_v2_projection_runs r
+          INDEXED BY orchestration_v2_projection_runs_id_status_idx
+          ON (r.run_id || '') = (counts.run_id || '')
         GROUP BY counts.thread_id
       `;
 
