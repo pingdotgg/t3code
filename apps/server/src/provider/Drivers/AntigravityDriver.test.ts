@@ -20,6 +20,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
@@ -34,6 +35,10 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
 const hostPlatform = HostProcess.Platform.defaultValue();
 const windowsHost = hostPlatform === "win32";
+const pinnedRelease = resolveAntigravityReleaseAsset(
+  hostPlatform,
+  HostProcess.Architecture.defaultValue(),
+);
 const decodeRequest = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -374,6 +379,22 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       expect(h.releases).toEqual([h.first.version]);
       yield* h.assertClosed;
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost || pinnedRelease === null)(
+    "advises an update when the managed runtime is older than the pinned release",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        h.controls.selected = { ...h.first, version: "1.1.1" };
+        const snapshot = yield* h.instance.snapshot.refresh;
+        expect(snapshot.version).toBe("1.1.1");
+        expect(snapshot.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "1.1.1",
+          latestVersion: pinnedRelease?.version,
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)(
