@@ -11,6 +11,8 @@ import type {
   PullRequestDetail,
   PullRequestMergeMethod,
   PullRequestRef,
+  PullRequestSummary,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
@@ -30,7 +32,6 @@ import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
 import {
-  composerTargetKey,
   type ComposerThreadTarget,
   type DraftId,
   useComposerDraftStore,
@@ -44,8 +45,7 @@ import { toastManager } from "../ui/toast";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import {
   checkoutFailureDescription,
-  handoffPrompt,
-  handoffReviewComments,
+  appendHandoff,
   readableFailure,
 } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
@@ -138,7 +138,7 @@ export function usePullRequestActionRunner({
   environmentId: EnvironmentId;
   reference: PullRequestRef | null;
   terminology: ChangeRequestTerminology;
-  onSuccess?: (action: PullRequestAction) => void;
+  onSuccess?: (action: PullRequestAction, reply: PullRequestSummary | undefined) => void;
   /** Resolve repository settings on click to avoid per-row reads. */
   resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
 }) {
@@ -184,13 +184,15 @@ export function usePullRequestActionRunner({
       return;
     }
     toastManager.add({ type: "success", title: actionSuccessLabels(terminology.singular)[action] });
-    onSuccess?.(action);
+    onSuccess?.(action, result.value);
   };
 
   return { actionPending, perform };
 }
 
-export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullRequestEntry) => void) {
+export function usePullRequestCloseBatch(
+  onClosed: (entry: EnvironmentPullRequestEntry, reply: PullRequestSummary | undefined) => void,
+) {
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const pending = useRef(new Set<string>());
   const [closingKeys, setClosingKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -224,7 +226,7 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
           );
           return;
         }
-        onClosed(entry);
+        onClosed(entry, result.value);
         return true;
       }),
     );
@@ -246,6 +248,20 @@ export interface PullRequestThreadTask {
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
 }
 
+export function writeHandoffToComposer(
+  target: ScopedThreadRef | DraftId,
+  task: PullRequestThreadTask,
+) {
+  const store = useComposerDraftStore.getState();
+  const draft = store.getComposerDraft(target);
+  const next = appendHandoff(
+    { prompt: draft?.prompt ?? "", reviewComments: draft?.reviewComments ?? [] },
+    task,
+  );
+  store.setPrompt(target, next.prompt);
+  store.setReviewComments(target, next.reviewComments);
+}
+
 export type PullRequestHandoffDetail = Pick<
   PullRequestDetail,
   "projectId" | "workspaceRoot" | "url"
@@ -255,8 +271,6 @@ export interface PullRequestHandoffThread {
   target: ComposerThreadTarget;
   pullRequestUrl: string;
 }
-
-const lastHandoffPromptByTarget = new Map<string, string>();
 
 export function usePullRequestHandoffs({
   environmentId,
@@ -283,24 +297,6 @@ export function usePullRequestHandoffs({
   const handoffInCurrentThread =
     currentThread !== undefined && detail?.url === currentThread.pullRequestUrl;
 
-  const setTask = (target: ComposerThreadTarget, task: PullRequestThreadTask) => {
-    const store = useComposerDraftStore.getState();
-    const draft = store.getComposerDraft(target);
-    const key = composerTargetKey(target);
-    store.setPrompt(
-      target,
-      handoffPrompt(
-        { prompt: draft?.prompt ?? "", lastHandoffPrompt: lastHandoffPromptByTarget.get(key) },
-        task.prompt,
-      ),
-    );
-    lastHandoffPromptByTarget.set(key, task.prompt);
-    store.setReviewComments(
-      target,
-      handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
-    );
-  };
-
   // Questions must not change checkouts or create worktrees.
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
@@ -314,7 +310,8 @@ export function usePullRequestHandoffs({
         () => null,
       ));
     if (session === null) return null;
-    if (task !== null) setTask(session.draftId, task);
+    if (task === null) return session;
+    writeHandoffToComposer(session.draftId, task);
     return session;
   };
 
@@ -349,7 +346,7 @@ export function usePullRequestHandoffs({
   ) => {
     if (!detail || handoff !== null) return;
     if (handoffInCurrentThread && currentThread !== undefined && task !== null) {
-      setTask(currentThread.target, task);
+      writeHandoffToComposer(currentThread.target, task);
       toastManager.add({
         type: "success",
         title: "Task ready",
