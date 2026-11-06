@@ -244,6 +244,11 @@ describe("media tables", () => {
       "<table>\n  <tr>\n    <th>\n      Before\n    </th>\n  </tr>\n  <tr><td>",
       "</td></tr>\n</table>",
     ],
+    [
+      "a cell indented by a space and a tab",
+      "<table>\n<tr><td>\n \tBefore\n</td><td>",
+      "</td></tr>\n</table>",
+    ],
   ])("splits a media table with %s line by line, as before", (_name, open, close) => {
     const body = `${open}\n\n${video}\n\n${close}`;
     expect(splitPullRequestBody(body)).toEqual([
