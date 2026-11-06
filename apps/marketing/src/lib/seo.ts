@@ -27,7 +27,7 @@ export const organizationJsonLd = (): JsonLd => ({
   name: "T3 Tools Inc",
   url: SITE_ORIGIN,
   logo: absoluteUrl("/apple-touch-icon.png"),
-  sameAs: ["https://x.com/t3dotgg", "https://github.com/pingdotgg"],
+  sameAs: ["https://github.com/pingdotgg"],
 });
 
 export const websiteJsonLd = (): JsonLd => ({
