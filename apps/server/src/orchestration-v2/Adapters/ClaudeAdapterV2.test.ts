@@ -3138,6 +3138,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       for (let tick = 0; tick < ticks; tick++) yield* Effect.yieldNow;
     });
 
+  const modelCatalogWithAlias = (alias: string, slug: string) => ({
+    models: BUNDLED_CLAUDE_MODEL_CATALOG.models.map((entry) => {
+      const aliases = (entry.model.aliases ?? []).filter((value) => value !== alias);
+      return {
+        ...entry,
+        model: {
+          ...entry.model,
+          aliases: entry.model.slug === slug ? [...aliases, alias] : aliases,
+        },
+      };
+    }),
+  });
+
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
@@ -8681,9 +8694,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         description: "",
       };
       const reportedModels = yield* Ref.make<ReadonlyArray<ClaudeSdk.ModelInfo>>([discoveredAlias]);
+      const initialCatalog = modelCatalogWithAlias("opus", "claude-opus-4-6");
+      const modelCatalog = yield* Ref.make(initialCatalog);
       const harness = yield* makeWakeHarnessWithOptions({
         freshQueueOnReopen: true,
         reportedModels,
+        modelCatalog: Ref.get(modelCatalog),
       });
       const executed = () => {
         const { model, modelSubstituted } = lastProviderTurn(harness.events);
@@ -8840,6 +8856,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
           if (ordinal === 7) yield* Ref.set(reportedModels, []);
+          if (ordinal === 5) {
+            yield* Ref.set(modelCatalog, BUNDLED_CLAUDE_MODEL_CATALOG);
+            yield* harness.runtime.steerTurn({
+              threadId: harness.threadId,
+              runId: RunId.make(`run-attempt-claude-restricted-model-${ordinal}`),
+              providerThread: harness.providerThread,
+              providerTurnId: lastProviderTurn(harness.events).id,
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: MessageId.make("catalog-refresh-steer"),
+                text: "Keep reviewing.",
+                attachments: [],
+              },
+            });
+          }
           yield* Queue.offerAll(harness.processQueues.at(-1) ?? harness.sdkMessages, [
             makeAssistantErrorFrame({
               uuid: `00000000-0000-4000-8000-00000000068${ordinal}`,
@@ -8854,7 +8886,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* Queue.take(harness.terminalReceipts);
           return executed();
         });
-      const opus = resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, "opus");
+      const opus = resolveClaudeModelSlug(initialCatalog, "opus");
       assert.deepEqual(yield* aliasTurn(5, opus), { model: opus, modelSubstituted: false });
       assert.deepEqual(yield* aliasTurn(6, "claude-sonnet-4-6"), {
         model: "claude-sonnet-4-6",
@@ -8872,6 +8904,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Ref.set(reportedModels, [{ ...discoveredAlias, resolvedModel: "claude-sonnet-4-6" }]);
       assert.deepEqual(yield* aliasTurn(9, "claude-sonnet-4-6", "gateway/best"), {
         model: "claude-sonnet-4-6",
+        modelSubstituted: false,
+      });
+      yield* Ref.set(modelCatalog, modelCatalogWithAlias("downloaded-opus", opus));
+      assert.deepEqual(yield* aliasTurn(10, opus, "downloaded-opus"), {
+        model: opus,
+        modelSubstituted: false,
+      });
+      yield* Ref.set(modelCatalog, BUNDLED_CLAUDE_MODEL_CATALOG);
+      const refreshedOpus = resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, "opus");
+      assert.deepEqual(yield* aliasTurn(11, refreshedOpus), {
+        model: refreshedOpus,
         modelSubstituted: false,
       });
     }).pipe(
@@ -12142,7 +12185,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     (opening) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
+          const modelCatalog = yield* Ref.make(
+            modelCatalogWithAlias("sonnet", "claude-sonnet-4-6"),
+          );
+          const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(modelCatalog) });
           const now = yield* DateTime.now;
 
           yield* harness.runtime.startTurn(
@@ -12151,6 +12197,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               providerThread: harness.providerThread,
               now,
               attemptId: RunAttemptId.make("attempt-claude-wake-init-1"),
+              modelSelection: {
+                ...CLAUDE_TEST_MODEL_SELECTION,
+                model: "sonnet",
+              },
               text: "Run the build in the background.",
               attachments: [],
             }),
@@ -12162,7 +12212,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.offerAndWait(wakeNotification);
           assert.lengthOf(harness.continuationRequests, 0);
           if (opening === "init") {
-            yield* harness.offerAndWait(wakeTurnInit);
+            yield* harness.offerAndWait(claudeSdkFrame({ ...wakeTurnInit, model: "claude-sonnet-4-6" }));
           } else {
             yield* harness.offerAndWait(
               usageStreamFrame(
@@ -12184,12 +12234,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.lengthOf(harness.continuationRequests, 1);
           assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
 
+          yield* Ref.set(modelCatalog, BUNDLED_CLAUDE_MODEL_CATALOG);
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
               providerThread: harness.providerThread,
               now,
               attemptId: RunAttemptId.make("attempt-claude-wake-init-2"),
+              modelSelection: {
+                ...CLAUDE_TEST_MODEL_SELECTION,
+                model: "sonnet",
+              },
               text: "Background task completed.",
               attachments: [],
               providerTurnOrdinal: 2,
@@ -12212,9 +12267,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
             ),
           );
-          if (opening === "stream start") {
-            assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
-          }
+          assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
+          assert.isFalse(lastProviderTurn(harness.events).modelSubstituted);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
