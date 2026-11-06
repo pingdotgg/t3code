@@ -142,6 +142,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
     readonly latestReachability?: ConnectReachability.ConnectReachability["Service"]["latest"];
+    readonly connector?: ManagedEndpointRuntime.ConnectorFacts | null;
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -208,7 +209,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             requestRecovery: () => Effect.void,
             restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
-            inspectConnector: Effect.succeed(null),
+            inspectConnector: Effect.succeed(harness.connector ?? null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
@@ -1108,6 +1109,28 @@ describe("releaseManagedTunnelOnShutdown", () => {
         applyConfigCalls: [],
         requests: [],
         latestReachability: Effect.succeedSome(reachable),
+      }),
+    );
+  });
+
+  it.effect("reports the live tunnel address for agents that cannot discover the host", () => {
+    const { store } = makeMemorySecretStore(managedLinkSecrets);
+
+    return Effect.gen(function* () {
+      const state = yield* (yield* CloudLink.CloudLink).linkState();
+
+      expect(state.managedTunnelHttpBaseUrl).toBe("https://prod-abc.t3coderelay.com");
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        connector: {
+          pid: 123,
+          readyConnections: 4,
+          hostname: "prod-abc.t3coderelay.com",
+          protocol: "quic",
+        },
       }),
     );
   });
