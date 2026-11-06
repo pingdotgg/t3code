@@ -1,7 +1,8 @@
 import type { TranscriptionResult } from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { VoiceTranscriptionError } from "@t3tools/client-runtime/voice-input";
+import { VoiceInputController, VoiceTranscriptionError } from "@t3tools/client-runtime/voice-input";
+import { resetVoiceInputGlobalsForTests } from "../../../../packages/client-runtime/src/voice-input/controller";
 
 const mocks = vi.hoisted(() => ({
   isAvailable: vi.fn<(locale: string) => boolean>(),
@@ -65,8 +66,43 @@ async function transcribeOnce(signal = new AbortController().signal) {
     .catch((error: unknown) => error);
 }
 
+/** Drives one on-device dictation through the controller the composer uses. */
+function createDictation() {
+  const recorder = {
+    uri: "file:///voice.m4a",
+    prepareToRecordAsync: async () => {},
+    record: vi.fn(),
+    stop: vi.fn(async () => {}),
+  };
+  const commits: string[] = [];
+  const deleted: string[] = [];
+  const ended = Promise.withResolvers<void>();
+  const controller = new VoiceInputController({
+    recorder,
+    getTranscriber: () => ({
+      prepare: async (options) => (await getLocalVoiceTranscriber())!.prepare(options),
+    }),
+    requestPermission: async () => ({ granted: true, canAskAgain: true }),
+    configureRecording: async () => {},
+    releaseRecording: async () => {},
+    deleteRecording: (uri) => deleted.push(uri),
+    readDraft: () => ({
+      ownerKey: "environment:thread",
+      text: "",
+      selection: { start: 0, end: 0 },
+      revision: 1,
+    }),
+    commitDraft: (text) => commits.push(text),
+    onStateChange: (state) => {
+      if (state.phase === "idle" || state.phase === "error") ended.resolve();
+    },
+  });
+  return { controller, recorder, commits, deleted, ended: ended.promise };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
+  resetVoiceInputGlobalsForTests();
   useLanguages([], "sv-SE");
   mocks.isAvailable.mockReturnValue(true);
   mocks.prepare.mockResolvedValue("sv-SE");
@@ -144,6 +180,63 @@ describe("getLocalVoiceTranscriber", () => {
         code: failure === "cancellation" ? "cancelled" : "preparation-failed",
       });
       expect(mocks.prepare.mock.calls.map(([candidate]) => candidate)).toEqual(["ko-KR"]);
+    },
+  );
+
+  it("records while Apple prepares its speech model and transcribes once it is ready", async () => {
+    const nativePrepare = Promise.withResolvers<string>();
+    mocks.prepare.mockReturnValue(nativePrepare.promise);
+    const dictation = createDictation();
+
+    await dictation.controller.start();
+    expect(dictation.recorder.record).toHaveBeenCalledOnce();
+    expect(dictation.controller.currentState.phase).toBe("recording");
+
+    const stopping = dictation.controller.stop();
+    nativePrepare.resolve("sv-SE");
+    await stopping;
+
+    expect(mocks.transcribe).toHaveBeenCalledOnce();
+    expect(dictation.commits).toEqual(["Hej världen."]);
+    expect(dictation.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it.each(["cancel", "cancel after stop", "model failure", "model failure after stop"] as const)(
+    "discards early audio without a late commit after %s",
+    async (ending) => {
+      const nativePrepare = Promise.withResolvers<string>();
+      mocks.prepare.mockReturnValue(nativePrepare.promise);
+      const dictation = createDictation();
+      await dictation.controller.start();
+
+      let finishing: Promise<void> | undefined;
+      const cancelled = ending === "cancel" || ending === "cancel after stop";
+      if (ending.endsWith("after stop")) finishing = dictation.controller.stop();
+      if (cancelled) {
+        dictation.controller.cancel();
+      } else {
+        nativePrepare.reject(Object.assign(new Error("download failed"), { code: "Network" }));
+      }
+      await finishing;
+      await dictation.ended;
+
+      const next = createDictation();
+      mocks.prepare.mockResolvedValue("sv-SE");
+      await next.controller.start();
+      expect(next.controller.currentState.phase).toBe("recording");
+      expect(dictation.deleted).toEqual(["file:///voice.m4a"]);
+      expect(mocks.transcribe).not.toHaveBeenCalled();
+      await next.controller.stop();
+      expect(next.commits).toEqual(["Hej världen."]);
+      nativePrepare.resolve("sv-SE");
+
+      expect(dictation.commits).toEqual([]);
+      expect(dictation.recorder.stop).toHaveBeenCalled();
+      expect(dictation.controller.currentState).toMatchObject(
+        cancelled
+          ? { phase: "idle" }
+          : { phase: "error", error: "Voice transcription could not prepare this language." },
+      );
     },
   );
 
