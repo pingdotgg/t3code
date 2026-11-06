@@ -6,7 +6,8 @@ describe("formatBytes", () => {
   it.each([
     [1_048_575, "1.0 MB"],
     [1_073_741_823, "1.0 GB"],
-  ])("formats %d bytes as %s once rounding reaches the next unit", (bytes, label) => {
+    [10_230, "10 KB"],
+  ])("formats %d bytes as %s from the rounded value", (bytes, label) => {
     expect(formatBytes(bytes)).toBe(label);
   });
 });

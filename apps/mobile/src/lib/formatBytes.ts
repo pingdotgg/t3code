@@ -1,7 +1,7 @@
 const UNITS = ["KB", "MB", "GB", "TB"] as const;
 
 function formatScaled(value: number): string {
-  return value.toFixed(value < 10 ? 1 : 0);
+  return Number(value.toFixed(1)) < 10 ? value.toFixed(1) : value.toFixed(0);
 }
 
 export function formatBytes(bytes: number): string {
