@@ -130,6 +130,11 @@
 
 @utility sidebar-status-dot {
   background-color: color-mix(in srgb, currentColor 30%, var(--foreground));
+
+  @media (forced-colors: active) {
+    background-color: CanvasText;
+    forced-color-adjust: none;
+  }
   animation: sidebar-status-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   animation-play-state: var(--visible-animation-state, paused);
   will-change: var(--visible-animation-will-change, auto);
@@ -237,6 +242,20 @@
   /* Hover and pointer rows hide the time for Settle, and keyboard focus has to as well. */
   & [data-status-slot]:has(:focus-visible) > span:first-child {
     opacity: 0;
+  }
+
+  /* Forced colors drop fills and shadows, so the bar and the stroke need system colours. */
+  @media (forced-colors: active) {
+    &[data-attention]::after {
+      background: CanvasText;
+      forced-color-adjust: none;
+    }
+
+    &[data-surface="active"],
+    &[data-surface="selected"] {
+      outline: 1px solid Highlight;
+      outline-offset: -1px;
+    }
   }
 }
 
