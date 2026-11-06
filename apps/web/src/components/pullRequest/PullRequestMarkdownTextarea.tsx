@@ -124,7 +124,7 @@ function CompletionRow({ completion }: { completion: PullRequestCompletion }) {
     return (
       <>
         <PullRequestActorAvatar actor={actor} className="size-5" />
-        <span className="truncate font-medium">{actor.login}</span>
+        <span className="truncate">{actor.login}</span>
         {actor.name && actor.name !== actor.login ? (
           <span className="min-w-0 truncate text-muted-foreground">{actor.name}</span>
         ) : null}
@@ -135,7 +135,7 @@ function CompletionRow({ completion }: { completion: PullRequestCompletion }) {
   return (
     <>
       <ReferenceStateIcon candidate={candidate} />
-      <span className="shrink-0 font-medium tabular-nums">{candidate.reference}</span>
+      <span className="shrink-0 tabular-nums">{candidate.reference}</span>
       <span className="min-w-0 truncate text-muted-foreground">{candidate.title}</span>
     </>
   );
@@ -309,8 +309,8 @@ export function PullRequestMarkdownTextarea({
                   role="option"
                   aria-selected={index === activeIndex}
                   className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-                    index === activeIndex && "bg-accent text-accent-foreground",
+                    "flex cursor-pointer items-center gap-2 rounded-row px-2.5 py-1 text-label text-foreground",
+                    index === activeIndex && "surface-selected-soft text-strong-foreground",
                   )}
                   onMouseMove={() => {
                     if (index !== activeIndex) setHighlight({ query: trigger?.query ?? "", index });
@@ -324,7 +324,7 @@ export function PullRequestMarkdownTextarea({
               ))}
             </div>
           ) : (
-            <p className="px-1 text-xs text-muted-foreground">
+            <p className="px-1 text-meta text-muted-foreground">
               {
                 EMPTY_STATE[trigger?.kind ?? "mention"][
                   isPending ? "pending" : failed ? "failed" : "none"
