@@ -805,6 +805,7 @@ export function PullRequestSummaryTab({
       completionScope={completionScope}
       thread={thread}
       workspaceRoot={detail.workspaceRoot}
+      completionScope={completionScope}
       canReply={canReplyToThreads}
       canResolve={canResolveThreads && canResolvePullRequestThread(detail, thread)}
       canReact={detail.capabilities.reactions === true}
