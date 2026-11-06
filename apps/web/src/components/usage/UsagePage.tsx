@@ -100,7 +100,12 @@ import {
   resolveUsageShortcut,
   type UsageMetric,
 } from "./usageShortcuts";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  providersWithUsage,
+  rankProvidersByMetric,
+} from "./usageProviders";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -670,17 +675,18 @@ function UsageOverview({
     (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
     0,
   );
+  const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
   const cursorInsertAt =
-    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
+    Math.max(rankedProviders.indexOf("codex"), rankedProviders.indexOf("claude")) + 1;
   const summaryRows: ReadonlyArray<
     | { readonly kind: "usage"; readonly provider: UsageProviderKind }
     | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
   > = [
-    ...activeProviders
+    ...rankedProviders
       .slice(0, cursorInsertAt)
       .map((provider) => ({ kind: "usage" as const, provider })),
     ...cursorAccessEnvironments.map((environment) => ({ kind: "enable" as const, environment })),
-    ...activeProviders
+    ...rankedProviders
       .slice(cursorInsertAt)
       .map((provider) => ({ kind: "usage" as const, provider })),
   ];
