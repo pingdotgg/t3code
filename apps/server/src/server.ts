@@ -8,6 +8,7 @@ import * as ConversationSummaries from "./project/conversationSummaries/Conversa
 import * as ModelEvaluations from "./modelEvaluations/ModelEvaluations.ts";
 import * as ExternalHistory from "./project/externalHistory/ExternalHistory.ts";
 import * as ProjectLoom from "./project/loom/ProjectLoom.ts";
+import * as CodeIndexReactor from "./project/knowledge/CodeIndexReactor.ts";
 import * as CodeIntelligence from "./project/knowledge/CodeIntelligence.ts";
 import * as FileHistory from "./project/knowledge/FileHistory.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -657,14 +658,16 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+const layerStorageCleanup = StorageCleanup.layer.pipe(
+  Layer.provide(Layer.merge(ProjectionStoreV2.layer, WorktreeBranches.layer)),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
-  StorageCleanup.layer.pipe(
-    Layer.provide(Layer.merge(ProjectionStoreV2.layer, WorktreeBranches.layer)),
-  ),
+  layerStorageCleanup,
   DatabaseStorage.layer.pipe(Layer.provide(ProjectionMaintenance.layer)),
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
@@ -694,6 +697,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  CodeIndexReactor.layer.pipe(
+    Layer.provide(layerStorageCleanup),
+    Layer.provide(ProjectionStoreV2.layer),
+    Layer.provide(ProjectStore.layer),
+    Layer.provide(layerServerSettings),
+  ),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
@@ -788,7 +797,14 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
-const layerCodeIntelligence = Layer.mergeAll(CodeIntelligence.layer, FileHistory.layer).pipe(
+const layerCodeIntelligence = Layer.mergeAll(
+  CodeIntelligence.layer.pipe(
+    Layer.provide(GitVcsDriver.layerVcs),
+    // Layers memoize by reference, so this is the same settings instance the server uses.
+    Layer.provide(layerServerSettings),
+  ),
+  FileHistory.layer,
+).pipe(
   Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, ProjectionStoreV2.layer, layerWorkspace)),
 );
 

@@ -10,6 +10,8 @@ const KEPT_ENV = new Set([
   "T3CODE_TRANSFER_BUDGET_RESULT_PATH",
   // Opt-in: points the HtmlRender tests at a headless browser, which they skip without.
   "T3CODE_TEST_HEADLESS_SHELL",
+  // The mobile test script sets this; tests must see the platform their code was compiled for.
+  "T3_MOBILE_TEST_PLATFORM",
 ]);
 
 if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {

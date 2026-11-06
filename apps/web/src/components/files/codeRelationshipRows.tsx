@@ -28,7 +28,7 @@ function coverageSummary(coverage: ProjectCodeCoverage): string {
     case "stale":
       return "Stale · some returned files changed since indexing. Verify in source.";
     case "unavailable":
-      return "The code index is unavailable for this checkout.";
+      return "The code index is not ready for this checkout.";
   }
 }
 

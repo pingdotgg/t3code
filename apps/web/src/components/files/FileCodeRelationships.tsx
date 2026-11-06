@@ -308,7 +308,7 @@ function SymbolsTab(props: {
           Refresh
         </Button>
       </div>
-      {data.nodes.length === 0 ? (
+      {data.coverage.state === "unavailable" ? null : data.nodes.length === 0 ? (
         <EmptyNote>
           No indexed declarations in this file. Its language may be unsupported, or it declares
           nothing the index recognizes.

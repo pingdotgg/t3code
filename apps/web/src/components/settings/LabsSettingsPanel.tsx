@@ -26,6 +26,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <AutoCodeIndexRow />
         <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
@@ -160,6 +161,27 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function AutoCodeIndexRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("auto-code-index")}
+      settingKeys={["autoCodeIndexEnabled"]}
+      description="Index a project when you add it, and a worktree while an agent works in it. A worktree's index is removed when its thread settles. While this is off, a checkout only indexes when something asks it a code question."
+      control={
+        <ScopedSwitch
+          settingKeys={["autoCodeIndexEnabled"]}
+          checked={settings.autoCodeIndexEnabled}
+          onCheckedChange={(checked) => updateSettings({ autoCodeIndexEnabled: Boolean(checked) })}
+          aria-label="Automatic code indexing"
         />
       }
     />

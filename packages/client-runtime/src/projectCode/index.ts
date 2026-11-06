@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import type { Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
@@ -36,6 +36,8 @@ const requireProjectCode = Effect.fn("ProjectCode.requireCapability")(function* 
 export function createProjectCodeAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
+  // An atom drops a value equal to its last one, and the same signal can arrive twice running.
+  let received = 0;
   const indexEvents = createEnvironmentSubscriptionAtomFamily(runtime, {
     label: "project-code:index-events",
     idleTtlMs: 0,
@@ -48,7 +50,7 @@ export function createProjectCodeAtoms<R, E>(
               : Stream.never,
           ),
         ),
-      ),
+      ).pipe(Stream.map((event) => ({ ...event, received: ++received }))),
   });
   const refreshTrigger = ({
     environmentId,
@@ -64,12 +66,29 @@ export function createProjectCodeAtoms<R, E>(
         ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
       },
     });
+  // Queries start builds, so only a real publication or a failure re-runs one; the re-read signal
+  // a settle removal or a stopped build sends would otherwise start the build it just ended.
+  // Per registry, as `refreshOnSignalWhileRead` keeps its own bookkeeping.
+  const queryRefreshTrigger = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: ProjectCodeQueryInput;
+  }) => {
+    const signal = refreshTrigger(target);
+    const lastSignificant = new WeakMap<AtomRegistry.AtomRegistry, number>();
+    return Atom.transform(signal, (get) => {
+      const event = AsyncResult.getOrElse(get(signal), () => null);
+      if (event !== null && (event.outcome !== "published" || event.generation !== null)) {
+        lastSignificant.set(get.registry, event.received);
+      }
+      return lastSignificant.get(get.registry) ?? 0;
+    });
+  };
   return {
     query: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
       label: "project-code:query",
       tag: WS_METHODS.projectCodeQuery,
       staleTimeMs: 0,
-      refreshTrigger,
+      refreshTrigger: queryRefreshTrigger,
       execute: Effect.fn("ProjectCode.query")(function* (input: ProjectCodeQueryInput) {
         yield* requireProjectCode();
         return yield* requestGuarded(WS_METHODS.projectCodeQuery, input);
@@ -110,6 +129,19 @@ const REFRESH_DETAIL = {
   failed: "The last refresh failed, so this index is still answering.",
 } as const;
 
+const FIRST_INDEX_BADGE: Record<"building" | "failed", ProjectCodeIndexBadge> = {
+  building: {
+    label: "Indexing",
+    tone: "muted",
+    detail: "Building the first index for this checkout.",
+  },
+  failed: {
+    label: "Index failed",
+    tone: "warn",
+    detail: "Building the first index for this checkout failed. The next code query tries again.",
+  },
+};
+
 /**
  * The plain-text badge every client shows for an index. Stale names the commit the index was
  * built at when HEAD has moved since, otherwise how many files changed under it.
@@ -119,13 +151,7 @@ export function projectCodeIndexBadge(
 ): ProjectCodeIndexBadge {
   const badge = describeIndexState(index);
   if (index?.refresh === undefined) return badge;
-  if (index.state === "unindexed" && index.refresh === "building") {
-    return {
-      label: "Indexing",
-      tone: "muted",
-      detail: "Building the first index for this checkout.",
-    };
-  }
+  if (index.state === "unindexed") return FIRST_INDEX_BADGE[index.refresh];
   return { ...badge, detail: `${badge.detail} ${REFRESH_DETAIL[index.refresh]}` };
 }
 
@@ -161,7 +187,7 @@ function describeIndexState(index: ProjectCodeIndexInfo | undefined): ProjectCod
       return {
         label: moved ? `Stale @${indexedAt}` : "Stale",
         tone: "warn",
-        detail: `${files} The next code query or turn refreshes the index.`,
+        detail: `${files} Code queries refresh the index, and so do agent turns while automatic indexing is on.`,
       };
     }
     case "indexing":
@@ -172,7 +198,7 @@ function describeIndexState(index: ProjectCodeIndexInfo | undefined): ProjectCod
       };
     case "unindexed":
       return {
-        label: "Unavailable",
+        label: "Not indexed",
         tone: "muted",
         detail: "This checkout has not been indexed yet. The first code query indexes it.",
       };

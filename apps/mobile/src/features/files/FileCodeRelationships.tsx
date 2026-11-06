@@ -50,7 +50,7 @@ function coverageLine(coverage: ProjectCodeCoverage): string {
     case "stale":
       return "Stale · some files changed since indexing. Verify in source.";
     case "unavailable":
-      return "The code index is unavailable for this checkout.";
+      return "The code index is not ready for this checkout.";
   }
 }
 
@@ -220,7 +220,7 @@ function Body(props: {
   return (
     <ScrollView className="max-h-80" nestedScrollEnabled>
       <Note>{coverageLine(data.coverage)}</Note>
-      {data.nodes.length === 0 ? (
+      {data.coverage.state === "unavailable" ? null : data.nodes.length === 0 ? (
         <Note>No indexed declarations in this file. Its language may be unsupported.</Note>
       ) : (
         data.nodes.map((node) => (

@@ -406,19 +406,19 @@ it("warns when the index is stale", async () => {
   await expect.element(screen.getByText("Stale")).toBeVisible();
 });
 
-it("says the index is unavailable instead of drawing an empty graph", async () => {
+it("says the index is not ready instead of drawing an empty graph", async () => {
   const registry = setup({ empty: true, coverage: "unavailable", index: "unindexed" });
   await using screen = await renderHost(registry);
   await expect
     .element(
       screen.getByText(
-        "The code index is unavailable for this checkout, so no calls can be shown.",
+        "The code index is not ready for this checkout, so no calls can be shown yet.",
       ),
     )
     .toBeVisible();
   await expect.element(screen.getByText(/No static callers or callees found/)).toBeVisible();
   expect(graph(screen, "greet").query()).toBeNull();
-  await expect.element(screen.getByText("Unavailable")).toBeVisible();
+  await expect.element(screen.getByText("Not indexed")).toBeVisible();
 });
 
 it("keeps the legacy explorer usable without sending unsupported path or freshness queries", async () => {
