@@ -274,13 +274,13 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps PR writing on task while allowing checkout inspection", () =>
+  it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Remove default shapes", body: "Removes default shapes." }),
-        launchArgs: "--config 'developer_instructions=\"Continue the previous task\"'",
+        launchArgs: "--config 'developer_instructions=\"Use TEAM: as the PR title prefix\"'",
         requiredCwd: process.cwd(),
-        requireInstructions: "Your sole task is to write a PR title and body",
+        requireInstructions: "Use TEAM: as the PR title prefix",
         forbidArg: "--config features.shell_tool=false",
         mcpServers: [
           { name: "augmenter", enabled: true },
