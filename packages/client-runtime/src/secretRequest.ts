@@ -1,4 +1,14 @@
-import type { OrchestrationV2TurnItem, SecretRequestAnswerInput } from "@t3tools/contracts";
+import {
+  SecretReference,
+  type OrchestrationV2TurnItem,
+  type SecretProviderId,
+  type SecretRequestAnswerInput,
+  type ServerConfig,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 export type SecretRequestItem = Extract<
   OrchestrationV2TurnItem,
@@ -94,19 +104,90 @@ export function secretRequestDisplay(
   }
 }
 
+/** A configured secret provider a pending card can read its answer from. */
+export interface SecretRequestSource {
+  readonly id: SecretProviderId;
+  readonly label: string;
+  readonly isReference: (reference: string) => boolean;
+  readonly referencePlaceholder: string;
+  readonly invalidReferenceMessage: string;
+}
+
+const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
+const decodeConfigByKind = new Map(
+  builtInSecretProviderDefinitions.definitions.map((definition) => [
+    definition.kind,
+    Schema.decodeUnknownOption(definition.configSchema),
+  ]),
+);
+
+/** Empty unless the server accepts reference answers; providers this build cannot read are left out. */
+export function secretRequestSources(
+  config: Pick<ServerConfig, "secretRequestReferences"> | null | undefined,
+  providers: ServerSettings["secretProviders"],
+): ReadonlyArray<SecretRequestSource> {
+  if (config?.secretRequestReferences !== true) return NO_SOURCES;
+  return (Object.keys(providers) as Array<SecretProviderId>).flatMap((id) => {
+    const provider = providers[id];
+    const definition =
+      provider === undefined ? undefined : builtInSecretProviderDefinitions.find(provider.kind);
+    if (
+      provider === undefined ||
+      definition === undefined ||
+      decodeConfigByKind.get(definition.kind)?.(provider.config)._tag !== "Some"
+    ) {
+      return [];
+    }
+    return [
+      {
+        id,
+        label: provider.label,
+        isReference: definition.isReference,
+        referencePlaceholder: definition.referencePlaceholder,
+        invalidReferenceMessage: definition.invalidReferenceMessage,
+      },
+    ];
+  });
+}
+
+const decodeSecretReference = Schema.decodeUnknownOption(SecretReference);
+
+/** The reference `text` names, or undefined when it is not `source`'s syntax. */
+export function secretRequestReference(
+  source: SecretRequestSource,
+  text: string,
+): SecretReference | undefined {
+  const decoded = decodeSecretReference({ provider: source.id, reference: text.trim() });
+  return Option.isSome(decoded) && source.isReference(decoded.value.reference)
+    ? decoded.value
+    : undefined;
+}
+
 /** A card value by input key. Own keys only: a field may be named `constructor`. */
 export const secretRequestValue = (values: Readonly<Record<string, string>>, key: string) =>
   Object.hasOwn(values, key) ? (values[key] ?? "") : "";
 
-/** `values` is keyed by `SecretRequestInput.key`; null until every input has a value. */
+export type SecretRequestReply =
+  /** Keyed by `SecretRequestInput.key`. */
+  | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
+  /** Single-value cards only: the server reads it through `source`. */
+  | { readonly type: "reference"; readonly source: SecretRequestSource; readonly reference: string }
+  | { readonly type: "decline" };
+
+/** Null until every input has a value, or while a reference is not `source`'s syntax. */
 export function secretRequestAnswerInput(
   item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
-  answer:
-    | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
-    | { readonly type: "decline" },
+  answer: SecretRequestReply,
 ): SecretRequestAnswerInput | null {
   const base = { threadId: item.threadId, turnItemId: item.id };
   if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
+  if (answer.type === "reference") {
+    const reference =
+      item.fields === undefined
+        ? secretRequestReference(answer.source, answer.reference)
+        : undefined;
+    return reference === undefined ? null : { ...base, answer: { type: "reference", reference } };
+  }
   const entries = secretRequestInputs(item).map(
     (input) => [input.key, secretRequestValue(answer.values, input.key).trim()] as const,
   );
@@ -114,6 +195,7 @@ export function secretRequestAnswerInput(
   if (item.fields === undefined) {
     return { ...base, answer: { type: "save", secret: entries[0]?.[1] ?? "" } };
   }
+
   return { ...base, answer: { type: "save", values: Object.fromEntries(entries) } };
 }
 

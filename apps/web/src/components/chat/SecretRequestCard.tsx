@@ -5,22 +5,34 @@ import {
   secretRequestFailureMessage,
   secretRequestInputs,
   secretRequestPrivacyNote,
+  secretRequestReference,
+  secretRequestSources,
   secretRequestValue,
   type SecretRequestInput,
   type SecretRequestItem,
+  type SecretRequestReply,
+  type SecretRequestSource,
 } from "@t3tools/client-runtime/secret-request";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
+  SecretProviderId,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { CheckIcon, EyeIcon, EyeOffIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
+import { isSecretsFeatureEnabled } from "../../env";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { SecretSourceSelect } from "../settings/SecretSourceInput";
 import { WorkLogRow } from "./WorkLog";
 
 export function SecretRequestCard(props: {
@@ -52,6 +64,15 @@ export function SecretRequestCard(props: {
   return <PendingSecretRequestForm environmentId={props.environmentId} item={item} />;
 }
 
+const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
+
+function useSecretRequestSources(environmentId: EnvironmentId) {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  return isSecretsFeatureEnabled
+    ? secretRequestSources(config, config?.settings.secretProviders ?? {})
+    : NO_SOURCES;
+}
+
 function PendingSecretRequestForm(props: {
   readonly environmentId: EnvironmentId;
   readonly item: SecretRequestItem;
@@ -66,31 +87,45 @@ function PendingSecretRequestForm(props: {
     reportFailure: false,
     reportDefect: false,
   });
+  const inputs = secretRequestInputs(item);
+  const multiple = item.fields !== undefined;
+  // A reference answers one value, so a card with fields is always typed.
+  const configuredSources = useSecretRequestSources(props.environmentId);
+  const sources = multiple ? NO_SOURCES : configuredSources;
+  const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
+  const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
+  const [reference, setReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
   const inFlight = useRef(false);
-  const inputs = secretRequestInputs(item);
-  const multiple = item.fields !== undefined;
   const inputId = (index: number) => `${formId}-${index}`;
   const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
-  const saveInput = secretRequestAnswerInput(item, { type: "save", values });
+  const canSave =
+    source === null
+      ? secretRequestAnswerInput(item, { type: "save", values }) !== null
+      : reference.trim().length > 0;
 
-  const send = async (reply: Parameters<typeof secretRequestAnswerInput>[1]) => {
+  const send = async (reply: SecretRequestReply) => {
     const input = secretRequestAnswerInput(item, reply);
     if (input === null || inFlight.current) return;
     inFlight.current = true;
     setSubmitting(true);
     setError(null);
+    // A password field that leaves the page with text in it can prompt to save a login,
+    // so the card is emptied before it closes; a failed answer puts the values back.
+    const typed = values;
+    setValues({});
     const result = await answer({ environmentId: props.environmentId, input }).finally(() => {
       inFlight.current = false;
       setSubmitting(false);
     });
     if (result._tag === "Success") {
-      setValues({});
+      setReference("");
       return;
     }
+    setValues(typed);
     if (!isAtomCommandInterrupted(result)) {
       pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
     }
@@ -98,7 +133,13 @@ function PendingSecretRequestForm(props: {
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void send({ type: "save", values });
+    if (source === null) {
+      void send({ type: "save", values });
+    } else if (secretRequestReference(source, reference) === undefined) {
+      setError(source.invalidReferenceMessage);
+    } else {
+      void send({ type: "reference", source, reference });
+    }
   };
 
   const field = (input: SecretRequestInput, index: number) => (
@@ -116,7 +157,7 @@ function PendingSecretRequestForm(props: {
     />
   );
   const saveButton = (
-    <Button type="submit" disabled={submitting || saveInput === null}>
+    <Button type="submit" disabled={submitting || !canSave}>
       Save securely
     </Button>
   );
@@ -154,7 +195,41 @@ function PendingSecretRequestForm(props: {
         <div className="flex min-w-0 flex-col gap-2.5">{inputs.map(field)}</div>
       ) : (
         <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 flex-1">{inputs.map(field)}</div>
+          {sources.length > 0 ? (
+            <SecretSourceSelect
+              value={source?.id ?? null}
+              sources={sources}
+              label={item.label}
+              disabled={submitting}
+              onValueChange={(next) => {
+                setSourceId(next);
+                setError(null);
+              }}
+            />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            {source === null ? (
+              inputs.map(field)
+            ) : (
+              <Input
+                id={inputId(0)}
+                font="mono"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                placeholder={source.referencePlaceholder}
+                value={reference}
+                disabled={submitting}
+                aria-invalid={error !== null || undefined}
+                aria-describedby={describedBy}
+                onChange={(event) => {
+                  setReference(event.currentTarget.value);
+                  setError(null);
+                }}
+              />
+            )}
+          </div>
           {saveButton}
         </div>
       )}
@@ -205,9 +280,8 @@ function SecretRequestField(props: {
     <InputGroup>
       <InputGroupInput
         id={props.id}
-        // Password fields prompt to save credentials; this secret is not a login.
-        type="text"
-        className={masked ? "[-webkit-text-security:disc]" : undefined}
+        // A CSS-masked text field still exposes its value to screen readers.
+        type={masked ? "password" : "text"}
         autoComplete="off"
         autoCorrect="off"
         autoCapitalize="off"

@@ -178,16 +178,24 @@ const McpToolUseCall = Schema.Struct({
 type McpToolUseCall = typeof McpToolUseCall.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
-const McpToolUseExpect = Schema.Struct({
+const McpToolUseCallsExpect = Schema.Struct({
   /** Each entry needs one matching call. */
   calls: Schema.optional(Schema.Array(McpToolUseCall)),
+  /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
+  distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
+  minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+});
+
+const McpToolUseExpect = Schema.Struct({
+  ...McpToolUseCallsExpect.fields,
+  /** Passes when one alternative passes every one of its checks. */
+  anyOf: Schema.optional(Schema.Array(McpToolUseCallsExpect)),
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
   /** First calls of these tools happen in this order. */
   order: Schema.optional(Schema.Array(Schema.String)),
-  minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
-  maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   /**
    * One `args`-style value per new top-level thread the agent asks for, by `t3_thread_launch` or a
    * `create_threads` entry. Each matches a different thread's request; no other thread is asked for.
@@ -1747,6 +1755,22 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
     calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
+  if (expect.distinctCalls !== undefined) {
+    const expected = expect.distinctCalls.map(({ tool, args }) => ({ tool, input: args ?? {} }));
+    add(
+      "distinctCalls",
+      calls.every((call) => expected.filter((entry) => matches(entry, call)).length <= 1) &&
+        matchesDistinct(
+          expected,
+          calls.map((request) => ({ request, brief: "" })),
+        ),
+    );
+  }
+  if (expect.anyOf !== undefined) {
+    const passes = (alternative: (typeof expect.anyOf)[number]) =>
+      gradeSample(alternative, run, pasted).every((check) => check.pass);
+    add("anyOf", expect.anyOf.some(passes));
+  }
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
   if (expect.order !== undefined) {

@@ -71,6 +71,76 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
     ),
     ["notCalls Agent", "shellMustNot /sleep/"],
   );
+  const distinctCalls = ["application key", "application secret", "consumer key"].map((label) => ({
+    tool: "request_secret",
+    args: { label: "~" + label, delivery: "file", value: null },
+  }));
+  const cards = distinctCalls.map(({ tool, args }) => ({
+    step: 0,
+    tool,
+    input: { ...args, label: args.label.slice(1) },
+  }));
+  const run = (calls: SampleRun["calls"]) => ({ calls, text: "", stopReason: "end_turn" });
+  assert.deepEqual(failed({ distinctCalls }, run(cards)), []);
+  assert.deepEqual(
+    failed(
+      { distinctCalls },
+      run(cards.map((card) => ({ ...card, input: { ...card.input, value: "invented" } }))),
+    ),
+    ["distinctCalls"],
+  );
+  assert.deepEqual(failed({ distinctCalls }, run([cards[0]!])), ["distinctCalls"]);
+  assert.deepEqual(
+    failed(
+      { distinctCalls },
+      run(
+        cards.map((card, i) =>
+          i === 1 ? { ...card, input: { ...card.input, delivery: "secretRef" } } : card,
+        ),
+      ),
+    ),
+    ["distinctCalls"],
+  );
+  assert.deepEqual(
+    failed(
+      { distinctCalls },
+      run([
+        {
+          step: 0,
+          tool: "request_secret",
+          input: { label: "application key, application secret, consumer key", delivery: "file" },
+        },
+      ]),
+    ),
+    ["distinctCalls"],
+  );
+  assert.deepEqual(
+    failed(
+      { distinctCalls },
+      run([
+        {
+          ...cards[0]!,
+          input: { ...cards[0]!.input, label: "application key, application secret, consumer key" },
+        },
+        ...cards.slice(1),
+      ]),
+    ),
+    ["distinctCalls"],
+  );
+  const oneCard = {
+    tool: "request_secret",
+    args: { fields: distinctCalls.map(({ args }) => ({ label: args.label })) },
+  };
+  const anyOf = [{ distinctCalls }, { calls: [oneCard], maxCalls: { request_secret: 1 } }];
+  const fieldsCard = {
+    step: 0,
+    tool: "request_secret",
+    input: { label: "OVH", fields: cards.map((card) => ({ label: card.input.label })) },
+  };
+  assert.deepEqual(failed({ anyOf }, run(cards)), []);
+  assert.deepEqual(failed({ anyOf }, run([fieldsCard])), []);
+  assert.deepEqual(failed({ anyOf }, run([fieldsCard, fieldsCard])), ["anyOf"]);
+  assert.deepEqual(failed({ anyOf }, run([cards[0]!])), ["anyOf"]);
 });
 
 it("matches shellMust, not shellMustNot, against a command's argv lists as a command line", () => {

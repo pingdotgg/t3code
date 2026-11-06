@@ -319,7 +319,13 @@ function launcherFixture() {
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
   write(
     "package.json",
-    JSON.stringify({ type: "module", scripts: { "knip:check": "knip --include files" } }),
+    JSON.stringify({
+      type: "module",
+      scripts: {
+        "knip:check:files": "knip --include files",
+        "knip:check:exports": "knip --exports",
+      },
+    }),
   );
   write("packages/example/package.json", JSON.stringify({ name: "example" }));
   const source = "packages/example/space & (draft) %PATH% ! 研究.ts";
@@ -426,7 +432,9 @@ it("lints an Astro component and runs knip when only it changed", () => {
     "--no-error-on-unmatched-pattern",
     page,
   ]);
-  expect(calls.some(({ args }) => args[0] === "exec" && args[1] === "knip")).toBe(true);
+  const commands = calls.map(({ args }) => args);
+  expect(commands).toContainEqual(["exec", "knip", "--include", "files"]);
+  expect(commands).toContainEqual(["exec", "knip", "--exports"]);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
