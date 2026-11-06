@@ -1,9 +1,11 @@
+import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type {
+  PullRequestActor,
   PullRequestCapabilities,
   PullRequestReaction,
   PullRequestReviewDecision,
@@ -39,6 +41,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve"],
   },
   reviewers: { request: true, listCandidates: true },
+  labels: true,
   edit: { changeRequest: true, comment: true },
 };
 
@@ -63,6 +66,7 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
 /** Authors may close/reopen/change draft state regardless of role; REST omits authorship. */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
+  readonly viewerCanEditLabels?: boolean | undefined;
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter(
@@ -72,6 +76,7 @@ export function gitLabViewerPermissions(input: {
     resolve: true,
     verdicts: CAPABILITIES.review.verdicts,
     requestReviewers: true,
+    labels: input.viewerCanEditLabels === true,
     ...(input.viewerCanMerge ? { updateMethods: CAPABILITIES.updateMethods } : {}),
   };
 }
@@ -221,6 +226,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
+    mergeMessageRewrite: removeAgentCredits,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
 
     getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
@@ -328,6 +334,8 @@ export const make = Effect.gen(function* () {
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+            editedAtByNoteId: new Map<string, string>(),
+            botLogins: new Set<string>(),
           }),
           // Usually cached by the detail read beside this one; web_url holds the real web origin.
           recoverRead(
@@ -341,10 +349,21 @@ export const make = Effect.gen(function* () {
         Effect.map(
           ([notes, commits, discussions, awards, webUrl]): ProviderChangeRequestActivity => {
             const noteUrl = (id: string) => (webUrl === null ? null : `${webUrl}#note_${id}`);
+            const edited = (id: string) => {
+              const editedAt = awards.editedAtByNoteId.get(id);
+              return editedAt === undefined ? {} : { editedAt };
+            };
+            const botLogins = new Set([...awards.botLogins].map((login) => login.toLowerCase()));
+            const withBotFlag = (author: PullRequestActor | null) =>
+              author !== null && botLogins.has(author.login.toLowerCase())
+                ? { ...author, isBot: true }
+                : author;
             return {
               reactions: awards.reactions,
               comments: notes.comments.map((comment) => ({
                 ...comment,
+                ...edited(comment.id),
+                author: withBotFlag(comment.author),
                 url: noteUrl(comment.id),
                 reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
               })),
@@ -354,6 +373,8 @@ export const make = Effect.gen(function* () {
                 ...thread,
                 comments: thread.comments.map((comment) => ({
                   ...comment,
+                  ...edited(comment.id),
+                  author: withBotFlag(comment.author),
                   url: noteUrl(comment.id),
                   reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
                 })),
@@ -411,6 +432,29 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
+    listLabelCandidates: (input) =>
+      cli
+        .listLabelCandidates({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          number: input.number,
+        })
+        .pipe(Effect.mapError(fail("listLabelCandidates"))),
+
+    setLabels: writing((input) =>
+      cli
+        .setLabels({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          number: input.number,
+          labels: input.labels,
+          applied: input.applied,
+        })
+        .pipe(Effect.mapError(fail("setLabels"))),
+    ),
+
     listRepositoryLabels: (input) =>
       cli
         .listProjectLabels({
@@ -453,6 +497,7 @@ export const make = Effect.gen(function* () {
           number: input.number,
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
         })
         .pipe(Effect.mapError(fail("runAction"))),
     ),

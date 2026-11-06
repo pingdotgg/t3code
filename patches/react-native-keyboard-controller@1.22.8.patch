@@ -1,3 +1,90 @@
+diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
+index cdbd633..41a72bc 100644
+--- a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
++++ b/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
+@@ -25,6 +25,12 @@ public extension KeyboardMovementObserver {
+       name: UIResponder.keyboardWillShowNotification,
+       object: nil
+     )
++    NotificationCenter.default.addObserver(
++      self,
++      selector: #selector(keyboardWillChangeFrame),
++      name: UIResponder.keyboardWillChangeFrameNotification,
++      object: nil
++    )
+   }
+ 
+   @objc func unmount() {
+diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
+index 545a5b2..fbdc984 100644
+--- a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
++++ b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
+@@ -8,6 +8,12 @@
+ extension KeyboardMovementObserver {
+   @objc func keyboardWillAppear(_ notification: Notification) {
+     guard !UIResponder.isKeyboardPreloading else { return }
++    floatingHideTask?.cancel()
++
++    if isFloatingKeyboard(notification) {
++      hideIfKeyboardShown(notification)
++      return
++    }
+ 
+     let (duration, frame) = notification.keyboardMetaData()
+     if let keyboardFrame = frame {
+@@ -36,8 +42,40 @@ extension KeyboardMovementObserver {
+     }
+   }
+ 
++  @objc func keyboardWillChangeFrame(_ notification: Notification) {
++    guard !UIResponder.isKeyboardPreloading, isFloatingKeyboard(notification) else { return }
++    // runs after a willShow/willHide posted with this notification, which cancel it, so hide events fire once
++    floatingHideTask?.cancel()
++    let task = DispatchWorkItem { [weak self] in
++      self?.hideIfKeyboardShown(notification)
++    }
++    floatingHideTask = task
++    DispatchQueue.main.async(execute: task)
++  }
++
++  // iPadOS floating and minimized keyboards are narrower than the screen or end above the app's bottom, so
++  // they cover no app content; UIKit switches to them without willHide, so they must count as hidden.
++  private func isFloatingKeyboard(_ notification: Notification) -> Bool {
++    guard let frame = notification.keyboardMetaData().1?.cgRectValue, !frame.isEmpty else { return false }
++    let screen = (notification.object as? UIScreen ?? UIScreen.main).bounds
++    // in Slide Over a docked keyboard ends at the app window's bottom, above the screen's
++    let windowBottom = UIApplication.shared.activeWindow.map {
++      $0.convert($0.bounds, to: $0.screen.coordinateSpace).maxY
++    } ?? screen.height
++    let dockedBottom = min(screen.height, windowBottom)
++    return frame.width.rounded() < screen.width.rounded() || frame.maxY.rounded() < dockedBottom.rounded()
++  }
++
++  private func hideIfKeyboardShown(_ notification: Notification) {
++    let targetHeight = self.notification?.keyboardMetaData().1?.cgRectValue.height ?? 0
++    if targetHeight > 0 {
++      keyboardWillDisappear(notification)
++    }
++  }
++
+   @objc func keyboardWillDisappear(_ notification: Notification) {
+     guard !UIResponder.isKeyboardPreloading else { return }
++    floatingHideTask?.cancel()
+     let (duration, _) = notification.keyboardMetaData()
+     tag = UIResponder.current.reactViewTag
+     self.notification = notification
+diff --git a/ios/observers/movement/observer/KeyboardMovementObserver.swift b/ios/observers/movement/observer/KeyboardMovementObserver.swift
+index ae97d61..2ea1d2d 100644
+--- a/ios/observers/movement/observer/KeyboardMovementObserver.swift
++++ b/ios/observers/movement/observer/KeyboardMovementObserver.swift
+@@ -37,6 +37,7 @@ public class KeyboardMovementObserver: NSObject {
+   // manual did events
+   var notification: Notification?
+   var keyboardDidTask: DispatchWorkItem?
++  var floatingHideTask: DispatchWorkItem?
+ 
+   @objc public init(
+     handler: @escaping (NSString, NSNumber, NSNumber, NSNumber, NSNumber) -> Void,
 diff --git a/lib/commonjs/components/KeyboardChatScrollView/index.js b/lib/commonjs/components/KeyboardChatScrollView/index.js
 index 0b78ff3..98b3b6c 100644
 --- a/lib/commonjs/components/KeyboardChatScrollView/index.js
