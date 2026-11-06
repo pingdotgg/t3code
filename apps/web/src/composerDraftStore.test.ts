@@ -1659,6 +1659,26 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
+  it("releases a seeded pick once the thread runs it without options the model does not advertise", () => {
+    // Opus 5.5 advertises effort and fastMode only, so the server drops the default's contextWindow.
+    const pick = createModelSelection(CLAUDE_AGENT_INSTANCE, "claude-opus-5-5", [
+      { id: "effort", value: "high" },
+      { id: "contextWindow", value: "1m" },
+    ]);
+    useComposerDraftStore.getState().setModelSelection(threadRef, pick, { replaceOptions: true });
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId);
+
+    h.update({
+      modelSelection: createModelSelection(CLAUDE_AGENT_INSTANCE, "claude-opus-5-5", [
+        { id: "effort", value: "high" },
+        { id: "fastMode", value: false },
+      ]),
+    });
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toBeUndefined();
+  });
+
   it("marks picker writes explicit and seeding writes non-explicit", () => {
     const store = useComposerDraftStore.getState();
     store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
