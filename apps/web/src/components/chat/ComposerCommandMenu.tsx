@@ -18,6 +18,7 @@ import {
   ArrowUpIcon,
   BoxIcon,
   CornerDownLeftIcon,
+  EraserIcon,
   HammerIcon,
   MessageCircleQuestionIcon,
   MessagesSquareIcon,
@@ -185,6 +186,7 @@ export function groupComposerCommandItems(
 
 const SLASH_COMMAND_ICONS: Record<ComposerSlashCommand, LucideIcon> = {
   model: BoxIcon,
+  clear: EraserIcon,
   plan: PencilRulerIcon,
   default: HammerIcon,
   side: MessageCircleQuestionIcon,
@@ -242,15 +244,14 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <CommandList
             id={props.listId}
             aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
-            inset="composer"
             className="max-h-112 min-h-0"
           >
             {pullRequestsPending ? (
-              <CommandGroup spacing="composer">
+              <CommandGroup>
                 <CommandGroupLabel>Pull requests</CommandGroupLabel>
                 <div
                   role="status"
-                  className="flex min-h-8 items-center gap-2.5 px-2.5 text-meta text-dim-foreground"
+                  className="flex min-h-8 items-center gap-2 px-2 text-meta text-dim-foreground"
                 >
                   <Spinner aria-hidden className="size-[15px] shrink-0" />
                   <span className="min-w-0 truncate">Loading pull requests...</span>
@@ -258,7 +259,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               </CommandGroup>
             ) : null}
             {groups.map((group) => (
-              <CommandGroup key={group.key} spacing="composer">
+              <CommandGroup key={group.key}>
                 <CommandGroupLabel>{group.label}</CommandGroupLabel>
                 {group.items.map((item) => (
                   <ComposerCommandMenuItem
@@ -278,16 +279,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         ) : (
           // Nothing to list yet: the menu keeps its header and one row's height,
           // so searching and no-match read as states of the same list.
-          <div className="p-1.5">
+          <div className="p-2">
             {props.triggerKind ? (
-              <div className="px-2.5 pt-2 pb-1 text-caption text-dim-foreground">
+              <div className="px-2 py-1.5 text-meta text-dim-foreground">
                 {LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]}
               </div>
             ) : null}
             <div
               role="status"
               data-composer-command-menu-empty={props.isLoading ? "loading" : "no-match"}
-              className="flex min-h-8 items-center gap-2.5 px-2.5 text-meta text-dim-foreground"
+              className="flex min-h-8 items-center gap-2 px-2 text-meta text-dim-foreground"
             >
               {props.isLoading ? (
                 <Spinner aria-hidden className="size-[15px] shrink-0" />
@@ -343,7 +344,7 @@ function ComposerMenuSurface({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "surface-popover kbd-in-popover flex min-h-0 w-full flex-col overflow-hidden rounded-card text-popover-foreground [--kbd-background:var(--kbd-fill)] [--type-label:0.8125rem] [--type-meta:0.75rem] [--type-caption:0.6875rem]",
+        "surface-popover kbd-in-popover flex min-h-0 w-full flex-col overflow-hidden rounded-card text-popover-foreground [--kbd-background:var(--kbd-fill)]",
         className,
       )}
       {...props}
@@ -450,7 +451,6 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     <CommandItem
       render={<div id={props.optionId} />}
       aria-selected={props.isActive}
-      spacing="composer"
       value={props.item.id}
       data-composer-item-id={props.item.id}
       active={props.isActive}
