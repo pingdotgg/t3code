@@ -1615,8 +1615,12 @@ export const make = Effect.gen(function* () {
         variables: { fullPath: input.repository, iids: input.numbers.map(String) },
         decode: decodeReviewDecisionsJson,
       });
+    // glab exits non-zero when GitLab rejects the query; a timeout or I/O failure is not that.
     return read(REVIEW_DECISIONS_GRAPHQL_QUERY).pipe(
-      Effect.catchTags({ GitLabCliCommandError: () => read(APPROVALS_GRAPHQL_QUERY) }),
+      Effect.catchIf(
+        (error) => error._tag === "GitLabCliCommandError" && isVcsProcessExitError(error.cause),
+        () => read(APPROVALS_GRAPHQL_QUERY),
+      ),
     );
   };
 
@@ -2133,10 +2137,29 @@ export const make = Effect.gen(function* () {
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {
       const project = projectPath(input.repository);
       const mergeRequest = `projects/${project}/merge_requests/${input.number}`;
-      // GitLab has no pending review to attach comments to, so a review is replayed as the
-      // requests it is made of: the line comments, then the summary, then the verdict. A
-      // failure part-way therefore leaves what was already posted in place, which is why
-      // the verdict goes last — a half-sent review is never an approval.
+      // GitLab has no pending review, so a review is replayed as separate requests and a failure
+      // leaves earlier ones posted. Requesting changes (GitLab 18.9+) goes first so an older
+      // server fails before any comment lands; approval goes last so a half-sent review never
+      // approves.
+      if (input.verdict === "request-changes") {
+        // GitLab keeps the verdict on the reviewer, so the viewer joins the reviewers first.
+        const viewer = yield* viewerUsername(input);
+        const target = { projectPath: input.repository, iid: String(input.number) };
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: SET_SELF_AS_REVIEWER_MUTATION,
+          variables: { ...target, reviewers: [viewer] },
+        });
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: REQUEST_CHANGES_MUTATION,
+          variables: target,
+        });
+      }
       if (input.comments.length > 0) {
         const refs = yield* getDiffRefs(input);
         yield* Effect.forEach(
@@ -2182,26 +2205,6 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/approve`,
           method: "POST",
-        });
-      }
-      if (input.verdict === "request-changes") {
-        // GitLab keeps the verdict on the reviewer, so whoever requests changes joins the
-        // reviewers first, as on GitHub. Appending someone already there changes nothing.
-        const viewer = yield* viewerUsername(input);
-        const target = { projectPath: input.repository, iid: String(input.number) };
-        yield* graphqlMutation({
-          cwd: input.cwd,
-          host: input.host,
-          operation: "submitReview",
-          query: SET_SELF_AS_REVIEWER_MUTATION,
-          variables: { ...target, reviewers: [viewer] },
-        });
-        yield* graphqlMutation({
-          cwd: input.cwd,
-          host: input.host,
-          operation: "submitReview",
-          query: REQUEST_CHANGES_MUTATION,
-          variables: target,
         });
       }
     }),

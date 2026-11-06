@@ -1,5 +1,5 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
@@ -171,46 +171,77 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("keeps approvals from a server that has no reviewer review states", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation(({ cwd, stdin }) =>
-        (stdin ?? "").includes("reviewState")
-          ? Effect.fail(
-              new GitLabCli.GitLabCliCommandError({
-                operation: "execute",
-                command: "glab",
-                cwd,
-                cause: new Error("Field 'reviewState' doesn't exist"),
-              }),
-            )
-          : Effect.succeed(
-              output(
-                JSON.stringify({
-                  data: {
-                    metadata: { enterprise: false },
-                    project: {
-                      mergeRequests: {
-                        nodes: [
-                          { iid: "7", approved: true, approvedBy: { nodes: [{ username: "r" }] } },
-                        ],
+  it.effect.each([
+    {
+      reading: "a rejected query",
+      cause: new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/w",
+        exitCode: 1,
+        detail: "Field 'reviewState' doesn't exist on type 'MergeRequestReviewer'",
+      }),
+      calls: 2,
+      expected: [[7, "approved"]],
+    },
+    {
+      reading: "a timeout",
+      cause: new VcsProcessTimeoutError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/w",
+        timeoutMs: 1000,
+      }),
+      calls: 1,
+      expected: "GitLabCliCommandError",
+    },
+  ])(
+    "retries review decisions without review states after $reading",
+    ({ cause, calls, expected }) =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation(({ cwd, stdin }) =>
+          (stdin ?? "").includes("reviewState")
+            ? Effect.fail(
+                new GitLabCli.GitLabCliCommandError({
+                  operation: "execute",
+                  command: "glab",
+                  cwd,
+                  cause,
+                }),
+              )
+            : Effect.succeed(
+                output(
+                  JSON.stringify({
+                    data: {
+                      metadata: { enterprise: false },
+                      project: {
+                        mergeRequests: {
+                          nodes: [
+                            {
+                              iid: "7",
+                              approved: true,
+                              approvedBy: { nodes: [{ username: "r" }] },
+                            },
+                          ],
+                        },
                       },
                     },
-                  },
-                }),
+                  }),
+                ),
               ),
-            ),
-      );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const decisions = yield* cli.getReviewDecisions({
-        cwd: "/w",
-        repository: "acme/web",
-        numbers: [7],
-      });
+        const outcome = yield* cli
+          .getReviewDecisions({ cwd: "/w", repository: "acme/web", numbers: [7] })
+          .pipe(
+            Effect.map((decisions) => [...decisions]),
+            Effect.catch((error) => Effect.succeed(error._tag)),
+          );
 
-      expect([...decisions]).toEqual([[7, "approved"]]);
-      expect(mockedExecute).toHaveBeenCalledTimes(2);
-    }),
+        expect(outcome).toEqual(expected);
+        expect(mockedExecute).toHaveBeenCalledTimes(calls);
+      }),
   );
 
   it.effect("asks GitLab for one row more than the page, to probe for a next page", () =>
@@ -1225,11 +1256,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
           repository: "acme/web",
           number: 7,
           verdict: "request-changes",
-          body: "",
-          comments: [],
+          body: "Needs work",
+          comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
         }),
       );
 
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
       const target = { projectPath: "acme/web", iid: "7" };
       const setReviewers = JSON.parse(callAt(1).stdin ?? "");
       expect(setReviewers.query).toContain("operationMode: APPEND");
