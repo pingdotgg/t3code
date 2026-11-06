@@ -8,16 +8,13 @@ import {
   REDIRECTS_VERSION,
   SPLAT_REGEX,
 } from "../../shared/configuration/constants.ts";
+import type { ParsedHeaders, ParsedRedirects } from "../../shared/configuration/types.ts";
 import type {
   AssetConfig,
   MetadataHeaders,
   MetadataRedirects,
   MetadataStaticRedirects,
 } from "../../shared/types.ts";
-import type {
-  ParsedHeaders,
-  ParsedRedirects,
-} from "../../shared/configuration/types.ts";
 
 export const constructRedirects = Effect.fn("constructRedirects")(function* ({
   redirects,
@@ -35,13 +32,9 @@ export const constructRedirects = Effect.fn("constructRedirects")(function* ({
 
   // exhaustive check, since we could not have parsed `redirects` out of
   // a non-existing redirects file
-  const redirectsRelativePath = redirectsFile
-    ? relative(process.cwd(), redirectsFile)
-    : "";
+  const redirectsRelativePath = redirectsFile ? relative(process.cwd(), redirectsFile) : "";
 
-  yield* Effect.log(
-    `✨ Parsed ${num_valid} valid redirect rule${num_valid === 1 ? "" : "s"}.`,
-  );
+  yield* Effect.log(`✨ Parsed ${num_valid} valid redirect rule${num_valid === 1 ? "" : "s"}.`);
 
   if (num_invalid > 0) {
     let invalidRedirectRulesList = ``;
@@ -113,13 +106,9 @@ export const constructHeaders = Effect.fn("constructHeaders")(function* ({
 
   // exhaustive check, since we could not have parsed `headers` out of
   // a non-existing headers file
-  const headersRelativePath = headersFile
-    ? relative(process.cwd(), headersFile)
-    : "";
+  const headersRelativePath = headersFile ? relative(process.cwd(), headersFile) : "";
 
-  yield* Effect.log(
-    `✨ Parsed ${num_valid} valid header rule${num_valid === 1 ? "" : "s"}.`,
-  );
+  yield* Effect.log(`✨ Parsed ${num_valid} valid header rule${num_valid === 1 ? "" : "s"}.`);
 
   if (num_invalid > 0) {
     let invalidHeaderRulesList = ``;

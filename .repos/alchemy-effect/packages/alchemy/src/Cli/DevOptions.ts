@@ -7,8 +7,8 @@ export const DevOptions = Schema.Struct({
   envFile: Schema.OptionFromOptional(Schema.String),
   profile: Schema.optional(Schema.String),
   force: Schema.Boolean,
-  include: Schema.optional(Schema.Array(Schema.String)),
-  exclude: Schema.optional(Schema.Array(Schema.String)),
+  include: Schema.String.pipe(Schema.Array, Schema.optional),
+  exclude: Schema.String.pipe(Schema.Array, Schema.optional),
 });
 
 export type DevOptions = typeof DevOptions.Type;
