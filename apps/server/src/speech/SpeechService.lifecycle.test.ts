@@ -132,6 +132,7 @@ const correctionWordLayer = SpeechService.layer.pipe(
       speechModelId: "test-model",
       speechCustomWords: [{ term: "T3 Code", aliases: [] }],
       speechCorrectionWord: "err",
+      speechPostProcessingEnabled: true,
     }),
   ),
   Layer.provide(NodeServices.layer),
