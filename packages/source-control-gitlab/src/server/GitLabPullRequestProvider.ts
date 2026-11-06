@@ -41,7 +41,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     // GitLab has no requested-changes verdict.
     verdicts: ["comment", "approve"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: true },
   labels: true,
   edit: { changeRequest: true, comment: true },
 };

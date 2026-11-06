@@ -251,6 +251,11 @@ export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Typ
 export const PullRequestReviewerCapabilities = Schema.Struct({
   request: Schema.Boolean,
   listCandidates: Schema.Boolean,
+  /**
+   * Reviewer candidates take a `query` the host matches past the first page. Absent, as from a
+   * server that predates it, means the client narrows the loaded page itself.
+   */
+  searchCandidates: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 

@@ -56,7 +56,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: false,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
 };
 const USER_SEARCH_LIMIT = 50;

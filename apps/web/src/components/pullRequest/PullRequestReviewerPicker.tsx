@@ -3,9 +3,12 @@ import type {
   EnvironmentId,
   PullRequestRef,
   PullRequestReviewerCandidate,
-  SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { mergeReviewerCandidates } from "@t3tools/client-runtime/pull-request-reviewers";
+import {
+  hostReviewerQuery,
+  reviewerCandidateView,
+  type ReviewerTruncation,
+} from "@t3tools/client-runtime/pull-request-reviewers";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -19,16 +22,27 @@ import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
 
+const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => string> = {
+  unsearchable: () =>
+    "This repository has more people with access than are listed here. Ask for the rest on the host.",
+  searchable: () =>
+    "This repository has more people with access than are listed here. Search to find them.",
+  "search-failed": (error) =>
+    `Only the people already listed are matched: the host search failed. ${error ?? ""}`,
+  "search-truncated": () =>
+    "More people match than the host returned. Keep typing to narrow it down.",
+};
+
 export function PullRequestReviewerPicker({
   environmentId,
   reference,
   allowed,
-  provider,
+  searchable,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   allowed: boolean;
-  provider: SourceControlProviderKind;
+  searchable: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -38,17 +52,14 @@ export function PullRequestReviewerPicker({
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
   );
   // Past the first page the host is asked, since what was loaded cannot answer for the rest.
-  const searchQuery = useDebouncedValue(query.trim(), 250);
-  const supportsSearch = provider === "github" || provider === "gitlab";
-  const searchesHost =
-    supportsSearch && candidatesQuery.data?.truncated === true && searchQuery.length > 0;
-  // Only once the debounce has caught up, or rows matching the previous text would linger.
-  const searched = searchesHost && searchQuery === query.trim();
+  const debouncedQuery = useDebouncedValue(query.trim(), 250);
+  const searchInput = { loaded: candidatesQuery.data, searchable, query, debouncedQuery };
+  const hostQuery = hostReviewerQuery(searchInput);
   const searchResult = useEnvironmentQuery(
-    open && searchesHost
+    open && hostQuery !== null
       ? pullRequestEnvironment.reviewerSearch({
           environmentId,
-          input: { ...reference, query: searchQuery },
+          input: { ...reference, query: hostQuery },
         })
       : null,
   );
@@ -56,11 +67,10 @@ export function PullRequestReviewerPicker({
     reportFailure: false,
   });
 
-  const candidates = mergeReviewerCandidates(
-    candidatesQuery.data?.candidates ?? [],
-    searched ? (searchResult.data?.candidates ?? []) : [],
-    query,
-  );
+  const { candidates, searchPending, searchError, truncation } = reviewerCandidateView({
+    ...searchInput,
+    search: searchResult,
+  });
 
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
     if (pending !== null) return;
@@ -89,7 +99,7 @@ export function PullRequestReviewerPicker({
     }
     // The command reads the loaded list again only for somebody it lacked, and a search result
     // is keyed by what was typed, so the one on screen is read here or it keeps the old request.
-    if (searchesHost) searchResult.refresh();
+    if (hostQuery !== null) searchResult.refresh();
     toastManager.add({
       type: "success",
       title: candidate.isRequested
@@ -109,41 +119,20 @@ export function PullRequestReviewerPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search people with access"
-      isPending={
-        (candidatesQuery.isPending && candidatesQuery.data === null) ||
-        // Nothing loaded matches yet, and the host has not answered: not a "nobody matches".
-        (candidates.length === 0 &&
-          supportsSearch &&
-          candidatesQuery.data?.truncated === true &&
-          query.trim().length > 0 &&
-          (searchQuery !== query.trim() || searchResult.isPending))
-      }
+      isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || searchPending}
       error={
         candidatesQuery.data === null
           ? candidatesQuery.error
-          : searched && candidates.length === 0
-            ? searchResult.error
+          : candidates.length === 0
+            ? searchError
             : null
       }
       candidates={candidates}
       emptyLabel="Nobody else has access to this repository."
       noMatchLabel="Nobody with access matches that."
       errorLabel="The people with access could not be read."
-      truncated={
-        candidatesQuery.data?.truncated === true &&
-        (!supportsSearch ||
-          query.trim().length === 0 ||
-          (searched && (searchResult.error !== null || searchResult.data?.truncated === true)))
-      }
-      truncatedLabel={
-        !supportsSearch
-          ? "The provider has more reviewers than are listed here. Find additional reviewers on the provider."
-          : searched && searchResult.error !== null
-            ? `Only the people already listed are matched: the host search failed. ${searchResult.error}`
-            : searched
-              ? "More people match than the host returned. Keep typing to narrow it down."
-              : "This repository has more people with access than are listed here. Search to find them."
-      }
+      truncated={truncation !== null}
+      truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}
