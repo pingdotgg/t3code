@@ -51,6 +51,8 @@ import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProto
 
 // A staged runtime's cold start can take over a minute on a loaded, swapping host.
 const PREFLIGHT_TIMEOUT = Duration.minutes(3);
+/** Prepared desktop installs keep the drain until commit; abandon releases it. */
+const DESKTOP_ABANDONED_PREPARE_DRAIN_TIMEOUT = Duration.minutes(20);
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -216,9 +218,27 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
               : { channel: input.channel, targetVersion: input.targetVersion },
           )
           .pipe(
-            Effect.tap((result) =>
-              result.desktopUpdateToken === undefined ? releaseOwnedDesktopDrain() : Effect.void,
-            ),
+            Effect.tap((result) => {
+              if (result.desktopUpdateToken === undefined) {
+                return releaseOwnedDesktopDrain();
+              }
+              // Commit is a separate RPC; if it never arrives, release this owned drain only.
+              const shutdownId = drain.shutdownId;
+              return Effect.sleep(DESKTOP_ABANDONED_PREPARE_DRAIN_TIMEOUT).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    if ((yield* Ref.get(ownedDesktopDrainId)) !== shutdownId) return;
+                    yield* Effect.logWarning(
+                      "Releasing desktop update drain after abandoned prepare.",
+                      { shutdownId },
+                    );
+                    yield* releaseOwnedDesktopDrain();
+                  }),
+                ),
+                Effect.forkDetach,
+                Effect.asVoid,
+              );
+            }),
             Effect.onError(() => releaseOwnedDesktopDrain()),
           );
       }
