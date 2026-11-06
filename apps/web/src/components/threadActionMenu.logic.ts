@@ -25,6 +25,7 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread"
+  | "copy-thread-markdown"
   | "copy-thread-id"
   | "archive"
   | "delete";
@@ -109,6 +110,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-path",
     "copy-branch",
     "copy-thread",
+    "copy-thread-markdown",
     "copy-thread-id",
   ].includes(action);
 }
@@ -234,6 +236,7 @@ export function buildThreadActionMenuItems(
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
         { id: "copy-thread", label: "Thread", icon: "message-square" },
+        { id: "copy-thread-markdown", label: "Thread as Markdown", icon: "file-text" },
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },

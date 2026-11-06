@@ -237,6 +237,9 @@ when it has a PR, choose **Copy → Thread** from its context menu, or **Copy
 thread** from its long-press menu on mobile.
 **Thread ID** copies the bare ID for scripts and the `t3` CLI. See
 [keybindings](./keybindings.md) for custom configuration.
+**Thread as Markdown** copies the conversation as readable text for a ticket or PR:
+your messages and the agent's replies with their times, without tool work or
+reasoning. It is also in the command palette on web and desktop.
 
 ## Inspect agent work
 

@@ -61,6 +61,7 @@ import {
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
+  FileTextIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
@@ -92,6 +93,7 @@ import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
+import { useCopyThreadMarkdown } from "../hooks/useCopyThreadMarkdown";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
@@ -496,6 +498,7 @@ function OpenCommandPaletteDialog(props: {
             activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
           hostedAppUrl: configuredHostedAppUrl(),
         });
+  const copyThreadMarkdown = useCopyThreadMarkdown();
   const copyActiveThreadReference = async () => {
     if (activeThreadReferenceCopyTarget === null) return;
     await copyThreadReference(activeThreadReferenceCopyTarget);
@@ -1394,6 +1397,18 @@ function OpenCommandPaletteDialog(props: {
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",
       run: copyActiveThreadReference,
+    });
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:copy-thread-markdown",
+      searchTerms: ["copy", "export", "thread", "markdown", "transcript", "conversation"],
+      title: "Copy thread as Markdown",
+      icon: <FileTextIcon className={ITEM_ICON_CLASS} />,
+      run: () => copyThreadMarkdown(threadRef),
     });
   }
 
