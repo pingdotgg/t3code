@@ -12188,7 +12188,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const modelCatalog = yield* Ref.make<ClaudeModelCatalog>(
             modelCatalogWithAlias("sonnet", "claude-sonnet-4-6"),
           );
-          const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(modelCatalog) });
+          const harness = yield* makeWakeHarnessWithOptions({
+            modelCatalog: Ref.get(modelCatalog),
+          });
           const now = yield* DateTime.now;
 
           yield* harness.runtime.startTurn(
