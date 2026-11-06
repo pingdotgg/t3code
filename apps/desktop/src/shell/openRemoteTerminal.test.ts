@@ -201,4 +201,14 @@ describe("Windows launch argv", () => {
     assert.match(script, /ArgumentList '-t -- box&calc&rem "/);
     assert.match(script, /my \\"proj\\"\\path/);
   });
+
+  it("keeps smart single quotes inside PowerShell string literals", () => {
+    const host = "box\u2019 ; Start-Process calc; #";
+    const args = powerShellStartRemoteArgs("ssh.exe", ["-t", "--", host, "remote"]);
+    const script = decodePowerShellEncodedCommand(args[5] ?? "");
+    assert.match(script, /Start-Process -FilePath 'ssh\.exe'/);
+    // Typographic ’ is doubled so it cannot close the ArgumentList literal.
+    assert.match(script, /ArgumentList '-t -- "box\u2019\u2019 ; Start-Process calc; #" remote'/);
+    assert.isFalse(script.includes(`box\u2019 ; Start-Process`));
+  });
 });

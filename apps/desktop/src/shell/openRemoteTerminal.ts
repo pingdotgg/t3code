@@ -57,7 +57,9 @@ const escapeAppleScriptString = (value: string): string =>
 /** wt.exe treats `;` as a command separator even inside quoted argv. */
 const escapeWindowsTerminalArg = (value: string): string => value.replaceAll(";", "\\;");
 
-const escapePowerShellStringLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;
+/** Doubles ASCII and typographic single quotes so they cannot end a PS literal. */
+const escapePowerShellStringLiteral = (value: string): string =>
+  Result.getOrThrow(CommandLine.quote(value, { format: "powershell" }));
 
 const encodeUtf16LeBase64 = (input: string): string => {
   const bytes = new Uint8Array(input.length * 2);
