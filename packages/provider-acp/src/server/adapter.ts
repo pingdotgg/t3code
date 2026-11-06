@@ -8052,7 +8052,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
               yield* setActiveSessionSetup(activated);
-              yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
+              yield* configureSession(
+                activated,
+                turnInput.modelSelection,
+                turnInput.runtimePolicy,
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnPreparationError({ driver, cause }),
+                ),
+              );
               yield* Ref.set(activeSelection, turnInput.modelSelection);
               yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
             } else {
@@ -8074,6 +8083,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   currentSessionSetup,
                   turnInput.modelSelection,
                   turnInput.runtimePolicy,
+                ).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterTurnPreparationError({ driver, cause }),
+                  ),
                 );
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);

@@ -46,7 +46,11 @@ const PROMPT_REFUSAL_TAGS = [
 ] as const;
 
 export const refusedBeforePrompt = (error: unknown): boolean =>
+  Predicate.isTagged(error, "ProviderAdapterTurnPreparationError") ||
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (Predicate.isTagged(error, "ProviderAdapterProtocolError") &&
+    Predicate.hasProperty(error, "reason") &&
+    error.reason === "attachment_unreadable") ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;

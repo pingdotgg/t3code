@@ -249,7 +249,21 @@ function makeTestAdapter(input: {
                 input.failStartOnce !== undefined &&
                 (yield* Ref.getAndSet(input.failStartOnce, false))
               )
-                return yield* unimplemented(input.driver, "turn start failed after injection");
+                return yield* unimplemented(input.driver, "turn start failed after injection").pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterTurnStartError({
+                        driver: input.driver,
+                        threadId: turnInput.threadId,
+                        providerThreadId: turnInput.providerThread.id,
+                        runId: turnInput.runId,
+                        cause: new ProviderAdapter.ProviderAdapterTurnPreparationError({
+                          driver: input.driver,
+                          cause,
+                        }),
+                      }),
+                  ),
+                );
               if (
                 input.refuseStarts !== undefined &&
                 (yield* Ref.getAndUpdate(input.refuseStarts, (left) => Math.max(0, left - 1))) > 0

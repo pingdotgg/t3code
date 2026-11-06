@@ -1763,23 +1763,16 @@ export const layer: Layer.Layer<
             }),
           ),
         );
-        // Only an out-of-stream closure observer needs to wake an idle subscription.
-        const providerEvents =
-          input.session.onSessionClosed === undefined
-            ? rawProviderEvents
-            : rawProviderEvents.pipe(Stream.interruptWhen(Deferred.await(sessionClosed)));
         const providerEventFiber = yield* eventSink
           .consumeProviderEvents(
-            providerEvents,
+            rawProviderEvents,
             (event) =>
               Effect.gen(function* () {
                 yield* ingestEvent(yield* routeEvent(event));
               }),
             Effect.gen(function* () {
               if (yield* agentTurnsSettled) yield* endPreviewActivity;
-              return (
-                (yield* Deferred.isDone(sessionClosed)) || (yield* shouldStopProviderEventIngestion)
-              );
+              return yield* shouldStopProviderEventIngestion;
             }),
             Ref.get(rootTerminalSeen).pipe(Effect.map((seen) => !seen)),
           )

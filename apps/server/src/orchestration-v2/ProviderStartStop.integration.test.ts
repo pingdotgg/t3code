@@ -53,6 +53,7 @@ it.effect.each([
   "identity-timeout-force",
   "unsupported-compact",
   "prompt-refusal",
+  "attachment-refusal",
   "manager-release",
   "manager-release-interrupt",
   "provider-stopped",
@@ -117,16 +118,23 @@ it.effect.each([
               turn,
             ) =>
               Effect.gen(function* () {
-                if (scenario === "prompt-refusal") {
+                if (scenario === "prompt-refusal" || scenario === "attachment-refusal") {
                   return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
                     driver,
                     threadId: turn.threadId,
                     providerThreadId: turn.providerThread.id,
                     runId: turn.runId,
-                    cause: {
-                      _tag: "ClaudeAppendSystemPromptFileError",
-                      path: "/task-owned/missing-file",
-                    },
+                    cause:
+                      scenario === "attachment-refusal"
+                        ? new ProviderAdapter.ProviderAdapterProtocolError({
+                            driver,
+                            reason: "attachment_unreadable",
+                            detail: "Synthetic unreadable attachment before prompt delivery",
+                          })
+                        : {
+                            _tag: "ClaudeAppendSystemPromptFileError",
+                            path: "/task-owned/missing-file",
+                          },
                   });
                 }
                 yield* Deferred.succeed(entered, undefined);
@@ -387,6 +395,7 @@ it.effect.each([
         if (
           scenario === "unsupported-compact" ||
           scenario === "prompt-refusal" ||
+          scenario === "attachment-refusal" ||
           lateSubscription
         ) {
           yield* Fiber.join(startup);

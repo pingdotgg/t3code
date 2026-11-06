@@ -1582,7 +1582,15 @@ export const layer: Layer.Layer<
                     }),
                 }),
             persist: persistHandoff,
-          });
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterTurnPreparationError({
+                  driver: session.driver,
+                  cause,
+                }),
+            ),
+          );
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
           const start = compact ? session.compactThread! : session.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.

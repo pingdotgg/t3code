@@ -306,6 +306,18 @@ export class ProviderAdapterForkThreadError extends Schema.TaggedError<ProviderA
   }
 }
 
+export class ProviderAdapterTurnPreparationError extends Schema.TaggedError<ProviderAdapterTurnPreparationError>()(
+  "ProviderAdapterTurnPreparationError",
+  {
+    driver: ProviderDriverKind,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to prepare a turn on ${this.driver}.`;
+  }
+}
+
 export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAdapterTurnStartError>()(
   "ProviderAdapterTurnStartError",
   {
