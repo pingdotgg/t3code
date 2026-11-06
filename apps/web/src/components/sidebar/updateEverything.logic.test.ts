@@ -272,6 +272,20 @@ describe("localSwitchBlockReason", () => {
     expect(
       localSwitchBlockReason(nightly, stable, [{ connected: false, databaseMigration: 69 }], 1),
     ).toBe("its server is not connected, so its database cannot be checked");
+    // The inventory counts a backend that has no client entry at all.
+    expect(localSwitchBlockReason(nightly, stable, [], 1)).toBe(
+      "its server is not connected, so its database cannot be checked",
+    );
+    // With Local environment off the app hosts nothing, so the reinstall restarts no database.
+    expect(localSwitchBlockReason(nightly, stable, [], 0)).toBeNull();
+    expect(
+      localSwitchBlockReason(
+        "0.1.3",
+        { channel: "nightly", version: nightly, databaseMigration: 69 },
+        [],
+        0,
+      ),
+    ).toBeNull();
     expect(localSwitchBlockReason("0.1.3", stable, [], 1)).toBeNull();
   });
 });
