@@ -182,29 +182,18 @@ export function createPhoneScene(
     if (crown && edge !== "top") button.rotation.z += Math.PI / 2;
     orientation.add(button);
   }
-  if (profile.band) {
-    const { width: bandWidth, length } = profile.band;
-    const bandMaterial = new MeshStandardMaterial({
-      color: profile.band.color,
-      metalness: 0.05,
-      roughness: 0.8,
-    });
-    materials.push(bandMaterial);
-    const lug = profile.round
-      ? Math.sqrt(Math.max(0, (width / 2) ** 2 - (bandWidth / 2) ** 2))
-      : height / 2;
+  if (profile.lugs) {
+    const { span, width: lugWidth, length } = profile.lugs;
+    const x = (span - lugWidth) / 2;
+    // Each lug starts a little inside the case so it reads as one piece with the rim.
+    const rim = Math.sqrt(Math.max(0, (width / 2) ** 2 - x ** 2));
     for (const direction of [1, -1]) {
-      const strap = new Group();
-      strap.name = "watch-band";
-      strap.position.set(0, direction * (lug - 0.08), middleZ);
-      strap.rotation.x = -direction * 0.35;
-      const segment = new Mesh(
-        new BoxGeometry(bandWidth, length, profile.depth * 0.4),
-        bandMaterial,
-      );
-      segment.position.y = (direction * length) / 2;
-      strap.add(segment);
-      orientation.add(strap);
+      for (const sideX of [x, -x]) {
+        const lug = new Mesh(new BoxGeometry(lugWidth, length, profile.depth * 0.55), metal);
+        lug.name = "watch-lug";
+        lug.position.set(sideX, direction * (rim + length / 2 - 0.08), middleZ);
+        orientation.add(lug);
+      }
     }
   }
   const flashMaterial = new MeshBasicMaterial({ color: 0xf2ead6 });

@@ -120,19 +120,27 @@ describe("3D phone input", () => {
     texture.dispose();
   });
 
-  it("gives watches bands instead of a rear phone camera", () => {
+  it("gives round watches lugs instead of a rear phone camera", () => {
     const texture = new Texture();
-    for (const profile of [ROUND_WATCH_SHAPE, SQUARE_WATCH_SHAPE]) {
+    const countLugs = (scene: ReturnType<typeof createPhoneScene>) => {
+      let lugs = 0;
+      scene.root.traverse((object) => {
+        if (object.name === "watch-lug") lugs++;
+      });
+      return lugs;
+    };
+    for (const [profile, lugs] of [
+      [ROUND_WATCH_SHAPE, 4],
+      [SQUARE_WATCH_SHAPE, 0],
+    ] as const) {
       const watch = createPhoneScene(texture, phoneDisplayLayout(null, 480, 480), profile);
       expect(watch.root.getObjectByName("rear-camera")).toBeUndefined();
-      const bands: unknown[] = [];
-      watch.root.traverse((object) => object.name === "watch-band" && bands.push(object));
-      expect(bands).toHaveLength(2);
+      expect(countLugs(watch)).toBe(lugs);
       watch.dispose();
     }
     const phone = createPhoneScene(texture, phoneDisplayLayout(null, 900, 1950));
     expect(phone.root.getObjectByName("rear-camera")).toBeDefined();
-    expect(phone.root.getObjectByName("watch-band")).toBeUndefined();
+    expect(countLugs(phone)).toBe(0);
     phone.dispose();
     texture.dispose();
   });

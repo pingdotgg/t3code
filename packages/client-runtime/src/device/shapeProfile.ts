@@ -19,11 +19,11 @@ export interface DeviceShapeProfile {
     readonly edge: "left" | "right" | "top";
     readonly offset: number;
     readonly length: number;
-    /** A cylindrical crown that sticks out this far, instead of a flat key. */
+    /** A cylindrical key or crown that sticks out this far, instead of a flat key. */
     readonly crown?: number;
   }>;
-  /** Strap stubs leaving the top and bottom of the case, tilted toward the wrist. */
-  readonly band?: { readonly width: number; readonly length: number; readonly color: number };
+  /** Strap lugs in pairs at the top and bottom of a round case, `span` apart at their outer edges. */
+  readonly lugs?: { readonly span: number; readonly width: number; readonly length: number };
   readonly camera: {
     readonly width: number;
     readonly height: number;
@@ -118,16 +118,17 @@ const ANDROID_TABLET_SHAPE: DeviceShapeProfile = {
 export const ROUND_WATCH_SHAPE: DeviceShapeProfile = {
   id: "round-watch",
   round: true,
-  bezel: 0.24,
+  bezel: 0.11,
   bodyRadius: 0,
   screenRadius: 0,
   depth: 0.6,
   backColor: 0x2b2f33,
+  // Home and back keys at about two and four o'clock.
   buttons: [
-    { edge: "right", offset: 0.55, length: 0.3 },
-    { edge: "right", offset: -0.55, length: 0.3 },
+    { edge: "right", offset: 0.58, length: 0.2, crown: 0.12 },
+    { edge: "right", offset: -0.58, length: 0.2, crown: 0.12 },
   ],
-  band: { width: 1.3, length: 1.1, color: 0x22262a },
+  lugs: { span: 1.3, width: 0.17, length: 0.3 },
   camera: null,
 };
 
@@ -142,7 +143,6 @@ export const SQUARE_WATCH_SHAPE: DeviceShapeProfile = {
     { edge: "right", offset: 0.5, length: 0.32, crown: 0.09 },
     { edge: "right", offset: -0.25, length: 0.5 },
   ],
-  band: { width: 1.4, length: 1.1, color: 0x2a2d33 },
   camera: null,
 };
 
