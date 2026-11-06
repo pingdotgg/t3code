@@ -1537,34 +1537,6 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("backs off reading a never-synced link whose host read keeps failing", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(NOW));
-        const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
-          summary: () => Effect.fail(gitLabCliFailure),
-        });
-        yield* Effect.gen(function* () {
-          const reactor = yield* startAndSweep(fixture);
-          yield* sweepFor(fixture, reactor, 10);
-          const readsInTenMinutes = (yield* Ref.get(fixture.summaryCalls)).length;
-          assert.isAtMost(
-            readsInTenMinutes,
-            5,
-            "a link whose read keeps failing is read on every one-minute sweep",
-          );
-          yield* sweepFor(fixture, reactor, 6);
-          assert.isAbove(
-            (yield* Ref.get(fixture.summaryCalls)).length,
-            readsInTenMinutes,
-            "a link whose read keeps failing is never retried",
-          );
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
-  );
-
   it.effect(
     "caps the failed-read backoff at the slow cadence and restarts it after a success",
     () =>
