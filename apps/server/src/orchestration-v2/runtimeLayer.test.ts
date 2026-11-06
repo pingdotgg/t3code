@@ -4632,6 +4632,59 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([
+    { kind: "subagent", lineage: { relationshipToParent: "subagent" } },
+    { kind: "side-chat", lineage: { relationshipToParent: "fork", sideChat: true } },
+  ] as const)("refuses to pin a $kind thread, which thread lists never show", ({ kind, lineage }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const parentId = ThreadId.make(`runtime-layer-pin-${kind}-parent`);
+      const childId = ThreadId.make(`runtime-layer-pin-${kind}-child`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`runtime-layer-pin-${kind}-create`),
+        threadId: parentId,
+        projectId: ProjectId.make(`runtime-layer-pin-${kind}-project`),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const parent = (yield* orchestrator.getThreadProjection(parentId)).thread;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`runtime-layer-pin-${kind}-child-created`),
+            type: "thread.created",
+            threadId: childId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...parent,
+              id: childId,
+              lineage: { ...lineage, parentThreadId: parentId, rootThreadId: parentId },
+            },
+          },
+        ],
+      });
+
+      const error = yield* orchestrator
+        .dispatch({
+          type: "thread.pin",
+          commandId: CommandId.make(`runtime-layer-pin-${kind}-pin`),
+          threadId: childId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.notExists((yield* orchestrator.getThreadProjection(childId)).thread.pinnedAt);
+    }),
+  );
+
   it.effect("settles a thread its own agent settled once the turn completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
