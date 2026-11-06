@@ -438,6 +438,15 @@ const make = Effect.gen(function* () {
       .pipe(Effect.asVoid);
 
   /**
+   * The key the stop a task owes is sent with: one per stop generation and task, as tasks on
+   * one thread there each count their own stops.
+   */
+  const stopKey = (remote: OrchestrationV2RemoteTaskChild) => {
+    const generation = remote.stopCount === undefined ? "stop" : `stop-${remote.stopCount}`;
+    return remote.runId === undefined ? generation : `${generation}:${remote.runId}`;
+  };
+
+  /**
    * The last reply `runId` gave on the task's thread there, which is its
    * result, read whole however long it is. A failed run prefers its error
    * from the activity view over an earlier reply, without taking another run's.
@@ -561,8 +570,7 @@ const make = Effect.gen(function* () {
         ((task.status === "cancelled" || task.status === "interrupted") &&
           remote.stoppedThere !== true)
       ) {
-        const key = remote.stopCount === undefined ? "stop" : `stop-${remote.stopCount}`;
-        yield* stopThere(scope, remote, key).pipe(
+        yield* stopThere(scope, remote, stopKey(remote)).pipe(
           // Its thread there now runs above what this side may touch, say
           // because the parent here was lowered since; no retry changes that.
           Effect.catchIf(isModeRefusal, (error) =>
@@ -859,7 +867,7 @@ const make = Effect.gen(function* () {
         if (owed?.event.type === "subagent.updated") {
           const stopCount = owed.event.payload.remoteChild?.stopCount;
           // The key the follower sends this stop with, so it reaches the thread there once.
-          yield* stopThere(there, remote, `stop-${stopCount}`, reason).pipe(
+          yield* stopThere(there, remote, stopKey({ ...remote, stopCount }), reason).pipe(
             Effect.andThen(
               complete(
                 task.threadId,
@@ -881,21 +889,16 @@ const make = Effect.gen(function* () {
               : "cancelled",
         } satisfies OrchestratorMcpTaskCancelResult;
       }
-      // A link that is gone or a machine that is down still cancels the task
-      // here; its follower keeps trying to stop it there, across restarts.
-      const unstopped = yield* stopThere(there, remote, key, reason).pipe(
-        Effect.as(undefined),
-        Effect.catch((error) => Effect.succeed(error.message)),
-      );
+      // Recorded first, which ends following its thread there, so a run ending there meanwhile
+      // starts nothing new; a link that is gone or a machine that is down still cancels the task
+      // here, and its follower keeps trying to stop it there, across restarts.
       const cancelled = reason === undefined ? "Cancelled." : `Cancelled: ${reason}`;
       yield* complete(
         task.threadId,
         task.id,
         "cancelled",
-        unstopped === undefined
-          ? cancelled
-          : `${cancelled} It could not be stopped in ${remote.label} and may still run there: ${unstopped}`,
-        unstopped === undefined ? "stopped" : undefined,
+        cancelled,
+        undefined,
         remote.stopCount,
       ).pipe(
         Effect.tapError((cause) =>
@@ -908,6 +911,12 @@ const make = Effect.gen(function* () {
               message: "Unable to record the cancellation.",
             }),
         ),
+      );
+      yield* stopThere(there, remote, stopKey(remote), reason).pipe(
+        Effect.andThen(
+          complete(task.threadId, task.id, "cancelled", cancelled, "stopped", remote.stopCount),
+        ),
+        Effect.ignoreCause({ log: true }),
       );
       return {
         taskId: task.id,

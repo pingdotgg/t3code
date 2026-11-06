@@ -1588,6 +1588,96 @@ it.effect("cancelling the first task records the end of following before stoppin
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("cancelling each task on one thread there sends each its own stop", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const { delegated, followUpId } = yield* handedOff(a, thread);
+      yield* Deferred.succeed(thread.laterFinished, undefined);
+      yield* taskResult(a, followUpId);
+
+      // Both tasks have their result and have each been stopped once: two stops there.
+      yield* a.call("task_cancel", { taskId: delegated.taskId });
+      expect(yield* Ref.get(thread.interrupted)).toBe(1);
+      yield* a.call("task_cancel", { taskId: followUpId });
+      expect(yield* Ref.get(thread.interrupted)).toBe(2);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("cancelling a running task records it before stopping there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+
+      // While the stop there is unanswered, its run may end there and the thread go on.
+      yield* Ref.set(thread.holdFirstStop, true);
+      const cancel = yield* a
+        .call("task_cancel", { taskId: delegated.taskId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(thread.stopStarted);
+      const { subagents } = yield* a.threads.getThreadRecords(parentThreadId, ["subagents"]);
+      yield* Deferred.succeed(thread.releaseStop, undefined);
+      yield* Fiber.join(cancel);
+      expect(subagents.find((task) => task.id === delegated.taskId)).toMatchObject({
+        status: "cancelled",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a deleted parent's finished task is not followed again after a restart", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* taskResult(a, delegated.taskId);
+      expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([
+        { parentThreadId, taskId: delegated.taskId },
+      ]);
+
+      yield* a.orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("command:archive:laptop-parent"),
+        threadId: parentThreadId,
+      });
+      yield* a.orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("command:delete:laptop-parent"),
+        threadId: parentThreadId,
+      });
+      expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("a task whose thread there waits on its own task ends with the answer after it", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1816,7 +1906,8 @@ it.effect("cancel ends the task here even when the link is gone", () =>
       });
       const task = yield* taskResult(a, delegated.taskId);
       expect(task?.status).toBe("cancelled");
-      expect(task?.result).toContain("could not be stopped in Box");
+      // Its follower still owes the stop there.
+      expect(task?.remoteChild?.stoppedThere).toBeUndefined();
       expect(yield* Ref.get(thread.interrupted)).toBe(0);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

@@ -8721,7 +8721,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const { subagents } = yield* projectionStore
-      .getThreadRecords(command.parentThreadId, ["subagents"])
+      .getThreadRecords(command.parentThreadId, ["subagents"], { subagentIds: [command.taskId] })
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
@@ -8758,7 +8758,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     task: OrchestrationV2Subagent,
   ) {
     const { subagents } = yield* projectionStore
-      .getThreadRecords(command.parentThreadId, ["subagents"])
+      .getThreadRecords(command.parentThreadId, ["subagents"], {
+        subagentRemoteThreadIds: task.remoteChild === undefined ? [] : [task.remoteChild.threadId],
+      })
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),

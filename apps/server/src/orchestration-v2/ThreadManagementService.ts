@@ -537,16 +537,21 @@ export function latestRun(
 }
 
 /**
- * The earliest run after `after` that is not `after` restarted, once it has started; one that
- * ended without starting, say a queued message removed, is skipped.
+ * The run that started first after `after` did, other than `after` restarted. Queued runs can
+ * start out of ordinal order, so start time orders them; one that never started counts only if
+ * it failed trying, as it ended. A queued message removed or still held is no run yet.
  */
 function laterRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
   after: OrchestrationV2Run,
 ): OrchestrationV2Run | undefined {
+  const began = (run: OrchestrationV2Run) =>
+    DateTime.toEpochMillis(run.startedAt ?? run.completedAt ?? run.requestedAt);
+  const beganAfter = (run: OrchestrationV2Run, other: OrchestrationV2Run) =>
+    began(run) === began(other) ? run.ordinal > other.ordinal : began(run) > began(other);
   const restarts = new Set<RunId>([after.id]);
+  let earliest: OrchestrationV2Run | undefined;
   for (const run of runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
-    if (run.ordinal <= after.ordinal) continue;
     if (
       run.restartContinuationOfRunId !== undefined &&
       restarts.has(run.restartContinuationOfRunId)
@@ -554,10 +559,11 @@ function laterRun(
       restarts.add(run.id);
       continue;
     }
-    if (run.startedAt !== null) return run;
-    if (!isTerminalRunStatus(run.status)) return undefined;
+    if (run.id === after.id || (run.startedAt === null && run.status !== "failed")) continue;
+    if (!beganAfter(run, after)) continue;
+    if (earliest === undefined || beganAfter(earliest, run)) earliest = run;
   }
-  return undefined;
+  return earliest;
 }
 
 function latestRestartContinuation(
@@ -1052,8 +1058,12 @@ const make = Effect.gen(function* () {
         .delegatedTaskResultPending(input.threadId)
         .pipe(Effect.mapError(loadError));
       if (pending) return undefined;
-      // A run waited on by id answers for itself over an earlier one, say as a monitor's does.
-      return input.runId !== undefined && runRanAfter(selected, progress.resultRun)
+      // A run waited on by id that is no result candidate, as a monitor's or one that failed to
+      // start, answers for itself over an earlier one; a rolled-back or unrun one never does.
+      return input.runId !== undefined &&
+        selected.status !== "rolled_back" &&
+        (selected.startedAt !== null || selected.status === "failed") &&
+        runRanAfter(selected, progress.resultRun)
         ? selected
         : progress.resultRun;
     });
