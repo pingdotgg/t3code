@@ -1,11 +1,13 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "@effect/vitest";
+import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import {
   activeTargetsAtom,
   activeThreadReferencesAtom,
   classifyThreadReferences,
+  referenceActivitySignal,
   referenceHighlightRole,
   threadReferenceHighlight,
 } from "./threadReferenceHighlight";
@@ -91,4 +93,42 @@ it("classifies targets and the threads that mention or wait on any of them", () 
   expect(role("mentions-a")).toBe("related");
   expect(role("waits-on-b")).toBe("related");
   expect(role("unrelated")).toBeNull();
+});
+
+it("refreshes on any shell change and polls only while a thread is running", () => {
+  vi.useFakeTimers();
+  const shell = (status: "running" | "completed") => ({
+    runtime: {
+      status,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: null,
+      lastError: null,
+    },
+  });
+  const shells = Atom.make<ReadonlyArray<ReturnType<typeof shell>>>([]).pipe(Atom.keepAlive);
+  const signal = referenceActivitySignal(shells);
+  const unmount = appAtomRegistry.mount(signal);
+  const read = () => appAtomRegistry.get(signal);
+  try {
+    const idle = read();
+    vi.advanceTimersByTime(30_000);
+    expect(read()).toBe(idle);
+
+    appAtomRegistry.set(shells, [shell("running")]);
+    const started = read();
+    expect(started).not.toBe(idle);
+    vi.advanceTimersByTime(9_999);
+    expect(read()).toBe(started);
+    vi.advanceTimersByTime(1);
+    expect(read()).not.toBe(started);
+
+    appAtomRegistry.set(shells, [shell("completed")]);
+    const ended = read();
+    vi.advanceTimersByTime(30_000);
+    expect(read()).toBe(ended);
+  } finally {
+    unmount();
+    vi.useRealTimers();
+  }
 });

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { request } from "@t3tools/client-runtime/rpc";
 import { createEnvironmentQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
@@ -15,6 +16,7 @@ import { environmentPresentations } from "./state/presentation";
 import { environmentThreadShells } from "./state/threads";
 
 export type ThreadReferenceHighlightRole = "target" | "related" | null;
+type ThreadRuntime = Parameters<typeof threadRuntimeIsActive>[0];
 
 export interface ActiveThreadReferences {
   readonly hovered: ScopedThreadRef | null;
@@ -78,10 +80,25 @@ export const activeTargetsAtom = Atom.make((get): ReadonlyArray<ScopedThreadRef>
     : pinned;
 });
 
-// Quiet shells skip streaming ticks, which land several times a second during a run. A mention
-// in a message still streaming shows up the next time that run changes state.
-const referenceActivityAtom = environmentThreadShells.quietThreadShellsAtom.pipe(
-  Atom.debounce("500 millis"),
+/**
+ * Changes whenever references may have changed. Quiet shells hold still through a run's streaming
+ * ticks, so a mention added mid-run would wait for the run to end; a running thread polls instead.
+ */
+export const referenceActivitySignal = (
+  shells: Atom.Atom<ReadonlyArray<{ readonly runtime: ThreadRuntime }>>,
+) => {
+  let revision = 0;
+  return Atom.make((get) => {
+    if (get(shells).some((thread) => threadRuntimeIsActive(thread.runtime))) {
+      const timer = setTimeout(() => get.refreshSelf(), 10_000);
+      get.addFinalizer(() => clearTimeout(timer));
+    }
+    return ++revision;
+  });
+};
+
+const referenceActivityAtom = referenceActivitySignal(
+  environmentThreadShells.quietThreadShellsAtom.pipe(Atom.debounce("500 millis")),
 );
 
 const references = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
@@ -151,7 +168,7 @@ const highlightAtom = Atom.make((get): ThreadReferenceHighlight => {
       for (const threadId of data?.mentions ?? []) mentions.add(key({ environmentId, threadId }));
       for (const threadId of data?.waits ?? []) waits.add(key({ environmentId, threadId }));
       if (AsyncResult.isFailure(result)) unavailable++;
-      if (result.waiting) pending = true;
+      if (result.waiting && !data) pending = true;
     }
     for (const thread of shells) {
       if (
