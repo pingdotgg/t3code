@@ -1059,7 +1059,6 @@ describe("AssetAccess", () => {
         "heic",
         "tif",
         "tiff",
-        "weba",
         "mmd",
         "mermaid",
       ]) {

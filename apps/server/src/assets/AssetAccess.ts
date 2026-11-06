@@ -1017,11 +1017,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       : null;
   }
   const segments = decodedPath.split(/[\\/]/);
+  const isMedia =
+    isWorkspaceAudioPreviewPath(decodedPath) || isWorkspaceVideoPreviewPath(decodedPath);
   if (
     decodedPath.length === 0 ||
     decodedPath.includes("\0") ||
     segments.some((segment) => segment === "." || segment === ".." || segment.startsWith(".")) ||
-    !PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase())
+    (!isMedia && !PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase()))
   ) {
     return null;
   }
@@ -1031,5 +1033,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
   });
-  return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;
+  // The asset route sends host media only with an explicit audio/video type, uncached.
+  const mimeType = isMedia ? hostPreviewMimeTypeFromExtension(path.extname(decodedPath)) : null;
+  return workspaceFile
+    ? ({
+        kind: "file",
+        path: workspaceFile,
+        ...(mimeType ? { mimeType } : {}),
+      } satisfies ResolvedAsset)
+    : null;
 });
