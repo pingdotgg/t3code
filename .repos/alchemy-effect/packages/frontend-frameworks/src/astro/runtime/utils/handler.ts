@@ -1,21 +1,22 @@
+import type { RouteData } from "astro";
+import type { RenderOptions } from "astro/app";
+import { createApp } from "astro/app/entrypoint";
+import { setGetEnv } from "astro/env/setup";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
- * Vendored from `@astrojs/cloudflare` v14.1.3 (`src/utils/handler.ts`).
+ * Vendored from `@astrojs/cloudflare` v14.4.2 (`src/utils/handler.ts`).
  *
  * The Worker `fetch` handler. Imports zero wrangler code; bindings are read
  * from `cloudflare:workers` env and the `virtual:astro-cloudflare:config`
  * virtual module served by this package's config plugin.
  */
 import { env as globalEnv } from "cloudflare:workers";
-import type { RouteData } from "astro";
-import type { RenderOptions } from "astro/app";
-import { createApp } from "astro/app/entrypoint";
-import { setGetEnv } from "astro/env/setup";
 import {
   cacheProviderEnabled,
   compileImageConfig,
   isPrerender,
+  loadPrerenderScope,
 } from "virtual:astro-cloudflare:config";
 import {
   createErrorPageFetch,
@@ -29,13 +30,12 @@ import {
 import { createGetEnv } from "./env.ts";
 import {
   handlePrerenderRequest,
-  handleStaticImagesRequest,
   handleStaticPathsRequest,
   installPrerenderErrorPropagation,
   isPrerenderRequest,
-  isStaticImagesRequest,
   isStaticPathsRequest,
 } from "./prerender.ts";
+import { applyCloudflareResponseHeaders } from "./response.ts";
 
 export type { Runtime };
 
@@ -66,20 +66,21 @@ export async function handle(
 
   // Handle prerender endpoints (only active during build prerender phase)
   if (isPrerender) {
-    if (compileImageConfig) {
-      const { installAddStaticImage } =
-        await import("./static-image-collection.ts");
-      installAddStaticImage(compileImageConfig);
-    }
-
-    if (isStaticPathsRequest(request)) {
-      return handleStaticPathsRequest(app) as unknown as CfResponse;
-    }
-    if (isPrerenderRequest(request)) {
-      return handlePrerenderRequest(app, request) as unknown as CfResponse;
-    }
-    if (isStaticImagesRequest(request)) {
-      return handleStaticImagesRequest() as unknown as CfResponse;
+    const isStaticPaths = isStaticPathsRequest(request);
+    if (isStaticPaths || isPrerenderRequest(request)) {
+      await app.getLogger();
+      // Install the isolate's render scope so concurrent prerender requests
+      // each collect their metadata in their own per-render store. The
+      // loader thunk is generated into the virtual config module only for the
+      // prerender environment, keeping the module — and its `node:async_hooks`
+      // import — out of production worker output entirely; the install
+      // itself is first-wins, making the per-request call idempotent.
+      (await loadPrerenderScope?.())?.ensurePrerenderScope();
+      // Without build-time image optimization, prerendered pages keep the runtime image URLs.
+      const options = { staticImages: compileImageConfig !== null };
+      return (isStaticPaths
+        ? handleStaticPathsRequest(app, options)
+        : handlePrerenderRequest(app, request, options)) as unknown as CfResponse;
     }
   }
 
@@ -115,21 +116,9 @@ export async function handle(
     clientAddress: getClientAddress(request),
   });
 
-  if (app.setCookieHeaders) {
-    for (const setCookieHeader of app.setCookieHeaders(response)) {
-      response.headers.append("Set-Cookie", setCookieHeader);
-    }
-  }
+  // Collect cookies before any rebuild: `setCookieHeaders` looks the
+  // response up by identity, so it must see the original object.
+  const setCookieHeaders = app.setCookieHeaders ? [...app.setCookieHeaders(response)] : [];
 
-  // When the Cloudflare cache provider is configured, default uncached
-  // responses to `no-store` so opting in to route caching never
-  // accidentally caches a route that didn't set any cache intent.
-  if (
-    cacheProviderEnabled &&
-    !response.headers.has("Cloudflare-CDN-Cache-Control")
-  ) {
-    response.headers.set("Cloudflare-CDN-Cache-Control", "no-store");
-  }
-
-  return response;
+  return applyCloudflareResponseHeaders(response, setCookieHeaders, cacheProviderEnabled);
 }
