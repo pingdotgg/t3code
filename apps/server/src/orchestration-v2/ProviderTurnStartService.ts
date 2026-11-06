@@ -848,7 +848,14 @@ export const layer: Layer.Layer<
       const installFailure = Effect.fn("ProviderTurnStartService.installFailure")(function* (
         error: ProviderAdapter.ProviderAdapterV2Error,
       ) {
-        if (!launching || !(yield* installedSinceAdmission(providerThread.driver))) return error;
+        // Another client holding the native thread is not an install failure.
+        if (
+          !launching ||
+          error._tag === "ProviderAdapterThreadInUseError" ||
+          !(yield* installedSinceAdmission(providerThread.driver))
+        ) {
+          return error;
+        }
         launching = false;
         const updating = new ProviderUpdatingError({
           driver: providerThread.driver,
