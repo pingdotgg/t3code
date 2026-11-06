@@ -4,6 +4,7 @@ import {
   selectWorkspaceDetail,
   setNativelyPoppingWorkspaceRoute,
   workspaceDetailLinkAction,
+  workspaceDetailOpenStep,
   workspaceDetailRouter,
   type WorkspaceDetail,
 } from "./workspace-detail-selection";
@@ -137,5 +138,64 @@ describe("workspaceDetailLinkAction", () => {
         routes: [{ name: "Home" }, { name: "Settings" }, { name: "SettingsAppearance" }],
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("workspaceDetailOpenStep", () => {
+  it("stays when the detail is already focused", () => {
+    const state = select(home(), threadA);
+    expect(workspaceDetailOpenStep(state, threadA)).toEqual({ type: "stay" });
+  });
+
+  it("pops back to a thread under a drilled-in pull request", () => {
+    const state = push(select(home(), threadA), "PullRequest", pullRequest.params);
+    expect(workspaceDetailOpenStep(state, threadA)).toEqual({ type: "pop", count: 1 });
+  });
+
+  it("pops past several pages to the matching thread", () => {
+    const state = push(
+      push(select(home(), threadA), "PullRequest", pullRequest.params),
+      "GitOverview",
+    );
+    expect(workspaceDetailOpenStep(state, threadA)).toEqual({ type: "pop", count: 2 });
+  });
+
+  it("pushes when the thread is not on the stack", () => {
+    const state = select(home(), pullRequest);
+    expect(workspaceDetailOpenStep(state, threadA)).toEqual({ type: "push" });
+  });
+
+  it("does not treat a different thread as a match", () => {
+    const state = push(select(home(), threadA), "PullRequest", pullRequest.params);
+    expect(workspaceDetailOpenStep(state, threadB)).toEqual({ type: "push" });
+  });
+
+  it("pushes a new-task draft instead of reusing a thread", () => {
+    const state = push(select(home(), threadA), "PullRequest", pullRequest.params);
+    expect(
+      workspaceDetailOpenStep(state, {
+        name: "Thread",
+        params: { draft: { draftId: "new-task:ask", title: "Ask about #1" } },
+      }),
+    ).toEqual({ type: "push" });
+  });
+
+  it("stays when the pull request is already focused", () => {
+    const state = select(home(), pullRequest);
+    expect(workspaceDetailOpenStep(state, pullRequest)).toEqual({ type: "stay" });
+  });
+
+  it("pops back to a pull request under a drilled-in page", () => {
+    const state = push(select(home(), pullRequest), "GitOverview");
+    expect(workspaceDetailOpenStep(state, pullRequest)).toEqual({ type: "pop", count: 1 });
+  });
+
+  it("does not treat a different pull request as a match", () => {
+    const other = {
+      name: "PullRequest" as const,
+      params: { ...pullRequest.params, number: 2 },
+    };
+    const state = push(select(home(), pullRequest), "GitOverview");
+    expect(workspaceDetailOpenStep(state, other)).toEqual({ type: "push" });
   });
 });

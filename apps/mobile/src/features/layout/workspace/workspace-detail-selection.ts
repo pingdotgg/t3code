@@ -46,11 +46,29 @@ const IDENTITY = {
 
 type RouteLike = { readonly name: string; readonly key?: string; readonly params?: object };
 
-function showsDetail(route: RouteLike, detail: WorkspaceDetail) {
+export function workspaceDetailMatches(route: RouteLike, detail: WorkspaceDetail) {
   if (route.name !== detail.name) return false;
   const current = route.params as Readonly<Record<string, unknown>> | undefined;
   const target = detail.params as Readonly<Record<string, unknown>> | undefined;
   return IDENTITY[detail.name].every((key) => current?.[key] === target?.[key]);
+}
+
+/**
+ * How opening a thread or pull request from another page should move: stay if it is focused,
+ * pop back to it when it is already under the current page, otherwise push.
+ */
+export function workspaceDetailOpenStep(
+  state: { readonly index: number; readonly routes: readonly RouteLike[] },
+  detail: WorkspaceDetail,
+):
+  | { readonly type: "stay" }
+  | { readonly type: "pop"; readonly count: number }
+  | { readonly type: "push" } {
+  const routes = state.routes.slice(0, state.index + 1);
+  const index = routes.findLastIndex((route) => workspaceDetailMatches(route, detail));
+  if (index === state.index) return { type: "stay" };
+  if (index >= 0) return { type: "pop", count: state.index - index };
+  return { type: "push" };
 }
 
 // UIKit pops a card by native Back before the router hears of it, so a row tapped meanwhile
@@ -75,7 +93,7 @@ function workspaceDetailState<
   const home = live.find((route) => route.name === "Home") ?? { name: "Home" };
   const page = live.find((route) => route.name !== "Home" && route.name !== "Settings");
   const reused =
-    live.findLast((route) => showsDetail(route, detail)) ??
+    live.findLast((route) => workspaceDetailMatches(route, detail)) ??
     (page?.name === detail.name ? page : undefined);
   const routes = [
     home,

@@ -1,7 +1,7 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
 import { Platform } from "react-native";
-import { useSelectWorkspaceDetail } from "../features/layout/workspace/useSelectWorkspaceDetail";
+import { useOpenWorkspaceDetail } from "../features/layout/useOpenWorkspaceDetail";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
@@ -14,7 +14,7 @@ type PullRequestContext = { readonly environmentId: string; readonly projectId: 
 // Avoid useRoute so layouts without route context can open any thread's pull requests.
 export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
   const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
+  const openDetail = useOpenWorkspaceDetail();
   const projects = useProjects();
   const replace = options?.replace;
   return async (url: string, context: PullRequestContext | null) => {
@@ -25,10 +25,13 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
     );
     if (!destination) return tryOpenExternalUrl(url, "pull-request");
     const params = withKnownPullRequestSummary(destination);
-    // Android shows one page at a time; iOS opens it over the current page, so Back returns.
-    if (Platform.OS === "android") selectDetail({ name: "PullRequest", params });
-    else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
-    else navigation.dispatch(StackActions.push("PullRequest", params));
+    // Android selects one detail; iOS reuses a PR already on the stack, otherwise pushes.
+    // `replace` still swaps the current page (e.g. dismissing a sheet into the PR).
+    if (replace && Platform.OS !== "android") {
+      navigation.dispatch(StackActions.replace("PullRequest", params));
+    } else {
+      openDetail({ name: "PullRequest", params });
+    }
     return true;
   };
 }
