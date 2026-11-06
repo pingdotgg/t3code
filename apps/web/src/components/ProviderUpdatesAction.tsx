@@ -16,6 +16,27 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+// `refreshModels` is the only refresh that drops the server's hour-long latest-version cache.
+export function useCheckProviderUpdates() {
+  const { environments } = useEnvironments();
+  const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  return () =>
+    Promise.all(
+      environments
+        .filter(
+          (environment) =>
+            environment.connection.phase === "connected" &&
+            manageableIds.has(environment.environmentId),
+        )
+        .map(({ environmentId }) =>
+          refreshProviders({ environmentId, input: { refreshModels: true } }),
+        ),
+    );
+}
+
 export function useProviderUpdates() {
   const { environments } = useEnvironments();
   const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
