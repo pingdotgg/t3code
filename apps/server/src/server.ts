@@ -81,8 +81,10 @@ import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as PeerEnvironmentRegistry from "./peer/PeerEnvironmentRegistry.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
+import * as OpenShellFleetStore from "./environment/OpenShellFleetStore.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -811,10 +813,14 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(PreviewBrowser.layer),
   // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
+  // The fleet registry answers for registered workers, so the same bridge reaches them.
+  // Built here so the fleet state store re-reads what a restart interrupted at startup.
   Layer.provide(
     PeerForwarding.layer.pipe(
       Layer.provideMerge(PeerMcpClient.layer),
       Layer.provideMerge(PeerLinks.layer),
+      Layer.provideMerge(PeerEnvironmentRegistry.layer),
+      Layer.provide(OpenShellFleetStore.layer),
     ),
   ),
   Layer.provide(
