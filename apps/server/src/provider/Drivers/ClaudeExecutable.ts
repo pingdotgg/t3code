@@ -39,10 +39,13 @@ function resolveWinGetExecutablePath(shimPath: string, environment: NodeJS.Proce
     "Links",
     "claude.cmd",
   );
-  if (NodePath.win32.normalize(shimPath).toLowerCase() !== launcherPath.toLowerCase())
-    return undefined;
-
   try {
+    if (
+      NodePath.win32.normalize(shimPath).toLowerCase() !== launcherPath.toLowerCase() &&
+      NodeFS.realpathSync.native(shimPath).toLowerCase() !==
+        NodeFS.realpathSync.native(launcherPath).toLowerCase()
+    )
+      return undefined;
     const launcher = NodeFS.readFileSync(shimPath, "utf8").replaceAll("\r\n", "\n").trim();
     const expectedLauncher = `@echo off\n"%LOCALAPPDATA%\\${WINGET_PACKAGE_ENTRY.join("\\")}" %*`;
     if (launcher.toLowerCase() !== expectedLauncher.toLowerCase()) return undefined;

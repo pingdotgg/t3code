@@ -49,15 +49,24 @@ describe("resolveClaudeSdkExecutablePath", () => {
           { LOCALAPPDATA: localAppData },
           { LocalAppData: localAppData },
         ]) {
-          for (const binaryPath of ["claude", shim]) {
-            expect(
-              yield* resolveClaudeSdkExecutablePath(binaryPath, environment).pipe(
-                withWindowsResolution({
-                  resolvedCommand: shim,
-                  existingFiles: [executable],
-                }),
-              ),
-            ).toBe(executable);
+          for (const resolvedCommand of [
+            shim,
+            "C:\\Users\\DEVELO~1\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.cmd",
+            "C:\\winget-links\\claude.cmd",
+          ]) {
+            using _realpath = vi
+              .spyOn(NodeFS.realpathSync, "native")
+              .mockImplementation((filePath) => {
+                if (filePath === shim || filePath === resolvedCommand) return shim;
+                throw new Error("unknown launcher");
+              });
+            for (const binaryPath of ["claude", resolvedCommand]) {
+              expect(
+                yield* resolveClaudeSdkExecutablePath(binaryPath, environment).pipe(
+                  withWindowsResolution({ resolvedCommand, existingFiles: [executable] }),
+                ),
+              ).toBe(executable);
+            }
           }
         }
       }
@@ -94,7 +103,14 @@ describe("resolveClaudeSdkExecutablePath", () => {
           withWindowsResolution({ resolvedCommand: WINGET_SHIM }),
         ),
       ).toBe("claude");
-      for (const shim of [NPM_SHIM, WINGET_SHIM.replace(".cmd", ".ps1")]) {
+      using _realpath = vi
+        .spyOn(NodeFS.realpathSync, "native")
+        .mockImplementation((filePath) => String(filePath));
+      for (const shim of [
+        NPM_SHIM,
+        WINGET_SHIM.replace(".cmd", ".ps1"),
+        "C:\\different-winget-links\\claude.cmd",
+      ]) {
         expect(
           yield* resolveClaudeSdkExecutablePath("claude", { LOCALAPPDATA: LOCAL_APP_DATA }).pipe(
             withWindowsResolution({
@@ -176,6 +192,17 @@ describe("resolveClaudeSdkExecutablePath", () => {
           withWindowsResolution({ resolvedCommand: WINGET_SHIM, existingFiles: [WINGET_EXE] }),
         ),
       ).toBe(WINGET_SHIM);
+      using _realpath = vi.spyOn(NodeFS.realpathSync, "native").mockImplementation(() => {
+        throw new Error("unreadable path");
+      });
+      expect(
+        yield* resolveClaudeSdkExecutablePath("claude", { LOCALAPPDATA: LOCAL_APP_DATA }).pipe(
+          withWindowsResolution({
+            resolvedCommand: "C:\\unreadable-winget-links\\claude.cmd",
+            existingFiles: [WINGET_EXE],
+          }),
+        ),
+      ).toBe("claude");
     }),
   );
 });
