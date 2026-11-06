@@ -1498,9 +1498,12 @@ export default function GitActionsControl({
   const changesSummary = (
     <span className="ms-auto flex min-w-0 items-center gap-1 text-caption tabular-nums">
       {changesBaseLabel ? (
-        <span className="min-w-0 truncate text-muted-foreground" title={changesBaseLabel}>
-          {changesBaseLabel}
-        </span>
+        <Tooltip>
+          <TooltipTrigger render={<span className="min-w-0 truncate text-muted-foreground" />}>
+            {changesBaseLabel}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{changesBaseLabel}</TooltipPopup>
+        </Tooltip>
       ) : null}
       <span className="shrink-0 text-diff-addition">
         +{formatDiffCount(changesTotals?.insertions ?? 0)}
