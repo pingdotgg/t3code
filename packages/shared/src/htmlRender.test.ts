@@ -18,21 +18,27 @@ describe("htmlRenderTheme graphic contrast", () => {
     { name: "a midgray accent and canvas", canvas: "#757575", accent: "#747474" },
     { name: "a pale accent on a light canvas", canvas: "#fafafa", accent: "#eeeeee" },
   ])("keeps graphic ink and paired text readable for $name", ({ canvas, accent }) => {
-    const { variables } = htmlRenderTheme(
-      { ...T3_CODE_DARK_THEME_COLORS, canvas, accent, accentForeground: "#ffffff" },
-      "dark",
-    );
+    for (const appearance of ["dark", "light"] as const) {
+      const { variables } = htmlRenderTheme(
+        { ...T3_CODE_DARK_THEME_COLORS, canvas, accent, accentForeground: "#ffffff" },
+        appearance,
+      );
 
-    expect(variables["--background"]).toBe(canvas);
-    for (const key of [
-      "--accent",
-      ...Array.from({ length: 6 }, (_, index) => `--chart-${index + 1}`),
-    ]) {
-      expect(wcagContrast(variables[key]!, canvas), key).toBeGreaterThanOrEqual(3);
+      expect(variables["--background"]).toBe(canvas);
+      for (const key of [
+        "--accent",
+        ...Array.from({ length: 6 }, (_, index) => `--chart-${index + 1}`),
+      ]) {
+        expect(
+          wcagContrast(variables[key]!, canvas),
+          `${appearance} ${key}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+      expect(
+        wcagContrast(variables["--accent-foreground"]!, variables["--accent"]!),
+        appearance,
+      ).toBeGreaterThanOrEqual(4.5);
     }
-    expect(
-      wcagContrast(variables["--accent-foreground"]!, variables["--accent"]!),
-    ).toBeGreaterThanOrEqual(4.5);
   });
 
   it.each([
