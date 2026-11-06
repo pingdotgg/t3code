@@ -1,5 +1,5 @@
 import * as Dialog from "../../../components/ui/Dialog";
-import { SheetHeader } from "../../../components/ui/SheetHeader";
+import { cn } from "../../../lib/cn";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -24,10 +24,8 @@ import { AppBar } from "../../../components/ui/AppBar";
 import { ListRow } from "../../../components/ui/ListRow";
 import { ListSection } from "../../../components/ui/ListSection";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
-import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { InspectorSheetContext } from "../../layout/workspace-inspector-sheet";
 import { AppText as Text } from "../../../components/ui/AppText";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -62,7 +60,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 }
 
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
@@ -235,7 +232,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       nestedScrollEnabled
       alwaysBounceVertical
       className="flex-1 android:bg-sheet-solid ios:bg-screen"
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      contentInsetAdjustmentBehavior="automatic"
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
       contentContainerStyle={{
@@ -244,9 +241,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
-        Platform.OS === "ios" || isInspector ? (
-          <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
-        ) : undefined
+        <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
       }
     >
       <ListSection>
@@ -348,47 +343,19 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     onPress: () => void handleRefresh(),
   };
 
-  if (isInspector) {
-    return (
-      <View collapsable={false} className="flex-1 ios:bg-screen android:bg-header">
-        <AppBar title={currentBranchLabel} subtitle={currentStatusSummary} refresh={refresh} />
-        <ScreenContent insetHorizontal>{content}</ScreenContent>
-      </View>
-    );
-  }
-
-  if (Platform.OS === "ios") {
-    return (
-      <View collapsable={false} className="flex-1 bg-sheet">
-        <SheetHeader
-          presentation="native"
-          title={currentBranchLabel}
-          subtitle={currentStatusSummary}
-          onClose={() => navigation.goBack()}
-        />
-        {content}
-      </View>
-    );
-  }
-
   return (
     <View
       collapsable={false}
-      className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-sheet"}
+      className={cn("flex-1 android:bg-header", isInspector ? "ios:bg-screen" : "ios:bg-sheet")}
     >
-      <NativeStackScreenOptions
-        options={{ sheetCornerRadius: Platform.OS === "android" ? 28 : undefined }}
-      />
       <AppBar
-        sheet
         title={currentBranchLabel}
-        hideBottomBorder={Platform.OS === "android"}
         subtitle={currentStatusSummary}
-        onBack={() => navigation.goBack()}
+        hideBottomBorder={!isInspector}
+        onClose={isInspector ? undefined : () => navigation.goBack()}
         refresh={refresh}
       />
-
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+      <ScreenContent insetHorizontal={isInspector ? true : undefined}>{content}</ScreenContent>
     </View>
   );
 }
