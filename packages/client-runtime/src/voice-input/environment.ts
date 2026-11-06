@@ -1,8 +1,12 @@
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { SPEECH_STREAM_PATH } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
+  CloudSpeechModelId,
+  CloudSpeechProvider,
+  SettingsSecretValue,
   SpeechAcceleration,
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
@@ -17,8 +21,10 @@ import {
   makeEnvironmentHttpApiUrlBuilder,
 } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
+import { VoiceTranscriptionError } from "./transcription.ts";
 
 const INFERENCE_OR_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
+const isCloudSpeechError = Schema.is(CloudSpeechError);
 type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
   ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
 >;
@@ -64,6 +70,94 @@ export const getEnvironmentSpeechStatus = (prepared: PreparedConnection) =>
     path: (urls) => urls.status(),
     run: ({ client, headers }) => client.status({ headers }),
   });
+
+export const getCloudSpeechKeys = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.cloudKeys(),
+    run: ({ client, headers }) => client.cloudKeys({ headers }),
+  });
+
+export const getCloudSpeechModels = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.cloudModels(),
+    run: ({ client, headers }) => client.cloudModels({ headers }),
+  });
+
+export const requireCloudSpeechKey = (
+  prepared: PreparedConnection,
+  provider: CloudSpeechProvider,
+) =>
+  getCloudSpeechKeys(prepared).pipe(
+    Effect.flatMap((keys) =>
+      keys[provider]
+        ? Effect.void
+        : Effect.fail(
+            new VoiceTranscriptionError({
+              code: "unavailable",
+              message: new CloudSpeechError({ provider, reason: "missing-key" }).message,
+            }),
+          ),
+    ),
+  );
+
+export const setCloudSpeechKey = (
+  prepared: PreparedConnection,
+  provider: CloudSpeechProvider,
+  key: SettingsSecretValue | null,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.setCloudKey({ params: { provider } }),
+    run: ({ client, headers }) =>
+      client.setCloudKey({
+        headers,
+        params: { provider },
+        payload: { key: typeof key === "string" ? Redacted.make(key) : key },
+      }),
+  });
+
+export const transcribeCloudPcm = (
+  prepared: PreparedConnection,
+  provider: CloudSpeechProvider,
+  pcm: Uint8Array,
+  options: SpeechTranscriptionOptions,
+  canSend: () => boolean,
+  model?: CloudSpeechModelId,
+) => {
+  const query = model === undefined ? {} : { model };
+  return request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    canSend,
+    timeoutMs: 130_000,
+    path: (urls) => urls.transcribeCloud({ params: { provider }, query }),
+    run: ({ client, headers }) =>
+      client.transcribeCloud({
+        headers,
+        params: { provider },
+        query,
+        payload: encodeSpeechPcmRequest(pcm, options),
+      }),
+  }).pipe(
+    Effect.mapError((error) =>
+      error._tag === "RemoteEnvironmentAuthFetchError" && isCloudSpeechError(error.cause)
+        ? new VoiceTranscriptionError({
+            code: "transcription-failed",
+            message: error.cause.message,
+          })
+        : error,
+    ),
+  );
+};
 
 export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
   let endpoint = prepared.httpBaseUrl;

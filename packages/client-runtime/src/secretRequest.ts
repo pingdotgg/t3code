@@ -95,6 +95,12 @@ export function secretRequestSources(
   providers: ServerSettings["secretProviders"],
 ): ReadonlyArray<SecretRequestSource> {
   if (config?.secretRequestReferences !== true) return NO_SOURCES;
+  return configuredSecretSources(providers);
+}
+
+export function configuredSecretSources(
+  providers: ServerSettings["secretProviders"],
+): ReadonlyArray<SecretRequestSource> {
   return (Object.keys(providers) as Array<SecretProviderId>).flatMap((id) => {
     const provider = providers[id];
     const definition =
