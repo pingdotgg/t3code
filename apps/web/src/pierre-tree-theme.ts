@@ -3,6 +3,8 @@ import type { CSSProperties } from "react";
 export const PIERRE_TREE_UNSAFE_CSS = `
   :host {
     --trees-bg-override: transparent;
+    --trees-fg-muted-override: var(--contrast-muted-foreground);
+    --trees-status-ignored-override: var(--contrast-muted-foreground);
     --trees-selected-bg-override: color-mix(in srgb, currentColor 12%, transparent);
     --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
     --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
