@@ -174,10 +174,10 @@ function channelSwitchBlockReason(
     : null;
 }
 
-/** This app's reinstall restarts every server it hosts, so each of their databases must allow the
- * switch. `backendCount` is the desktop's own inventory: a backend still starting has no client
- * entry yet. A cached config can outlive its connection, so only a connected server's head counts.
- * An app that hosts nothing, such as one with Local environment off, restarts no database. */
+/** This app's reinstall restarts every server it hosts, so each of their databases must allow it.
+ * `backendCount` is the desktop's inventory, which omits the primary backend during a preflight
+ * retry; with Local environment on, empty lists still mean an unchecked server. Only a connected
+ * server's head counts, since a cached config can outlive its connection. */
 export function localSwitchBlockReason(
   appVersion: string,
   release: ChannelSwitchRelease,
@@ -186,9 +186,13 @@ export function localSwitchBlockReason(
     readonly databaseMigration: number | undefined;
   }>,
   backendCount: number,
+  localEnvironmentEnabled: boolean,
 ): string | null {
   if (!crossesTrack(appVersion, release)) return null;
-  if (hosted.length < backendCount || hosted.some((server) => !server.connected)) {
+  if (
+    hosted.length < Math.max(backendCount, localEnvironmentEnabled ? 1 : 0) ||
+    hosted.some((server) => !server.connected)
+  ) {
     return "its server is not connected, so its database cannot be checked";
   }
   return (
