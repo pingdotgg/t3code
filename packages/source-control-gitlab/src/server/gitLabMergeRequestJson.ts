@@ -1403,14 +1403,19 @@ export function decodeLabelPermissionJson(raw: string): Result.Result<boolean, D
 
 /**
  * GitLab lets whoever can push to a fork's branch allow maintainer pushes, but once allowed the
- * target's maintainers can push too, so only the author may change it, as on GitHub.
+ * target's maintainers can push too, so only the author may change it, as on GitHub. GitLab
+ * drops the setting unless the source branch is unprotected and neither project is private
+ * (`MergeRequest#collaborative_push_possible?`).
  */
 export const MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
   currentUser { username }
   project(fullPath: $fullPath) {
+    visibility
     mergeRequest(iid: $iid) {
       author { username }
       userPermissions { pushToSourceBranch }
+      sourceBranchProtected
+      sourceProject { visibility }
     }
   }
 }`;
@@ -1421,10 +1426,15 @@ const decodeMaintainerEditsPermission = decodeJsonResult(
       currentUser: Schema.NullOr(Schema.Struct({ username: Schema.String })),
       project: Schema.NullOr(
         Schema.Struct({
+          visibility: Schema.NullOr(Schema.String),
           mergeRequest: Schema.NullOr(
             Schema.Struct({
               author: Schema.NullOr(Schema.Struct({ username: Schema.String })),
               userPermissions: Schema.Struct({ pushToSourceBranch: Schema.Boolean }),
+              sourceBranchProtected: Schema.Boolean,
+              sourceProject: Schema.NullOr(
+                Schema.Struct({ visibility: Schema.NullOr(Schema.String) }),
+              ),
             }),
           ),
         }),
@@ -1440,10 +1450,15 @@ export function decodeMaintainerEditsPermissionJson(
   if (Result.isFailure(decoded)) return Result.fail(decoded.failure);
   const { currentUser, project } = decoded.success.data;
   const mergeRequest = project?.mergeRequest;
+  const isPublicOrInternal = (visibility: string | null | undefined) =>
+    visibility === "public" || visibility === "internal";
   return Result.succeed(
     currentUser !== null &&
       mergeRequest?.author?.username === currentUser.username &&
-      mergeRequest.userPermissions.pushToSourceBranch,
+      mergeRequest.userPermissions.pushToSourceBranch &&
+      !mergeRequest.sourceBranchProtected &&
+      isPublicOrInternal(project?.visibility) &&
+      isPublicOrInternal(mergeRequest.sourceProject?.visibility),
   );
 }
 

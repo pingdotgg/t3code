@@ -1581,55 +1581,92 @@ layer("GitLabPullRequestCli.layer", (it) => {
   );
 
   it.effect.each([
-    ["the author who can push to the fork", "bilal", true, true, true],
-    ["the author who turned them off", "bilal", true, false, true],
-    ["a target maintainer the fork lets push", "octocat", true, true, false],
-    ["the author without push access", "bilal", false, true, false],
-    ["a viewer on a host that rejects the permission read", "bilal", null, true, false],
-  ] as const)(
-    "reads a fork's maintainer edits and lets %s change them",
-    ([, viewer, pushToSourceBranch, allowCollaboration, allowed]) =>
-      Effect.gen(function* () {
-        mockedExecute.mockImplementation(({ args }) =>
-          Effect.succeed(
-            output(
-              args[1] === "graphql"
-                ? JSON.stringify(
-                    pushToSourceBranch === null
-                      ? { errors: [{ message: "Field 'pushToSourceBranch' doesn't exist" }] }
-                      : {
-                          data: {
-                            currentUser: { username: viewer },
-                            project: {
-                              mergeRequest: {
-                                author: { username: "bilal" },
-                                userPermissions: { pushToSourceBranch },
+    { viewer: "the author who can push to the fork", username: "bilal", allowed: true },
+    {
+      viewer: "the author who turned them off",
+      username: "bilal",
+      allowCollaboration: false,
+      allowed: true,
+    },
+    { viewer: "a target maintainer the fork lets push", username: "octocat", allowed: false },
+    {
+      viewer: "the author without push access",
+      username: "bilal",
+      pushToSourceBranch: false,
+      allowed: false,
+    },
+    {
+      viewer: "a viewer on a host that rejects the permission read",
+      username: "bilal",
+      rejected: true,
+      allowed: false,
+    },
+    {
+      viewer: "the author of a protected source branch",
+      username: "bilal",
+      sourceBranchProtected: true,
+      allowed: false,
+    },
+    {
+      viewer: "the author of a private fork",
+      username: "bilal",
+      sourceVisibility: "private",
+      allowed: false,
+    },
+    {
+      viewer: "the author targeting a private project",
+      username: "bilal",
+      targetVisibility: "private",
+      allowed: false,
+    },
+  ])("reads a fork's maintainer edits and lets $viewer change them", (row) =>
+    Effect.gen(function* () {
+      const allowCollaboration = row.allowCollaboration ?? true;
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify(
+                  row.rejected === true
+                    ? { errors: [{ message: "Field 'pushToSourceBranch' doesn't exist" }] }
+                    : {
+                        data: {
+                          currentUser: { username: row.username },
+                          project: {
+                            visibility: row.targetVisibility ?? "public",
+                            mergeRequest: {
+                              author: { username: "bilal" },
+                              userPermissions: {
+                                pushToSourceBranch: row.pushToSourceBranch ?? true,
                               },
+                              sourceBranchProtected: row.sourceBranchProtected ?? false,
+                              sourceProject: { visibility: row.sourceVisibility ?? "public" },
                             },
                           },
                         },
-                  )
-                : mergeRequestJson({
-                    author,
-                    source_project_id: 40,
-                    target_project_id: 12,
-                    allow_collaboration: allowCollaboration,
-                  }),
-            ),
+                      },
+                )
+              : mergeRequestJson({
+                  author,
+                  source_project_id: 40,
+                  target_project_id: 12,
+                  allow_collaboration: allowCollaboration,
+                }),
           ),
-        );
-        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-        const detail = yield* cli.getMergeRequestDetail({
-          cwd: "/w",
-          repository: "acme/web",
-          number: 7,
-          downstreamChecks: false,
-        });
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+      });
 
-        expect(detail.maintainerCanModify).toBe(allowCollaboration);
-        expect(detail.viewerCanEditMaintainerEdits).toBe(allowed);
-      }),
+      expect(detail.maintainerCanModify).toBe(allowCollaboration);
+      expect(detail.viewerCanEditMaintainerEdits).toBe(row.allowed);
+    }),
   );
 
   it.effect("skips a fork's maintainer edits permission read when the caller opts out", () =>
