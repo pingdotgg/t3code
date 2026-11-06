@@ -225,7 +225,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
       threadId === undefined
         ? Effect.sync(() => {
             catchUp.activitySnapshotReads += 1;
-            return { snapshotSequence: 1, threads: options.catchUpThreads ?? (options.backfillThread ? [options.backfillThread] : []) };
+            return {
+              snapshotSequence: 1,
+              threads:
+                options.catchUpThreads ?? (options.backfillThread ? [options.backfillThread] : []),
+            };
           })
         : Effect.sync(() => shellReads.push(threadId)).pipe(
             Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),

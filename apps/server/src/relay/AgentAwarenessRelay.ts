@@ -438,7 +438,7 @@ export const make = Effect.gen(function* () {
   const snoozeWakeups = new Map<ThreadId, { deadline: number; timer: Fiber.Fiber<void> }>();
   let enqueueSnoozeWakeup: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const scheduleSnoozeWakeup = Effect.fn("AgentAwarenessRelay.scheduleSnoozeWakeup")(function* (
-    thread: OrchestrationV2ThreadShell,
+    thread: AgentAwarenessThread,
     nowMs: number,
   ) {
     const deadline = thread.snoozedUntil?.epochMilliseconds;
