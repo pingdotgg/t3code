@@ -906,12 +906,7 @@ function WorkingWindowView({
   const windowRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const [collapseClips, setCollapseClips] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the expanded height before the collapse transition paints its first frame
-  useLayoutEffect(() => {
-    if (open) return;
-    setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
-  }, [open]);
-  const { onWorkingHistoryCollapsing, listRef } = ctx;
+  const { listRef } = ctx;
   const collapsing = !open && history !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the list applies shrinks a frame late, so the collapse reports each frame's row size itself
   useLayoutEffect(() => {
@@ -922,6 +917,12 @@ function WorkingWindowView({
     report();
     return observeResize(row, report);
   }, [collapsing, itemKey, listRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the expanded height before the collapse transition paints its first frame
+  useLayoutEffect(() => {
+    if (open) return;
+    setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
+  }, [open]);
+  const { onWorkingHistoryCollapsing } = ctx;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted, and the timeline stops following its end, until the collapse transition finishes
   useEffect(() => {
     if (open || history === null) return;
