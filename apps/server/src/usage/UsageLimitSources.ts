@@ -99,9 +99,14 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
+      const refreshAfter = DateTime.toEpochMillis(yield* DateTime.now) + 5 * 60_000;
       const retained = (lastGoodSources.get(accountKey) ?? []).map((account) => ({
         ...account,
-        usageLimits: { ...account.usageLimits, stale: true },
+        usageLimits: {
+          ...account.usageLimits,
+          stale: true,
+          refreshAfter: Math.max(refreshAfter, account.usageLimits.refreshAfter ?? 0),
+        },
       }));
       lastGoodSources.set(accountKey, retained);
       return { ...base, accounts: retained, error: accounts.failure.detail };

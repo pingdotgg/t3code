@@ -216,7 +216,7 @@ it.effect.each(["listing", "quota", "changed-account"] as const)(
         expect(failed.accounts).toEqual(
           prior.accounts.map((account) => ({
             ...account,
-            usageLimits: { ...account.usageLimits, stale: true },
+            usageLimits: { ...account.usageLimits, stale: true, refreshAfter: 600_000 },
           })),
         );
       if (failure === "quota")
