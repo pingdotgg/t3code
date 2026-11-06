@@ -364,6 +364,7 @@ export function AddEnvironmentDialog({
         )}
         disabled={isAddingSavedBackend}
         onClick={() => {
+          if (input.mode !== savedBackendMode) onErrorChange(null);
           setSavedBackendMode(input.mode);
         }}
       >
