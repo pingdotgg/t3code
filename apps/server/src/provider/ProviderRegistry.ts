@@ -70,8 +70,9 @@ export class ProviderRegistry extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /**
-     * Rebuilds and re-checks enabled instances not yet found installed, after the host environment
-     * changed. Drivers copy the environment when built, so only a rebuild sees a later PATH.
+     * Rebuilds and re-checks enabled instances not yet found installed, plus failed Codex checks,
+     * after the host environment changed. Drivers copy the environment when built, so only a rebuild
+     * sees a later PATH.
      */
     readonly rebuildMissingAndRefresh: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
@@ -698,7 +699,9 @@ export const layer = Layer.effect(
       return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
     });
 
-    // Instances that found their CLI keep running; restarting them could end live sessions.
+    // Instances whose check passed keep running; restarting them could end live sessions. A failed
+    // Codex check is rebuilt too: its npm launcher spawns on the bare PATH but cannot find node.
+    // Other drivers report auth and network failures as "error", and a rebuild would close sessions.
     const rebuildMissingAndRefresh = Effect.fn("rebuildMissingAndRefresh")(function* () {
       const instances = yield* instanceRegistry.listInstances;
       yield* refresh();
@@ -712,7 +715,11 @@ export const layer = Layer.effect(
           )
             return false;
           const snapshot = yield* instance.snapshot.getSnapshot;
-          return !snapshot.installed;
+          return (
+            !snapshot.installed ||
+            (instance.driverKind === ProviderDriverKind.make("codex") &&
+              snapshot.status === "error")
+          );
         }),
       );
       if (missing.length === 0) return yield* Ref.get(providersRef);

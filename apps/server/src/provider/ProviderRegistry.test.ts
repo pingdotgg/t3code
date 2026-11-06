@@ -1161,163 +1161,171 @@ it.layer(
       );
     });
 
-    it.effect.each(["replay", "in-flight missing", "in-flight installed"] as const)(
-      "recovers a copied driver environment after late PATH (%s)",
-      (mode) =>
-        Effect.gen(function* () {
-          const host = { PATH: "/early/bin", T3CODE_CODEX_LAUNCH_ARGS: "hidden" };
-          const environment = providerHostEnvironment(
-            { organization: "PATH test", lockedSettings: [] },
-            host,
-          );
-          const updates = yield* DesktopTelemetryReceiver.makeDesktopShellEnvironmentUpdates(
-            host,
-            "linux",
-          );
-          const entered = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
-          const finished = yield* Deferred.make<void>();
-          const paths: Array<string | undefined> = [];
-          let first = true;
-          const driverKind = ProviderDriverKind.make("pi");
-          const instanceId = ProviderInstanceId.make("late-path");
-          const driver: AnyProviderDriver = {
-            driverKind,
-            metadata: { displayName: "PATH fixture" },
-            configSchema: Schema.Unknown,
-            defaultConfig: () => ({}),
-            create: (input) =>
-              Effect.gen(function* () {
-                const copied = { ...environment };
-                paths.push(copied.PATH);
-                const installed =
-                  mode === "in-flight installed" || copied.PATH?.includes("/late/bin") === true;
-                const snapshot: ServerProvider = {
-                  instanceId,
-                  driver: driverKind,
-                  enabled: true,
-                  installed: false,
-                  status: "warning",
-                  auth: { status: "unknown" },
-                  version: null,
-                  checkedAt: "2026-10-03T00:00:00.000Z",
-                  models: [],
-                  slashCommands: [],
-                  skills: [],
-                };
-                const current = yield* Ref.make(snapshot);
-                return {
-                  instanceId: input.instanceId,
-                  driverKind,
-                  enabled: true,
-                  displayName: undefined,
-                  continuationIdentity: { driverKind, continuationKey: "pi:late-path" },
-                  snapshot: {
-                    resolveMaintenance: () =>
-                      Effect.succeed(
-                        makeManualOnlyProviderMaintenanceCapabilities({
-                          provider: driverKind,
-                          packageName: null,
-                        }),
-                      ),
-                    getSnapshot: Ref.get(current),
-                    refresh: Effect.gen(function* () {
-                      if (first && mode !== "replay") {
-                        first = false;
-                        yield* Deferred.succeed(entered, undefined);
-                        yield* Deferred.await(release);
-                      }
-                      const checked = {
-                        ...snapshot,
-                        installed,
-                        status: installed ? ("ready" as const) : ("error" as const),
-                      };
-                      yield* Ref.set(current, checked);
-                      return checked;
-                    }),
-                    streamChanges: Stream.empty,
-                    applyUsageLimits: () => Effect.void,
-                  },
-                  orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-                  textGeneration: {} as ProviderInstance["textGeneration"],
-                } satisfies ProviderInstance;
-              }),
-          };
-          const built = yield* ProviderInstanceRegistry.makeProviderInstanceRegistry({
-            drivers: [driver],
-            configMap: { [instanceId]: { driver: driverKind, enabled: true } },
-          }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({})));
-          yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry.ProviderRegistry;
-            const running =
-              mode === "replay" ? undefined : yield* registry.refresh().pipe(Effect.forkScoped);
-            if (running) yield* Deferred.await(entered);
-            yield* updates.apply({
-              version: 1,
-              type: "shellEnvironment",
-              platform: "linux",
-              discovered: true,
-              environment: { PATH: "/early/bin:/late/bin" },
-            });
-            expect(paths).toEqual(["/early/bin"]);
-            if (mode === "replay") {
-              yield* Layer.build(
-                ProviderHostPathWatcher.layer.pipe(
-                  Layer.provide(
-                    DesktopTelemetryReceiver.layerTest({ pathChanges: updates.pathChanges }),
-                  ),
-                  Layer.provide(
-                    Layer.succeed(ProviderRegistry.ProviderRegistry, {
-                      ...registry,
-                      rebuildMissingAndRefresh: registry.rebuildMissingAndRefresh.pipe(
-                        Effect.tap(() => Deferred.succeed(finished, undefined)),
-                      ),
-                    }),
-                  ),
+    it.effect.each([
+      "replay",
+      "in-flight missing",
+      "in-flight installed",
+      "launcher",
+      "other error",
+    ] as const)("recovers a copied driver environment after late PATH (%s)", (mode) =>
+      Effect.gen(function* () {
+        // "launcher": the Codex CLI is found on the early PATH, but its check fails until the
+        // late PATH brings the node its npm launcher runs. "other error" is the same failure on a
+        // driver whose errors may be auth or network, so it must not be rebuilt.
+        const failsEarly = mode === "launcher" || mode === "other error";
+        const replay = mode === "replay" || failsEarly;
+        const host = { PATH: "/early/bin", T3CODE_CODEX_LAUNCH_ARGS: "hidden" };
+        const environment = providerHostEnvironment(
+          { organization: "PATH test", lockedSettings: [] },
+          host,
+        );
+        const updates = yield* DesktopTelemetryReceiver.makeDesktopShellEnvironmentUpdates(
+          host,
+          "linux",
+        );
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const finished = yield* Deferred.make<void>();
+        const paths: Array<string | undefined> = [];
+        let first = true;
+        const driverKind = ProviderDriverKind.make(mode === "launcher" ? "codex" : "pi");
+        const instanceId = ProviderInstanceId.make("late-path");
+        const driver: AnyProviderDriver = {
+          driverKind,
+          metadata: { displayName: "PATH fixture" },
+          configSchema: Schema.Unknown,
+          defaultConfig: () => ({}),
+          create: (input) =>
+            Effect.gen(function* () {
+              const copied = { ...environment };
+              paths.push(copied.PATH);
+              const late = copied.PATH?.includes("/late/bin") === true;
+              const installed = mode === "in-flight installed" || failsEarly || late;
+              const ready = failsEarly ? late : installed;
+              const snapshot: ServerProvider = {
+                instanceId,
+                driver: driverKind,
+                enabled: true,
+                installed: false,
+                status: "warning",
+                auth: { status: "unknown" },
+                version: null,
+                checkedAt: "2026-10-03T00:00:00.000Z",
+                models: [],
+                slashCommands: [],
+                skills: [],
+              };
+              const current = yield* Ref.make(snapshot);
+              return {
+                instanceId: input.instanceId,
+                driverKind,
+                enabled: true,
+                displayName: undefined,
+                continuationIdentity: { driverKind, continuationKey: `${driverKind}:late-path` },
+                snapshot: {
+                  resolveMaintenance: () =>
+                    Effect.succeed(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: driverKind,
+                        packageName: null,
+                      }),
+                    ),
+                  getSnapshot: Ref.get(current),
+                  refresh: Effect.gen(function* () {
+                    if (first && !replay) {
+                      first = false;
+                      yield* Deferred.succeed(entered, undefined);
+                      yield* Deferred.await(release);
+                    }
+                    const checked = {
+                      ...snapshot,
+                      installed,
+                      status: ready ? ("ready" as const) : ("error" as const),
+                    };
+                    yield* Ref.set(current, checked);
+                    return checked;
+                  }),
+                  streamChanges: Stream.empty,
+                  applyUsageLimits: () => Effect.void,
+                },
+                orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              } satisfies ProviderInstance;
+            }),
+        };
+        const built = yield* ProviderInstanceRegistry.makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: { driver: driverKind, enabled: true } },
+        }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({})));
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const running = replay ? undefined : yield* registry.refresh().pipe(Effect.forkScoped);
+          if (running) yield* Deferred.await(entered);
+          yield* updates.apply({
+            version: 1,
+            type: "shellEnvironment",
+            platform: "linux",
+            discovered: true,
+            environment: { PATH: "/early/bin:/late/bin" },
+          });
+          expect(paths).toEqual(["/early/bin"]);
+          if (replay) {
+            yield* Layer.build(
+              ProviderHostPathWatcher.layer.pipe(
+                Layer.provide(
+                  DesktopTelemetryReceiver.layerTest({ pathChanges: updates.pathChanges }),
                 ),
-              );
-            } else {
-              yield* registry.rebuildMissingAndRefresh.pipe(
-                Effect.tap(() => Deferred.succeed(finished, undefined)),
-                Effect.forkScoped({ startImmediately: true }),
-              );
-              expect(paths).toEqual(["/early/bin"]);
-            }
-            yield* Deferred.succeed(release, undefined);
-            if (running) yield* Fiber.join(running);
-            yield* Deferred.await(finished);
-            expect(
-              (yield* registry.getProviders).find((row) => row.instanceId === instanceId)
-                ?.installed,
-            ).toBe(true);
-            expect(paths).toEqual(
-              mode === "in-flight installed"
-                ? ["/early/bin"]
-                : ["/early/bin", "/early/bin:/late/bin"],
+                Layer.provide(
+                  Layer.succeed(ProviderRegistry.ProviderRegistry, {
+                    ...registry,
+                    rebuildMissingAndRefresh: registry.rebuildMissingAndRefresh.pipe(
+                      Effect.tap(() => Deferred.succeed(finished, undefined)),
+                    ),
+                  }),
+                ),
+              ),
             );
-          }).pipe(
-            Effect.provide(
-              ProviderRegistry.layer.pipe(
-                Layer.provide(
-                  Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, built.registry),
-                ),
-                Layer.provide(
-                  Layer.succeed(
-                    ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-                    built.mutator,
-                  ),
+          } else {
+            yield* registry.rebuildMissingAndRefresh.pipe(
+              Effect.tap(() => Deferred.succeed(finished, undefined)),
+              Effect.forkScoped({ startImmediately: true }),
+            );
+            expect(paths).toEqual(["/early/bin"]);
+          }
+          yield* Deferred.succeed(release, undefined);
+          if (running) yield* Fiber.join(running);
+          yield* Deferred.await(finished);
+          expect(
+            (yield* registry.getProviders).find((row) => row.instanceId === instanceId)?.installed,
+          ).toBe(true);
+          expect(paths).toEqual(
+            mode === "in-flight installed" || mode === "other error"
+              ? ["/early/bin"]
+              : ["/early/bin", "/early/bin:/late/bin"],
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, built.registry),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                  built.mutator,
                 ),
               ),
             ),
-          );
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-late-path-" }).pipe(
-              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-            ),
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-late-path-" }).pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),
+      ),
     );
 
     describe("Codex model inventories", () => {
