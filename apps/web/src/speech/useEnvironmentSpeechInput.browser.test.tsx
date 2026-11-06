@@ -88,7 +88,7 @@ vi.mock("../hooks/useSettings", () => ({
       ),
     }),
 }));
-vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
+vi.mock("./runEnvironmentSpeech", () => ({ runEnvironmentSpeech: Effect.runPromise }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
