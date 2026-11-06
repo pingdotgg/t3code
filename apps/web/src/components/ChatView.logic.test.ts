@@ -4,6 +4,7 @@ import {
   mergeDirectPreviewAnnotation,
   planComposerTurn,
   restorePlanFollowUpComposer,
+  sideChatFirstMessage,
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
@@ -13,6 +14,7 @@ import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import { terminalContextReference } from "../lib/composerContextRecords";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
   EnvironmentId,
@@ -1217,6 +1219,76 @@ describe("boundAttachmentIds", () => {
     expect(
       boundAttachmentIds([{ id: "upload-1" }, {}], [{ id: "local-1" }, { id: "local-2" }]),
     ).toEqual(["upload-1", "local-2"]);
+  });
+});
+
+describe("sideChatFirstMessage", () => {
+  const image = {
+    type: "image" as const,
+    id: "local-image",
+    name: "screenshot.png",
+    mimeType: "image/png",
+    sizeBytes: 4,
+    previewUrl: "blob:screenshot",
+    file: new File(["png!"], "screenshot.png", { type: "image/png" }),
+  };
+  const file = {
+    type: "file" as const,
+    id: "local-file",
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 5,
+    file: null,
+  };
+  const uploaded = [
+    {
+      type: "image" as const,
+      id: "upload-image",
+      name: image.name,
+      mimeType: "image/png",
+      sizeBytes: 4,
+    },
+    {
+      type: "file" as const,
+      id: "upload-file",
+      name: file.name,
+      mimeType: "text/plain",
+      sizeBytes: 5,
+    },
+  ];
+
+  it("sends the attachments with context bound to their upload ids", () => {
+    const message = sideChatFirstMessage({
+      prompt: " what is this? ",
+      attachments: [image, file],
+      turnAttachments: uploaded,
+    });
+    expect(message?.text).toBe("what is this?");
+    expect(message?.attachments).toEqual(uploaded);
+    expect(message?.titleSeed).toBe("what is this?");
+    expect(message?.context?.records).toMatchObject([
+      { kind: "image", attachmentId: "upload-image" },
+      { kind: "file", attachmentId: "upload-file" },
+    ]);
+  });
+
+  it("sends attachments without text as an attachment-only message", () => {
+    const message = sideChatFirstMessage({
+      prompt: "",
+      attachments: [image],
+      turnAttachments: uploaded.slice(0, 1),
+    });
+    expect(message?.text).toBe(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+    expect(message?.titleSeed).toBe("Attached image");
+  });
+
+  it("sends plain text alone, and nothing for a bare /side", () => {
+    expect(sideChatFirstMessage({ prompt: "why?", attachments: [], turnAttachments: [] })).toEqual({
+      text: "why?",
+      attachments: [],
+      titleSeed: "why?",
+    });
+    expect(sideChatFirstMessage({ prompt: " ", attachments: [], turnAttachments: [] })).toBeNull();
   });
 });
 

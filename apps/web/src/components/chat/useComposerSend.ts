@@ -6,6 +6,8 @@ import {
   shouldDockDraftHeroForSubmission,
   restorePlanFollowUpComposer,
   buildExpiredTerminalContextToastCopy,
+  sideChatFirstMessage,
+  type SideChatFirstMessage,
   deriveComposerSendState,
   boundAttachmentIds,
   formatOutgoingPrompt,
@@ -244,8 +246,8 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
-  /** Resolves true once the side chat started and got the prompt. */
-  readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
+  /** Resolves true once the side chat started and got the message. */
+  readonly onSideChat?: ((message: SideChatFirstMessage | null) => Promise<boolean>) | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -363,6 +365,9 @@ export function useComposerSend(input: ComposerSendInput) {
     (store) => store.setEnvironmentContexts,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const clearComposerPromptAndImages = useComposerDraftStore(
+    (store) => store.clearComposerPromptAndImages,
+  );
   const sendToMultipleModels = useMultipleModelSend({
     environmentId,
     routeThreadKey,
@@ -405,6 +410,45 @@ export function useComposerSend(input: ComposerSendInput) {
     pendingApprovalsRef.current = pendingApprovals;
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
+
+  // Side chats need the server's config, so their attachments always upload.
+  const uploadSideChatAttachments = async (
+    threadId: ThreadId,
+    attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
+  ) => {
+    const fileBlockReason = () => {
+      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+      return fileAttachmentCapabilityBlockReason({
+        files: attachments.filter((attachment) => attachment.type === "file"),
+        attachmentUploadsCapabilityKnown: config !== null,
+        supportsAttachmentUploads: config !== null,
+        maxFileAttachmentBytes:
+          config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
+      });
+    };
+    const blockedBeforeUpload = fileBlockReason();
+    if (blockedBeforeUpload !== null) {
+      setThreadError(threadId, blockedBeforeUpload);
+      return null;
+    }
+    for (const attachment of attachments) {
+      const upload =
+        readAttachmentUpload(attachment.id)?.status === "failed"
+          ? retryAttachmentUpload
+          : startAttachmentUpload;
+      upload({ environmentId, image: attachment, draftTarget: composerDraftTarget });
+    }
+    await awaitAttachmentUploads(attachments.map((attachment) => attachment.id));
+    const blockedAfterUpload = fileBlockReason();
+    if (blockedAfterUpload !== null) {
+      setThreadError(threadId, blockedAfterUpload);
+      return null;
+    }
+    const uploaded = getUploadedAttachments({ environmentId, images: attachments });
+    if (uploaded === null)
+      setThreadError(threadId, "Retry or remove failed uploads before sending.");
+    return uploaded;
+  };
 
   const onSend = async (
     e?: { preventDefault: () => void },
@@ -507,8 +551,6 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
       if (
-        sendCtx.images.length > 0 ||
-        sendCtx.files.length > 0 ||
         filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
         sendCtx.previewAnnotations.length > 0 ||
         sendCtx.reviewComments.length > 0 ||
@@ -518,22 +560,36 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: "Side chats take text only",
-            description: "Remove the attachments and context, then send it again.",
+            title: "Side chats take text and attachments only",
+            description: "Remove the added context, then send it again.",
           }),
         );
         return;
       }
-      const started = await onSideChat(sideChatCommand.prompt);
-      // Clear only what was sent; the user may have edited the draft or left meanwhile.
-      if (
-        started &&
-        currentRouteThreadKeyRef.current === routeThreadKey &&
-        promptRef.current === promptAtSend
-      ) {
-        promptRef.current = "";
-        setComposerDraftPrompt(composerDraftTarget, "");
-        composerRef.current?.resetCursorState();
+      const attachments = [...sendCtx.images, ...sendCtx.files];
+      sendInFlightRef.current = true;
+      try {
+        const turnAttachments = await uploadSideChatAttachments(activeThread.id, attachments);
+        if (turnAttachments === null) return;
+        const started = await onSideChat(
+          sideChatFirstMessage({ prompt: sideChatCommand.prompt, attachments, turnAttachments }),
+        );
+        const current = composerRef.current?.getSendContext();
+        // Clear only what was sent; the user may have edited the draft or left meanwhile.
+        if (
+          started &&
+          currentRouteThreadKeyRef.current === routeThreadKey &&
+          promptRef.current === promptAtSend &&
+          composerRef.current?.hasPendingAttachments() !== true &&
+          sameAttachmentIds(current ? [...current.images, ...current.files] : [], attachments)
+        ) {
+          promptRef.current = "";
+          clearComposerPromptAndImages(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+          releaseDraftAttachments(attachments);
+        }
+      } finally {
+        sendInFlightRef.current = false;
       }
       return;
     }
@@ -1532,4 +1588,11 @@ export function useComposerSend(input: ComposerSendInput) {
   };
 
   return { onSend };
+}
+
+function sameAttachmentIds(
+  left: ReadonlyArray<{ readonly id: string }>,
+  right: ReadonlyArray<{ readonly id: string }>,
+) {
+  return left.length === right.length && left.every((item, index) => item.id === right[index]?.id);
 }
