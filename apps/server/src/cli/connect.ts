@@ -610,10 +610,14 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
   if (yield* CliState.dropRevokedCloudLink) {
     yield* Console.log("Replacing the link T3 Connect revoked.");
   }
-  if (publishOnly) {
-    const secrets = yield* ServerSecretStore.ServerSecretStore;
-    yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, stringToBytes("true"));
-  }
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const publishOn = stringToBytes("true");
+  // A managed link defaults publishing on, like desktop onboarding, but keeps an explicit opt-out.
+  yield* publishOnly
+    ? secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, publishOn)
+    : secrets
+        .create(PUBLISH_AGENT_ACTIVITY_SECRET, publishOn)
+        .pipe(Effect.catchIf(ServerSecretStore.isSecretAlreadyExistsError, () => Effect.void));
   return { identity } as const;
 });
 export { linkEnvironmentForConnect };
