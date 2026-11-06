@@ -344,6 +344,7 @@ const cleanupFixture = (
     let deletedThreads: OrchestrationV2ThreadShell[] = [];
     let storedWorktreePaths: string[] = [worktree];
     let projectRoots = [repo];
+    let defaultBranch: string | null = null;
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
@@ -359,6 +360,7 @@ const cleanupFixture = (
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
+        getDefaultBranchOverride: () => Effect.sync(() => defaultBranch),
         execute: (input) =>
           Effect.gen(function* () {
             gitInspections++;
@@ -368,7 +370,9 @@ const cleanupFixture = (
               editBeforeRemoval &&
               (input.args.includes("remove") || input.args.includes("--porcelain"))
             )
-              yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
+              yield* fs
+                .writeFileString(`${worktree}/tracked.txt`, "late edit\n")
+                .pipe(Effect.orDie);
             return yield* git.execute(input);
           }),
         statusDetailsLocal: (...args) => {
@@ -479,6 +483,9 @@ const cleanupFixture = (
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
       repo,
+      setDefaultBranch: (branch: string | null) => {
+        defaultBranch = branch;
+      },
       setTerminals: (terminals: TerminalSummary[]) =>
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
       editBeforeRemoval: () => {
@@ -628,6 +635,24 @@ const submoduleCleanupFixture = () =>
     yield* recordSubmodules();
     return { ...fixture, submodule, child, recordSubmodules };
   });
+
+it.live(
+  "retains worktrees when the configured default branch is missing and resumes after reset",
+  () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, setDefaultBranch } = yield* cleanupFixture();
+        setDefaultBranch("release/missing");
+        expect((yield* service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Configured default branch is unavailable",
+        });
+        expect(yield* fs.exists(worktree)).toBe(true);
+        setDefaultBranch(null);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+);
 
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>
   runCleanupTest(
@@ -2496,22 +2521,28 @@ describe("storage cleanup reports and local file policies", () => {
   );
   it.live.each([
     ["unchanged", "removed", "No commits beyond the project branch"],
+    ["override", "removed", "No commits beyond the project branch"],
     ["unmerged", "kept", "Has commits beyond the project branch"],
     ["detached", "kept", "Project branch is unavailable"],
     ["merged-only", "kept", "No remote is configured for merged-worktree cleanup"],
   ] as const)("cleans archived local-only worktrees: %s", ([state, outcome, reason]) =>
     runCleanupTest(
       Effect.gen(function* () {
-        const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
-          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-          worktreeUnchanged: state !== "merged-only",
-          worktreeOnMerge: true,
-        });
+        const { service, fs, repo, worktree, command, setThreads, setDefaultBranch } =
+          yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeUnchanged: state !== "merged-only",
+            worktreeOnMerge: true,
+          });
         yield* command(repo, ["branch", "-m", "main", "trunk"]);
         setThreads([shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) })]);
-        if (state === "unmerged") {
+        if (state === "unmerged" || state === "override") {
           yield* fs.writeFileString(`${worktree}/tracked.txt`, "unmerged work\n");
           yield* command(worktree, ["commit", "-am", "unmerged work"]);
+        }
+        if (state === "override") {
+          yield* command(repo, ["branch", "release/v2", "feature"]);
+          setDefaultBranch("release/v2");
         }
         if (state === "detached") yield* command(repo, ["checkout", "--detach"]);
 

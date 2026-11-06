@@ -281,6 +281,7 @@ export const VcsStatusStreamEvent = Schema.Union([
 export type VcsStatusStreamEvent = typeof VcsStatusStreamEvent.Type;
 
 export const VcsListRefsResult = Schema.Struct({
+  primaryRemoteName: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   isAtRepositoryRoot: Schema.optional(Schema.Boolean),
   refs: Schema.Array(VcsRef),
   isRepo: Schema.Boolean,

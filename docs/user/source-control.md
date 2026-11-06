@@ -171,6 +171,16 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## Choose a default branch
+
+In **Project settings → Source control**, choose a **Default branch** for new worktrees,
+comparisons, pull request defaults, automatic pull, and worktree cleanup. Explicit branch and
+pull request bases still take precedence. Choose **Automatic** to follow the repository again.
+This does not change your checkout or the repository's default branch on the host.
+
+If the selected branch becomes unavailable, choose another branch or Automatic. T3 keeps the
+selection and pauses operations that need it, including automatic pull and worktree cleanup.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit

@@ -31,6 +31,16 @@ export interface ResolvedProjectSettings<Settings extends ServerSettings = Serve
 
 const EMPTY_OVERRIDES: ProjectSettingsOverrides = {};
 
+export function defaultBranchSettingsKey(settings: ServerSettings): string {
+  return JSON.stringify([
+    settings.defaultBranch ?? null,
+    Object.entries(settings.projectSettingsOverrides ?? {})
+      .filter(([, override]) => override.defaultBranch !== undefined)
+      .map(([id, override]) => [id, override.defaultBranch])
+      .sort(([left], [right]) => String(left).localeCompare(String(right))),
+  ]);
+}
+
 const ENVIRONMENT_SOURCES: ProjectSettingSources = Object.fromEntries(
   PROJECT_SCOPED_SERVER_SETTING_KEYS.map((key) => [key, "environment"]),
 ) as Record<ProjectScopedServerSettingKey, ProjectSettingSource>;

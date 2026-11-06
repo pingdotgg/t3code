@@ -397,6 +397,9 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       remoteName: string,
     ) => Effect.Effect<string | null, GitCommandError>;
+    readonly getDefaultBranchOverride: (
+      cwd: string,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly fetchRemote: (input: GitFetchRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly remoteExists: (input: GitRemoteExistsInput) => Effect.Effect<boolean, GitCommandError>;
     readonly remoteBranchExists: (

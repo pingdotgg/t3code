@@ -51,6 +51,7 @@ import {
   decodeJsonReply,
 } from "@t3tools/provider-core/server/textGenerationOperations";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as DefaultBranchPolicy from "../vcs/DefaultBranchPolicy.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
@@ -597,6 +598,7 @@ function preparePullRequestThread(
 }
 
 function makeManager(input?: {
+  defaultBranchOverride?: string;
   providerScenario?: FakeProviderScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
@@ -674,7 +676,17 @@ function makeManager(input?: {
         ),
       )
     : GitVcsDriver.layer;
-  const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
+  const layerVcsDriver = (
+    watchesGitSpawns || input?.defaultBranchOverride !== undefined
+      ? Layer.fresh(gitVcsDriver)
+      : gitVcsDriver
+  ).pipe(
+    Layer.provide(
+      Layer.succeed(DefaultBranchPolicy.DefaultBranchPolicy, {
+        getOverride: () => Effect.succeed(input?.defaultBranchOverride ?? null),
+        changes: Stream.empty,
+      }),
+    ),
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -3454,53 +3466,61 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("create_pr targets the remote default branch when it is not main", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "origin", "HEAD:master"]);
-      yield* runGit(repoDir, ["fetch", "origin"]);
-      yield* runGit(repoDir, ["remote", "set-head", "origin", "master"]);
+  it.effect.each([false, true])(
+    "create_pr targets the remote default or project override (override: %s)",
+    (override) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "origin", "HEAD:master"]);
+        if (override) yield* runGit(repoDir, ["push", "origin", "HEAD:refs/heads/release/v2"]);
+        yield* runGit(repoDir, ["fetch", "origin"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "master"]);
 
-      yield* runGit(repoDir, ["checkout", "-b", "feature/master-default"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "master-default.txt"), "master default\n");
-      yield* runGit(repoDir, ["add", "master-default.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Master default"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/master-default"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "master-default.txt"), "master default\n");
+        yield* runGit(repoDir, ["add", "master-default.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Master default"]);
 
-      const { manager, providerCalls } = yield* makeManager({
-        providerScenario: {
-          // Mirrors a provider that cannot report a default branch, as the Azure
-          // DevOps CLI does when it cannot detect the repository.
-          defaultBranch: "",
-          prListSequence: [
-            [],
-            [
-              {
-                number: 505,
-                title: "Master default",
-                url: "https://github.com/pingdotgg/codething-mvp/pull/505",
-                baseRefName: "master",
-                headRefName: "feature/master-default",
-              },
+        const { manager, providerCalls } = yield* makeManager({
+          ...(override ? { defaultBranchOverride: "release/v2" } : {}),
+          providerScenario: {
+            // Mirrors a provider that cannot report a default branch, as the Azure
+            // DevOps CLI does when it cannot detect the repository.
+            defaultBranch: override ? "master" : "",
+            prListSequence: [
+              [],
+              [
+                {
+                  number: 505,
+                  title: "Master default",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/505",
+                  baseRefName: "master",
+                  headRefName: "feature/master-default",
+                },
+              ],
             ],
-          ],
-        },
-      });
+          },
+        });
 
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "create_pr",
-      });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
 
-      expect(result.pr.status).toBe("created");
-      expect(
-        created(providerCalls).some(
-          (call) => call.baseRefName === "master" && call.headSelector === "feature/master-default",
-        ),
-      ).toBe(true);
-    }),
+        expect(result.pr.status).toBe("created");
+        expect(
+          created(providerCalls).some(
+            (call) =>
+              call.baseRefName === (override ? "release/v2" : "master") &&
+              call.headSelector === "feature/master-default",
+          ),
+        ).toBe(true);
+        if (override)
+          expect(providerCalls.some((call) => call.operation === "getDefaultBranch")).toBe(false);
+      }),
   );
 
   it.effect("create_pr reports a created PR when the lookup after creation fails", () =>

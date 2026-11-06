@@ -402,6 +402,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   // Drafts only; the reads are shared per-project atoms, and queued rows skip them.
   const projectDefaults = useNewTaskProjectDefaults(isDraft ? props.project : null);
   const draftDefaults = {
+    defaultBranch: projectDefaults.projectSettings.settings.defaultBranch,
     canChooseWorkspace: !projectDefaults.isScratch,
     defaultMode: projectDefaults.defaultWorkspaceMode,
     defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,

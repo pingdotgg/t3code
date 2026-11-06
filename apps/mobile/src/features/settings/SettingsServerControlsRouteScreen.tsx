@@ -32,6 +32,7 @@ import { SourceControlSignInSection } from "./components/SourceControlSignInSect
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useSettingsWriter } from "./useSettingsWriter";
+import { DefaultBranchSettingsRow } from "./SettingsDefaultBranchRouteScreen";
 import {
   managedSettingReason,
   planMobileScopedSettingsClear,
@@ -62,7 +63,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
   ],
-  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
+  "source-control": ["defaultBranch", "defaultAutoPull", "removeAgentCreditsOnMerge"],
   worktrees: [
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
@@ -420,6 +421,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                 </SettingsSection>
                 <SettingsSection title="Default branch">
+                  {projectSelected ? (
+                    <DefaultBranchSettingsRow disabled={disabledFor("defaultBranch")} />
+                  ) : null}
                   <SettingsSwitchRow
                     icon="arrow.down.circle"
                     label="Automatically pull"

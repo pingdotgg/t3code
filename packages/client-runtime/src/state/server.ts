@@ -25,7 +25,9 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { defaultBranchSettingsKey } from "@t3tools/shared/projectSettings";
+import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
 
 import {
   createAtomCommandScheduler,
@@ -405,6 +407,7 @@ function sameCacheValue(previous: unknown, next: unknown): boolean {
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
   function* (subscription: ServerConfigSubscriptionOptions) {
+    const registry = yield* Effect.serviceOption(AtomRegistry.AtomRegistry);
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const cache = yield* Persistence.EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
@@ -491,12 +494,21 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     }).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
-          const next = applyServerConfigProjection(yield* SubscriptionRef.get(state), event);
+          const previous = yield* SubscriptionRef.get(state);
+          const next = applyServerConfigProjection(previous, event);
           if (Option.isNone(next)) {
             return;
           }
           yield* Ref.set(pendingPersistence, Option.some(next.value.config));
           yield* SubscriptionRef.set(state, next);
+          if (
+            Option.isSome(registry) &&
+            Option.isSome(previous) &&
+            defaultBranchSettingsKey(previous.value.config.settings) !==
+              defaultBranchSettingsKey(next.value.config.settings)
+          ) {
+            yield* invalidateCachedVcsRefs(registry.value, { environmentId, cwd: "<settings>" });
+          }
           yield* Queue.offer(persistence, next.value.config);
         }),
       ),

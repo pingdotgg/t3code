@@ -18,7 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type ReactElement } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -332,6 +332,7 @@ export function NewTaskBranchPickerRouteScreen() {
 }
 
 export function BranchPickerScreen(props: {
+  readonly header?: ReactElement;
   readonly title: string;
   readonly project: EnvironmentProject | null;
   readonly branches: readonly VcsRef[];
@@ -390,20 +391,22 @@ export function BranchPickerScreen(props: {
     />
   );
 
-  const branchListHeader = props.worktree ? (
-    <View
-      className={cn(
-        "mb-3 overflow-hidden",
-        Platform.OS === "android" ? "rounded-[28px]" : "rounded-2xl",
-      )}
-    >
-      <ToggleRow
-        onValueChange={props.worktree.onChangeStartFromOrigin}
-        title="Start from remote"
-        value={props.worktree.startFromOrigin}
-      />
-    </View>
-  ) : null;
+  const branchListHeader =
+    props.header ??
+    (props.worktree ? (
+      <View
+        className={cn(
+          "mb-3 overflow-hidden",
+          Platform.OS === "android" ? "rounded-[28px]" : "rounded-2xl",
+        )}
+      >
+        <ToggleRow
+          onValueChange={props.worktree.onChangeStartFromOrigin}
+          title="Start from remote"
+          value={props.worktree.startFromOrigin}
+        />
+      </View>
+    ) : null);
 
   const branchContent =
     props.branches.length === 0 ? (

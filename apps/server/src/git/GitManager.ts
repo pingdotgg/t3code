@@ -2076,6 +2076,13 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    const override = yield* gitCore.getDefaultBranchOverride(cwd);
+    if (override !== null) {
+      const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
+      yield* gitCore.resolveDefaultBranchName(cwd, remoteName);
+      return { baseBranch: override, baseRef: override };
+    }
+
     const defaultFromProvider = yield* sourceControlProvider(cwd).pipe(
       Effect.flatMap((provider) => provider.getDefaultBranch({ cwd })),
       Effect.orElseSucceed(() => null),

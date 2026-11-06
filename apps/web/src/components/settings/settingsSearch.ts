@@ -1080,6 +1080,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
   {
+    id: "default-branch",
+    title: "Default branch",
+    to: "/settings/source-control",
+    scope: "project",
+    searchTerms: ["override base branch repository automatic worktree pull request"],
+  },
+  {
     id: "automatic-pull",
     title: "Automatically pull",
     to: "/settings/source-control",

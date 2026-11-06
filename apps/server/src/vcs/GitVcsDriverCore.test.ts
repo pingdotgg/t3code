@@ -43,6 +43,7 @@ import {
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as DefaultBranchPolicy from "./DefaultBranchPolicy.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
@@ -384,6 +385,135 @@ it.effect.each(["root", "nested", "worktree"] as const)(
       assert.isFalse(status.hasWorkingTreeChanges);
       assert.include(yield* fs.readFileString(runsPath), "clean");
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "uses project defaults immediately across cached refs and worktrees without changing Git HEAD",
+  () => {
+    let selected: string | null = null;
+    return Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir();
+      const sibling = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["branch", "-M", "main"]);
+      yield* git(cwd, ["branch", "release/v2"]);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "origin", remote]);
+      yield* git(cwd, ["push", "origin", "main", "release/v2"]);
+      yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+      yield* git(cwd, ["worktree", "add", sibling, "-b", "feature/test"]);
+
+      assert.equal(
+        (yield* driver.listRefs({ cwd })).refs.find((ref) => ref.isDefault)?.name,
+        "main",
+      );
+      selected = "release/v2";
+      for (const location of [cwd, sibling]) {
+        assert.equal(yield* driver.resolveDefaultBranchName(location, "origin"), "release/v2");
+        assert.equal(
+          (yield* driver.listRefs({ cwd: location })).refs.find((ref) => ref.isDefault)?.name,
+          "release/v2",
+        );
+      }
+      assert.isFalse((yield* driver.statusDetailsLocal(cwd)).isDefaultBranch);
+      const preview = yield* driver.getReviewDiffPreview({ cwd: sibling });
+      assert.equal(
+        preview.sources.find((source) => source.kind === "branch-range")?.baseRef,
+        "origin/release/v2",
+      );
+      const explicit = yield* driver.getReviewDiffPreview({ cwd: sibling, baseRef: "main" });
+      assert.equal(
+        explicit.sources.find((source) => source.kind === "branch-range")?.baseRef,
+        "main",
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      const nested = NodePath.join(sibling, "nested");
+      yield* fileSystem.makeDirectory(nested);
+      const nestedPreview = yield* driver.getReviewDiffPreview({ cwd: nested });
+      assert.equal(
+        nestedPreview.sources.find((source) => source.kind === "branch-range")?.baseRef,
+        "origin/main",
+      );
+      yield* git(cwd, ["checkout", "release/v2"]);
+      assert.isTrue((yield* driver.statusDetailsLocal(cwd)).isDefaultBranch);
+      const onDefault = yield* driver.getReviewDiffPreview({ cwd });
+      assert.equal(
+        onDefault.sources.find((source) => source.kind === "branch-range")?.baseRef,
+        "origin/release/v2",
+      );
+      yield* git(cwd, ["checkout", "main"]);
+      assert.include(yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD"]), "/main");
+      selected = null;
+      assert.equal(
+        (yield* driver.listRefs({ cwd })).refs.find((ref) => ref.isDefault)?.name,
+        "main",
+      );
+      selected = "deleted/branch";
+      const result = yield* driver.resolveDefaultBranchName(cwd, "origin").pipe(Effect.result);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.include(result.failure.detail, "Automatic");
+      assert.isFalse((yield* driver.listRefs({ cwd })).refs.some((ref) => ref.isDefault));
+      assert.equal((yield* driver.statusDetailsRemote(sibling)).defaultBranch, "deleted/branch");
+      assert.isTrue(
+        Result.isSuccess(
+          yield* driver.getReviewDiffPreview({ cwd: sibling, baseRef: "main" }).pipe(Effect.result),
+        ),
+      );
+      assert.isTrue(
+        Result.isFailure(yield* driver.getReviewDiffPreview({ cwd: sibling }).pipe(Effect.result)),
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(
+          Layer.provide(
+            Layer.succeed(DefaultBranchPolicy.DefaultBranchPolicy, {
+              getOverride: ({ cwd }) =>
+                Effect.sync(() => (NodePath.basename(cwd) === "nested" ? "main" : selected)),
+              changes: Stream.empty,
+            }),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect.each(["origin", "team/upstream"])(
+  "uses a remote-only project default on %s",
+  (remoteName) =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", remoteName, remote]);
+      yield* git(cwd, ["push", remoteName, "HEAD:refs/heads/release/v2"]);
+      assert.equal(yield* driver.resolveDefaultBranchName(cwd, remoteName), "release/v2");
+      assert.equal(
+        (yield* driver.listRefs({ cwd })).refs.find((ref) => ref.isDefault)?.name,
+        `${remoteName}/release/v2`,
+      );
+      assert.equal((yield* driver.statusDetailsRemote(cwd)).defaultBranch, "release/v2");
+      const preview = yield* driver.getReviewDiffPreview({ cwd });
+      assert.equal(
+        preview.sources.find((source) => source.kind === "branch-range")?.baseRef,
+        `${remoteName}/release/v2`,
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(
+          Layer.provide(
+            Layer.succeed(DefaultBranchPolicy.DefaultBranchPolicy, {
+              getOverride: () => Effect.succeed("release/v2"),
+              changes: Stream.empty,
+            }),
+          ),
+        ),
+      ),
+    ),
 );
 
 it.effect.each(["origin", "github"] as const)(

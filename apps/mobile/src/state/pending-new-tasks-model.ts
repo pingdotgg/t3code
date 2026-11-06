@@ -49,6 +49,7 @@ function draftTitle(draft: ComposerDraft): string {
 
 /** A project's new-task defaults, as useNewTaskProjectDefaults resolves them. */
 export interface PendingDraftProjectDefaults {
+  readonly defaultBranch?: string | null;
   readonly canChooseWorkspace: boolean;
   readonly defaultMode: "local" | "worktree";
   readonly defaultModeSettled: boolean;
@@ -75,6 +76,7 @@ export function resolvePendingDraftBranch(input: {
   readonly projectCwd: string | null;
 }): string | null {
   return resolveNewTaskDraftWorkspace({
+    defaultBranch: input.defaults.defaultBranch,
     selection: input.draft.workspaceSelection,
     canChooseWorkspace: input.defaults.canChooseWorkspace,
     defaultMode: input.defaults.defaultMode,

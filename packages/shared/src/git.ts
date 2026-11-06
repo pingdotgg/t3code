@@ -10,6 +10,17 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 
 export const WORKTREE_BRANCH_PREFIX = "t3";
+
+export function defaultBranchOptions(refs: readonly VcsRef[], primaryRemoteName: string | null) {
+  const branches = new Map<string, VcsRef>();
+  for (const ref of refs) {
+    if (ref.isRemote && (primaryRemoteName === null || ref.remoteName !== primaryRemoteName))
+      continue;
+    const name = ref.isRemote ? ref.name.slice((ref.remoteName ?? "").length + 1) : ref.name;
+    if (!branches.has(name) || !ref.isRemote) branches.set(name, { ...ref, name });
+  }
+  return [...branches.values()];
+}
 const TEMP_WORKTREE_HEX_TOKEN = "[0-9a-f]{8}";
 const TEMP_WORKTREE_UUID_V4_TOKEN =
   "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";

@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { vcsRefsCacheStateAtom } from "./vcsRefInvalidation.ts";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
@@ -386,6 +387,7 @@ describe("accepted server update recovery", () => {
 
 const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarness")(function* (
   saveServerConfig: Persistence.EnvironmentCacheStore["Service"]["saveServerConfig"],
+  clearVcsRefs: Effect.Effect<void> = Effect.void,
 ) {
   const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
   const client = {
@@ -411,7 +413,7 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
     loadVcsRefs: () => Effect.succeedNone,
     saveVcsRefs: () => Effect.void,
     removeVcsRefs: () => Effect.void,
-    clearVcsRefs: () => Effect.void,
+    clearVcsRefs: () => clearVcsRefs,
     clear: () => Effect.void,
   });
   const state = yield* makeEnvironmentServerConfigState({
@@ -435,6 +437,38 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
 });
 
 describe("server state projection", () => {
+  it.effect(
+    "invalidates cached branch lists when another client changes or resets a project default",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
+          Effect.sync(() => value.dispose()),
+        );
+        const cleared = yield* Queue.unbounded<void>();
+        const h = yield* makeConfigPersistenceHarness(
+          () => Effect.void,
+          Queue.offer(cleared, undefined),
+        ).pipe(Effect.provideService(AtomRegistry.AtomRegistry, registry));
+        let expectedRevision = 0;
+        for (const defaultBranch of ["release/v2", "develop", null]) {
+          const config = {
+            ...CONFIG,
+            settings: {
+              ...CONFIG.settings,
+              projectSettingsOverrides: { "project-1": { defaultBranch } },
+            },
+          };
+          yield* h.send(snapshotEvent(config));
+          yield* Queue.take(cleared);
+          yield* h.send(
+            snapshotEvent({ ...config, settings: { ...config.settings, defaultAutoPull: true } }),
+          );
+          expect(
+            registry.get(vcsRefsCacheStateAtom({ environmentId: TARGET.environmentId })).revision,
+          ).toBe(++expectedRevision);
+        }
+      }).pipe(Effect.scoped),
+  );
   it.effect("skips duplicate keybinding saves but persists changed keybindings", () =>
     Effect.gen(function* () {
       const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);

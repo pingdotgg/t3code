@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  defaultBranchOptions,
   formatGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
@@ -15,6 +16,30 @@ import {
   sanitizeFeatureBranchName,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
+
+it("deduplicates default branch choices while preserving slash names and the primary remote", () => {
+  const local = { name: "release/v2", current: false, isDefault: false, worktreePath: null };
+  const remote = {
+    ...local,
+    isRemote: true,
+    remoteName: "team/upstream",
+    name: "team/upstream/release/v2",
+  };
+  expect(
+    defaultBranchOptions(
+      [
+        remote,
+        local,
+        { ...remote, name: "team/upstream/remote/only" },
+        { ...remote, remoteName: "fork", name: "fork/unrelated" },
+      ],
+      "team/upstream",
+    ).map((ref) => [ref.name, ref.isRemote ?? false]),
+  ).toEqual([
+    ["release/v2", false],
+    ["remote/only", true],
+  ]);
+});
 
 describe("normalizeGitRemoteUrl", () => {
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {

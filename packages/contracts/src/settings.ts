@@ -1143,6 +1143,7 @@ export const WorktreeCleanup = Schema.NullOr(
 export type WorktreeCleanup = typeof WorktreeCleanup.Type;
 
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
+  "defaultBranch",
   "worktreeCleanup",
   "defaultModelSelection",
   "defaultRuntimeMode",
@@ -1181,6 +1182,7 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
 /** Absent keys inherit; null is a value for nullable settings.
  * providerInstances overrides fields per instance; other keys replace the whole setting. */
 export const ProjectSettingsOverrides = Schema.Struct({
+  defaultBranch: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
@@ -1233,6 +1235,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
     [K in ProjectScopedServerSettingKey]: null extends ProjectSettingsOverrides[K] ? K : never;
   }[ProjectScopedServerSettingKey]
 >([
+  "defaultBranch",
   "defaultModelSelection",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
@@ -1377,6 +1380,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  defaultBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1819,6 +1825,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
+  defaultBranch: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Array(ProjectScript))),

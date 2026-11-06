@@ -32,6 +32,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as DefaultBranchPolicy from "./DefaultBranchPolicy.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -249,6 +250,7 @@ const normalizeCwd = (cwd: string) =>
 export const make = Effect.gen(function* () {
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
   const autoPullPolicy = yield* VcsAutoPullPolicy;
+  const defaultBranchPolicy = yield* DefaultBranchPolicy.DefaultBranchPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
@@ -759,6 +761,20 @@ export const make = Effect.gen(function* () {
       yield* Fiber.interrupt(pollerToInterrupt).pipe(Effect.ignore);
     }
   });
+
+  yield* defaultBranchPolicy.changes.pipe(
+    Stream.runForEach(() =>
+      Effect.gen(function* () {
+        const cache = yield* Ref.get(cacheRef);
+        yield* Effect.forEach(
+          [...cache.keys()],
+          (cwd) => refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true })),
+          { concurrency: 4, discard: true },
+        );
+      }),
+    ),
+    Effect.forkIn(broadcasterScope),
+  );
 
   const streamStatus: VcsStatusBroadcaster["Service"]["streamStatus"] = (input) =>
     Stream.unwrap(

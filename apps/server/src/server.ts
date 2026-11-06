@@ -123,6 +123,7 @@ import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as DefaultBranchPolicy from "./vcs/DefaultBranchPolicy.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -382,6 +383,12 @@ const layerPlatformServices = DocumentText.layer.pipe(
 );
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
+
+const layerDefaultBranchPolicy = DefaultBranchPolicy.layer.pipe(
+  Layer.provide(ProjectStore.layer),
+  Layer.provide(layerServerSettings),
+  Layer.provide(layerPersistence),
+);
 
 const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
 
@@ -767,6 +774,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
+  Layer.provideMerge(layerDefaultBranchPolicy),
   Layer.provide(NetService.layer),
 );
 

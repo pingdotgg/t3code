@@ -40,6 +40,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { DefaultBranchPicker } from "../DefaultBranchPicker";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -106,6 +107,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedDefaultBranch = useScopedSettingsMixed(["defaultBranch"]);
+  const branchProject = scope.members.find(
+    (member) => member.environmentId === target?.environmentId && member.id === target.projectId,
+  );
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
@@ -413,6 +418,24 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : (
         <>
+          {isProjectScope && target && branchProject ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["defaultBranch"]}
+              mixed={mixedDefaultBranch}
+              {...searchableSetting("default-branch")}
+              description="Used for new worktrees, comparisons, pull request defaults, automatic pull, and worktree cleanup. Automatic follows the repository."
+              control={
+                <DefaultBranchPicker
+                  environmentId={target.environmentId}
+                  cwd={branchProject.workspaceRoot}
+                  value={settings.defaultBranch}
+                  mixed={mixedDefaultBranch}
+                  onChange={(defaultBranch) => updateSettings({ defaultBranch })}
+                />
+              }
+            />
+          ) : null}
           <SettingsRow
             serverScoped
             settingKeys={["defaultAutoPull"]}

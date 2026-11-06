@@ -132,6 +132,12 @@ describe("fillNewTaskWorkspaceBranch", () => {
     expect(fillNewTaskWorkspaceBranch({ ...base, selection, worktreeDefaultSettled: false })).toBe(
       selection,
     );
+    expect(
+      fillNewTaskWorkspaceBranch({ ...base, selection, defaultBranch: "release/missing" }),
+    ).toMatchObject({
+      branch: "release/missing",
+      worktreePath: null,
+    });
   });
 
   it("follows the current checkout only for a local selection the user just chose", () => {
