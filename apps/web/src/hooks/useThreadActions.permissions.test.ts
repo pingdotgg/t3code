@@ -10,6 +10,11 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useDiffPanelStore } from "../diffPanelStore";
+import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+import { useRightPanelStore } from "../rightPanelStore";
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => {
@@ -163,6 +168,23 @@ vi.mock("./useSettings", () => ({
 
 import { useThreadActions } from "./useThreadActions";
 
+function seedThreadPanelState(ref: ScopedThreadRef) {
+  useRightPanelStore.getState().show(ref);
+  useDiffPanelStore.getState().selectGitScope(ref, "branch");
+  usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab"));
+}
+
+function threadPanelStatePresence(ref: ScopedThreadRef) {
+  const key = scopedThreadKey(ref);
+  return {
+    rightPanel: key in useRightPanelStore.getState().byThreadKey,
+    diffPanel: key in useDiffPanelStore.getState().byThreadKey,
+    miniPlayer: key in usePreviewMiniPlayerStore.getState().byThreadKey,
+  };
+}
+const panelStateKept = { rightPanel: true, diffPanel: true, miniPlayer: true };
+const panelStateCleared = { rightPanel: false, diffPanel: false, miniPlayer: false };
+
 const primary = EnvironmentId.make("primary");
 const secondary = EnvironmentId.make("secondary");
 const target = { environmentId: secondary, threadId: ThreadId.make("thread") };
@@ -226,6 +248,9 @@ beforeEach(() => {
   state.toasts = [];
   state.afterRequest = undefined;
   state.sessionLookupFails = false;
+  useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+  useDiffPanelStore.setState(useDiffPanelStore.getInitialState(), true);
+  usePreviewMiniPlayerStore.setState(usePreviewMiniPlayerStore.getInitialState(), true);
 });
 
 describe("thread action permissions", () => {
@@ -284,23 +309,28 @@ describe("thread action permissions", () => {
 
   it("deletes an archived thread only with its own environment's grant", async () => {
     state.threads = [];
+    seedThreadPanelState(target);
     const actions = useThreadActions();
     await actions.deleteThread(target);
     expect(state.requests).toEqual([]);
+    expect(threadPanelStatePresence(target)).toEqual(panelStateKept);
     state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
     expect((await actions.deleteThread(target))._tag).toBe("Success");
     expect(state.requests).toEqual([
       expect.objectContaining({ action: "delete", environmentId: secondary }),
     ]);
+    expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
   });
 
   it("stops before delete and local cleanup when permission is revoked during session stop", async () => {
     state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
     state.threads[0]!.session = { status: "ready" };
     state.afterRequest = () => state.scopes.get(secondary)!.clear();
+    seedThreadPanelState(target);
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Failure");
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession"]);
     expect(state.localEffects).toEqual([]);
+    expect(threadPanelStatePresence(target)).toEqual(panelStateKept);
   });
 
   it.each([
@@ -310,10 +340,12 @@ describe("thread action permissions", () => {
     state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
     state.threads[0]!.worktreePath = "/worktrees/thread";
     state.sessionLookupFails = sessionLookupFails;
+    seedThreadPanelState(target);
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
+    expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
   });
 
   it("does not request worktree removal after its grant is revoked during delete", async () => {
