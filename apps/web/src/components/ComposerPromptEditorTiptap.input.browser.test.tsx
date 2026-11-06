@@ -360,8 +360,8 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   await using screen = await mountEditor(value);
   const { editor } = screen;
   const scroller = editor.view.dom;
+  await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
   expect(document.activeElement).not.toBe(scroller);
-  expect(scroller.scrollTop).toBeGreaterThan(0);
   const caret = editor.view.coordsAtPos(editor.state.selection.head);
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom + 1);
 });
