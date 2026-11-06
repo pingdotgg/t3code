@@ -14,6 +14,7 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import {
   openRemoteEditorUrl,
+  openRemoteTerminal,
   useRemoteCapableEditors,
   useRemoteOpenHint,
   useRemoteOpenState,
@@ -254,16 +255,24 @@ export const OpenInPicker = memo(function OpenInPicker({
     if (!editor) return false;
     if (remote.mode === "remote-unavailable") return false;
     if (remote.mode === "remote-links") {
-      const url = buildRemoteOpenUrl({
-        editor,
-        ...remote.host,
-        absolutePath: openInCwd,
-        isFile: openInCwdIsFile,
-      });
-      if (url === undefined) return false;
-      // Only record hint-seen/preferred when the shell actually accepted
-      // the URL (an older desktop build can refuse the editor scheme).
-      const opened = await openRemoteEditorUrl(url);
+      let opened = false;
+      if (editor === "terminal") {
+        opened = await openRemoteTerminal({
+          host: remote.host,
+          absolutePath: openInCwd,
+          isFile: openInCwdIsFile,
+        });
+      } else {
+        const url = buildRemoteOpenUrl({
+          editor,
+          ...remote.host,
+          absolutePath: openInCwd,
+          isFile: openInCwdIsFile,
+        });
+        // Only record hint-seen/preferred when the shell actually accepted
+        // the URL (an older desktop build can refuse the editor scheme).
+        opened = url !== undefined && (await openRemoteEditorUrl(url));
+      }
       if (!opened) return false;
       markRemoteHintSeen();
       setPreferredEditor(editor);

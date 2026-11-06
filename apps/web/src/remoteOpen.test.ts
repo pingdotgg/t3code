@@ -3,7 +3,13 @@ import {
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
+import {
+  buildRemoteOpenUrl,
+  buildRemoteSshTerminalDestination,
+  buildRemoteSshTerminalRemoteCommand,
+  EnvironmentId,
+  remoteTerminalWorkingDirectory,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveRemoteOpenState } from "./remoteOpen";
@@ -140,6 +146,32 @@ describe("resolveRemoteOpenState", () => {
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
+  });
+});
+
+describe("remote SSH terminal helpers", () => {
+  it("builds a destination that matches remote editor hosts", () => {
+    expect(buildRemoteSshTerminalDestination("sol")).toBe("sol");
+    expect(buildRemoteSshTerminalDestination("sol.tail.ts.net", "theo")).toBe(
+      "theo@sol.tail.ts.net",
+    );
+  });
+
+  it("opens file targets in their parent folder", () => {
+    expect(remoteTerminalWorkingDirectory("/work/project", false)).toBe("/work/project");
+    expect(remoteTerminalWorkingDirectory("/work/project/README.md", true)).toBe("/work/project");
+    expect(remoteTerminalWorkingDirectory("C:\\Users\\theo\\app\\file.ts", true)).toBe(
+      "/C:/Users/theo/app",
+    );
+  });
+
+  it("quotes the remote cd path and leaves SHELL for the remote shell", () => {
+    expect(buildRemoteSshTerminalRemoteCommand("/work/my project")).toBe(
+      `cd -- '/work/my project' && exec "\${SHELL:-/bin/sh}" -l`,
+    );
+    expect(buildRemoteSshTerminalRemoteCommand("/tmp/o'brian")).toBe(
+      `cd -- '/tmp/o'\\''brian' && exec "\${SHELL:-/bin/sh}" -l`,
+    );
   });
 });
 
