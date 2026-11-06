@@ -7,7 +7,6 @@ import {
   isRuntimeModeAbove,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
-import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { EyeIcon, type LucideIcon } from "lucide-react";
 import type * as Context from "effect/Context";
@@ -17,12 +16,11 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
-import { cn } from "~/lib/utils";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { RadioGroup } from "../ui/radio-group";
+import { Radio, RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
@@ -143,7 +141,7 @@ export function ConnectAgentSurface() {
 
   if (loaded.status === "loading") {
     return (
-      <StandalonePage tone="plain">
+      <StandalonePage>
         <ConnectAgentHeading
           title="Checking the sign-in request"
           description="One moment while this environment verifies the agent's request."
@@ -155,7 +153,7 @@ export function ConnectAgentSurface() {
 
   if (loaded.status === "invalid") {
     return (
-      <StandalonePage tone="plain">
+      <StandalonePage>
         <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
         <p className="mt-4 text-body text-muted-foreground">
           Close this page and start the sign-in again from your agent.
@@ -169,7 +167,7 @@ export function ConnectAgentSurface() {
   const canApprove = pending === null && (oneClick || pairingCode.trim().length > 0);
 
   return (
-    <StandalonePage tone="plain">
+    <StandalonePage>
       <ConnectAgentHeading
         title={`Connect ${details.clientName}`}
         description={
@@ -214,7 +212,6 @@ export function ConnectAgentSurface() {
               <AccessOption
                 key={option}
                 access={option}
-                selected={option === access}
                 managedReason={ceilingReason(details, option)}
               />
             ))}
@@ -255,7 +252,7 @@ export function ConnectAgentSurface() {
           </Alert>
         ) : null}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button disabled={!canApprove} type="submit">
             {pending === "approve" ? "Approving…" : "Approve"}
           </Button>
@@ -280,7 +277,7 @@ function ConnectAgentHeading({
   readonly title: string;
   readonly description: ReactNode;
 }) {
-  return <StandalonePageHeader context="Agent sign-in" title={title} description={description} />;
+  return <StandalonePageHeader title={title} description={description} />;
 }
 
 /** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
@@ -295,39 +292,22 @@ function ceilingReason(details: AuthMcpApprovalDetails, access: AuthMcpClientAcc
 
 function AccessOption({
   access,
-  selected,
   managedReason,
 }: {
   readonly access: AuthMcpClientAccess;
-  readonly selected: boolean;
   readonly managedReason: string | undefined;
 }) {
   const { label, description, icon: Icon } = accessConfig[access];
   return (
-    <RadioPrimitive.Root
-      value={access}
-      disabled={managedReason !== undefined}
-      className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
-        "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-        selected
-          ? "border-primary bg-background ring-2 ring-inset ring-primary/25 dark:border-transparent dark:bg-primary/10 dark:ring-1 dark:ring-primary/30"
-          : "border-border bg-background hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
-      )}
-    >
-      <Icon
-        aria-hidden
-        className={cn(
-          "mt-0.5 size-4 shrink-0",
-          selected ? "text-primary" : "text-muted-foreground",
-        )}
-      />
+    <label className="flex cursor-pointer items-start gap-3 rounded-control surface-well px-3 py-3 has-data-disabled:cursor-not-allowed has-data-disabled:opacity-64">
+      <Radio value={access} disabled={managedReason !== undefined} />
+      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0">
         <span className="block text-label text-foreground">{label}</span>
         <span className="block text-meta text-muted-foreground">
           {managedReason ?? description}
         </span>
       </span>
-    </RadioPrimitive.Root>
+    </label>
   );
 }
