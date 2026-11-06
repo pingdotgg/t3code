@@ -295,7 +295,9 @@ export function usePullRequestHandoffs({
   ).changeRequest;
 
   const handoffInCurrentThread =
-    currentThread !== undefined && detail?.url === currentThread.pullRequestUrl;
+    currentThread !== undefined &&
+    detail !== null &&
+    sourceControlClients.isSameChangeRequest(detail.url, currentThread.pullRequestUrl);
 
   // Questions must not change checkouts or create worktrees.
   const openThreadWithTask = async (

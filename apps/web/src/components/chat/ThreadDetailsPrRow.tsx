@@ -95,8 +95,10 @@ export function ThreadDetailsPrRow({
   onActed,
   onStopWatching,
   currentThread,
+  handoffDisabled = false,
 }: {
   currentThread?: PullRequestHandoffThread | undefined;
+  handoffDisabled?: boolean | undefined;
   environmentId: EnvironmentId;
   pr: ThreadPr;
   number: number;
@@ -197,7 +199,7 @@ export function ThreadDetailsPrRow({
   );
 
   const startResolveConflicts = () => {
-    if (detail === null) return;
+    if (detail === null || handoffDisabled) return;
     void startHandoff("conflicts", {
       prompt: buildResolveConflictsPrompt({
         number: detail.number,
@@ -209,7 +211,7 @@ export function ThreadDetailsPrRow({
   };
 
   const startFixChecks = () => {
-    if (detail === null) return;
+    if (detail === null || handoffDisabled) return;
     void startHandoff(
       "findings",
       buildFixFindingsHandoff({
@@ -476,7 +478,11 @@ export function ThreadDetailsPrRow({
                       size="sm"
                       part="meta"
                       tone={trailingAction.destructive ? "destructive" : "primary"}
-                      disabled={actionPending || handoff !== null}
+                      disabled={
+                        actionPending ||
+                        handoff !== null ||
+                        (handoffDisabled && (rowAction === "fix" || rowAction === "resolve"))
+                      }
                       onClick={trailingAction.onClick}
                     />
                   }
