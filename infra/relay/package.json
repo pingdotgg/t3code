@@ -9,7 +9,7 @@
     "tunnels:census": "node scripts/tunnel-census.ts",
     "destroy": "alchemy destroy",
     "test": "vp test run --config ../../vite.config.ts --dir .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "dependencies": {
     "@alchemy.run/axiom": "catalog:",
@@ -26,17 +26,17 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "alchemy": "catalog:",
-    "drizzle-orm": "1.0.0-rc.5-ab785fc",
+    "drizzle-orm": "1.0.0-rc.5",
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/test": "catalog:",
     "@cloudflare/workers-types": "^4.20260601.1",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@electric-sql/pglite": "0.3.15",
     "@types/node": "catalog:",
-    "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "typescript": "catalog:",
+    "drizzle-kit": "1.0.0-rc.5",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

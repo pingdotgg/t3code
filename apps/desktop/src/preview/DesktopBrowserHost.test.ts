@@ -144,6 +144,44 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("re-sends shown to a backend that starts later and when a tab attaches again", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      host.attach(key, makeDebuggee().tab);
+      host.setShown(key, true);
+      const reader = yield* takeEvents(host, 5).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.detach(key);
+      host.attach(key, makeDebuggee().tab);
+
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+        { type: "detached", ...key },
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+      ]);
+    }),
+  );
+
+  it.effect("replays an explicit hidden report before announcing another tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const other = { ...key, tabId: "tab-2" };
+      host.setShown(key, false);
+      host.attach(key, makeDebuggee().tab);
+      host.setShown(other, true);
+      host.attach(other, makeDebuggee().tab);
+
+      expect(yield* takeEvents(host, 3)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: false },
+        { type: "attached", ...other },
+      ]);
+    }),
+  );
+
   it.effect("drops replies from a relay the server released", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
@@ -917,12 +955,14 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
       const paths: Array<string> = [];
       const item = {
         setSavePath: (path: string) => void paths.push(path),
       } as unknown as Electron.DownloadItem;
 
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(false);
+      const sent = debuggee.nextSend();
       yield* host.handleCommandLine(
         encodeJson({
           type: "cdp",
@@ -934,10 +974,15 @@ describe("DesktopBrowserHost", () => {
           }),
         }),
       );
-      debuggee.emit("Browser.downloadWillBegin", { guid: "guid-1", suggestedFilename: "r.csv" });
+      yield* Effect.promise(() => sent);
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(1);
+      debuggee.emit("Page.downloadWillBegin", { guid: "guid-1", suggestedFilename: "r.csv" });
+      expect(host.placeDownload(makeDebuggee().tab.webContents, item)).toBe(false);
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(true);
       expect(paths).toEqual(["/srv/downloads/guid-1"]);
-    }),
+      expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(false);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("tells a download the person clicked from one the agent's input started", () =>

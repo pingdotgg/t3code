@@ -1,0 +1,17 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "include": ["src/**/*.ts", "test/**/*.ts", "vite.config.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext"
+  },
+  "references": [
+    {
+      "path": "../../../../packages/alchemy/tsconfig.json"
+    },
+    { "path": "../../../../packages/domain/tsconfig.json" }
+  ]
+}

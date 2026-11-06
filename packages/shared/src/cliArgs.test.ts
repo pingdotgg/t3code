@@ -25,6 +25,24 @@ describe("tokenizeCliArgs", () => {
         String.raw`--config model="gpt 5" --enable foo\ bar --config=profile='work profile'`,
       ),
     ).toEqual(["--config", "model=gpt 5", "--enable", "foo bar", "--config=profile=work profile"]);
+
+    for (const whitespace of [" ", "\t"]) {
+      const args = `--add-dir /tmp/project\\${whitespace}`;
+      expect(tokenizeCliArgs(args)).toEqual(["--add-dir", `/tmp/project${whitespace}`]);
+      expect(tokenizeCliArgs(`${args} --verbose`)).toEqual([
+        "--add-dir",
+        `/tmp/project${whitespace}`,
+        "--verbose",
+      ]);
+    }
+  });
+
+  it("ignores unescaped surrounding whitespace", () => {
+    expect(tokenizeCliArgs(" \t\n")).toEqual([]);
+    expect(tokenizeCliArgs(" \t--add-dir /tmp/project \t\n")).toEqual([
+      "--add-dir",
+      "/tmp/project",
+    ]);
   });
 
   it("preserves literal backslashes in path values", () => {
