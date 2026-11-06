@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   modelState: "ready" as "ready" | "missing-model",
   statusModelId: "test-model",
   models: [] as EnvironmentSpeechModel[],
+  catalogOffline: false,
   download: vi.fn<(modelId: string) => Promise<void>>(),
   selected: [] as string[],
   selectionFails: false,
@@ -135,7 +136,11 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       if (mocks.selectionFails) throw new Error("selection failed");
       return { models: mocks.models };
     }),
-  getEnvironmentSpeechModels: () => Effect.sync(() => ({ models: mocks.models })),
+  getEnvironmentSpeechModels: () =>
+    Effect.sync(() => {
+      if (mocks.catalogOffline) throw new Error("Catalog offline");
+      return { models: mocks.models };
+    }),
   postProcessEnvironmentTranscript: (
     prepared: PreparedConnection,
     transcript: string,
@@ -206,6 +211,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.modelState = "ready";
   mocks.statusModelId = "test-model";
   mocks.models = [];
+  mocks.catalogOffline = false;
   mocks.download.mockReset();
   mocks.selected = [];
   mocks.selectionFails = false;
@@ -375,6 +381,8 @@ it.each([
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
   setup({ destination: "env-a" });
   mocks.modelState = "missing-model";
+  mocks.settings = { speechLanguage: "en" };
+  mocks.models = [catalogModel(mocks.statusModelId, ["en"], true)];
   let finishDownload!: () => void;
   mocks.download.mockReturnValue(
     new Promise<void>((resolve) => {
@@ -454,6 +462,24 @@ it.each([
     await act(() => mocks.voice.setup.download());
     expect(mocks.download).toHaveBeenCalledExactlyOnceWith(german);
     expect(mocks.voice.setup.model?.id).toBe(german);
+  },
+);
+
+it.each([true, false])(
+  "never downloads the English default when no German recommendation is available (catalog offline: %s)",
+  async (offline) => {
+    setup({ destination: "env-a" });
+    mocks.settings = { speechLanguage: "de" };
+    mocks.modelState = "missing-model";
+    mocks.statusModelId = "english";
+    mocks.models = [catalogModel("english", ["en"], true)];
+    mocks.catalogOffline = offline;
+    await using _screen = await render(<Probe />);
+    await act(() => mocks.voice.start());
+    expect(mocks.voice.setup.open).toBe(true);
+    await act(() => mocks.voice.setup.download());
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(mocks.voice.setup.error).toBeTruthy();
   },
 );
 

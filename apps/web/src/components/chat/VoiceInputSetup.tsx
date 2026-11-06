@@ -69,7 +69,6 @@ export function VoiceInputSetup(props: {
     : "System default";
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
-  const size = model?.size ?? status?.size;
   const progress =
     model?.downloaded === undefined ? null : Math.round((model.downloaded / model.size) * 100);
   const openSettings = (hash: string) => {
@@ -89,51 +88,51 @@ export function VoiceInputSetup(props: {
         <WizardPanel>
           {props.step === 0 ? (
             <section className="space-y-3 text-sm">
-              <div className="rounded-lg border border-border/70 bg-card/60 p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-medium">
-                    {model?.name ?? status?.model ?? "Transcription model"}
-                  </h3>
-                  {model?.recommended && props.language ? (
-                    <span className="text-xs font-medium text-primary">
-                      Recommended for {languageLabel(props.language)}
-                    </span>
+              {model ? (
+                <div className="rounded-lg border border-border/70 bg-card/60 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-medium">{model.name}</h3>
+                    {model?.recommended && props.language ? (
+                      <span className="text-xs font-medium text-primary">
+                        Recommended for {languageLabel(props.language)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-muted-foreground">
+                    Download the {Math.round(model.size / 1024 / 1024)} MB model to{" "}
+                    {environment?.label ?? "your transcription environment"}. Microphone audio is
+                    sent there for transcription, as chosen in Voice settings.
+                  </p>
+                  <p className="mt-2 text-muted-foreground">
+                    Silero (1.2 MB), used for silence filtering and pause detection, downloads
+                    alongside the speech model. An installed copy is reused.
+                  </p>
+                  {props.downloading ? (
+                    <div role="status" className="mt-4 space-y-1 text-muted-foreground">
+                      <div
+                        role="progressbar"
+                        aria-label="Speech model download progress"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={progress ?? undefined}
+                        className="h-1 overflow-hidden rounded-full bg-muted"
+                      >
+                        <div
+                          className="h-full bg-primary transition-[width] duration-200"
+                          style={{ width: `${progress ?? 0}%` }}
+                        />
+                      </div>
+                      <p className="text-xs">
+                        {model?.state === "verifying"
+                          ? "Verifying download…"
+                          : progress === null
+                            ? "Starting download…"
+                            : `${progress}% downloaded`}
+                      </p>
+                    </div>
                   ) : null}
                 </div>
-                <p className="mt-2 text-muted-foreground">
-                  Download the {size === undefined ? 697 : Math.round(size / 1024 / 1024)} MB model
-                  to {environment?.label ?? "your transcription environment"}. Microphone audio is
-                  sent there for transcription, as chosen in Voice settings.
-                </p>
-                <p className="mt-2 text-muted-foreground">
-                  Silero (1.2 MB), used for silence filtering and pause detection, downloads
-                  alongside the speech model. An installed copy is reused.
-                </p>
-                {props.downloading ? (
-                  <div role="status" className="mt-4 space-y-1 text-muted-foreground">
-                    <div
-                      role="progressbar"
-                      aria-label="Speech model download progress"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={progress ?? undefined}
-                      className="h-1 overflow-hidden rounded-full bg-muted"
-                    >
-                      <div
-                        className="h-full bg-primary transition-[width] duration-200"
-                        style={{ width: `${progress ?? 0}%` }}
-                      />
-                    </div>
-                    <p className="text-xs">
-                      {model?.state === "verifying"
-                        ? "Verifying download…"
-                        : progress === null
-                          ? "Starting download…"
-                          : `${progress}% downloaded`}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
               {props.error ? (
                 <p role="alert" className="text-destructive">
                   {props.error}
@@ -214,25 +213,27 @@ export function VoiceInputSetup(props: {
           {props.step === 0 ? (
             <>
               <Button variant="outline" onClick={() => openSettings("speech-models")}>
-                Choose another model or language
+                {model ? "Choose another model or language" : "Choose a model or language"}
               </Button>
               {props.downloading ? (
                 <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
                   Cancel download
                 </Button>
               ) : null}
-              <Button
-                disabled={!canManage || props.downloading || !status}
-                onClick={props.onDownload}
-              >
-                {props.downloading
-                  ? "Downloading…"
-                  : props.error
-                    ? "Retry download"
-                    : canManage
-                      ? "Download model"
-                      : "Ask an environment admin to download"}
-              </Button>
+              {model ? (
+                <Button
+                  disabled={!canManage || props.downloading || !status}
+                  onClick={props.onDownload}
+                >
+                  {props.downloading
+                    ? "Downloading…"
+                    : props.error
+                      ? "Try again"
+                      : canManage
+                        ? "Download model"
+                        : "Ask an environment admin to download"}
+                </Button>
+              ) : null}
             </>
           ) : (
             <>
