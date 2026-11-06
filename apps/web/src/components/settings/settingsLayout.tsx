@@ -957,7 +957,9 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider
-      targetId={focused && targetId !== null ? (searchTargetFallbacks?.[targetId] ?? targetId) : null}
+      targetId={
+        focused && targetId !== null ? (searchTargetFallbacks?.[targetId] ?? targetId) : null
+      }
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >
