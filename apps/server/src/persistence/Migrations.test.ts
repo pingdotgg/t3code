@@ -22,6 +22,7 @@ const correlationIndexMigration = [87, "DropOrchestrationEventCorrelationIndex"]
 const modelEvaluationMigration = [88, "ModelEvaluations"] as const;
 const delegatedRecoveryMigration = [89, "DelegatedRecoveryIndexes"] as const;
 const scheduledTaskThreadModeMigration = [90, "ScheduledTaskThreadMode"] as const;
+const dropProjectLoomIndexesMigration = [91, "DropProjectLoomIndexes"] as const;
 
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
   Effect.gen(function* () {
@@ -47,6 +48,7 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
       modelEvaluationMigration,
       delegatedRecoveryMigration,
       scheduledTaskThreadModeMigration,
+      dropProjectLoomIndexesMigration,
     ]);
     assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_deliveries`, before);
     yield* sql`INSERT INTO project_knowledge_deliveries (
@@ -175,12 +177,20 @@ const assertConsolidatedSchema = Effect.gen(function* () {
   `;
   for (const name of [
     "orchestration_v2_projection_turn_items_stop_request_idx",
-    "orchestration_v2_projection_turn_items_run_updated_idx",
-    "orchestration_v2_projection_turn_items_run_command_at_idx",
-    "orchestration_v2_projection_turn_items_run_command_updated_idx",
     "orchestration_v2_projection_turn_items_waiting_link_idx",
+    "orchestration_v2_projection_threads_project_linked_idx",
   ]) {
     assert.ok(indexes.some((index) => index.name === name));
+  }
+  for (const name of [
+    "orchestration_v2_projection_runs_thread_requested_idx",
+    "orchestration_v2_projection_runs_thread_completed_idx",
+    "orchestration_v2_projection_checkpoints_thread_captured_idx",
+    "orchestration_v2_projection_turn_items_run_command_updated_idx",
+    "orchestration_v2_projection_turn_items_run_updated_idx",
+    "orchestration_v2_projection_turn_items_run_command_at_idx",
+  ]) {
+    assert.notOk(indexes.some((index) => index.name === name));
   }
   const peerColumns = yield* sql<{
     readonly name: string;
@@ -385,6 +395,7 @@ describe("runMigrations", () => {
             modelEvaluationMigration,
             delegatedRecoveryMigration,
             scheduledTaskThreadModeMigration,
+            dropProjectLoomIndexesMigration,
           ],
         );
         yield* assertConsolidatedSchema;
@@ -426,6 +437,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
         ],
       );
       assert.deepStrictEqual(yield* runMigrations(), [
@@ -440,6 +452,7 @@ describe("runMigrations", () => {
         modelEvaluationMigration,
         delegatedRecoveryMigration,
         scheduledTaskThreadModeMigration,
+        dropProjectLoomIndexesMigration,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(
@@ -476,6 +489,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
         ]);
 
         yield* assertConsolidatedSchema;
@@ -582,6 +596,7 @@ describe("runMigrations", () => {
         modelEvaluationMigration,
         delegatedRecoveryMigration,
         scheduledTaskThreadModeMigration,
+        dropProjectLoomIndexesMigration,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(yield* sql`SELECT secret_name, fenced FROM peer_environment_links`, [
@@ -637,6 +652,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(
@@ -697,6 +713,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(yield* sql`SELECT * FROM cross_environment_launches`, routes);
