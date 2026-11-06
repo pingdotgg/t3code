@@ -342,6 +342,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   private var rowsDecodeGeneration = 0
   private var rowsDecodeCancellation: ReviewDiffRowPreparation?
   private var tokensDecodeGeneration = 0
+  private var tokensDecodeCancellation: ReviewDiffRowPreparation?
 
   let onDebug = EventDispatcher()
   let onVisibleFileChange = EventDispatcher()
@@ -390,6 +391,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
 
   deinit {
     rowsDecodeCancellation?.cancel()
+    tokensDecodeCancellation?.cancel()
   }
 
   public override func layoutSubviews() {
@@ -485,10 +487,15 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   }
 
   func setTokensJson(_ tokensJson: String) {
+    tokensDecodeCancellation?.cancel()
+    let cancellation = ReviewDiffRowPreparation()
+    tokensDecodeCancellation = cancellation
     tokensDecodeGeneration += 1
     let generation = tokensDecodeGeneration
 
     payloadDecodeQueue.async { [weak self] in
+      // Entered decoding may finish; only skip full payloads already obsolete in the queue.
+      guard !cancellation.isCancelled, self != nil else { return }
       guard let data = tokensJson.data(using: .utf8) else {
         return
       }
@@ -615,6 +622,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     rowsDecodeCancellation = nil
     rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
+    tokensDecodeCancellation?.cancel()
     contentView.tokensByRowId = [:]
     rows = []
     contentView.rows = []
