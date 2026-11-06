@@ -2216,7 +2216,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               Effect.suspend(() => {
                 if (state.active !== turn || turn.limitRead !== read) return Effect.void;
                 turn.limitRead = undefined;
-                return endExecution(state, turn, failed(resetAt)).pipe(
+                // A Stop sent during the read wins, so the stopped thread does not resume at the reset.
+                const end = turn.interrupted ? { status: "interrupted" as const } : failed(resetAt);
+                return endExecution(state, turn, end).pipe(
                   Effect.andThen(syncRosterAncestors(state)),
                 );
               }),
@@ -2425,6 +2427,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         if (turn !== undefined) {
           turn.awaitingStart = false;
           turn.heldEnd = undefined;
+          turn.limitRead = undefined;
           return;
         }
       }

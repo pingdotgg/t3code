@@ -796,6 +796,120 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // An event for a session T3 Code does not know; it only holds the replay at its label.
+  const marker = (label: string) =>
+    event(
+      "session.model.selected",
+      {
+        sessionID: "ses_f148ca2deffeUnknownSession0",
+        model: { providerID: "opencode", id: "big-pickle", variant: "default" },
+      },
+      label,
+    );
+
+  // regression: a Stop sent during the Go usage read ended the turn failed, so it resumed at the reset
+  it.effect("keeps a Stop sent while Go usage is read, so the thread does not resume", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["interrupting"]);
+      const reading = yield* Deferred.make<void>();
+      const usage = yield* Deferred.make<ServerProviderUsageLimits>();
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          failWith({ type: "provider.go-limit", message: goLimitMessage, status: 429 }),
+          out("session.interrupt", { sessionID: SESSION }),
+          // Holds the interrupt reply until the usage read has finished.
+          marker("interrupting"),
+          reply("session.interrupt", { interrupted: false }),
+        ],
+        {
+          replayGate: gate,
+          readUsageLimits: Deferred.succeed(reading, undefined).pipe(
+            Effect.andThen(Deferred.await(usage)),
+          ),
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(reading);
+      const stop = yield* runtime
+        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .pipe(Effect.forkScoped);
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("interrupting")));
+      yield* Deferred.succeed(usage, goUsage(100));
+      const ended = yield* Fiber.join(terminal);
+      gate.release("interrupting");
+      yield* Fiber.join(stop);
+      assert.equal(ended?.status, "interrupted");
+      assert.notExists(ended?.failure);
+    }).pipe(Effect.scoped),
+  );
+
+  // regression: an undecodable start left the Go usage read able to end the restarted execution
+  it.effect("keeps a Go-limited turn that restarts with a start this build cannot decode", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["end"]);
+      const restarted = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          failWith({ type: "provider.go-limit", message: goLimitMessage, status: 429 }),
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "sdk.event",
+              event: {
+                id: "evt_executionstartedx",
+                created: 1,
+                type: "session.execution.started",
+                data: { sessionID: SESSION },
+                durable: "not-an-envelope",
+              },
+            },
+          },
+          event("session.text.started", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+            ordinal: 0,
+          }),
+          event("session.text.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+            ordinal: 0,
+            text: "DONE",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }, "end"),
+        ],
+        {
+          replayGate: gate,
+          // The restarted execution ends only after the read, whose end is queued first.
+          readUsageLimits: Deferred.await(restarted).pipe(
+            Effect.as(goUsage(100)),
+            Effect.ensuring(Effect.sync(() => gate.release("end"))),
+          ),
+        },
+      );
+      const terminal = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.text === "DONE"
+            ? Deferred.succeed(restarted, undefined)
+            : Effect.void,
+        ),
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.map(Option.getOrUndefined),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.deepInclude(ended, { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -2740,6 +2854,39 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
         assert.deepInclude(prompts[0], { skills: [{ id: "greet" }] });
       }).pipe(Effect.scoped),
+  );
+
+  // OpenCode already delivered this execution's end; a listing taken at reconnect does not undo it.
+  it.effect("ends a Go limit after a reconnect even while OpenCode still lists the session", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["reconnected"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          failWith({ type: "provider.go-limit", message: goLimitMessage, status: 429 }),
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", { [SESSION]: { type: "running" } }),
+          ...openRequests([]),
+          marker("reconnected"),
+        ],
+        {
+          replayGate: gate,
+          // The read ends after the reconnect has listed the session as running.
+          readUsageLimits: Effect.promise(() => gate.waitForReached("reconnected")).pipe(
+            Effect.tap(() => Effect.sync(() => gate.release("reconnected"))),
+            Effect.as(goUsage(100)),
+          ),
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.failure?.class, "usage_limit");
+      assert.equal(ended?.failure?.resetAt, "2026-11-06T04:12:00.000Z");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
