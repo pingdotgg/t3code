@@ -1,11 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Mac from "effect/crypto/Mac";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 
@@ -122,6 +124,54 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
       const second = yield* secretStore.getOrCreateRandom("session-signing-key", 32);
 
       assert.deepEqual(Array.from(second), Array.from(first));
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
+  it.effect("reuses a non-empty secret file instead of replacing it", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = secretStore.directory;
+      if (directory === undefined) {
+        return yield* Effect.die("Secret store directory is missing.");
+      }
+      const stored = Uint8Array.of(9);
+      const secretPath = path.join(directory, "short-signing-key.bin");
+
+      yield* fileSystem.writeFile(secretPath, stored);
+
+      const first = yield* secretStore.getOrCreateRandom("short-signing-key", 32);
+      const second = yield* secretStore.getOrCreateRandom("short-signing-key", 32);
+
+      assert.deepEqual(Array.from(first), Array.from(stored));
+      assert.deepEqual(Array.from(second), Array.from(stored));
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
+  it.effect("replaces an empty secret file and then reuses the replacement", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = secretStore.directory;
+      if (directory === undefined) {
+        return yield* Effect.die("Secret store directory is missing.");
+      }
+      const secretPath = path.join(directory, "server-signing-key.bin");
+
+      yield* fileSystem.writeFile(secretPath, new Uint8Array());
+      const emptyKey = yield* Effect.flip(Mac.key(Mac.hmacSha256, new Uint8Array()));
+      assert.include(emptyKey.message, "empty");
+
+      const created = yield* secretStore.getOrCreateRandom("server-signing-key", 32);
+      const reused = yield* secretStore.getOrCreateRandom("server-signing-key", 32);
+      const persisted = Option.getOrThrow(yield* secretStore.get("server-signing-key"));
+
+      assert.equal(created.byteLength, 32);
+      assert.deepEqual(Array.from(reused), Array.from(created));
+      assert.deepEqual(Array.from(persisted), Array.from(created));
+      yield* Mac.key(Mac.hmacSha256, created);
     }).pipe(Effect.provide(layerServerSecretStore())),
   );
 

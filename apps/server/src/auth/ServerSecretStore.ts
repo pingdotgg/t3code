@@ -261,10 +261,13 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // A zero-length file is not a key (`Mac.key` rejects it). `create` cannot
+  // replace an existing path, so overwrite that file and keep any non-empty key.
   const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
     get(name).pipe(
-      Effect.flatMap(
-        Option.match({
+      Effect.flatMap((existing) => {
+        const reusable = Option.filter(existing, (value) => bytes === 0 || value.byteLength > 0);
+        return Option.match(reusable, {
           onSome: Effect.succeed,
           onNone: () =>
             crypto.randomBytes(bytes).pipe(
@@ -275,31 +278,36 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
               ),
-              Effect.flatMap((generated) =>
-                create(name, generated).pipe(
-                  Effect.as(Uint8Array.from(generated)),
+              Effect.flatMap((generated) => {
+                const value = Uint8Array.from(generated);
+                const write = Option.isSome(existing) ? set(name, value) : create(name, value);
+                return write.pipe(
+                  Effect.as(value),
                   Effect.catchIf(isSecretStoreError, (error) =>
                     isSecretAlreadyExistsError(error)
                       ? get(name).pipe(
-                          Effect.flatMap(
-                            Option.match({
-                              onSome: Effect.succeed,
+                          Effect.flatMap((persisted) =>
+                            Option.match(persisted, {
                               onNone: () =>
                                 Effect.fail(
                                   new SecretStoreConcurrentReadError({
                                     resource: `secret ${name}`,
                                   }),
                                 ),
+                              onSome: (stored) =>
+                                bytes > 0 && stored.byteLength === 0
+                                  ? set(name, value).pipe(Effect.as(value))
+                                  : Effect.succeed(stored),
                             }),
                           ),
                         )
                       : Effect.fail(error),
                   ),
-                ),
-              ),
+                );
+              }),
             ),
-        }),
-      ),
+        });
+      }),
       Effect.withSpan("ServerSecretStore.getOrCreateRandom"),
     );
 
