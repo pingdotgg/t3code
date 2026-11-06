@@ -1,7 +1,7 @@
 /** Instances sharing a login directory share credits; serialize redemptions on that directory. */
 import type { ProviderConsumeResetCreditOutcome } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as PlatformError from "effect/PlatformError";
@@ -27,7 +27,7 @@ export class ResetCreditCoordinator extends Context.Service<
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const statesRef = yield* Ref.make<ReadonlyMap<string, AccountRedemptionState>>(new Map());
 
   // Create account locks atomically so concurrent first redemptions cannot use separate locks.
@@ -54,7 +54,7 @@ export const make = Effect.gen(function* () {
     return yield* state.lock.withPermits(1)(
       Effect.gen(function* () {
         const existing = yield* Ref.get(state.pendingKey);
-        const idempotencyKey = existing ?? (yield* crypto.randomUUIDv4());
+        const idempotencyKey = existing ?? (yield* random.uuidV4());
         yield* Ref.set(state.pendingKey, idempotencyKey);
         const outcome = yield* consume(idempotencyKey).pipe(
           Effect.tapError((error) =>
@@ -78,13 +78,10 @@ export const layerTest = Layer.effect(
     let counter = 0;
     return yield* make.pipe(
       Effect.provideService(
-        Crypto.Crypto,
-        Crypto.make({
-          randomBytes: (size) => {
-            counter += 1;
-            return new Uint8Array(size).fill(counter);
-          },
-          digest: (_algorithm, data) => Effect.succeed(data),
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => {
+          counter += 1;
+          return new Uint8Array(size).fill(counter);
         }),
       ),
     );

@@ -166,6 +166,7 @@ function layerRegistrationReplay(input: {
       ),
     ),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
+    Layer.provide(NodeCryptoLayer.layerMac),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(Devices.Devices, input.devices),
