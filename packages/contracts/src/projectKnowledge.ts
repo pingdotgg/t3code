@@ -47,12 +47,11 @@ const knownKnowledgeOrigins = [
     sessionId: TrimmedNonEmptyString,
     label: Schema.String,
   }),
-  // Written only by the server's assisted learning job, never accepted from a client or agent.
+  // Written only by the server's automatic learning job, never accepted from a client or agent.
   Schema.Struct({
     kind: Schema.Literal("assisted"),
     threadId: ThreadId,
     runId: RunId,
-    // Candidates from a failed or interrupted run are marked so a reviewer weighs them accordingly.
     runOutcome: Schema.Literals(["completed", "failed", "interrupted"]),
   }),
 ] as const;
@@ -98,6 +97,8 @@ export const ProjectFactFields = Schema.Struct({
   kind: ProjectFactKind,
   sources: Schema.Array(KnowledgeFactSource).check(Schema.isMaxLength(16)),
 });
+export const ProjectFactStatus = Schema.Literals(["saved", "forgotten"]);
+export type ProjectFactStatus = typeof ProjectFactStatus.Type;
 const FactIdentity = {
   id: ProjectFactId,
   origin: KnowledgeOrigin,
@@ -116,7 +117,7 @@ const FactIdentity = {
 export const ActiveProjectFact = Schema.Struct({
   ...FactIdentity,
   ...ProjectFactFields.fields,
-  status: Schema.Literals(["proposed", "confirmed"]),
+  status: Schema.Literal("saved"),
   forgottenAt: Schema.Null,
 });
 const ForgottenProjectFact = Schema.Struct({
@@ -141,7 +142,6 @@ const ProjectKnowledgeMutationSchema = Schema.Union([
     ...ProjectFactFields.fields,
   }),
   Schema.Struct({ action: Schema.Literal("edit"), ...ExistingFact, ...ProjectFactFields.fields }),
-  Schema.Struct({ action: Schema.Literal("confirm"), ...ExistingFact }),
   Schema.Struct({ action: Schema.Literal("forget"), ...ExistingFact }),
   Schema.Struct({ action: Schema.Literal("feedback"), ...ExistingFact, helpful: Schema.Boolean }),
   // Creates replacementFactId and links it to factId, which keeps its content (unlike forget).
@@ -179,14 +179,13 @@ export const ProjectKnowledgeMutationResult: Schema.Codec<
 > = ProjectKnowledgeMutationResultSchema;
 export const ProjectKnowledgeListInput = Schema.Struct({
   projectId: ProjectId,
-  status: Schema.optionalKey(Schema.Literals(["confirmed", "proposed", "forgotten"])),
+  status: Schema.optionalKey(ProjectFactStatus),
   afterId: Schema.optionalKey(ProjectFactId),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
   includeSuperseded: Schema.optionalKey(Schema.Boolean),
-  /** Only facts whose message citations no longer resolve (archived conversations excluded).
-      Without an explicit status this spans proposed and confirmed facts. */
+  /** Only facts whose message citations no longer resolve. */
   sourceState: Schema.optionalKey(Schema.Literal("unavailable")),
-  /** Only facts proposed by assisted learning. */
+  /** Only facts saved by automatic learning. */
   origin: Schema.optionalKey(Schema.Literal("assisted")),
 });
 export type ProjectKnowledgeListInput = typeof ProjectKnowledgeListInput.Type;
@@ -225,6 +224,7 @@ export const ProjectFactHistoryEvent = Schema.Literals([
   "baseline",
   "created",
   "edited",
+  // Past reviews only; nothing records this any more.
   "confirmed",
   "forgotten",
   "feedback",
@@ -251,7 +251,7 @@ export const ProjectFactHistoryEntry = Schema.Struct({
 export type ProjectFactHistoryEntry = typeof ProjectFactHistoryEntry.Type;
 export const ProjectFactSummary = Schema.Struct({
   id: ProjectFactId,
-  status: Schema.Literals(["proposed", "confirmed", "forgotten"]),
+  status: ProjectFactStatus,
   revision: PositiveInt,
   excerpt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(320))),
 });
@@ -281,20 +281,18 @@ export const AssistedLearningRun = Schema.Struct({
   runOutcome: AssistedLearningRunOutcome,
   result: Schema.Literals(["ran", "skipped", "failed"]),
   reason: Schema.NullOr(Schema.String),
-  proposed: NonNegativeInt,
-  suggested: NonNegativeInt,
+  saved: NonNegativeInt,
   at: IsoDateTime,
 });
 export type AssistedLearningRun = typeof AssistedLearningRun.Type;
 export const ProjectKnowledgeStatus = Schema.Struct({
-  // proposed and confirmed exclude superseded facts, which are counted on their own.
+  // saved excludes superseded facts, which are counted on their own.
   counts: Schema.Struct({
-    proposed: NonNegativeInt,
-    confirmed: NonNegativeInt,
+    saved: NonNegativeInt,
     superseded: NonNegativeInt,
     forgotten: NonNegativeInt,
   }),
-  // Recallable facts (proposed or confirmed, not superseded) by trust quartile.
+  // Recallable facts (saved, not superseded) by trust quartile.
   trustBands: Schema.Struct({
     low: NonNegativeInt,
     guarded: NonNegativeInt,
@@ -309,11 +307,7 @@ export const ProjectKnowledgeStatus = Schema.Struct({
   unavailableSourcesCoverage: Schema.Literals(["complete", "partial"]),
   // Optional so older servers still decode.
   assistedLearning: Schema.optionalKey(
-    Schema.Struct({
-      // Unreviewed assisted proposals, excluding superseded ones.
-      suggested: NonNegativeInt,
-      lastRun: Schema.NullOr(AssistedLearningRun),
-    }),
+    Schema.Struct({ lastRun: Schema.NullOr(AssistedLearningRun) }),
   ),
 });
 export type ProjectKnowledgeStatus = typeof ProjectKnowledgeStatus.Type;
@@ -511,7 +505,6 @@ export class ProjectKnowledgeError extends Schema.TaggedError<ProjectKnowledgeEr
       "forgotten",
       "invalid_source",
       "fact_size",
-      "user_confirmation_required",
       "wrong_environment",
       "wrong_project",
       "stale_context",
@@ -539,8 +532,6 @@ export class ProjectKnowledgeError extends Schema.TaggedError<ProjectKnowledgeEr
         return "Fact text and entities must fit within 16 KiB, and each tag within 256 UTF-8 bytes.";
       case "invalid_source":
         return "The selected source is unavailable or has changed.";
-      case "user_confirmation_required":
-        return "A user must confirm proposed knowledge.";
       case "wrong_project":
         return "This context belongs to another project.";
       case "wrong_environment":

@@ -27,7 +27,6 @@ import {
 } from "./assistedLearningSchedule.ts";
 import * as ProjectKnowledge from "./ProjectKnowledge.ts";
 
-// Bounds on what one run sends to the model and what it may propose back.
 const MAX_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 6_000;
 const MAX_TRANSCRIPT_CHARS = 32_000;
@@ -35,8 +34,6 @@ const MAX_CANDIDATES = 3;
 const MAX_CANDIDATE_CHARS = 2_000;
 const MAX_ENTITIES = 5;
 
-// The provider schema keeps the reply loosely typed; this is the boundary that decides what
-// may become a proposal.
 const Candidate = Schema.Struct({
   kind: Schema.Literals(["decision", "constraint", "convention"]),
   content: Schema.Trim.check(Schema.isNonEmpty(), Schema.isMaxLength(MAX_CANDIDATE_CHARS)),
@@ -44,7 +41,6 @@ const Candidate = Schema.Struct({
   citations: Schema.Array(Schema.String),
 });
 const decodeCandidate = Schema.decodeUnknownOption(Candidate);
-// The proposal must also satisfy the mutation contract, which caps citations per fact.
 const isMutation = Schema.is(ProjectKnowledgeMutation);
 
 const make = Effect.gen(function* () {
@@ -70,14 +66,7 @@ const make = Effect.gen(function* () {
       if (records === null) return;
       const projectId: ProjectId = records.thread.projectId;
       if (yield* knowledge.hasAssistedRun(projectId, runId)) return;
-      const finish = (
-        result: AssistedLearningRun["result"],
-        reason: string | null,
-        counts: { readonly proposed: number; readonly suggested: number } = {
-          proposed: 0,
-          suggested: 0,
-        },
-      ) =>
+      const finish = (result: AssistedLearningRun["result"], reason: string | null, saved = 0) =>
         DateTime.now.pipe(
           Effect.flatMap((now) =>
             knowledge.recordAssistedRun(projectId, {
@@ -86,7 +75,7 @@ const make = Effect.gen(function* () {
               runOutcome,
               result,
               reason,
-              ...counts,
+              saved,
               at: DateTime.formatIso(now),
             }),
           ),
@@ -98,7 +87,7 @@ const make = Effect.gen(function* () {
       ).settings;
       // The setting can change between scheduling and running; the latest choice wins.
       if (!settings.enableAssistedLearning)
-        return yield* finish("skipped", "Assisted learning is off for this project.");
+        return yield* finish("skipped", "Automatic memory is off for this project.");
       const finalized = records.messages
         .filter(
           (message) =>
@@ -164,13 +153,11 @@ const make = Effect.gen(function* () {
         );
       if (!generated.ok) return yield* finish("failed", generated.detail.slice(0, 300));
       const actor = { kind: "assisted" as const, threadId, runId, runOutcome };
-      // Proposals commit with the run's outcome. A lost outcome then leaves nothing a user could
-      // have reviewed or forgotten, and an attempt that finished first keeps its result.
       yield* sql.withTransaction(
         Effect.gen(function* () {
           if (yield* knowledge.hasAssistedRun(projectId, runId)) return;
-          let proposed = 0;
-          let suggested = 0;
+          let saved = 0;
+          let duplicates = 0;
           let dropped = 0;
           for (const raw of generated.candidates.slice(0, MAX_CANDIDATES)) {
             const candidate = Option.getOrNull(decodeCandidate(raw));
@@ -184,13 +171,11 @@ const make = Effect.gen(function* () {
               dropped += 1;
               continue;
             }
-            // Named by run and content, so a retry that regenerates candidates in another order
-            // lands on the same ids and cannot bring back a proposal that was since forgotten.
-            const id = `assisted:${runId}:${(yield* digest(candidate.content)).slice(0, 32)}`;
-            const proposal = {
+            const runContentId = `assisted:${runId}:${(yield* digest(candidate.content)).slice(0, 32)}`;
+            const create = {
               action: "create" as const,
-              commandId: CommandId.make(id),
-              factId: ProjectFactId.make(id),
+              commandId: CommandId.make(runContentId),
+              factId: ProjectFactId.make(runContentId),
               projectId,
               kind: candidate.kind,
               content: candidate.content,
@@ -204,11 +189,11 @@ const make = Effect.gen(function* () {
               tags: [],
               sources,
             };
-            if (!isMutation(proposal)) {
+            if (!isMutation(create)) {
               dropped += 1;
               continue;
             }
-            const result = yield* knowledge.proposeAssisted(proposal, actor).pipe(
+            const result = yield* knowledge.saveAutomatic(create, actor).pipe(
               Effect.catchTags({
                 ProjectKnowledgeError: (error) =>
                   error.reason === "storage" || error.reason === "missing_project"
@@ -216,20 +201,24 @@ const make = Effect.gen(function* () {
                     : Effect.succeed({ outcome: "dropped" as const }),
               }),
             );
-            if (result.outcome === "proposed") proposed += 1;
-            else if (result.outcome === "suggested") {
-              proposed += 1;
-              suggested += 1;
-            } else if (result.outcome === "dropped") dropped += 1;
+            if (result.outcome === "saved") saved += 1;
+            else if (result.outcome === "duplicate") duplicates += 1;
+            else if (result.outcome === "dropped") dropped += 1;
           }
+          const notes = [
+            ...(duplicates > 0
+              ? [`${duplicates} duplicate${duplicates === 1 ? "" : "s"} skipped.`]
+              : []),
+            ...(dropped > 0
+              ? [
+                  `${dropped} candidate${dropped === 1 ? "" : "s"} dropped: citations did not verify or exceeded the limit.`,
+                ]
+              : []),
+          ];
           yield* finish(
             "ran",
-            proposed === 0 && dropped === 0
-              ? "Nothing durable to propose."
-              : dropped > 0
-                ? `${dropped} candidate${dropped === 1 ? "" : "s"} dropped: citations did not verify or exceeded the limit.`
-                : null,
-            { proposed, suggested },
+            notes.length > 0 ? notes.join(" ") : saved === 0 ? "Nothing durable to save." : null,
+            saved,
           );
         }),
       );

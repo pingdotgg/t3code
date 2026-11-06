@@ -35,7 +35,7 @@ import { KnowledgeHealthRow } from "./ProjectKnowledgeFactDetail";
 import { AppText, AppTextInput } from "./ui/AppText";
 import { Button } from "./ui/Button";
 
-type StatusFilter = "confirmed" | "proposed" | "suggested" | "forgotten";
+type StatusFilter = "saved" | "automatic" | "forgotten";
 
 /** Filters, search and paging for the fact list. The sheet reads its results for draft labels. */
 export function useProjectKnowledgeBrowse(props: {
@@ -44,7 +44,7 @@ export function useProjectKnowledgeBrowse(props: {
   readonly history: boolean;
   readonly onArchivedChange: () => void;
 }) {
-  const [status, setStatus] = useState<StatusFilter>("confirmed");
+  const [status, setStatus] = useState<StatusFilter>("saved");
   const [afterId, setAfterId] = useState<ProjectFactId | undefined>();
   const [includeArchived, setIncludeArchived] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -56,11 +56,10 @@ export function useProjectKnowledgeBrowse(props: {
       environmentId: props.environmentId,
       input: {
         projectId: props.projectId,
-        // The lost-source filter spans proposed and confirmed, matching the health count.
         ...(props.history && lostSourcesOnly
           ? { sourceState: "unavailable" as const }
-          : status === "suggested"
-            ? { status: "proposed" as const, origin: "assisted" as const }
+          : status === "automatic"
+            ? { status: "saved" as const, origin: "assisted" as const }
             : { status }),
         ...(afterId ? { afterId } : {}),
         ...(props.history && showSuperseded ? { includeSuperseded: true } : {}),
@@ -214,7 +213,6 @@ export function ProjectKnowledgeFactList(props: {
 }) {
   const { browse } = props;
   const { list, health, search, searchInput } = browse;
-  const suggested = health.data?.assistedLearning?.suggested;
   return (
     <View className="gap-4">
       <View className="gap-2">
@@ -243,12 +241,12 @@ export function ProjectKnowledgeFactList(props: {
 
       <View className="flex-row flex-wrap gap-2">
         {(props.assisted
-          ? (["confirmed", "proposed", "suggested", "forgotten"] as const)
-          : (["confirmed", "proposed", "forgotten"] as const)
+          ? (["saved", "automatic", "forgotten"] as const)
+          : (["saved", "forgotten"] as const)
         ).map((value) => (
           <Button
             key={value}
-            label={value === "suggested" && suggested ? `suggested (${suggested})` : value}
+            label={value}
             tone={
               browse.status === value && !searchInput && !browse.lostSourcesOnly
                 ? "primary"
@@ -427,7 +425,6 @@ function FactRow(props: {
   );
 }
 
-/** The project's opt-in for model-suggested facts and what the last run did with it. */
 function AssistedLearningRow(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
@@ -463,17 +460,17 @@ function AssistedLearningRow(props: {
   return (
     <View className="gap-1 rounded-2xl bg-subtle p-3">
       <View className="flex-row items-center gap-3">
-        <AppText className="flex-1">Suggest facts from finished runs</AppText>
+        <AppText className="flex-1">Save facts from finished runs</AppText>
         <Switch
-          accessibilityLabel="Suggest facts from finished runs"
+          accessibilityLabel="Save facts from finished runs"
           value={enabled}
           disabled={!canWrite || busy}
           onValueChange={(value) => void toggle(value)}
         />
       </View>
       <AppText className="text-xs text-foreground-muted">
-        After each run in this project, your text generation model proposes up to three cited facts
-        for review. Each run costs one model call.
+        After each run in this project, your text generation model saves up to three cited facts.
+        Each run costs one model call.
       </AppText>
       {props.lastRun ? (
         <AppText className="text-xs">{assistedLearningRunLabel(props.lastRun)}</AppText>

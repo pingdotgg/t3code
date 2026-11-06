@@ -95,6 +95,7 @@ import Migration0087 from "./Migrations/087_DropOrchestrationEventCorrelationInd
 import Migration0088 from "./Migrations/088_ModelEvaluations.ts";
 import Migration0089 from "./Migrations/089_DelegatedRecoveryIndexes.ts";
 import Migration0090 from "./Migrations/090_ScheduledTaskThreadMode.ts";
+import Migration0091 from "./Migrations/091_ProjectKnowledgeSavedLifecycle.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -188,6 +189,7 @@ const migrationEntries = [
   [88, "ModelEvaluations", Migration0088],
   [89, "DelegatedRecoveryIndexes", Migration0089],
   [90, "ScheduledTaskThreadMode", Migration0090],
+  [91, "ProjectKnowledgeSavedLifecycle", Migration0091],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

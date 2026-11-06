@@ -212,13 +212,13 @@ describe("SettingsServerControlsRouteScreen", () => {
       act(() => root.render(<SettingsZackRouteScreen />));
       const toggle = Array.from(
         container.querySelectorAll<HTMLButtonElement>('[role="switch"]'),
-      ).find((button) => button.textContent === "Suggest facts from finished runs")!;
+      ).find((button) => button.textContent === "Save facts from finished runs")!;
 
       act(() => toggle.click());
 
       expect(toggle.disabled).toBe(true);
       expect(mocks.updateSettings).not.toHaveBeenCalled();
-      expect(container.textContent).toContain("Assisted learning is not supported on Old server.");
+      expect(container.textContent).toContain("Automatic memory is not supported on Old server.");
     },
   );
 
@@ -228,33 +228,35 @@ describe("SettingsServerControlsRouteScreen", () => {
     act(() => root.render(<SettingsZackRouteScreen />));
     const toggle = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[role="switch"]'),
-    ).find((button) => button.textContent === "Suggest facts from finished runs")!;
+    ).find((button) => button.textContent === "Save facts from finished runs")!;
 
     act(() => toggle.click());
 
     expect(toggle.disabled).toBe(true);
     expect(mocks.updateSettings).not.toHaveBeenCalled();
     expect(container.textContent).toContain(
-      "Assisted learning is supported on only some selected environments.",
+      "Automatic memory is supported on only some selected environments.",
     );
     expect(container.textContent).toContain("Old server");
   });
 
-  it("enables assisted learning for a supported project without targeting unrelated older environments", async () => {
+  it("turns automatic memory off for a supported project without targeting unrelated older environments", async () => {
     mocks.targets = [environment("new", "New server", true), environment("old", "Old server")];
     mocks.projectSelected = true;
     mocks.projectEnvironmentIds = ["new"];
     act(() => root.render(<SettingsZackRouteScreen />));
     const toggle = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[role="switch"]'),
-    ).find((button) => button.textContent === "Suggest facts from finished runs")!;
+    ).find((button) => button.textContent === "Save facts from finished runs")!;
 
     await act(async () => toggle.click());
 
     expect(toggle.disabled).toBe(false);
     expect(mocks.updateSettings).toHaveBeenCalledExactlyOnceWith({
       environmentId: "new",
-      input: { patch: { projectSettingsOverrides: { project: { enableAssistedLearning: true } } } },
+      input: {
+        patch: { projectSettingsOverrides: { project: { enableAssistedLearning: false } } },
+      },
     });
   });
 

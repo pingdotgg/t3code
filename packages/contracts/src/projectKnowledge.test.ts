@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { ProjectKnowledgeListResult, ProjectKnowledgeDelivery } from "./projectKnowledge.ts";
+import {
+  ProjectKnowledgeDelivery,
+  ProjectKnowledgeListInput,
+  ProjectKnowledgeListResult,
+  ProjectKnowledgeMutation,
+  ProjectKnowledgeStatus,
+} from "./projectKnowledge.ts";
 
 const decodeDelivery = Schema.decodeUnknownSync(ProjectKnowledgeDelivery);
 
 const decodeList = Schema.decodeUnknownSync(ProjectKnowledgeListResult);
 const encodeList = Schema.encodeSync(ProjectKnowledgeListResult);
+const decodeListInput = Schema.decodeUnknownSync(ProjectKnowledgeListInput);
+const decodeMutation = Schema.decodeUnknownSync(ProjectKnowledgeMutation);
+const decodeStatus = Schema.decodeUnknownSync(ProjectKnowledgeStatus);
+const encodeStatus = Schema.encodeSync(ProjectKnowledgeStatus);
 
 const fact = (origin: Record<string, unknown>) => ({
   id: "fact-1",
@@ -22,7 +32,7 @@ const fact = (origin: Record<string, unknown>) => ({
   entities: [],
   tags: [],
   sources: [],
-  status: "proposed",
+  status: "saved",
   forgottenAt: null,
 });
 
@@ -43,6 +53,63 @@ describe("KnowledgeOrigin", () => {
   it("still fails a known origin kind whose payload is broken", () => {
     expect(() =>
       decodeList({ facts: [fact({ kind: "assisted", threadId: "t" })], nextCursor: null }),
+    ).toThrow();
+  });
+});
+
+describe("fact lifecycle", () => {
+  it("encodes and decodes saved directly", () => {
+    const list = { facts: [fact({ kind: "user" })], nextCursor: null };
+    expect(encodeList(decodeList(list)).facts[0]?.status).toBe("saved");
+  });
+
+  it.each(["proposed", "confirmed"])("rejects %s as a current status", (status) => {
+    expect(() =>
+      decodeList({ facts: [{ ...fact({ kind: "user" }), status }], nextCursor: null }),
+    ).toThrow();
+    expect(() => decodeListInput({ projectId: "project-1", status })).toThrow();
+  });
+
+  it("has no confirm mutation", () => {
+    expect(() =>
+      decodeMutation({
+        action: "confirm",
+        commandId: "command-1",
+        projectId: "project-1",
+        factId: "fact-1",
+        expectedRevision: 1,
+      }),
+    ).toThrow();
+  });
+
+  it("reports saved counts and runs without pending counters", () => {
+    const status = {
+      counts: { saved: 2, superseded: 1, forgotten: 0 },
+      trustBands: { low: 0, guarded: 0, steady: 2, high: 0 },
+      recallThreshold: 0.3,
+      belowRecallThreshold: 0,
+      retrievals: 0,
+      feedback: { helpful: 0, unhelpful: 0 },
+      unavailableSources: 0,
+      unavailableSourcesCoverage: "complete",
+      assistedLearning: {
+        lastRun: {
+          threadId: "thread-1",
+          runId: "run-1",
+          runOutcome: "completed",
+          result: "ran",
+          reason: null,
+          saved: 2,
+          at: "2026-10-22T00:00:00.000Z",
+        },
+      },
+    };
+    expect(encodeStatus(decodeStatus(status))).toEqual(status);
+    expect(() =>
+      decodeStatus({
+        ...status,
+        counts: { proposed: 1, confirmed: 1, superseded: 1, forgotten: 0 },
+      }),
     ).toThrow();
   });
 });

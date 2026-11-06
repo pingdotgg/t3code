@@ -162,7 +162,7 @@ describe("scoped settings writes", () => {
       ).toMatchObject({
         serverWrites: [],
         unavailableReason:
-          "Assisted learning is not supported on Older. Update T3 Code on that environment.",
+          "Automatic memory is not supported on Older. Update T3 Code on that environment.",
       });
     },
   );
@@ -176,7 +176,7 @@ describe("scoped settings writes", () => {
     ).toMatchObject({
       serverWrites: [],
       unavailableReason:
-        "Assisted learning is supported on only some selected environments. Update T3 Code on Server, or select a supported environment.",
+        "Automatic memory is supported on only some selected environments. Update T3 Code on Server, or select a supported environment.",
     });
   });
 
