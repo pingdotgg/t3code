@@ -32,7 +32,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -647,9 +646,8 @@ function TerminalSessionViewport({
       environmentId,
       input: { threadId, terminalId, cols, rows },
     });
-    // The surface only reports a new grid, so retry a failure once. Resend the current grid, not
-    // this one: a newer resize may already be queued behind it.
-    if (!retry && result._tag === "Failure" && !Cause.hasInterruptsOnly(result.cause)) {
+    // Resend the current grid, not this one: a newer resize may already be queued behind it.
+    if (!retry && result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       resizeRetryGenerationRef.current = generation;
       terminalRef.current?.resendSize();
     }

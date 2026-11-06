@@ -94,6 +94,7 @@ function setup(options: { readonly initialInput?: string } = {}) {
   // The session sees a settled result within a fixed number of microtasks.
   const failResize = async (index: number) => {
     resizeResults[index]!(AsyncResult.failure(Cause.fail("offline")));
+    // No promise marks the retry decision, so flush the command's continuation chain.
     for (let tick = 0; tick < 10; tick++) await Promise.resolve();
   };
   const exits: Array<true> = [];

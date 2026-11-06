@@ -284,16 +284,12 @@ it("resends the terminal size after a resize request fails", async () => {
     );
   };
   await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
-  using _timers = fakeTimers();
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
   await act(async () => {
     fixture.reportedSize = { cols: 57, rows: 41 };
     fixture.surfaceOptions.at(-1)!.onResize(57, 41);
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(10_000);
   });
   const resize = {
     environmentId: threadRef.environmentId,
