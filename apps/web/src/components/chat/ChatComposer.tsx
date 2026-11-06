@@ -143,8 +143,12 @@ import {
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
-import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+import {
+  useEnvironmentSpeechInput,
+  useSpeechUnavailableReason,
+} from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
+import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
@@ -1948,6 +1952,13 @@ export function ChatComposer(props: ChatComposerProps) {
     modelPickerOpen: isComposerModelPickerOpen,
     ...(backgroundThread ? { targetRef: composerFormRef } : {}),
   });
+  // The editor freezes while dictation runs and drops focus; collapsing then would hide the recording pill.
+  const dictationActiveRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes dictation activity to the asynchronous blur check
+  useEffect(() => {
+    dictationActiveRef.current = speechInput.state.phase !== "idle";
+  });
+  const speechUnavailableReason = useSpeechUnavailableReason(speechInput);
 
   const resolveActiveComposerTrigger = (): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -2366,6 +2377,23 @@ export function ChatComposer(props: ChatComposerProps) {
     });
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
+  const showsSpeechAction = speechInput.available || speechUnavailableReason !== null;
+  const renderSpeechAction = (inPill: boolean) =>
+    showsSpeechAction ? (
+      <ComposerSpeechButton
+        inPill={inPill}
+        state={speechInput.state}
+        progress={null}
+        shortcutLabel={dictationShortcutLabel}
+        disabled={dictationDisabled}
+        unavailableReason={speechUnavailableReason}
+        onStart={() => {
+          if (isComposerCollapsedMobile) expandMobileComposerStable();
+          void speechInput.start();
+        }}
+        onCancel={() => speechInput.cancel()}
+      />
+    ) : null;
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
@@ -2935,7 +2963,7 @@ export function ChatComposer(props: ChatComposerProps) {
     }
     composerBlurFrameRef.current = window.requestAnimationFrame(() => {
       composerBlurFrameRef.current = null;
-      if (mobileComposerExpandInFlightRef.current) {
+      if (mobileComposerExpandInFlightRef.current || dictationActiveRef.current) {
         return;
       }
       const composerSurface = composerSurfaceRef.current;
@@ -3507,38 +3535,54 @@ export function ChatComposer(props: ChatComposerProps) {
                     (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
-                <button
-                  type="button"
-                  data-chat-composer-transition-actions="true"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-control surface-pill text-foreground hover:surface-raised-hover disabled:opacity-64"
-                  disabled={collapsedComposerPrimaryActionDisabled}
-                  aria-label={collapsedComposerPrimaryActionLabel}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (collapsedComposerShowsStop) onInterrupt();
-                    else if (showResumeAction) onResume();
-                    else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
-                      expandMobileComposer();
-                    else submitComposer();
-                  }}
-                >
-                  {collapsedComposerShowsStop ? (
-                    <span className="size-2.5 rounded-xs bg-error-foreground" aria-hidden="true" />
-                  ) : showResumeAction ? (
-                    <PlayIcon className="size-4 fill-current" aria-hidden="true" />
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                      <path
-                        d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </button>
+                <div data-chat-composer-transition-actions="true" className="flex shrink-0">
+                  <span
+                    data-composer-send-pill="true"
+                    className="relative isolate inline-flex h-8 shrink-0 items-center rounded-lg surface-pill"
+                  >
+                    {renderSpeechAction(true)}
+                    <button
+                      type="button"
+                      className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
+                      disabled={collapsedComposerPrimaryActionDisabled}
+                      aria-label={collapsedComposerPrimaryActionLabel}
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (collapsedComposerShowsStop) onInterrupt();
+                        else if (showResumeAction) onResume();
+                        else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
+                          expandMobileComposer();
+                        else submitComposer();
+                      }}
+                    >
+                      {collapsedComposerShowsStop ? (
+                        <span
+                          className="size-2.5 rounded-xs bg-error-foreground"
+                          aria-hidden="true"
+                        />
+                      ) : showResumeAction ? (
+                        <PlayIcon className="size-4 fill-current" aria-hidden="true" />
+                      ) : (
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M8 3L8 13M8 3L4 7M8 3L12 7"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                  </span>
+                </div>
               </div>
             ) : null}
 
@@ -3703,6 +3747,7 @@ export function ChatComposer(props: ChatComposerProps) {
               >
                 {composerAttachButton}
                 <ComposerFooterPrimaryActions
+                  renderSpeechAction={renderSpeechAction}
                   compact={isComposerPrimaryActionsCompact}
                   canOperateThread={canOperateThread}
                   activeContextWindow={
@@ -3760,28 +3805,18 @@ export function ChatComposer(props: ChatComposerProps) {
                     : {})}
                 >
                   {speechInput.available ? (
-                    <>
-                      <ComposerSpeechRecordingPill
-                        state={speechInput.state}
-                        progress={null}
-                        finishShortcutLabel={dictationShortcutLabel}
-                        cancelShortcutLabel="Esc"
-                        level={speechInput.level}
-                        disabled={dictationDisabled}
-                        onStart={() => void speechInput.start()}
-                        onStop={() => void speechInput.stop()}
-                        onCancel={() => speechInput.cancel()}
-                        onSkipPostProcessing={() => speechInput.skipPostProcessing()}
-                      />
-                      <ComposerSpeechButton
-                        state={speechInput.state}
-                        progress={null}
-                        shortcutLabel={dictationShortcutLabel}
-                        disabled={dictationDisabled}
-                        onStart={() => void speechInput.start()}
-                        onCancel={() => speechInput.cancel()}
-                      />
-                    </>
+                    <ComposerSpeechRecordingPill
+                      state={speechInput.state}
+                      progress={null}
+                      finishShortcutLabel={dictationShortcutLabel}
+                      cancelShortcutLabel="Esc"
+                      level={speechInput.level}
+                      disabled={dictationDisabled}
+                      onStart={() => void speechInput.start()}
+                      onStop={() => void speechInput.stop()}
+                      onCancel={() => speechInput.cancel()}
+                      onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                    />
                   ) : null}
                   <VoiceInputSetup
                     environmentId={speechInput.transcriptionEnvironmentId}
