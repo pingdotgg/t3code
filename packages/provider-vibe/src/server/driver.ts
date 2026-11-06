@@ -59,7 +59,7 @@ export type VibeDriverEnv =
 export const VibeDriver: ProviderDriver<VibeSettings, VibeDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
-    displayName: "Mistral Vibe",
+    displayName: "Vibe",
     supportsMultipleInstances: true,
   },
   configSchema: VibeSettings,

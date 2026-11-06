@@ -32,7 +32,7 @@ export function accountViewToUsageLimits(
   const window: ServerProviderUsageWindow = {
     id: "vibe-code-monthly",
     kind: "monthly",
-    label: budget.paygEnabled === true ? "Monthly allowance (pay-as-you-go)" : "Monthly allowance",
+    label: budget.paygEnabled === true ? "Monthly (pay-as-you-go)" : "Monthly",
     usedPercent: clampPercent(budget.usagePercentage),
     ...(budget.resetAt ? { resetsAt: budget.resetAt } : {}),
   };
