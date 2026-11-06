@@ -221,6 +221,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
     const reusableTerminalId =
+      script.stopOnSettle ||
       options?.preferNewTerminal ||
       !canReuseTerminal ||
       !readEnvironmentScope(environmentId, AuthTerminalReadScope)
@@ -258,6 +259,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         : { terminalId: reusableTerminalId }),
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       ...(options?.providerInstanceId ? { providerInstanceId: options.providerInstanceId } : {}),
+      stopOnSettle: script.stopOnSettle ?? false,
       ...(options?.env ? { extraEnv: options.env } : {}),
     });
     if (!launched) return false;

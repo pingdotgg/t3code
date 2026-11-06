@@ -14,12 +14,19 @@ to keep a large paste editable in the composer instead.
 
 ## Formatting
 
-The composer writes Markdown and shows it styled as you type. Markers such as
-`**` stay in the text and show beside the styled words when your cursor is on
-them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
-task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
-block. What you typed is what the agent receives, markers and numbering
-included, and `#1234` without a space still looks up a pull request.
+The composer writes Markdown and shows it styled as you type. When your cursor
+is on styled text, its Markdown shows instead, such as `**bold**`, and the
+markers edit like any other text: delete them to remove the style, or change
+`**` to `*` for italic. The style updates when your cursor leaves. To write
+plain Markdown with no styling, turn off **Settings → Chat → Rich text
+composer**. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---`
+become lists, task lists, quotes, headings and rules; ` ``` ` followed by Enter
+opens a code block. What you typed is what the agent receives, markers and
+numbering included, and `#1234` without a space still looks up a pull request.
+
+Some styled text containing or touching literal Markdown characters, such as a
+bold `path\` or `2*3`, keeps its styling without showing markers. Use formatting
+shortcuts or turn off rich text to edit the formatting of those ranges.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
 on an empty line moves out one level, then leaves it; **Tab** nests a list item
@@ -177,28 +184,39 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on web and desktop
+
+Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio
+is transcribed on an environment you choose in **Settings → Voice**; nothing is
+sent until you choose one. See [Voice input](./voice-input.md).
+
 ## Voice input on mobile
 
-On supported iPhones with iOS 26 or later and Android devices with Android 12 or
-later, use the composer's microphone to record, then confirm to transcribe. Text is
+Use the composer's microphone to record, then confirm to transcribe. Text is
 inserted where your selection was when recording started, ready for you to review
 and edit before sending.
 
-Voice input uses on-device speech transcription: Apple's on iOS, and compatible
-Google speech services on Android. When it is unavailable for the device or its
-language, the composer has no microphone button and **Settings → Microphone** says
-voice input isn't available. On Android, keep T3 Code open while recording and
-transcribing.
+By default, audio stays on the phone. Local transcription needs a supported iPhone
+with iOS 26 or later, or Android 12 or later with compatible Google speech services.
+To use a paired environment instead, open **Settings → Voice → Transcribe on**,
+choose the environment, and confirm. Finished recordings go only to that environment,
+even when a draft belongs to another one. This also works on phones without local
+speech recognition. If the chosen environment disconnects, dictation stops; it never
+switches hosts. Choose **This device** to revoke access and discard pending audio.
+On Android, keep T3 Code open while recording and transcribing.
 
-The first use may download a speech model and needs a network connection.
-Later transcription works offline for that language. On Android, transcription
-processes the full recording at roughly its original duration. Recordings can be up to five
+On-device dictation may need a network connection to download a speech model the
+first time. After that it works offline for that language. iPhone dictates in the
+first of your preferred languages (**Settings → General → Language & Region**)
+that Apple’s speech model supports. If none is supported, it tries the app’s
+language. Android transcribes on the device while you
+record and finishes after you stop. Recordings can be up to five
 minutes long. Canceling or an audio interruption discards the recording and
 preserves your existing draft. Navigating to another screen keeps dictation active;
 use the floating controls to finish or cancel. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
-Choose a preferred order in **Settings → Microphone**. Voice input requests the first
+Choose a preferred order in **Settings → Voice**. Voice input requests the first
 connected microphone in the list. The list mixes kinds (built-in, other wired, other
 Bluetooth, and CarPlay on iOS) with wired and Bluetooth devices you have dictated
 with, listed by name. Drag to rank them together:
@@ -208,8 +226,8 @@ microphone on iOS. Swipe a device left to forget it. Android may use another inp
 when the preferred microphone cannot be routed. Devices with the same name may share
 a saved preference, but simultaneous same-name inputs remain separately selectable.
 
-Transcription runs on your device. T3 Code deletes the temporary audio after
-transcription or cancellation; only the message text is sent when you submit.
+T3 Code deletes the temporary recording from your phone after transcription or
+cancellation. The transcript stays in your draft until you send the message to the agent.
 
 ## Queued messages
 
@@ -256,6 +274,12 @@ Provider commands must start the message to run. T3 Code commands such as
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it, even with the context meter turned off.
+
+Send `/clear` on its own, or pick it from the slash menu, to start a fresh session
+in the same thread. Your next message goes to a new provider session that doesn't see the
+earlier messages, and the thread marks where it began with **New session**.
+Earlier messages and diffs stay in the thread. Dismiss the notice above the
+composer to keep the current session instead.
 
 On web and desktop, turn on **Settings → Labs → Legacy → Context
 window indicator (legacy)** to see context usage. The meter is off by default
