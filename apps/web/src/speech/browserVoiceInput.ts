@@ -11,7 +11,7 @@ import {
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/contracts";
 
-import { runtime } from "../lib/runtime";
+import { speechRuntime as runtime } from "./runtime";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 
 export function createBrowserVoiceInputPlatform(input: {
