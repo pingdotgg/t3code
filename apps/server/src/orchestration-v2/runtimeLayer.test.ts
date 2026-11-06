@@ -6493,6 +6493,111 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect(
+    "starts a fresh scheduled delivery on a new provider thread after a provider switch",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("runtime-layer-fresh-scheduled-provider-thread");
+        const scheduledMessageId = MessageId.make(`${threadId}:scheduled`);
+        const switchedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Fresh scheduled provider thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:active`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:active`),
+          text: "Busy",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const active = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:scheduled`),
+          threadId,
+          messageId: scheduledMessageId,
+          scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`),
+          text: "Scheduled prompt",
+          attachments: [],
+          freshContext: true,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queuedProjection = yield* orchestrator.getThreadProjection(threadId);
+        const queued = queuedProjection.runs.find(
+          (run) => run.userMessageId === scheduledMessageId,
+        )!;
+        // The queue reserved an unused provider thread on the original instance.
+        const reserved = queuedProjection.providerThreads.find(
+          (providerThread) => providerThread.id === queued.providerThreadId,
+        )!;
+        assert.equal(reserved.providerInstanceId, modelSelection.instanceId);
+        assert.isNull(reserved.firstRunOrdinal);
+        assert.isNull(reserved.nativeThreadRef);
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:select-switched`),
+          threadId,
+          modelSelection: switchedSelection,
+        });
+        const waiting = yield* orchestrator.getThreadProjection(threadId);
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:completed`),
+              type: "run.updated",
+              threadId,
+              runId: active.id,
+              occurredAt: now,
+              payload: {
+                ...waiting.runs.find((run) => run.id === active.id)!,
+                status: "completed",
+                completedAt: now,
+              },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const delivered = after.runs.find((run) => run.userMessageId === scheduledMessageId)!;
+        assert.equal(delivered.status, "starting");
+        assert.isTrue(delivered.freshContext === true);
+        assert.notEqual(delivered.providerThreadId, reserved.id);
+        assert.equal(
+          after.providerThreads.find(
+            (providerThread) => providerThread.id === delivered.providerThreadId,
+          )?.providerInstanceId,
+          alternateInstanceId,
+        );
+        assert.equal(
+          after.providerThreads.find((providerThread) => providerThread.id === reserved.id)
+            ?.providerInstanceId,
+          modelSelection.instanceId,
+        );
+      }),
+  );
+
   it.effect("starts each queued scheduled delivery on the selection current at its start", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

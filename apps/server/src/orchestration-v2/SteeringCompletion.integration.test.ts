@@ -490,6 +490,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   interruptTurn: Effect.Effect<void> = Effect.void,
   steeringAcceptsAttachments = true,
   nativeGoals?: boolean,
+  extraAdapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]> = [],
 ) {
   const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
@@ -610,7 +611,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   };
   const layer = ProviderReplayHarness.layerWithRegistry(
     { name },
-    ProviderAdapterRegistry.layerSingle(adapter),
+    ProviderAdapterRegistry.layerFromAdapters([adapter, ...extraAdapters]),
     { runEffectWorker: false },
   );
   const startFirstTurn = Effect.gen(function* () {
@@ -1723,6 +1724,125 @@ it.effect("steers a promoted scheduled delivery with the thread's current select
         assert.deepEqual(
           promoted?.type === "user_message" ? promoted.scheduledTaskId : undefined,
           ScheduledTaskId.make("task:scheduled"),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+const claudeSelection = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-test",
+};
+const claudeAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+  instanceId: claudeSelection.instanceId,
+  driver: ProviderDriverKind.make("claudeAgent"),
+  getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+  planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+  openSession: () => Effect.die("the Claude instance never starts a turn here"),
+};
+
+// Queues a scheduled delivery on the Codex thread, then switches the thread to Claude.
+const scheduledDeliveryAfterClaudeSwitch = (name: string, text: string) =>
+  Effect.gen(function* () {
+    const harness = yield* nextTurnSelectionHarness(
+      name,
+      false,
+      true,
+      Effect.void,
+      true,
+      undefined,
+      [claudeAdapter],
+    );
+    const queueAndSwitch = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = yield* harness.startFirstTurn;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("scheduled"),
+        threadId,
+        messageId: MessageId.make("message:scheduled"),
+        scheduledTaskId: ScheduledTaskId.make("task:scheduled"),
+        text,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "queued",
+      )!;
+      assert.equal(queuedRun.providerInstanceId, instanceId);
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("select-claude"),
+        threadId,
+        modelSelection: claudeSelection,
+      });
+      return { threadId, queuedRun };
+    });
+    return { ...harness, queueAndSwitch };
+  });
+
+it.effect("checks a promoted scheduled /goal against the thread's current provider", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
+        "promote-scheduled-goal",
+        "/goal pause",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const { threadId, queuedRun } = yield* queueAndSwitch;
+        const promoteError = yield* orchestrator
+          .dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("promote"),
+            threadId,
+            queuedRunId: queuedRun.id,
+            targetRunId: started[0]!.runId,
+          })
+          .pipe(Effect.flip);
+
+        assert.match(String(promoteError.cause), /Claude goals cannot be paused or resumed/);
+        assert.deepEqual(steered, []);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.id === queuedRun.id,
+          )?.status,
+          "queued",
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("checks an edited scheduled /goal against the thread's current provider", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
+        "edit-scheduled-goal",
+        "scheduled",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const { threadId, queuedRun } = yield* queueAndSwitch;
+        const editError = yield* orchestrator
+          .dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make("edit"),
+            threadId,
+            runId: queuedRun.id,
+            text: "/goal pause",
+          })
+          .pipe(Effect.flip);
+
+        assert.match(String(editError.cause), /Claude goals cannot be paused or resumed/);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+            (message) => message.id === queuedRun.userMessageId,
+          )?.text,
+          "scheduled",
         );
       }).pipe(Effect.provide(layer));
     }),

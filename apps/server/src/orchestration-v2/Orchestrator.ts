@@ -2060,7 +2060,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? activeProviderThread
           : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
         : freshContext &&
-            (storedProviderThread.firstRunOrdinal !== null ||
+            // The reserved row belongs to the instance the run queued on, which may have changed.
+            (storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
+              storedProviderThread.firstRunOrdinal !== null ||
               storedProviderThread.nativeThreadRef !== null)
           ? undefined
           : storedProviderThread;
@@ -10073,10 +10075,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
+    // A scheduled delivery steers on the thread's current pick, so /goal must suit that provider.
+    const modelSelection = queuedRunModelSelection(projection, queuedRun);
     const parsedGoalCommand = parseGoalCommand(queuedMessage);
     const goalCommand =
       parsedGoalCommand === null ||
-      (yield* goalDriverFor(command, queuedRun.providerInstanceId)) === undefined
+      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
         ? null
         : parsedGoalCommand;
     const target = projection.runs.find((run) => run.id === command.targetRunId);
@@ -10090,7 +10094,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       isCompactionCommandMessage(targetMessage)
     ) {
       if (goalCommand !== null) {
-        yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+        yield* ensureGoalCommandSupported(command, queuedMessage, modelSelection.instanceId);
       }
       yield* emitEvent({
         type: "run.updated",
@@ -10123,7 +10127,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (goalCommand !== null) {
-      yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+      yield* ensureGoalCommandSupported(command, queuedMessage, modelSelection.instanceId);
       const goal = projection.providerThreads.find(
         (candidate) => candidate.id === target?.providerThreadId,
       )?.goal;
@@ -10199,7 +10203,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events,
       effects,
       projection,
-      modelSelection: queuedRunModelSelection(projection, queuedRun),
+      modelSelection,
       targetRunId: command.targetRunId,
       messageId: queuedMessage.id,
       text: queuedMessage.text,
@@ -10414,7 +10418,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* ensureGoalCommandSupported(
       command,
       { text: command.text, attachments: command.attachments ?? queuedMessage.attachments },
-      queuedRun.providerInstanceId,
+      queuedRunModelSelection(projection, queuedRun).instanceId,
     );
     const queuedTurnItem = projection.turnItems.find(
       (candidate) => candidate.type === "user_message" && candidate.messageId === queuedMessage.id,
