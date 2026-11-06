@@ -39,8 +39,14 @@ const mocks = vi.hoisted(() => ({
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
   transcripts: [] as Array<string | Error>,
+  navigate: vi.fn(),
   committed: vi.fn(),
   draft: "",
+}));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => mocks.navigate,
 }));
 
 vi.mock("../state/session", () => ({
@@ -166,6 +172,7 @@ const THREAD_ENV = "thread-env";
 
 function setup(options: { readonly destination?: string | null } = {}) {
   mocks.settings = {};
+  mocks.navigate.mockReset();
   setDestination(options.destination ?? null);
   chooseTranscriptCleanup(false);
   mocks.primaryEnvironmentId = "primary-env";
@@ -238,7 +245,11 @@ it.each([
   await act(() => mocks.voice.start());
   expectNoAudioSent();
   expect(mocks.committed).not.toHaveBeenCalled();
-  expect(mocks.voice.available).toBe(false);
+  expect(mocks.voice.available).toBe(true);
+  expect(mocks.navigate).toHaveBeenCalledWith({
+    to: "/settings/voice",
+    hash: "voice-transcription-destination",
+  });
   expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
 });
 
@@ -309,6 +320,25 @@ it("retries a failed transcription on the same chosen environment", async () => 
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
 
+it.each(["missing-model", "ready"] as const)(
+  "opens setup explicitly with a %s model without recording",
+  async (modelState) => {
+    setup({ destination: "env-a" });
+    mocks.modelState = modelState;
+    await using _screen = await render(<Probe />);
+    await act(() => mocks.voice.setup.show());
+    expect(mocks.voice.setup).toMatchObject({
+      open: true,
+      step: modelState === "missing-model" ? 0 : 1,
+    });
+    expect(mocks.microphoneRequests).toEqual([]);
+    expect(mocks.transcribeCalls).toEqual([]);
+    await act(() => mocks.voice.setup.startRecording());
+    expect(mocks.voice.setup.open).toBe(modelState === "missing-model");
+    expect(mocks.microphoneRequests).toEqual(modelState === "ready" ? ["env-a"] : []);
+  },
+);
+
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
   setup({ destination: "env-a" });
   mocks.modelState = "missing-model";
@@ -370,7 +400,7 @@ it("revokes across windows even before the storage event and survives stale pref
     storage.removeItem(key);
     expect(canSend()).toBe(false);
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
-    await vi.waitFor(() => expect(mocks.voice.available).toBe(false));
+    await vi.waitFor(() => expect(mocks.voice.transcriptionEnvironmentId).toBeNull());
     expect(mocks.voice.state.phase).toBe("idle");
     await act(() => mocks.voice.stop());
     expect(mocks.transcribeCalls).toEqual([]);

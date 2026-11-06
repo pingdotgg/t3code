@@ -25,6 +25,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
@@ -119,6 +120,7 @@ export function useVoiceTranscriptionDestination() {
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {
+  const navigate = useNavigate();
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
   const grantId = destination.grantId;
@@ -423,7 +425,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (controller.currentState.phase === "recording") void controller.stop();
   });
 
-  const start = useStableCallback(async () => {
+  const start = useStableCallback(async (setupOnly = false) => {
+    if (latestRef.current.input.disabled) return;
+    if (!grantId) {
+      await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
+      return;
+    }
     const request = ++startRequestRef.current;
     const controller = controllerRef.current;
     const owner = latestRef.current.input.ownerKey;
@@ -458,8 +465,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       return;
     }
-    if (latestStatus.state === "missing-model") {
-      setSetup({ ...INITIAL_SETUP, open: true });
+    if (setupOnly || latestStatus.state === "missing-model") {
+      setSetup({
+        ...INITIAL_SETUP,
+        open: true,
+        step: latestStatus.state === "missing-model" ? 0 : 1,
+      });
       return;
     }
     setLevel(0);
@@ -513,9 +524,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   return {
     available:
-      prepared !== null &&
-      status?.prepared === prepared &&
-      status.value?.supported !== false &&
+      (!grantId ||
+        (prepared !== null &&
+          status?.prepared === prepared &&
+          status.value?.supported !== false)) &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
@@ -524,6 +536,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     transcriptionEnvironmentLabel: destination.label,
     setup: {
       ...setup,
+      show: () => start(true),
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,

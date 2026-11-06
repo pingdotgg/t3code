@@ -36,6 +36,9 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import {
@@ -126,6 +129,7 @@ type ModelCardProps = {
   readonly onSelect: () => void;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
+  readonly hidden?: boolean;
   readonly testControls?: ReactNode;
   readonly children?: ReactNode;
 };
@@ -147,7 +151,7 @@ function ModelCard(props: ModelCardProps) {
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
-    <div className="flex flex-wrap items-start gap-3 px-3 py-2.5 sm:px-4">
+    <div hidden={props.hidden} className="flex flex-wrap items-start gap-3 px-3 py-2.5 sm:px-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium leading-5">{model.name}</span>
@@ -737,7 +741,9 @@ function SpeechModelBrowser(props: {
         (!query || (model.name + " " + model.description).toLocaleLowerCase().includes(query)),
     )
     .toSorted((left, right) => modelSortOrder(left) - modelSortOrder(right));
-  const activeModel = models.find((model) => model.active);
+  const activeModel = models.find(
+    (model) => model.active || (status?.supported && model.id === status.modelId),
+  );
   const renderedModels =
     activeModel && !sortedModels.includes(activeModel)
       ? [activeModel, ...sortedModels]
@@ -856,11 +862,15 @@ function SpeechModelBrowser(props: {
                         runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
                       ),
                   };
-                  return model.active ? (
+                  return model === activeModel ? (
                     <TranscriptionTest
                       key={model.id}
                       card={card}
                       hidden={!sortedModels.includes(model)}
+                      onSetup={() => {
+                        setSearch("");
+                        setSelection([]);
+                      }}
                       environmentId={props.testEnvironmentId}
                       projectId={props.projectId}
                       projectName={props.projectName}
@@ -881,6 +891,7 @@ function SpeechModelBrowser(props: {
 function TranscriptionTest(props: {
   readonly card: ModelCardProps;
   readonly hidden: boolean;
+  readonly onSetup: () => void;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
   readonly projectName: string | null;
@@ -907,9 +918,24 @@ function TranscriptionTest(props: {
     commitDraft: (text) => setTranscript(text),
   });
   return (
-    <SettingsSearchTarget {...searchableSetting("transcription-test")} hidden={props.hidden}>
+    <SettingsSearchTarget {...searchableSetting("transcription-test")}>
+      {speech.available && speech.state.phase === "idle" ? (
+        <div className="flex justify-end px-3 py-2 sm:px-4">
+          <Button
+            size="sm"
+            onClick={() => {
+              props.onSetup();
+              setShowTranscript(true);
+              void speech.setup.show();
+            }}
+          >
+            Set up voice input
+          </Button>
+        </div>
+      ) : null}
       <ModelCard
         {...props.card}
+        hidden={props.hidden}
         testControls={
           <div className="flex min-w-0 max-w-full items-center gap-1">
             <ComposerSpeechRecordingPill
@@ -1001,6 +1027,10 @@ function TranscriptionTest(props: {
 }
 
 export function VoiceSettingsPanel() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const dictationShortcut = shortcutLabelForCommand(keybindings, "composer.dictation", {
+    context: { terminalFocus: false, terminalOpen: false },
+  });
   const cleanupEnabled = useCleanupGrant() !== null;
   const settings = useClientSettings();
   const settingsScope = useOptionalSettingsScope();
@@ -1113,7 +1143,11 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
           title="Dictation shortcut"
-          description="How the dictation shortcut starts and stops recording."
+          description={
+            dictationShortcut
+              ? `Press ${dictationShortcut} to dictate in the focused editor. Choose how it starts and stops recording.`
+              : "No dictation shortcut is assigned. Set one in Keybindings settings."
+          }
           control={
             <Select
               value={settings.voiceShortcutMode}
@@ -1143,8 +1177,8 @@ export function VoiceSettingsPanel() {
           title="Send microphone audio to"
           description={
             <>
-              Microphone audio is sent to this environment to transcribe, then discarded. Choose Off
-              to turn voice input off on this device. This choice is saved on this device only.
+              Audio is sent here to transcribe, then discarded. Choose Off to disable voice input.
+              Saved on this device only.
             </>
           }
           control={
@@ -1182,6 +1216,11 @@ export function VoiceSettingsPanel() {
             </Select>
           }
         >
+          {!destination.environmentId ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Choose an environment to enable voice input, then select Set up voice input below.
+            </p>
+          ) : null}
           {destination.environmentId && chosenUnsupported ? (
             <p className="mt-2 text-xs text-destructive">
               {chosenEnvironment.label} can’t transcribe audio. Pick an environment that can to use

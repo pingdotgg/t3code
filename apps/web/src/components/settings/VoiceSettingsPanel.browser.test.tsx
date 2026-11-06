@@ -20,7 +20,8 @@ import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
 
-it("preserves the model test transcript when its model is filtered out", async () => {
+it("keeps setup available with a non-English locale and preserves a filtered test transcript", async () => {
+  using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
     label: "Test environment",
@@ -40,12 +41,12 @@ it("preserves the model test transcript when its model is filtered out", async (
     supportsStreaming: false,
     supportsTranslation: false,
     supportsLanguageDetection: false,
-    active: true,
-    state: "installed",
+    active: false,
+    state: "downloadable",
   };
   const status = {
     supported: true,
-    state: "ready",
+    state: "missing-model",
     modelId: model.id,
     model: model.name,
     size: model.size,
@@ -103,6 +104,7 @@ it("preserves the model test transcript when its model is filtered out", async (
             model: null,
             downloading: false,
             error: null,
+            show: async () => {},
             setOpen: () => {},
             download: async () => {},
             cancelDownload: async () => {},
@@ -128,6 +130,13 @@ it("preserves the model test transcript when its model is filtered out", async (
               <VoiceSettingsPanel />
             </SettingsScopeProvider>,
           );
+          await expect
+            .element(screen.getByRole("button", { name: "Set up voice input", exact: true }))
+            .toBeVisible();
+          await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
+          await userEvent.click(
+            screen.getByRole("button", { name: "Set up voice input", exact: true }),
+          );
           const testModel = screen.getByRole("button", { name: "Test model", exact: true });
           await expect.element(testModel).toBeVisible();
           await userEvent.click(testModel);
@@ -137,13 +146,22 @@ it("preserves the model test transcript when its model is filtered out", async (
           const search = screen.getByRole("textbox", { name: "Search transcription models" });
           await userEvent.fill(search, "no matching model");
           await expect.element(screen.getByText("No models match.")).toBeVisible();
+          await expect
+            .element(screen.getByRole("button", { name: "Set up voice input", exact: true }))
+            .toBeVisible();
           await userEvent.clear(search);
           await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
           const french = screen.getByRole("button", { name: "French", exact: true });
           await userEvent.click(french);
           await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
           await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
-          expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
+          await expect
+            .element(
+              screen.container.querySelector<HTMLParagraphElement>(
+                '[aria-label="Test transcript"]',
+              ),
+            )
+            .not.toBeVisible();
           await userEvent.click(french);
           await expect.element(result).toBeVisible();
           await vi.waitFor(() =>
