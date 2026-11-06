@@ -106,7 +106,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
-import { pullRequestAutolinkPlugins } from "./pullRequestMarkdown.logic";
+import { pullRequestMarkdownPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -241,7 +241,7 @@ function pullRequestMarkdownContext(
   threadRef: ScopedThreadRef | null,
 ) {
   return {
-    remarkPlugins: pullRequestAutolinkPlugins(detail),
+    remarkPlugins: pullRequestMarkdownPlugins(detail),
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
     repository: detail?.repository ?? null,
