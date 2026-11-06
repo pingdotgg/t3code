@@ -212,14 +212,14 @@ const probeVibeAppServer = Effect.fn("VibeStatus.probeVibeAppServer")(function* 
         : option.value,
     ),
     Effect.catchCause((cause) =>
-      Effect.succeed({
+      Effect.as(Effect.logWarning("Mistral Vibe app server probe failed", { cause }), {
         version: null,
         auth: { status: "unknown" },
         usageLimits: undefined,
         models: [...FALLBACK_MODELS],
         defaultAgent: undefined,
         installed: false,
-        message: `Mistral Vibe app server probe failed: ${cause.toString().slice(0, 300)}`,
+        message: "Mistral Vibe app server probe failed.",
       } satisfies VibeProbeResult),
     ),
   );
