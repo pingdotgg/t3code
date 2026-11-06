@@ -66,6 +66,15 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
+    }
+  /**
+   * A fleet worker's workspace (spec section 6.3). Launch accepts it so the
+   * command type stays whole, but a local launch treats it as its own project
+   * root: the sandbox is provisioned by delegation, never by this service.
+   */
+  | {
+      readonly type: "sandbox";
+      readonly workerClass?: "ephemeral" | "persistent" | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -327,7 +336,10 @@ const make = Effect.gen(function* () {
     } else if (reused !== undefined) {
       yield* setupTracker.begin({
         threadId,
-        branch: input.workspaceStrategy.branch ?? null,
+        branch:
+          input.workspaceStrategy.type === "sandbox"
+            ? null
+            : (input.workspaceStrategy.branch ?? null),
         baseRef: reused.baseRef,
         stages: ["setup-script", "agent"],
         fiber: yield* Effect.fiber,
@@ -371,7 +383,8 @@ const make = Effect.gen(function* () {
         },
       );
 
-      const requestedBranch = input.workspaceStrategy.branch;
+      const requestedBranch =
+        input.workspaceStrategy.type === "sandbox" ? undefined : input.workspaceStrategy.branch;
       let branch: string | null;
       if (input.workspaceStrategy.type === "worktree" && requestedBranch === undefined) {
         const uuid = yield* randomUuidV4;
@@ -919,7 +932,8 @@ const make = Effect.gen(function* () {
                 },
               )
             : input.workspaceStrategy;
-        const initialBranch = workspaceStrategy.branch ?? null;
+        const initialBranch =
+          workspaceStrategy.type === "sandbox" ? null : (workspaceStrategy.branch ?? null);
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
         const claimDispatch =

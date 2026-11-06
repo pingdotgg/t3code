@@ -48,6 +48,7 @@ import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as OpenShellFleetService from "../environment/OpenShellFleetService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
@@ -293,6 +294,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       Layer.mergeAll(
         McpToolAccessTestkit.liveThreadsLayer,
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
+        Layer.mock(OpenShellFleetService.OpenShellFleetService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         NodeServices.layer,
         NodeCrypto.layer,
