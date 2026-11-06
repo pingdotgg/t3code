@@ -6,7 +6,6 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import { Command } from "effect/cli";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import packageJson from "../../package.json" with { type: "json" };
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
