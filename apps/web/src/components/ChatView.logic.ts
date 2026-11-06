@@ -1559,11 +1559,8 @@ export function presentThreadShellFromProjection(
   };
 }
 
-/** Background work the provider still runs after the latest run ended, plus watched pull requests. */
-export function deriveThreadPendingBackgroundTasks(
-  projection: ThreadStructure | null,
-  options?: { readonly includePullRequestWatches?: boolean },
-) {
+/** Background work the provider still runs after the latest run ended. */
+export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure | null) {
   if (projection === null) return [];
   const sessionError =
     projection.providerSessions.findLast(
@@ -1579,9 +1576,7 @@ export function deriveThreadPendingBackgroundTasks(
       turnItems: projection.turnItems,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
-      ...(options?.includePullRequestWatches === false
-        ? {}
-        : { pullRequests: projection.thread.pullRequests }),
+      pullRequests: projection.thread.pullRequests,
     }),
   ];
 }

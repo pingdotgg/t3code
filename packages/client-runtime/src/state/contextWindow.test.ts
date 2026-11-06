@@ -45,6 +45,7 @@ function sendInput(
     readonly threadIdle?: boolean;
     readonly backgroundTask?: boolean;
     readonly backgroundAgent?: boolean;
+    readonly laterRun?: "queued" | "rolled_back";
   } = {},
 ) {
   const source = overrides.source ?? claude;
@@ -127,6 +128,19 @@ function sendInput(
       ...(overrides.heldQueue === true
         ? [{ id: RunId.make("queued-run"), status: "queued", queueHeld: true, startedAt: null }]
         : []),
+      ...(overrides.laterRun === undefined
+        ? []
+        : [
+            {
+              id: RunId.make("run-2"),
+              ordinal: 2,
+              providerInstanceId: source,
+              modelSelection: sourceSelection,
+              status: overrides.laterRun,
+              startedAt: overrides.laterRun === "queued" ? null : "2026-10-30T14:21:00.000Z",
+              contextHandoffId: null,
+            },
+          ]),
     ],
     turnItems:
       overrides.backgroundAgent === true
@@ -273,6 +287,19 @@ describe("shouldCompactBeforeSend", () => {
     { name: "while the thread is working", threadIdle: false, expected: false },
     { name: "while a background command runs", backgroundTask: true, expected: false },
     { name: "while a background agent runs", backgroundAgent: true, expected: false },
+    {
+      name: "while a background agent runs behind a queued message",
+      backgroundAgent: true,
+      laterRun: "queued",
+      expected: false,
+    },
+    // Like web and idle compaction, a rolled-back latest run holds no background work.
+    {
+      name: "after a rollback that left a background command listed",
+      backgroundTask: true,
+      laterRun: "rolled_back",
+      expected: true,
+    },
     { name: "with no conversation but /compact", onlyCompactMessages: true, expected: false },
     { name: "for a typed /compact", text: "/compact keep the plan", expected: false },
   ] as const)("$name", ({ name: _name, expected, ...overrides }) => {

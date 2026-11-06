@@ -235,6 +235,29 @@ export function shouldOfferResumeCompaction(input: {
 }
 
 /**
+ * Whether the provider still runs background agents or commands for the thread's latest run.
+ * Pull request watches do not count, and a queued run has not taken over the session yet.
+ */
+export function hasPendingProviderBackgroundWork(
+  projection: Pick<ThreadStructure, "thread" | "providerThreads" | "runs" | "turnItems">,
+): boolean {
+  const latestRun = projection.runs.reduce<ThreadStructure["runs"][number] | null>(
+    (latest, run) =>
+      run.status === "queued" || (latest !== null && latest.ordinal > run.ordinal) ? latest : run,
+    null,
+  );
+  return (
+    derivePendingBackgroundWork({
+      latestRun,
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId: projection.thread.activeProviderThreadId,
+      runs: projection.runs,
+    }).length > 0
+  );
+}
+
+/**
  * Whether a plain send into an idle thread compacts it first, as web's composer does under
  * "When you return". Web reads the same state for its "Compact and send" button. A send that
  * hands off to another conversation starts that one fresh, so only the resumed one counts.
@@ -299,18 +322,7 @@ export function shouldCompactBeforeSend(input: {
     (thread) => thread.id === activeProviderThreadId,
   );
   // Background agents keep the session live and report into its next turn.
-  if (
-    derivePendingBackgroundWork({
-      latestRun: projection.runs.findLast(
-        (run) => run.status !== "queued" && run.status !== "rolled_back",
-      ),
-      providerThreads: projection.providerThreads,
-      turnItems: projection.turnItems,
-      activeProviderThreadId,
-      runs: projection.runs,
-    }).length > 0
-  )
-    return false;
+  if (hasPendingProviderBackgroundWork(projection)) return false;
   const liveUsage = latestProviderTurnTokenUsage(
     projection.providerTurns.filter((turn) => turn.providerThreadId === activeProviderThreadId),
     input.selection.instanceId === projection.thread.modelSelection.instanceId ? projection : null,
