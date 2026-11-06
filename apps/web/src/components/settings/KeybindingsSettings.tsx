@@ -1107,6 +1107,7 @@ function EditableKeybindingSettingsRow(
 }
 
 function useNewKeybindingDraft({
+  isSaving,
   allRows,
   onSave,
   onCancel,
@@ -1114,6 +1115,7 @@ function useNewKeybindingDraft({
   allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
   onCancel: () => void;
+  isSaving: boolean;
 }) {
   const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
@@ -1147,7 +1149,7 @@ function useNewKeybindingDraft({
     if (event.key === "Escape") {
       // An unhandled Escape closes the settings page.
       event.stopPropagation();
-      onCancel();
+      if (!isSaving) onCancel();
       return;
     }
     const next = keybindingFromKeyboardEvent(event.nativeEvent, navigator.platform, {
@@ -1290,7 +1292,7 @@ function NewKeybindingCancelIcon({
 /** Add-binding form shaped like the table rows below it. */
 function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
-  const draft = useNewKeybindingDraft({ allRows, onSave, onCancel });
+  const draft = useNewKeybindingDraft({ allRows, onSave, onCancel, isSaving });
 
   return (
     <div
