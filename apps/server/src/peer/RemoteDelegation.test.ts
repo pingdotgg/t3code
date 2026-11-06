@@ -1689,6 +1689,62 @@ it.effect("cancelling a running task records it before stopping there", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a retried cancel of a running task stops nothing new there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+
+      yield* a.call("task_cancel", { taskId: delegated.taskId, clientRequestId: "cancel-once" });
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({ status: "cancelled" });
+      expect(yield* Ref.get(thread.interrupted)).toBe(1);
+      // The same cancel again, as a retry after its answer was lost, once it has its result.
+      yield* a.call("task_cancel", { taskId: delegated.taskId, clientRequestId: "cancel-once" });
+      expect(yield* Ref.get(thread.interrupted)).toBe(1);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("cancelling a running task the box refuses to stop says it may still run there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+
+      // The parent is lowered below the full-access thread there, then cancels it.
+      yield* a.orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("command:lower:laptop-parent-cancel"),
+        threadId: parentThreadId,
+        runtimeMode: "approval-required",
+      });
+      yield* a.call("task_cancel", { taskId: delegated.taskId });
+
+      const { subagents } = yield* a.threads.getThreadRecords(parentThreadId, ["subagents"]);
+      const task = subagents.find((candidate) => candidate.id === delegated.taskId);
+      expect(task?.status).toBe("cancelled");
+      expect(task?.result).toContain("Cancelled. It could not be stopped in Box");
+      expect(yield* Ref.get(thread.stops)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("a deleted parent's finished task is not followed again after a restart", () =>
   Effect.scoped(
     Effect.gen(function* () {

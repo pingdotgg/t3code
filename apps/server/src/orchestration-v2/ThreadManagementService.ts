@@ -536,6 +536,13 @@ export function latestRun(
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
+const runBegan = (run: OrchestrationV2Run) =>
+  DateTime.toEpochMillis(run.startedAt ?? run.completedAt ?? run.requestedAt);
+
+/** Whether `run` began after `other`, by start time, then by ordinal. */
+const runBeganAfter = (run: OrchestrationV2Run, other: OrchestrationV2Run) =>
+  runBegan(run) === runBegan(other) ? run.ordinal > other.ordinal : runBegan(run) > runBegan(other);
+
 /**
  * The run that started first after `after` did, other than `after` restarted. Queued runs can
  * start out of ordinal order, so start time orders them; one that never started counts only if
@@ -545,10 +552,6 @@ function laterRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
   after: OrchestrationV2Run,
 ): OrchestrationV2Run | undefined {
-  const began = (run: OrchestrationV2Run) =>
-    DateTime.toEpochMillis(run.startedAt ?? run.completedAt ?? run.requestedAt);
-  const beganAfter = (run: OrchestrationV2Run, other: OrchestrationV2Run) =>
-    began(run) === began(other) ? run.ordinal > other.ordinal : began(run) > began(other);
   const restarts = new Set<RunId>([after.id]);
   let earliest: OrchestrationV2Run | undefined;
   for (const run of runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
@@ -565,8 +568,8 @@ function laterRun(
       (run.startedAt === null && run.status !== "failed")
     )
       continue;
-    if (!beganAfter(run, after)) continue;
-    if (earliest === undefined || beganAfter(earliest, run)) earliest = run;
+    if (!runBeganAfter(run, after)) continue;
+    if (earliest === undefined || runBeganAfter(earliest, run)) earliest = run;
   }
   return earliest;
 }
@@ -1042,19 +1045,46 @@ const make = Effect.gen(function* () {
       return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
+    /**
+     * The runs that answer for `selected`'s work: none from the first run after it that a message
+     * started, which is new work. A notification's run, as a delegated task's result waking the
+     * thread, continues it.
+     */
+    const ownWork = Effect.fnUntraced(function* (
+      runs: ReadonlyArray<OrchestrationV2Run>,
+      selected: OrchestrationV2Run,
+    ) {
+      const later = runs.filter((run) => runBeganAfter(run, selected));
+      if (later.length === 0) return runs;
+      const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
+        messageRoles: ["user"],
+        messageIds: later.map((run) => run.userMessageId),
+      });
+      const startedByMessage = (run: OrchestrationV2Run) =>
+        messages.some(
+          (message) => message.id === run.userMessageId && message.notification === undefined,
+        );
+      let newWork = laterRun(runs, selected);
+      while (newWork !== undefined && !startedByMessage(newWork)) newWork = laterRun(runs, newWork);
+      const bound = newWork;
+      return bound === undefined
+        ? runs
+        : runs.filter((run) => run.id !== bound.id && !runBeganAfter(run, bound));
+    });
     const delegatedWorkResult = Effect.fnUntraced(function* (selected: OrchestrationV2Run) {
       const records = yield* getProjectThreadRecords(
         input,
         ["runs", "messages", "subagents", "providerThreads"],
         { messageRoles: ["user"], monitorNotificationsOnly: true },
       );
-      const progress = delegatedTaskProgress(records);
+      const runs = yield* ownWork(records.runs, selected);
+      const progress = delegatedTaskProgress({ ...records, runs });
       // A thread rolled back past all its work, with nothing left running, has no answer to wait for.
       if (
         progress.resultRun === undefined &&
-        records.runs.every((run) => isTerminalRunStatus(run.status))
+        runs.every((run) => isTerminalRunStatus(run.status))
       ) {
-        return latestRun(records);
+        return latestRun({ runs });
       }
       if (progress.state !== "result_available" || progress.resultRun === undefined) {
         return undefined;

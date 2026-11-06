@@ -8605,6 +8605,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         return;
       const now = yield* DateTime.now;
+      // A cancel's result notes a stop refused there, as the report that settles it says.
+      const result =
+        task.status === "cancelled" && command.stoppedThere === "stopped"
+          ? command.result
+          : task.result;
       yield* emit(
         events,
         command,
@@ -8615,8 +8620,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nodeId: task.id,
         driver: task.driver,
         occurredAt: now,
-        payload: { ...task, remoteChild, updatedAt: now },
+        payload: { ...task, remoteChild, result, updatedAt: now },
       });
+      const item = parentProjection.turnItems.find(
+        (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
+      );
+      if (result !== task.result && item?.type === "subagent") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "turn-item.updated",
+          threadId: command.parentThreadId,
+          ...(item.runId === null ? {} : { runId: item.runId }),
+          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+          driver: task.driver,
+          occurredAt: now,
+          payload: { ...item, result, updatedAt: now },
+        });
+      }
       return;
     }
     const now = yield* DateTime.now;

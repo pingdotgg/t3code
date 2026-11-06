@@ -476,6 +476,7 @@ const settledRunsService = (
   projectId: ProjectId,
   threadId: ThreadId,
   runs: () => ReadonlyArray<OrchestrationV2Run>,
+  messages: ReadonlyArray<object> = [],
 ) =>
   ThreadManagementService.ThreadManagementService.pipe(
     Effect.provide(
@@ -493,7 +494,7 @@ const settledRunsService = (
                   ({
                     thread: { id: threadId, projectId, deletedAt: null },
                     runs: runs(),
-                    messages: [],
+                    messages,
                     subagents: [],
                     providerThreads: [],
                   }) as unknown as OrchestrationV2ThreadProjection,
@@ -619,6 +620,47 @@ it.effect("waitForThread on a rolled-back run answers with the work that survive
         untilDelegatedWorkSettled: true,
       }),
     ).toMatchObject({ timedOut: false, resultRun: { id: "run:r1" } });
+  }),
+);
+
+it.effect("waitForThread on a run answers with its own work, not a later message's run", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-own-work");
+    const threadId = ThreadId.make("thread:thread-management:wait-own-work");
+    const started = (id: string, ordinal: number, at: number) => ({
+      ...timedRun(id, ordinal, "completed", at),
+      userMessageId: MessageId.make(`message:${id}`),
+    });
+    // Run 2's own task woke it again; then a message there started run 3, all while unwatched.
+    const runs = [
+      started("run:r1", 1, 1),
+      started("run:r2", 2, 5),
+      started("run:r2-wake", 3, 8),
+      started("run:r3", 4, 10),
+    ];
+    const messages = [
+      { id: MessageId.make("message:run:r1"), runId: RunId.make("run:r1") },
+      { id: MessageId.make("message:run:r2"), runId: RunId.make("run:r2") },
+      {
+        id: MessageId.make("message:run:r2-wake"),
+        runId: RunId.make("run:r2-wake"),
+        notification: { source: { kind: "delegated_task", taskIds: [] } },
+      },
+      { id: MessageId.make("message:run:r3"), runId: RunId.make("run:r3") },
+    ];
+    const service = yield* settledRunsService(projectId, threadId, () => runs, messages);
+    const resultOf = (runId: string) =>
+      service.waitForThread({
+        projectId,
+        threadId,
+        runId: RunId.make(runId),
+        timeoutMs: 1,
+        untilDelegatedWorkSettled: true,
+      });
+
+    expect(yield* resultOf("run:r1")).toMatchObject({ resultRun: { id: "run:r1" } });
+    expect(yield* resultOf("run:r2")).toMatchObject({ resultRun: { id: "run:r2-wake" } });
+    expect(yield* resultOf("run:r3")).toMatchObject({ resultRun: { id: "run:r3" } });
   }),
 );
 

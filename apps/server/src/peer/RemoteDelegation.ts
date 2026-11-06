@@ -363,7 +363,8 @@ const make = Effect.gen(function* () {
   /**
    * Completes `task` here with its thread there's final state, one command per attempt; a
    * report refused because the task already has its result is done. `stoppedThere` records that
-   * nothing is left to stop there; `lastRunId`, the run after which the thread is followed.
+   * nothing is left to stop there; `lastRunId`, the run after which the thread is followed;
+   * `commandId`, a name the report keeps however often it is sent.
    */
   const complete = Effect.fn("RemoteDelegation.complete")(function* (
     parentThreadId: ThreadId,
@@ -373,12 +374,14 @@ const make = Effect.gen(function* () {
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
     lastRunId?: RunId,
+    commandId?: CommandId,
   ) {
-    const attempt = yield* random.uuidV4();
     yield* threads
       .dispatch({
         type: "delegated_task.remote.complete",
-        commandId: CommandId.make(`command:remote-task-complete:${taskId}:${attempt}`),
+        commandId:
+          commandId ??
+          CommandId.make(`command:remote-task-complete:${taskId}:${yield* random.uuidV4()}`),
         parentThreadId,
         taskId,
         status,
@@ -436,6 +439,17 @@ const make = Effect.gen(function* () {
         clientRequestId: `${key}:${remote.threadId}`,
       })
       .pipe(Effect.asVoid);
+
+  /**
+   * A cancelled task's result once its thread there refused the stop for good, as one running
+   * above this side's modes does: it may still run there.
+   */
+  const mayStillRun = (
+    cancelled: string,
+    remote: OrchestrationV2RemoteTaskChild,
+    error: OrchestratorMcpFailure,
+  ) =>
+    `${cancelled} It could not be stopped in ${remote.label} and may still run there: ${error.message}`;
 
   /**
    * The key the stop a task owes is sent with: one per stop generation and task, as tasks on
@@ -570,21 +584,27 @@ const make = Effect.gen(function* () {
         ((task.status === "cancelled" || task.status === "interrupted") &&
           remote.stoppedThere !== true)
       ) {
-        yield* stopThere(scope, remote, stopKey(remote)).pipe(
+        const { result: recorded } = task;
+        const result = yield* stopThere(scope, remote, stopKey(remote)).pipe(
+          Effect.as(recorded),
           // Its thread there now runs above what this side may touch, say
           // because the parent here was lowered since; no retry changes that.
           Effect.catchIf(isModeRefusal, (error) =>
             Effect.logWarning("A linked environment refused to stop a delegated task", {
               taskId,
               reason: error.message,
-            }),
+            }).pipe(
+              Effect.as(
+                task.status === "cancelled" ? mayStillRun(recorded, remote, error) : recorded,
+              ),
+            ),
           ),
         );
         yield* complete(
           parentThreadId,
           taskId,
           terminalStatus(task.status),
-          task.result,
+          result,
           "stopped",
           remote.stopCount,
         );
@@ -846,13 +866,16 @@ const make = Effect.gen(function* () {
       const key = `cancel:${encodeURIComponent(scope.requestNamespace)}:${
         input.clientRequestId ?? (yield* random.uuidV4())
       }`;
+      // One name whether the cancel finds the task running or finished, so a retry of one
+      // that found it running replays its record and resends that same stop.
+      const commandId = CommandId.make(`command:remote-cancel:${key}`);
       if (task.result !== null) {
         // Recorded first, which ends following its thread there; the result stands whether or
         // not the stop gets there, and the follower keeps trying it, as for a Stop.
         const recorded = yield* threads
           .dispatch({
             type: "delegated_task.remote.stop",
-            commandId: CommandId.make(`command:remote-cancel:${key}`),
+            commandId,
             parentThreadId: task.threadId,
             taskId: task.id,
           })
@@ -911,6 +934,8 @@ const make = Effect.gen(function* () {
         cancelled,
         undefined,
         remote.stopCount,
+        undefined,
+        commandId,
       ).pipe(
         Effect.tapError((cause) =>
           Effect.logWarning("remote-delegation.cancel-record-failed", { taskId: task.id, cause }),
@@ -924,8 +949,12 @@ const make = Effect.gen(function* () {
         ),
       );
       yield* stopThere(there, remote, stopKey(remote), reason).pipe(
-        Effect.andThen(
-          complete(task.threadId, task.id, "cancelled", cancelled, "stopped", remote.stopCount),
+        Effect.as(cancelled),
+        Effect.catchIf(isModeRefusal, (error) =>
+          Effect.succeed(mayStillRun(cancelled, remote, error)),
+        ),
+        Effect.flatMap((result) =>
+          complete(task.threadId, task.id, "cancelled", result, "stopped", remote.stopCount),
         ),
         Effect.ignoreCause({ log: true }),
       );

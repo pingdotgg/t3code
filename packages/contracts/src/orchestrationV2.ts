@@ -3463,9 +3463,9 @@ const OrchestrationV2InternalCommand = Schema.Union([
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its
-   * thread there ended as. The parent wakes exactly as for a child here. A
-   * task that already has a result keeps it; `stoppedThere` is still recorded,
-   * and without it (a Stop or cancel here) the task owes a stop there instead.
+   * thread there ended as, waking the parent as a child here does. A task with a result keeps
+   * it, but one cancelled here takes a `stopped` report's, which may note a refused stop;
+   * `stoppedThere` is still recorded, and without it (a Stop or cancel here) a stop is owed.
    */
   Schema.Struct({
     type: Schema.Literal("delegated_task.remote.complete"),
