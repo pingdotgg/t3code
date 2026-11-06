@@ -1024,15 +1024,16 @@ const make = Effect.gen(function* () {
 
   const rename: SessionStore["Service"]["rename"] = Effect.fn("SessionStore.rename")(
     function* (sessionId, label) {
-      const renamed = yield* authSessions
-        .setClientLabel({ sessionId, label })
-        .pipe(Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })));
-      if (!renamed) return false;
       const session = yield* loadActiveSession(sessionId).pipe(
         Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })),
       );
       if (Option.isNone(session)) return false;
-      yield* emitUpsert(session.value);
+      if (session.value.client.label === label) return true;
+      const renamed = yield* authSessions
+        .setClientLabel({ sessionId, label })
+        .pipe(Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })));
+      if (!renamed) return false;
+      yield* emitUpsert({ ...session.value, client: { ...session.value.client, label } });
       return true;
     },
   );

@@ -266,7 +266,7 @@ const sessionRenameCommand = Command.make("rename", {
         yield* Console.log(
           renamed
             ? `Renamed session ${flags.sessionId} to ${flags.label}.\n`
-            : `No active session found for ${flags.sessionId}.\n`,
+            : `No renamable active session found for ${flags.sessionId}. T3 Connect sessions renew hourly and cannot be renamed.\n`,
         );
       }),
     ),

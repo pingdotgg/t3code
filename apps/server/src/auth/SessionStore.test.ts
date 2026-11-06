@@ -615,6 +615,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       });
       const [listed] = yield* sessions.listActive();
       expect(listed?.client.label).toBe("Kitchen iPad");
+      expect(yield* sessions.rename(client.sessionId, "Kitchen iPad")).toBe(true);
 
       const relay = yield* sessions.issue(relaySessionInput);
       expect(yield* sessions.rename(relay.sessionId, "Renewals would drop this")).toBe(false);

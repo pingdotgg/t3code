@@ -514,7 +514,8 @@ function RenameClientDialog({
   const [label, setLabel] = useState(currentLabel);
   const [isRenaming, setIsRenaming] = useState(false);
   const trimmedLabel = label.trim();
-  const canSave = trimmedLabel.length > 0 && trimmedLabel !== currentLabel && !isRenaming;
+  const canSave =
+    !disabled && trimmedLabel.length > 0 && trimmedLabel !== currentLabel && !isRenaming;
 
   const handleRename = async () => {
     if (!canSave) return;
