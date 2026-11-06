@@ -1490,7 +1490,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         if (nativeRequestId === undefined) return;
-        const inputTitle = method === "input" ? (recordString(event, "title") ?? "") : "";
+        // The extension's follow-up input has an empty placeholder; its multi-select input does not.
+        const inputTitle =
+          method === "input" && event["placeholder"] === ""
+            ? (recordString(event, "title") ?? "")
+            : "";
         const followUpPrefix = Array.from(customAnswerFollowUps.keys())
           .filter((prefix) => inputTitle.startsWith(prefix))
           .reduce<string | undefined>(

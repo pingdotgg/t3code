@@ -4034,13 +4034,23 @@ describe("PiAdapterV2", () => {
       // The extension reads a bare number sent as the select's value as that option.
       yield* answerWithCustomText("ui-ask", "2");
       yield* answerWithCustomText("ui-ask-parallel", "5");
-      // A parallel tool's dialog can arrive before the extension's follow-up input.
+      // Parallel dialogs can arrive before the follow-up input, including a multi-select of the
+      // same question, which the extension asks as an input with a non-empty placeholder.
+      const multiSelectTitle = `How many replicas?\n\n${lines.join("\n")}\n\nEnter the numbers of all that apply.`;
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-multi",
+        method: "input",
+        title: multiSelectTitle,
+        placeholder: "1,3; custom answer",
+      });
       yield* fake.emit({
         type: "extension_ui_request",
         id: "ui-other",
         method: "input",
         title: "Anything else?",
       });
+      assert.equal((yield* takeWaitingRequest()).title, multiSelectTitle);
       assert.equal((yield* takeWaitingRequest()).title, "Anything else?");
       for (const [id, value] of [
         ["ui-custom", "2"],
