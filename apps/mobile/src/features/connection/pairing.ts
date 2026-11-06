@@ -1,4 +1,5 @@
 import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { T3_LEARN_LINK_SCHEMES } from "@t3tools/shared/t3LearnIdentity";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
@@ -78,7 +79,10 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
 
   try {
     const url = new URL(trimmed);
-    if (url.protocol === "t3code:" || url.protocol === "t3learn:") {
+    if (
+      url.protocol === "t3code:" ||
+      T3_LEARN_LINK_SCHEMES.some((scheme) => url.protocol === `${scheme}:`)
+    ) {
       const pairingUrl = url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
       if (pairingUrl.length > 0) {
         return pairingUrl;

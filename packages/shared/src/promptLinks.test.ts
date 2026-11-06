@@ -116,7 +116,7 @@ describe("link round trips", () => {
     const path = promptLinkAppPath(link);
     expect(path).toBe("/env-1/mcp%3A1");
     const deepLink = promptLinkDeepLink(path!);
-    expect(deepLink).toBe("t3learn://threads/env-1/mcp%3A1");
+    expect(deepLink).toBe("ominax://threads/env-1/mcp%3A1");
     expect(promptLinkAppPath(deepLink)).toBe(path);
   });
 
@@ -143,9 +143,9 @@ describe("link round trips", () => {
   });
 
   it("opens in-app paths in T3 Learn unless another scheme is given", () => {
-    expect(promptLinkDeepLink("/new?prompt=hi")).toBe("t3learn://new?prompt=hi");
+    expect(promptLinkDeepLink("/new?prompt=hi")).toBe("ominax://new?prompt=hi");
     expect(promptLinkDeepLink("/env-1/thread-1?prompt=go")).toBe(
-      "t3learn://threads/env-1/thread-1?prompt=go",
+      "ominax://threads/env-1/thread-1?prompt=go",
     );
     expect(promptLinkDeepLink("/new?prompt=hi", "t3code-dev")).toBe("t3code-dev://new?prompt=hi");
     expect(promptLinkAppPath(promptLinkDeepLink("/env-1/thread-1?prompt=go"))).toBe(

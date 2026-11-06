@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
-import { T3_LEARN_DESKTOP_SCHEME } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_DESKTOP_SCHEME, T3_LEARN_LINK_SCHEMES } from "@t3tools/shared/t3LearnIdentity";
 
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = T3_LEARN_DESKTOP_SCHEME;
@@ -19,6 +19,10 @@ const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+}
+
+export function getDesktopLinkSchemes(isDevelopment: boolean): readonly string[] {
+  return isDevelopment ? [DESKTOP_DEVELOPMENT_SCHEME] : T3_LEARN_LINK_SCHEMES;
 }
 
 function getDesktopOrigin(isDevelopment: boolean): string {

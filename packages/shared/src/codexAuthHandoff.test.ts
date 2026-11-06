@@ -45,7 +45,7 @@ describe("Codex desktop handoff", () => {
     });
   });
   it("opens T3 Learn's own scheme in production and the dev scheme in development", () => {
-    expect(codexAuthHandoffUrl(input)).toMatch(/^t3learn:\/\/auth\/codex\?request=/);
+    expect(codexAuthHandoffUrl(input)).toMatch(/^ominax:\/\/auth\/codex\?request=/);
     const devLink = codexAuthHandoffUrl(input, true);
     expect(devLink).toMatch(/^t3code-dev:\/\/auth\/codex\?request=/);
     expect(readCodexAuthHandoff(devLink, true)).toEqual(input);
@@ -53,7 +53,8 @@ describe("Codex desktop handoff", () => {
   it("rejects other handlers, schemes, arbitrary return sites, and non-OpenAI authorization", () => {
     const link = codexAuthHandoffUrl(input);
     expect(readCodexAuthHandoff(link, true)).toBeUndefined();
-    expect(readCodexAuthHandoff(link.replace(/^t3learn:/, "t3code:"), false)).toBeUndefined();
+    expect(readCodexAuthHandoff(link.replace(/^ominax:/, "t3code:"), false)).toBeUndefined();
+    expect(readCodexAuthHandoff(link.replace(/^ominax:/, "t3learn:"), false)).toEqual(input);
     expect(readCodexAuthHandoff(link.replace("auth/codex", "auth/other"), false)).toBeUndefined();
     expect(
       readCodexAuthHandoff(
