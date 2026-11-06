@@ -72,6 +72,11 @@ describe("sourceControlClients.parseChangeRequestUrl", () => {
       repository: "team/project",
       number: 9,
     });
+    expect(
+      sourceControlClients.changeRequestUrlFromReferenceAutolink(
+        "https://gitlab.com/team/apps/web/-/merge_requests/42",
+      ),
+    ).toBe("https://gitlab.com/team/apps/web/-/merge_requests/42");
   });
 
   it("reads Bitbucket and both Azure DevOps URL forms", () => {

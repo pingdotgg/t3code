@@ -12,7 +12,7 @@ import { decodeHTML } from "entities";
  * whole set comes from one command. `sourceBranch` is absent on some answers, so nothing here
  * requires it.
  */
-export const TangledPullSchema = Schema.Struct({
+const TangledPullSchema = Schema.Struct({
   rkey: Schema.String,
   uri: Schema.optional(Schema.String),
   title: Schema.String,

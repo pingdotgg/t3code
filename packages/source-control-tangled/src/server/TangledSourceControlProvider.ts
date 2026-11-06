@@ -127,7 +127,7 @@ function unsupported(operation: string, cwd: string) {
  * gives the same pull request, which is why this build cannot turn one into a `ChangeRequest`.
  * `sourceBranch` is absent on some answers, so it is not required.
  */
-export const TangledPullListSchema = Schema.Struct({
+const TangledPullListSchema = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       rkey: Schema.String,
