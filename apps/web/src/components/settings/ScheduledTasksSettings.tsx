@@ -154,7 +154,8 @@ const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
-const NEW_THREAD_DESTINATION = "new-thread";
+// Thread ids are trimmed, so the leading space keeps this from matching one.
+const NEW_THREAD_DESTINATION = " new-thread";
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
@@ -1291,7 +1292,11 @@ function ScheduledTaskDestination({
           onOpenChange={handleOpenChange}
           value={threadId ?? (threadMode === "new_thread" ? NEW_THREAD_DESTINATION : null)}
           onValueChange={(value) => {
-            if (value === NEW_THREAD_DESTINATION) onSelect(null);
+            if (value === NEW_THREAD_DESTINATION) {
+              onSelect(null);
+              handleOpenChange(false);
+              return;
+            }
             const picked = threads.find((row) => row.id === value);
             if (picked) onSelect(picked);
             handleOpenChange(false);
