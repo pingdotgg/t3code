@@ -416,19 +416,37 @@ const seedZaiGlmTurn = (input: SeedZaiGlmTurn) =>
     const attemptId = `attempt-${input.id}`;
     const model = input.model === undefined ? "glm-5.3" : input.model;
     seededZaiTurnOrdinal += 1;
+    // The run row shows a later steer to Claude; the attempt and its running event keep GLM.
     yield* sql`INSERT INTO orchestration_v2_projection_runs ${sql.insert({
       run_id: runId,
       thread_id: threadId,
       ordinal: 1,
-      provider: instanceId,
-      provider_instance_id: instanceId,
-      provider_thread_id: providerThreadId,
+      provider: "claudeAgent",
+      provider_instance_id: "claudeAgent",
+      provider_thread_id: "claude-thread",
       status: "completed",
       requested_at: "2026-08-01T09:00:00Z",
       completed_at: input.completedAt ?? "2026-08-01T10:00:00Z",
       payload_json: encodeUnknownJsonString({
         id: runId,
-        providerInstanceId: instanceId,
+        providerInstanceId: "claudeAgent",
+        modelSelection: { instanceId: "claudeAgent", model: "claude-steered" },
+      }),
+    })}`;
+    yield* sql`INSERT INTO orchestration_events ${sql.insert({
+      event_id: `event-${input.id}`,
+      aggregate_kind: "thread",
+      stream_id: threadId,
+      stream_version: 1,
+      event_type: "run.updated",
+      occurred_at: "2026-08-01T09:59:00Z",
+      actor_kind: "system",
+      metadata_json: "{}",
+      application_event_version: 2,
+      payload_json: encodeUnknownJsonString({
+        id: runId,
+        status: "running",
+        activeAttemptId: attemptId,
         ...(model === null ? {} : { modelSelection: { instanceId, model } }),
       }),
     })}`;
@@ -726,13 +744,13 @@ describe("Z.ai usage history", () => {
       });
       const history = yield* ZaiUsageHistory.ZaiUsageHistory;
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`ALTER TABLE orchestration_v2_projection_runs RENAME TO unavailable_runs`;
+      yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
       const error = yield* Effect.flip(
         history.readGlmTurns({ instanceIds: glmInstances, sinceMs }),
       );
       assert.instanceOf(error, ZaiUsageHistory.ZaiUsageHistoryReadError);
       assert.strictEqual(error.requestedInstanceCount, 2);
-      yield* sql`ALTER TABLE unavailable_runs RENAME TO orchestration_v2_projection_runs`;
+      yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
       assert.lengthOf(yield* history.readGlmTurns({ instanceIds: glmInstances, sinceMs }), 1);
     }).pipe(Effect.provide(historyLayer)),
   );

@@ -17,6 +17,7 @@ import * as ServerConfig from "../config.ts";
 export { ZaiUsageHistory, ZaiUsageHistoryReadError } from "@t3tools/provider-acp-registry/server";
 
 // `unavailable` turns and payloads without recorded usage fail decoding and are skipped.
+// The run row reflects later steering, so the instance and model come from the attempt.
 const GlmTurnUsageJson = Schema.Struct({
   usageStatus: Schema.Literals(["complete", "partial"]),
   inputTokens: Schema.optional(Schema.Number),
@@ -49,15 +50,26 @@ const make = Effect.gen(function* () {
         turn.provider_thread_id AS provider_thread_id,
         turn.completed_at AS completed_at,
         json_extract(turn.payload_json, '$.turnTokenUsage') AS turn_usage_json,
-        json_extract(run.payload_json, '$.modelSelection.model') AS model
+        (
+          SELECT json_extract(event.payload_json, '$.modelSelection.model')
+          FROM orchestration_events AS event
+          WHERE event.aggregate_kind = 'thread'
+            AND event.application_event_version = 2
+            AND event.stream_id = attempt.thread_id
+            AND event.event_type = 'run.updated'
+            AND json_extract(event.payload_json, '$.id') = attempt.run_id
+            AND json_extract(event.payload_json, '$.activeAttemptId') = attempt.attempt_id
+            AND json_extract(event.payload_json, '$.status') = 'running'
+          ORDER BY event.sequence
+          LIMIT 1
+        ) AS model
       FROM orchestration_v2_projection_provider_turns AS turn
       JOIN orchestration_v2_projection_run_attempts AS attempt
         ON attempt.attempt_id = turn.run_attempt_id
-      JOIN orchestration_v2_projection_runs AS run
-        ON run.run_id = attempt.run_id
-      WHERE run.provider_instance_id IN (SELECT value FROM json_each(${instanceIdsJson}))
+      WHERE attempt.provider_instance_id IN (SELECT value FROM json_each(${instanceIdsJson}))
         AND json_extract(turn.payload_json, '$.nativeTurnRef.driver') = 'acpRegistry'
         AND turn.completed_at >= ${DateTime.formatIso(DateTime.makeUnsafe(input.sinceMs))}
+      ORDER BY turn.completed_at, turn.provider_turn_id
     `.pipe(
       NodeSqliteClient.readOnly,
       Effect.mapError(
