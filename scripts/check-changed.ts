@@ -177,10 +177,12 @@ export const ignoredCheckInputs = Effect.fn("checkChanged.ignoredCheckInputs")(f
       entry.endsWith("/") && !inNodeModules.test(entry) && !entries[index + 1]?.startsWith(entry),
   );
   const files = entries.filter((entry) => !entry.endsWith("/"));
-  // 100 MAX_PATH paths fit a Windows command line. `.git/` is never listed; it keeps the
-  // pathspecs' common prefix out of a nested repository, where git would list nothing.
-  for (let start = 0; start < directories.length; start += 100) {
-    const batch = directories.slice(start, start + 100).map((dir) => `:(literal)${dir}`);
+  // Calls fit Windows' 32,767-character command line: 16 covers `:(literal)`, quotes, a space.
+  // `.git/` matches nothing; it stops git starting its walk inside a nested repository.
+  const longest = directories.reduce((max, dir) => Math.max(max, dir.length), 0);
+  const size = Math.max(1, Math.floor(30_000 / (longest + 16)));
+  for (let start = 0; start < directories.length; start += size) {
+    const batch = directories.slice(start, start + size).map((dir) => `:(literal)${dir}`);
     files.push(...(yield* list([...ignored, "--", ":(literal).git/", ...batch])));
   }
   // A nested repository is listed by its directory, as the old pathspecs listed it.
