@@ -286,6 +286,47 @@ describe("document preview contents", () => {
     ).toThrow("500 cells");
   });
 
+  it("shows notebook error tracebacks as plain lines", () => {
+    // Traceback saved by IPython for `1 / 0`.
+    const result = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "1 / 0",
+              outputs: [
+                {
+                  output_type: "error",
+                  ename: "ZeroDivisionError",
+                  evalue: "division by zero",
+                  traceback: [
+                    "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
+                    "\u001b[0;31mZeroDivisionError\u001b[0m                         Traceback (most recent call last)",
+                    "Cell \u001b[0;32mIn[1], line 1\u001b[0m\n\u001b[0;32m----> 1\u001b[0m \u001b[38;5;241;43m1\u001b[39;49m\u001b[38;5;241;43m/\u001b[39;49m\u001b[38;5;241;43m0\u001b[39m\n",
+                    "\u001b[0;31mZeroDivisionError\u001b[0m: division by zero",
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(result.type === "notebook" && result.cells[0]?.outputs).toEqual([
+      {
+        kind: "text",
+        text: [
+          "---------------------------------------------------------------------------",
+          "ZeroDivisionError                         Traceback (most recent call last)",
+          "Cell In[1], line 1\n----> 1 1/0\n",
+          "ZeroDivisionError: division by zero",
+        ].join("\n"),
+      },
+    ]);
+  });
+
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
     const archive = new JSZip().file(
       "content.xml",
