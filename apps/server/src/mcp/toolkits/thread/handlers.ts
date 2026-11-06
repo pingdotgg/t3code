@@ -6,6 +6,7 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  isRuntimeModeAbove,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
@@ -14,11 +15,14 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   dispatchFailure,
+  isOwnDelegatedChild,
   newCommandId,
   readCaller,
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "../../delegatedTaskModes.ts";
+import { DispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -217,9 +221,20 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         Effect.gen(function* () {
           const modelSelection = yield* required(input.modelSelection, "modelSelection");
           const {
+            caller,
             threads,
+            limits: callerLimits,
             projection: { thread },
           } = yield* readThread(input.threadId);
+          const declared = yield* DispatchModeLimit;
+          const limits =
+            declared?.ownChildRuntimeMode !== undefined &&
+            isRuntimeModeAbove(declared.ownChildRuntimeMode, callerLimits.runtimeMode) &&
+            (yield* isOwnDelegatedChild(threads, caller?.id, thread))
+              ? { ...callerLimits, runtimeMode: declared.ownChildRuntimeMode }
+              : callerLimits;
+          yield* resolveRuntimeMode(limits.runtimeMode, thread.runtimeMode);
+          yield* resolveInteractionMode(limits.interactionMode, thread.interactionMode);
           const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
           const result = yield* threads
             .dispatch({
@@ -228,7 +243,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               commandId: yield* newCommandId(),
               modelSelection,
             })
-            .pipe(Effect.mapError(dispatchFailure));
+            .pipe(
+              Effect.provideService(
+                DispatchModeLimit,
+                declared === undefined ? undefined : { ...declared, ...limits },
+              ),
+              Effect.mapError(dispatchFailure),
+            );
           return { sequence: result.sequence };
         }),
       { ownChildren: "at-their-runtime-mode" },

@@ -948,8 +948,13 @@ describe("a thread's own delegated child above its modes", () => {
       Effect.provideService(McpSchema.McpServerClient, client),
     );
 
-  const sendAsParent = (tool: string, threadId: ThreadId) =>
+  const writeAsParent = (tool: string, threadId: ThreadId) =>
     Effect.gen(function* () {
+      if (tool === "t3_thread_configure")
+        return yield* callAsParent(tool, {
+          threadId,
+          modelSelection: { instanceId: accountB, model: "gpt-5" },
+        });
       if (tool === "t3_thread_send") return yield* callAsParent(tool, { threadId, message: "Go." });
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
@@ -972,14 +977,14 @@ describe("a thread's own delegated child above its modes", () => {
    * A parent with a live run on account A, its delegated child (Full-access/default unless `child`
    * says otherwise) stopped and snoozed there, and an unrelated Full-access/default thread. The user
    * applies `narrow` to the parent once, after a tool's declaration read the parent and before the
-   * tool ran, and `childBeforeSend` to the child once, as a send reaches thread management.
+   * tool ran, and `childBeforeWrite` to the child once, as the write reaches thread management.
    */
   const withOwnChild = <A, E, R>(
     setup: {
       readonly parentRuntimeMode: RuntimeMode;
       readonly narrow?: Modes;
       readonly child?: Modes;
-      readonly childBeforeSend?: Modes;
+      readonly childBeforeWrite?: Modes;
     },
     body: (childId: ThreadId) => Effect.Effect<A, E, R>,
   ) =>
@@ -1071,7 +1076,13 @@ describe("a thread's own delegated child above its modes", () => {
       yield* setModes(parentId, { runtimeMode: setup.parentRuntimeMode });
 
       let narrowPending = setup.narrow !== undefined;
-      let childPending = setup.childBeforeSend !== undefined;
+      let childPending = setup.childBeforeWrite !== undefined;
+      const updateChildModes = (threadId: ThreadId | undefined) =>
+        Effect.suspend(() => {
+          if (threadId !== childId || !childPending) return Effect.void;
+          childPending = false;
+          return setModes(childId, setup.childBeforeWrite);
+        });
       const threads = ThreadManagement.ThreadManagementService.of({
         ...real,
         getThreadShell: (id) =>
@@ -1083,11 +1094,12 @@ describe("a thread's own delegated child above its modes", () => {
             }),
           ),
         sendToThread: (input) =>
-          Effect.suspend(() => {
-            if (input.threadId !== childId || !childPending) return Effect.void;
-            childPending = false;
-            return setModes(childId, setup.childBeforeSend);
-          }).pipe(Effect.andThen(real.sendToThread(input))),
+          updateChildModes(input.threadId).pipe(Effect.andThen(real.sendToThread(input))),
+        dispatch: (command) =>
+          (command.type === "provider.switch" || command.type === "thread.model-selection.set"
+            ? updateChildModes(command.threadId)
+            : Effect.void
+          ).pipe(Effect.andThen(real.dispatch(command))),
       });
       return yield* body(childId).pipe(
         // The declaration reads the caller through the calling context's service.
@@ -1144,7 +1156,7 @@ describe("a thread's own delegated child above its modes", () => {
             modelSelection: { instanceId: accountB, model: "gpt-5" },
           });
           expect(moved.isError).toBe(false);
-          const resumed = yield* sendAsParent(tool, childId);
+          const resumed = yield* writeAsParent(tool, childId);
           expect(resumed.isError).toBe(false);
           const child = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(childId);
           expect(child.thread).toMatchObject({
@@ -1161,7 +1173,7 @@ describe("a thread's own delegated child above its modes", () => {
       ),
   );
 
-  for (const tool of ["t3_thread_send", "t3_thread_send_attachments"])
+  for (const tool of ["t3_thread_send", "t3_thread_send_attachments", "t3_thread_configure"])
     it.effect.each([
       {
         name: "an unrelated Full-access thread once its caller drops to Auto",
@@ -1181,7 +1193,7 @@ describe("a thread's own delegated child above its modes", () => {
           parentRuntimeMode: "auto",
           narrow: { interactionMode: "plan" },
           child: { interactionMode: "plan" },
-          childBeforeSend: { interactionMode: "default" },
+          childBeforeWrite: { interactionMode: "default" },
         },
         target: "child",
         code: "interaction_mode_escalation_denied",
@@ -1192,7 +1204,7 @@ describe("a thread's own delegated child above its modes", () => {
           parentRuntimeMode: "full-access",
           narrow: { runtimeMode: "auto" },
           child: { runtimeMode: "auto" },
-          childBeforeSend: { runtimeMode: "full-access" },
+          childBeforeWrite: { runtimeMode: "full-access" },
         },
         target: "child",
         code: "runtime_mode_escalation_denied",
@@ -1202,10 +1214,13 @@ describe("a thread's own delegated child above its modes", () => {
         Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const threadId = target === "child" ? childId : unrelatedId;
-          const runs = (yield* orchestrator.getThreadProjection(threadId)).runs.length;
-          const sent = yield* sendAsParent(tool, threadId);
-          expect(declaredFailure(sent)).toMatchObject({ code });
-          expect((yield* orchestrator.getThreadProjection(threadId)).runs).toHaveLength(runs);
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const result = yield* writeAsParent(tool, threadId);
+          expect(declaredFailure(result)).toMatchObject({ code });
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          expect(after.runs).toHaveLength(before.runs.length);
+          expect(after.thread.modelSelection).toEqual(before.thread.modelSelection);
+          expect(after.thread.providerInstanceId).toBe(before.thread.providerInstanceId);
         }),
       ),
     );
