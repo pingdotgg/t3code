@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -56,24 +57,42 @@ export type RelayClientStatus =
 
 export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
-export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
-  readonly reason:
-    | "download_failed"
-    | "invalid_checksum"
-    | "install_locked"
-    | "managed_by_policy"
-    | "override_missing"
-    | "unsupported_platform"
-    | "validation_failed"
-    | "write_failed";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+class RelayClientLockRemoveError extends Schema.TaggedError<RelayClientLockRemoveError>()(
+  "RelayClientLockRemoveError",
+  { lockPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not remove the relay client lock ${this.lockPath}.`;
+  }
+}
 
-class CloudflaredCommandError extends Data.TaggedError("CloudflaredCommandError")<{
-  readonly command: string;
-  readonly exitCode: number;
-}> {}
+export class RelayClientInstallError extends Schema.TaggedError<RelayClientInstallError>()(
+  "RelayClientInstallError",
+  {
+    reason: Schema.Literals([
+      "download_failed",
+      "invalid_checksum",
+      "install_locked",
+      "managed_by_policy",
+      "override_missing",
+      "unsupported_platform",
+      "validation_failed",
+      "write_failed",
+    ]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+const isRelayClientInstallError = Schema.is(RelayClientInstallError);
+
+class CloudflaredCommandError extends Schema.TaggedError<CloudflaredCommandError>()(
+  "CloudflaredCommandError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {}
 
 export interface CloudflaredReleaseAsset {
   readonly url: string;
@@ -486,7 +505,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const removeEmptyLock = (lockPath: string) =>
-    Effect.tryPromise(() => NodeFSP.rmdir(lockPath)).pipe(Effect.ignore);
+    Effect.tryPromise({
+      try: () => NodeFSP.rmdir(lockPath),
+      catch: (cause) => new RelayClientLockRemoveError({ lockPath, cause }),
+    }).pipe(Effect.ignore);
 
   const releaseOwnedLock = Effect.fn("cloudflared.releaseOwnedLock")(function* (
     lockPath: string,
@@ -655,7 +677,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.catchIf(
-        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) => !isRelayClientInstallError(cause),
         (cause) =>
           Effect.fail(
             new RelayClientInstallError({

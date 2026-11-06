@@ -13,18 +13,14 @@ export interface CounterNamespace {
 
 export async function readEnv(): Promise<Record<string, unknown>> {
   try {
-    const mod = await import(
-      /* @vite-ignore */ DO_NOT_BUNDLE + "cloudflare:workers"
-    );
+    const mod = await import(/* @vite-ignore */ DO_NOT_BUNDLE + "cloudflare:workers");
     return mod.env as Record<string, unknown>;
   } catch {
     return {};
   }
 }
 
-export async function counterNamespace(): Promise<
-  CounterNamespace | undefined
-> {
+export async function counterNamespace(): Promise<CounterNamespace | undefined> {
   const env = await readEnv();
   return env.COUNTER as CounterNamespace | undefined;
 }

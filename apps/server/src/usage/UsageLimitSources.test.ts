@@ -5,6 +5,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -38,6 +39,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   }).pipe(
     Effect.provide([
       Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
         read: (references) => Effect.succeed(references.map(() => undefined)),
         invalidate: () => Effect.void,
       }),
@@ -97,8 +99,11 @@ it.effect("reads a management key from its secret provider", () => {
   });
   return Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
-    yield* sources.refresh;
-    const snapshots = yield* sources.current;
+    const snapshots = yield* sources.streamChanges.pipe(
+      Stream.filter((next) => next.length > 0),
+      Stream.runHead,
+      Effect.flatMap(Effect.fromOption),
+    );
     expect(snapshots.map(({ id, error }) => ({ id, error }))).toEqual([
       { id: "resolved-hub", error: undefined },
       {
@@ -129,6 +134,7 @@ it.effect("reads a management key from its secret provider", () => {
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
       Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
         read: (references) =>
           Effect.succeed(
             references.map((reference) =>
