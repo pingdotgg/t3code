@@ -139,25 +139,11 @@ export const make = Effect.gen(function* () {
         DesktopEarlyElectronStartup.shouldDisableGpuOnNvidiaWayland({
           env: process.env,
           ozonePlatform: readCommandLineSwitchValue(Electron.app.commandLine, "ozone-platform"),
-          ozonePlatformHint: readCommandLineSwitchValue(
-            Electron.app.commandLine,
-            "ozone-platform-hint",
-          ),
           homeDirectory,
           joinPath: NodePath.posix.join,
           existsSync: (path) => NodeFS.existsSync(path),
           readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
           hasSwitch: (name) => Electron.app.commandLine.hasSwitch(name),
-          hasLiveWaylandSocket: DesktopEarlyElectronStartup.makeHasLiveWaylandSocket({
-            env: process.env,
-            readdirSync: (directory) =>
-              NodeFS.readdirSync(directory, { withFileTypes: true }).map((entry) => ({
-                name: entry.name,
-                isSocket: () => entry.isSocket(),
-              })),
-            readUnixSockets: () => NodeFS.readFileSync("/proc/net/unix", "utf8"),
-            joinPath: NodePath.posix.join,
-          }),
         })
       ) {
         Electron.app.commandLine.appendSwitch("disable-gpu");

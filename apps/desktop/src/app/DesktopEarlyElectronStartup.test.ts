@@ -200,8 +200,7 @@ describe("Linux device scale persistence failures", () => {
 
   describe("shouldDisableGpuOnNvidiaWayland", () => {
     const base = {
-      ozonePlatform: null,
-      ozonePlatformHint: null,
+      ozonePlatform: "wayland",
       homeDirectory: "/home/user",
       joinPath: NodePath.posix.join,
       existsSync: (path: string) => path === "/dev/nvidiactl",
@@ -217,7 +216,11 @@ describe("Linux device scale persistence failures", () => {
 
     it("is false on X11", () => {
       assert.isFalse(
-        shouldDisableGpuOnNvidiaWayland({ ...base, env: { XDG_SESSION_TYPE: "x11" } }),
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "x11" },
+          ozonePlatform: "x11",
+        }),
       );
     });
 
@@ -237,107 +240,21 @@ describe("Linux device scale persistence failures", () => {
       );
     });
 
-    it("treats --ozone-platform=auto as an unspecified platform", () => {
-      assert.isTrue(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: { XDG_SESSION_TYPE: "wayland" },
-          ozonePlatform: "auto",
-        }),
-      );
-      assert.isTrue(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: { WAYLAND_DISPLAY: "wayland-0" },
-          ozonePlatform: "auto",
-        }),
-      );
-      assert.isFalse(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: { XDG_SESSION_TYPE: "x11" },
-          ozonePlatform: "auto",
-          hasLiveWaylandSocket: () => false,
-        }),
-      );
-    });
-
-    it("respects --ozone-platform-hint=x11 on a Wayland login", () => {
-      assert.isFalse(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" },
-          ozonePlatformHint: "x11",
-          hasLiveWaylandSocket: () => true,
-        }),
-      );
-    });
-
-    it("honors --ozone-platform-hint=wayland when the session variables are absent", () => {
-      assert.isTrue(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: {},
-          ozonePlatformHint: "wayland",
-        }),
-      );
-    });
-
-    it("prefers the explicit --ozone-platform over --ozone-platform-hint", () => {
-      assert.isFalse(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: { XDG_SESSION_TYPE: "wayland" },
-          ozonePlatform: "x11",
-          ozonePlatformHint: "wayland",
-        }),
-      );
-    });
-
-    it("falls back to the session environment for hint=auto or hint=default", () => {
-      for (const ozonePlatformHint of ["auto", "default"]) {
-        assert.isTrue(
-          shouldDisableGpuOnNvidiaWayland({
-            ...base,
-            env: { XDG_SESSION_TYPE: "wayland" },
-            ozonePlatformHint,
-          }),
-        );
+    it.each([null, "auto", "headless"])(
+      "does not infer Wayland from the environment for unresolved platform %s",
+      (ozonePlatform) => {
         assert.isFalse(
           shouldDisableGpuOnNvidiaWayland({
             ...base,
-            env: {},
-            ozonePlatformHint,
-            hasLiveWaylandSocket: () => false,
+            env: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" },
+            ozonePlatform,
           }),
         );
-      }
-    });
+      },
+    );
 
-    it("detects Wayland via WAYLAND_DISPLAY when session variables are absent", () => {
-      assert.isTrue(
-        shouldDisableGpuOnNvidiaWayland({ ...base, env: { WAYLAND_DISPLAY: "wayland-0" } }),
-      );
-    });
-
-    it("detects Wayland via live runtime socket when session variables are absent", () => {
-      assert.isTrue(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: {},
-          hasLiveWaylandSocket: () => true,
-        }),
-      );
-    });
-
-    it("stays false when no Wayland signal is present at all", () => {
-      assert.isFalse(
-        shouldDisableGpuOnNvidiaWayland({
-          ...base,
-          env: {},
-          hasLiveWaylandSocket: () => false,
-        }),
-      );
+    it("uses Electron's resolved Wayland backend without session or display variables", () => {
+      assert.isTrue(shouldDisableGpuOnNvidiaWayland({ ...base, env: {} }));
     });
 
     it("is false without NVIDIA devices", () => {

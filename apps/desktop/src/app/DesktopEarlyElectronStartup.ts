@@ -81,94 +81,20 @@ export function resolveEarlyLinuxPasswordStorePreference(
   }
 }
 
-const normalizeSwitchValue = (value: string | null | undefined): string | null => {
-  const normalized = value?.trim().toLowerCase();
-  return normalized && normalized.length > 0 ? normalized : null;
-};
-
-const isWaylandPlatform = (
-  env: NodeJS.ProcessEnv,
-  ozonePlatform: string | null,
-  ozonePlatformHint: string | null,
-  hasLiveWaylandSocket: () => boolean,
-): boolean => {
-  // --ozone-platform selects the backend directly; --ozone-platform-hint only
-  // breaks the auto/default tie, so an explicit platform always wins.
-  const explicit = normalizeSwitchValue(ozonePlatform);
-  if (explicit !== null && explicit !== "auto") return explicit === "wayland";
-  const hint = normalizeSwitchValue(ozonePlatformHint);
-  if (hint === "wayland") return true;
-  if (hint === "x11") return false;
-  if (normalizeSwitchValue(env.XDG_SESSION_TYPE) === "wayland") return true;
-  if (normalizeSwitchValue(env.WAYLAND_DISPLAY) !== null) return true;
-  return hasLiveWaylandSocket();
-};
-
-const WAYLAND_SOCKET_NAME = /^wayland-\d+$/;
-const WAYLAND_SOCKET_LINE = /\s(\/.*)$/;
-
-const hasLiveWaylandDisplay = (input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly readdirSync: (path: string) => ReadonlyArray<{ name: string; isSocket: () => boolean }>;
-  readonly readUnixSockets: () => string;
-  readonly joinPath: (first: string, second: string) => string;
-}): boolean => {
-  const runtimeDirectory = trimNonEmpty(input.env.XDG_RUNTIME_DIR);
-  if (runtimeDirectory === null) return false;
-  let liveSockets: ReadonlySet<string>;
-  let socketNames: ReadonlyArray<string>;
-  try {
-    liveSockets = new Set(
-      input
-        .readUnixSockets()
-        .split("\n")
-        .flatMap((line) => line.match(WAYLAND_SOCKET_LINE)?.[1] ?? []),
-    );
-    socketNames = input
-      .readdirSync(runtimeDirectory)
-      .filter((entry) => WAYLAND_SOCKET_NAME.test(entry.name) && entry.isSocket())
-      .map((entry) => entry.name);
-  } catch {
-    return false;
-  }
-  return socketNames.some((name) => liveSockets.has(input.joinPath(runtimeDirectory, name)));
-};
-
 const isNvidiaPresent = (existsSync: (path: string) => boolean): boolean =>
   existsSync("/dev/nvidiactl") || existsSync("/dev/nvidia0");
-
-export const makeHasLiveWaylandSocket =
-  (input: {
-    readonly env: NodeJS.ProcessEnv;
-    readonly readdirSync: (
-      path: string,
-    ) => ReadonlyArray<{ name: string; isSocket: () => boolean }>;
-    readonly readUnixSockets: () => string;
-    readonly joinPath: (first: string, second: string) => string;
-  }): (() => boolean) =>
-  () =>
-    hasLiveWaylandDisplay(input);
 
 export function shouldDisableGpuOnNvidiaWayland(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly ozonePlatform: string | null;
-  readonly ozonePlatformHint: string | null;
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
   readonly existsSync: (path: string) => boolean;
   readonly readFileString: (path: string) => string;
   readonly hasSwitch: (name: string) => boolean;
-  readonly hasLiveWaylandSocket?: () => boolean;
 }): boolean {
-  if (
-    !isWaylandPlatform(
-      input.env,
-      input.ozonePlatform,
-      input.ozonePlatformHint,
-      input.hasLiveWaylandSocket ?? (() => false),
-    )
-  )
-    return false;
+  // Electron resolves --ozone-platform before loading the main module, including auto selection.
+  if (input.ozonePlatform !== "wayland") return false;
   if (input.hasSwitch("disable-gpu") || input.hasSwitch("enable-gpu")) return false;
   const settingsPath = resolveEarlyDesktopSettingsPath({
     env: input.env,
