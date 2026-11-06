@@ -80,6 +80,7 @@ vi.mock("~/hooks/useTheme", () => ({
 vi.mock("~/state/queries", () => ({
   useCheckpointDiff: () => ({ data: null, error: null, isPending: false }),
   useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
+  useDebouncedValue: <A,>(value: A) => value,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {} }));
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async () => {} }));
@@ -95,6 +96,7 @@ vi.mock("./diffs/AnnotatableCodeView", async (importOriginal) => {
     },
   };
 });
+vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
@@ -302,7 +304,7 @@ it.each([false, true])(
     const toggle = screen.getByRole("button", { name: `Expand ${path}`, exact: true });
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(toggle);
-    act(() =>
+    await act(() =>
       context.registry.set(
         context.patch,
         AsyncResult.success({
