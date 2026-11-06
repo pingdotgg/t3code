@@ -434,16 +434,21 @@ describe("ChatMarkdown remote thread file links", () => {
     setup();
     machines.primaryEnvironmentId = desktop;
     machines.remoteEnvironmentIds.add(threadRef.environmentId);
-    const desktopFiles = new Set(["/home/me/Desktop/notes.txt", "/srv/shared.md"]);
+    const desktopFiles = new Set([
+      "/home/me/Desktop/notes.txt",
+      "/home/me/Desktop/shot.png",
+      "/srv/shared.md",
+    ]);
     const files = {
       [desktop]: desktopFiles,
       [threadRef.environmentId]: new Set(["/srv/shared.md"]),
     };
     filesystemMetadata.mockImplementation(
       (request: { environmentId: EnvironmentId; input: { paths: string[] } }) =>
-        // A reconnecting local backend never answers.
-        request.environmentId === desktop &&
-        ["/srv/shared.md", "/srv/pending.md"].includes(request.input.paths[0]!)
+        // A reconnecting backend never answers.
+        (request.environmentId === desktop &&
+          ["/srv/shared.md", "/srv/pending.md"].includes(request.input.paths[0]!)) ||
+        request.input.paths[0] === "/srv/stalled.md"
           ? new Promise(() => {})
           : Promise.resolve(
               AsyncResult.success({
@@ -454,13 +459,14 @@ describe("ChatMarkdown remote thread file links", () => {
             ),
     );
     await using screen = await renderText(
-      "[Notes](/home/me/Desktop/notes.txt:3), [Shared](/srv/shared.md), [Gone](/srv/gone.md), [Home](~/notes.txt) and [Pending](/srv/pending.md)",
+      "[Notes](/home/me/Desktop/notes.txt:3), [Shot](/home/me/Desktop/shot.png), [Shared](/srv/shared.md), [Gone](/srv/gone.md), [Home](~/notes.txt), [Pending](/srv/pending.md) and [Stalled](/srv/stalled.md)",
       { cwd: "/srv/project", threadRef },
     );
     using openFile = vi
       .spyOn(useRightPanelStore.getState(), "openFile")
       .mockImplementation(() => {});
-    const [notes, shared, gone, home, pending] = screen.container.querySelectorAll("a");
+    const [notes, shot, shared, gone, home, pending, stalled] =
+      screen.container.querySelectorAll("a");
 
     await act(async () => notes!.click());
     await vi.waitFor(() =>
@@ -470,6 +476,10 @@ describe("ChatMarkdown remote thread file links", () => {
       ),
     );
     expect(openFile).not.toHaveBeenCalled();
+    await act(async () => shot!.click());
+    await vi.waitFor(() =>
+      expect(machines.openInEditor).toHaveBeenLastCalledWith(desktop, "/home/me/Desktop/shot.png"),
+    );
 
     await act(async () => shared!.click());
     await vi.waitFor(() =>
@@ -483,14 +493,17 @@ describe("ChatMarkdown remote thread file links", () => {
     desktopFiles.add("~/notes.txt");
     await act(async () => home!.click());
     expect(openFile).toHaveBeenLastCalledWith(threadRef, "~/notes.txt", undefined);
-    expect(machines.openInEditor).toHaveBeenCalledOnce();
+    expect(machines.openInEditor).toHaveBeenCalledTimes(2);
 
     using _timers = fakeTimers();
     await act(async () => pending!.click());
     expect(openFile).toHaveBeenLastCalledWith(threadRef, "~/notes.txt", undefined);
     await act(() => vi.advanceTimersByTime(2_000));
     expect(openFile).toHaveBeenLastCalledWith(threadRef, "/srv/pending.md", undefined);
-    expect(machines.openInEditor).toHaveBeenCalledOnce();
+    await act(async () => stalled!.click());
+    await act(() => vi.advanceTimersByTime(2_000));
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, "/srv/stalled.md", undefined);
+    expect(machines.openInEditor).toHaveBeenCalledTimes(2);
   });
 });
 

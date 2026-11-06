@@ -323,7 +323,7 @@ function CodexArtifactTemplateCard(props: {
   );
 }
 
-const LOCAL_FILE_LOOKUP_TIMEOUT_MS = 2_000;
+const FILE_LOOKUP_TIMEOUT_MS = 2_000;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 
 function orderedListGutterStyle(
@@ -806,16 +806,23 @@ function useChatMarkdownState({
     });
     return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
   };
+  // `~` names a different home on each machine.
+  const mayBeOnLocalMachine = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    localEnvironmentId !== null &&
+    fileLinkMeta.workspaceRelativePath === null &&
+    isAbsolutePath(fileLinkMeta.filePath);
   const isOnlyOnLocalMachine = async (path: string) => {
     if (environmentId === null || localEnvironmentId === null) return false;
     const input = { paths: [path] };
-    const host = await getFilesystemMetadata({ environmentId, input });
-    if (host._tag !== "Success" || host.value.entries[0] !== null) return false;
-    // A reconnecting local backend never answers; open the host's copy instead.
-    const local = await Promise.race([
-      getFilesystemMetadata({ environmentId: localEnvironmentId, input }),
-      new Promise<null>((resolve) => setTimeout(resolve, LOCAL_FILE_LOOKUP_TIMEOUT_MS, null)),
-    ]);
+    // A reconnecting backend never answers; open the host's copy instead.
+    const lookup = (id: EnvironmentId) =>
+      Promise.race([
+        getFilesystemMetadata({ environmentId: id, input }),
+        new Promise<null>((resolve) => setTimeout(resolve, FILE_LOOKUP_TIMEOUT_MS, null)),
+      ]);
+    const host = await lookup(environmentId);
+    if (host?._tag !== "Success" || host.value.entries[0] !== null) return false;
+    const local = await lookup(localEnvironmentId);
     return local?._tag === "Success" && (local.value.entries[0] ?? null) !== null;
   };
   const openOnLocalMachine = async (targetPath: string) => {
@@ -842,11 +849,7 @@ function useChatMarkdownState({
       !!cwd &&
       (needsWorkspaceBasenameLookup(panelPath) ||
         stripRepeatedWorkspacePrefix(panelPath, cwd) !== null);
-    // `~` names a different home on each machine.
-    const mayBeLocal =
-      localEnvironmentId !== null &&
-      fileLinkMeta.workspaceRelativePath === null &&
-      isAbsolutePath(fileLinkMeta.filePath);
+    const mayBeLocal = mayBeOnLocalMachine(fileLinkMeta);
     if (!needsWorkspaceLookup && !mayBeLocal) {
       openAt(panelPath);
       return;
@@ -858,6 +861,20 @@ function useChatMarkdownState({
       if (!isLatestLookup()) return;
       if (isLocal) void openOnLocalMachine(fileLinkMeta.targetPath);
       else openAt(match ?? panelPath);
+    })();
+  };
+  const openMediaLink = (fileLinkMeta: MarkdownFileLinkMeta, mediaPath: string) => {
+    const isLatestLookup = claimWorkspaceBasenameLookup();
+    if (!mayBeOnLocalMachine(fileLinkMeta)) {
+      openMarkdownMedia(mediaPath, fileLinkMeta.filePath);
+      return;
+    }
+    const requestId = ++mediaRequestId.current;
+    void (async () => {
+      const isLocal = await isOnlyOnLocalMachine(fileLinkMeta.filePath);
+      if (!isLatestLookup() || mediaRequestId.current !== requestId) return;
+      if (isLocal) void openOnLocalMachine(fileLinkMeta.targetPath);
+      else openMarkdownMedia(mediaPath, fileLinkMeta.filePath);
     })();
   };
   const fileLinkChip = (
@@ -913,9 +930,7 @@ function useChatMarkdownState({
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
         onOpenMedia={
-          threadRef && canPreviewMedia
-            ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
-            : undefined
+          threadRef && canPreviewMedia ? () => openMediaLink(fileLinkMeta, mediaPath) : undefined
         }
         openInEditorMenuLabel={preferredEditorMenuLabel}
         onReveal={
