@@ -1816,7 +1816,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             args: ["commit", "-m", "initial"],
             env: {
               LC_ALL: "C",
-              GIT_CONFIG_GLOBAL: NodeOS.devNull,
+              GIT_CONFIG_GLOBAL: (yield* Path.Path).join(cwd, "missing-global-config"),
               GIT_CONFIG_NOSYSTEM: "1",
               GIT_CONFIG_COUNT: "2",
               GIT_CONFIG_KEY_0: "user.name",
