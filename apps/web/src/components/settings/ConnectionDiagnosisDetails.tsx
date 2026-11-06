@@ -201,7 +201,7 @@ export function ConnectionDiagnosisPanel({
         </Button>
         {onAddRoute ? (
           <Button type="button" size="xs" variant="outline" onClick={onAddRoute}>
-            Add direct route
+            {diagnosis.recovery === "pair-again" ? "Pair again" : "Add direct route"}
           </Button>
         ) : null}
       </div>

@@ -399,6 +399,17 @@ export const serverAuthDpopFailureReason = (
 ): DpopFailureReasonType | undefined =>
   error._tag === "ServerAuthInvalidCredentialError" ? error.dpopFailureReason : undefined;
 
+const isRevokedSessionError = Schema.is(
+  Schema.Union([SessionStore.SessionTokenRevokedError, SessionStore.WebSocketSessionRevokedError]),
+);
+
+export const serverAuthSessionFailureReason = (
+  error: ServerAuthCredentialError,
+): "revoked" | undefined =>
+  error._tag === "ServerAuthInvalidCredentialError" && isRevokedSessionError(error.cause)
+    ? "revoked"
+    : undefined;
+
 export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthInvalidScopeError>()(
   "ServerAuthInvalidScopeError",
   {},

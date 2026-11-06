@@ -39,6 +39,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -584,6 +593,8 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   ]);
   const selectedScopes = pairingScopes.filter((scope) => delegatableScopes.includes(scope));
   const [isCreatingPairingLink, setIsCreatingPairingLink] = useState(false);
+  const [confirmRevokeOthers, setConfirmRevokeOthers] = useState(false);
+  const otherClientCount = clientSessions?.filter((session) => !session.current).length ?? null;
 
   const handleCreatePairingLink = async () => {
     if (
@@ -630,10 +641,37 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         size="xs"
         variant="destructive-outline"
         disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
-        onClick={() => void onRevokeOtherClients()}
+        onClick={() => setConfirmRevokeOthers(true)}
       >
         {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
       </Button>
+      <AlertDialog open={confirmRevokeOthers} onOpenChange={setConfirmRevokeOthers}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {otherClientCount === null
+                ? "Revoke every other client?"
+                : `Revoke ${otherClientCount} other ${otherClientCount === 1 ? "client" : "clients"}?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Phones, browsers, desktops, and linked machines paired with this environment lose
+              access now. Each needs a new pairing link to reconnect. This one stays signed in.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setConfirmRevokeOthers(false);
+                onRevokeOtherClients();
+              }}
+            >
+              Revoke others
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
       <Dialog
         open={dialogOpen}
         onOpenChange={(open) => {

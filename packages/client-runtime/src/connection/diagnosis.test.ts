@@ -1,3 +1,4 @@
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
@@ -51,6 +52,36 @@ const results = (state: SupervisorConnectionState, via?: "relay" | "direct") =>
   diagnose(state, via)?.hops.map((hop) => `${hop.hop}:${hop.result}`);
 
 describe("presentConnectionDiagnosis", () => {
+  it("tells a revoked pairing apart from other refusals and offers pairing again", () => {
+    const refused = (sessionFailureReason?: "revoked") => ({
+      ...backoff(
+        mapRemoteEnvironmentError(
+          new EnvironmentAuthInvalidError({
+            code: "auth_invalid",
+            reason: "invalid_credential",
+            ...(sessionFailureReason === undefined ? {} : { sessionFailureReason }),
+            traceId: "trace-1",
+          }),
+        ),
+      ),
+      phase: "blocked" as const,
+      retryAt: null,
+    });
+
+    expect(diagnose(refused("revoked"), "direct")).toMatchObject({
+      headline: "Mac mini revoked this device's pairing",
+      steps: [
+        "On Mac mini, open Settings > Connections and create a pairing link.",
+        "On this device, add it as a route to this environment. Your threads stay.",
+      ],
+      recovery: "pair-again",
+    });
+    expect(diagnose(refused(), "direct")).toMatchObject({
+      headline: "T3 Code on Mac mini did not accept this device",
+      recovery: null,
+    });
+  });
+
   it("tells a working tunnel apart from T3 Code not answering", () => {
     expect(diagnose(backoff(unavailable("origin_unreachable")))?.headline).toBe(
       "Tunnel works, but T3 Code on Mac mini did not answer",

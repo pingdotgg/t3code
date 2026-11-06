@@ -324,6 +324,28 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
   );
 
+  it.effect("names a revoked session apart from other invalid credentials", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const revoked = yield* serverAuth.issueSession();
+      yield* serverAuth.revokeSession(revoked.sessionId);
+      const reasonFor = (authorization: string) =>
+        serverAuth
+          .authenticateHttpRequest({ cookies: {}, headers: { authorization } } as never)
+          .pipe(
+            Effect.flip,
+            Effect.map((error) =>
+              EnvironmentAuth.isServerAuthCredentialError(error)
+                ? (EnvironmentAuth.serverAuthSessionFailureReason(error) ?? "generic")
+                : error._tag,
+            ),
+          );
+
+      expect(yield* reasonFor(`Bearer ${revoked.token}`)).toBe("revoked");
+      expect(yield* reasonFor("Bearer not-a-session.token")).toBe("generic");
+    }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+  );
+
   it.effect("preserves pairing grants after rejecting scopes they do not grant", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

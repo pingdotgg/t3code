@@ -113,6 +113,10 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
+/** Why a session credential failed, when the server knows. Older clients ignore the field. */
+export const EnvironmentSessionFailureReason = Schema.Literals(["revoked"]);
+export type EnvironmentSessionFailureReason = typeof EnvironmentSessionFailureReason.Type;
+
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
 ]);
@@ -163,6 +167,7 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     code: Schema.Literal("auth_invalid"),
     reason: EnvironmentAuthInvalidReason,
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    sessionFailureReason: Schema.optionalKey(EnvironmentSessionFailureReason),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },

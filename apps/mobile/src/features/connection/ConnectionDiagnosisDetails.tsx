@@ -49,6 +49,7 @@ export function useConnectionDiagnosis(
 export function ConnectionDiagnosisDetails(props: {
   readonly hostLabel: string;
   readonly diagnosis: ConnectionDiagnosis;
+  readonly onPairAgain?: (() => void) | undefined;
 }) {
   const { diagnosis } = props;
   const { moreInfoUrl } = diagnosis;
@@ -78,6 +79,9 @@ export function ConnectionDiagnosisDetails(props: {
       <Text selectable className="font-mono text-xs text-foreground-muted">
         {diagnosis.facts.map(([label, value]) => `${label}: ${value}`).join("\n")}
       </Text>
+      {diagnosis.recovery === "pair-again" && props.onPairAgain ? (
+        <Button label="Pair again" icon="qrcode.viewfinder" onPress={props.onPairAgain} />
+      ) : null}
       <Button
         label="Copy diagnostics"
         icon="doc.on.doc"

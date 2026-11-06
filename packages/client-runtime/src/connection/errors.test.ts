@@ -1,3 +1,4 @@
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayAuthInvalidError,
   RelayEnvironmentConnectNotAuthorizedError,
@@ -100,5 +101,17 @@ describe("mapRemoteDpopEnvironmentError", () => {
       _tag: "ConnectionTransientError",
       detail: `${error.message} ${NETWORK_BLOCKING_HINT}`,
     });
+  });
+
+  it("keeps a revoked pairing named over the relay", () => {
+    const mapped = mapRemoteDpopEnvironmentError(
+      new EnvironmentAuthInvalidError({
+        code: "auth_invalid",
+        reason: "invalid_credential",
+        sessionFailureReason: "revoked",
+        traceId: "trace-1",
+      }),
+    );
+    expect(mapped).toMatchObject({ failureCause: "pairing_revoked", via: "relay" });
   });
 });

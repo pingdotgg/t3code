@@ -191,10 +191,16 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
-        detail: "The environment credential is invalid.",
+        detail:
+          error.sessionFailureReason === "revoked"
+            ? "The environment revoked this device's pairing."
+            : "The environment credential is invalid.",
         traceId: error.traceId,
         hop: "server",
         via,
+        ...(error.sessionFailureReason === "revoked"
+          ? { failureCause: "pairing_revoked" as const }
+          : {}),
       });
     case "EnvironmentScopeRequiredError":
     case "EnvironmentOperationForbiddenError":
@@ -262,7 +268,11 @@ export function mapRemoteEnvironmentError(
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,
 ): ConnectionAttemptError {
-  if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
+  if (
+    error._tag === "EnvironmentAuthInvalidError" &&
+    error.reason === "invalid_credential" &&
+    error.sessionFailureReason !== "revoked"
+  ) {
     return new ConnectionBlockedError({
       reason: "authentication",
       detail: dpopFailureMessage("The environment credential is invalid.", error.dpopFailureReason),

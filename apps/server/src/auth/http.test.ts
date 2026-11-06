@@ -1,5 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  bootstrapRemoteBearerSession,
+  issueRemoteWebSocketTicket,
+} from "@t3tools/client-runtime/authorization";
+import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import {
   AuthTokenExchangeGrantType,
   AuthEnvironmentBootstrapTokenType,
   AuthAccessTokenType,
@@ -23,10 +29,13 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import { layerServerEnvironmentHttpApi } from "../http.ts";
 import * as AuthHttp from "./http.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
-class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
+class AuthTestApi extends HttpApi.make("environment")
+  .add(EnvironmentHttpApi.groups.metadata)
+  .add(EnvironmentHttpApi.groups.auth) {}
 
 const layerConfig = Layer.effect(
   ServerConfig.ServerConfig,
@@ -47,10 +56,35 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
+const layerServerEnvironment = Layer.effect(
+  ServerEnvironment.ServerEnvironment,
+  Effect.gen(function* () {
+    const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    return ServerEnvironment.ServerEnvironment.of({
+      getEnvironmentId: identity.getEnvironmentId,
+      getDescriptor: Effect.map(identity.getEnvironmentId, (environmentId) => ({
+        environmentId,
+        label: "auth-http-test",
+        platform: { os: "linux" as const, arch: "x64" as const },
+        serverVersion: "0.0.0-test",
+        capabilities: { repositoryIdentity: false },
+      })),
+    });
+  }),
+);
 const layerRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
+  Layer.provide(layerServerEnvironmentHttpApi),
   Layer.provide(AuthHttp.layer),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provideMerge(layerEnvironmentAuth),
+  Layer.provide(
+    layerServerEnvironment.pipe(
+      Layer.provide(ServerEnvironment.layerIdentity),
+      Layer.provide(SqlitePersistence.layerMemory),
+      Layer.provide(ServerSecretStore.layer),
+      Layer.provide(layerConfig),
+    ),
+  ),
   Layer.provide(layerConfig),
   Layer.provideMerge(
     HttpPlatform.layer.pipe(
@@ -69,19 +103,22 @@ const postJson = (path: string, body: unknown, headers?: Readonly<Record<string,
     body: encodeJson(body),
   });
 
+const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+  get: () => Effect.succeedNone,
+  set: () => Effect.void,
+  create: () => Effect.void,
+  getOrCreateRandom: () => Effect.die("Not used by these routes."),
+  remove: () => Effect.void,
+});
+const makeRequestContext = (crypto: Crypto.Crypto) =>
+  Context.make(Crypto.Crypto, crypto).pipe(
+    Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+  );
+
 it.effect("sets the selected browser session cookies through the HTTP route", () =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
-      get: () => Effect.succeedNone,
-      set: () => Effect.void,
-      create: () => Effect.void,
-      getOrCreateRandom: () => Effect.die("Not used by these routes."),
-      remove: () => Effect.void,
-    });
-    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
-      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
-    );
+    const requestContext = makeRequestContext(crypto);
     return yield* Effect.acquireUseRelease(
       Effect.sync(
         () =>
@@ -154,4 +191,83 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "reports a revoked pairing as revoked and accepts a fresh pairing of the same environment",
+  () =>
+    Effect.gen(function* () {
+      const crypto = yield* Crypto.Crypto;
+      const requestContext = makeRequestContext(crypto);
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+        (environment) => {
+          const httpBaseUrl = "http://127.0.0.1/";
+          const statuses: Array<string> = [];
+          const fetchFn: typeof globalThis.fetch = async (input, init) => {
+            const request = new Request(input, init);
+            const response = await environment.handler(request, requestContext);
+            statuses.push(`${request.method} ${new URL(request.url).pathname} ${response.status}`);
+            return response;
+          };
+          return Effect.gen(function* () {
+            const admin = yield* Effect.promise(() =>
+              environment.handler(
+                postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+                requestContext,
+              ),
+            );
+            const adminCookie = admin.headers.getSetCookie()[0]?.split(";", 1)[0] ?? "";
+            const pair = Effect.fn(function* () {
+              const link = yield* Effect.promise(() =>
+                environment.handler(
+                  postJson("/api/auth/pairing-token", {}, { cookie: adminCookie }),
+                  requestContext,
+                ),
+              );
+              const { credential } = (yield* Effect.promise(() => link.json())) as {
+                credential: string;
+              };
+              const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl });
+              const access = yield* bootstrapRemoteBearerSession({ httpBaseUrl, credential });
+              return { environmentId: descriptor.environmentId, token: access.access_token };
+            });
+
+            const first = yield* pair();
+            yield* issueRemoteWebSocketTicket({ httpBaseUrl, bearerToken: first.token });
+
+            const revoked = yield* Effect.promise(() =>
+              environment.handler(
+                postJson("/api/auth/clients/revoke-others", {}, { cookie: adminCookie }),
+                requestContext,
+              ),
+            );
+            expect(revoked.status).toBe(200);
+
+            const refused = yield* Effect.flip(
+              issueRemoteWebSocketTicket({ httpBaseUrl, bearerToken: first.token }),
+            );
+            expect(refused).toMatchObject({
+              _tag: "EnvironmentAuthInvalidError",
+              reason: "invalid_credential",
+              sessionFailureReason: "revoked",
+            });
+
+            const second = yield* pair();
+            expect(second.environmentId).toBe(first.environmentId);
+            yield* issueRemoteWebSocketTicket({ httpBaseUrl, bearerToken: second.token });
+            expect(statuses).toEqual([
+              "GET /.well-known/t3/environment 200",
+              "POST /oauth/token 200",
+              "POST /api/auth/websocket-ticket 200",
+              "POST /api/auth/websocket-ticket 401",
+              "GET /.well-known/t3/environment 200",
+              "POST /oauth/token 200",
+              "POST /api/auth/websocket-ticket 200",
+            ]);
+          }).pipe(Effect.provide(layerRemoteHttpClient(fetchFn)));
+        },
+        (environment) => Effect.promise(() => environment.dispose()),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

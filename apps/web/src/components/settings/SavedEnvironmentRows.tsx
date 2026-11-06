@@ -336,7 +336,11 @@ export function SavedBackendListRow({
               hostLabel={environment.label}
               diagnosis={diagnosis}
               onRetry={() => void retryNow(environmentId)}
-              onAddRoute={relayOnly ? () => onAddRoute(environment) : null}
+              onAddRoute={
+                relayOnly || diagnosis.recovery === "pair-again"
+                  ? () => onAddRoute(environment)
+                  : null
+              }
             />
           ) : null}
           {routesOpen && (
