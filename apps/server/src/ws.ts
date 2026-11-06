@@ -1982,10 +1982,20 @@ export const layerWsRpc = (
         };
       });
 
-      const refreshGitStatus = (cwd: string) =>
+      const refreshGitStatus = (cwd: string, options?: { readonly skipLocalRefresh?: boolean }) =>
         vcsStatusBroadcaster
-          .refreshStatus(cwd)
+          .refreshStatus(cwd, options)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
+      // Answers once status subscribers can see the new ref; the network part stays detached.
+      const refreshGitStatusAfterCheckout = (cwd: string) =>
+        vcsStatusBroadcaster.refreshLocalStatus(cwd).pipe(
+          Effect.ignoreCause({ log: true }),
+          Effect.andThen(refreshGitStatus(cwd, { skipLocalRefresh: true })),
+          // A client that disconnects mid-refresh must not leave every other client on the old ref.
+          Effect.forkDetach,
+          Effect.flatMap(Fiber.join),
+        );
 
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
         const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
@@ -3180,7 +3190,9 @@ export const layerWsRpc = (
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow
+            .switchRef(input)
+            .pipe(Effect.tap(() => refreshGitStatusAfterCheckout(input.cwd))),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),

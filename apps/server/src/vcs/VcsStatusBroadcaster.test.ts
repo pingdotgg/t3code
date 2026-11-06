@@ -207,6 +207,31 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
+  it.effect(
+    "a refresh after an awaited local refresh reads git status only after the fetch",
+    () => {
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        fileSystem: FileSystem.makeNoop({ realPath: (cwd) => Effect.succeed(cwd) }),
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.refreshLocalStatus("/repo");
+        assert.strictEqual(state.localStatusCalls, 1);
+
+        yield* broadcaster.refreshStatus("/repo", { skipLocalRefresh: true });
+        assert.strictEqual(state.remoteStatusCalls, 1);
+        assert.strictEqual(state.localStatusCalls, 2);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    },
+  );
+
   it.effect("publishes terminal branch switches and validates cached status reads", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
