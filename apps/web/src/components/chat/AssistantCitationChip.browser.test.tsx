@@ -129,6 +129,26 @@ describe("citation comment source disappearance", () => {
 });
 
 describe("citation comment popup position", () => {
+  it("opens at its anchor instead of sliding in from the window corner", async () => {
+    using source = setup();
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+    );
+    const positioner = () =>
+      document.querySelector<HTMLElement>('[data-slot="popover-positioner"]');
+    await vi.waitFor(() => expect(positioner()?.style.opacity).not.toBe("0"));
+
+    const moves = positioner()!
+      .getAnimations()
+      .filter(
+        (animation) =>
+          animation instanceof CSSTransition &&
+          ["transform", "top", "left"].includes(animation.transitionProperty),
+      );
+    expect(moves).toEqual([]);
+  });
+
   it("stays on screen when the cited text ends in a code block's hidden overflow", async () => {
     using _source = setup();
     const message = document.createElement("div");
