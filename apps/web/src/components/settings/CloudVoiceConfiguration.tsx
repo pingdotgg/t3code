@@ -23,7 +23,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import { useId, useState } from "react";
 import { isSecretsFeatureEnabled } from "../../env";
 import { layer, runtime } from "../../lib/runtime";
-import { chooseAudioDestination } from "../../speech/voiceConsent";
+import { chooseAudioDestination, pendingCloudAudioChoice } from "../../speech/voiceConsent";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { Button } from "../ui/button";
@@ -99,9 +99,13 @@ export function CloudVoiceConfiguration({
     setError("");
     setBusy(true);
     try {
+      const commit =
+        !active && value !== null
+          ? pendingCloudAudioChoice({ kind: "cloud", provider, environmentId: id })
+          : null;
       await runtime.runPromise(setCloudSpeechKey(prepared, provider, value));
       refresh();
-      if (!active && value !== null) enable();
+      commit?.();
       close();
     } catch {
       setError("Couldn’t save this change. Check your connection and try again.");

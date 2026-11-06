@@ -1,8 +1,11 @@
 import { VoiceTranscriptionDestination } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { useSyncExternalStore } from "react";
 import { randomUUID } from "../lib/utils";
 import {
+  getLocalStorageItem,
   readLocalStorageValue,
+  subscribeLocalStorageKey,
   useLocalStorage,
   writeLocalStorageValue,
 } from "../hooks/useLocalStorage";
@@ -10,33 +13,78 @@ import {
 // Separate keys: a stale window saving ordinary preferences must not restore either grant.
 const AUDIO_KEY = "t3code:voice-audio-grant:v1";
 const CLEANUP_KEY = "t3code:voice-cleanup-grant:v1";
-const AudioGrant = Schema.NullOr(
-  Schema.Struct({ id: Schema.String, destination: VoiceTranscriptionDestination }),
+const Grant = Schema.Struct({ id: Schema.String, destination: VoiceTranscriptionDestination });
+const AudioGrant = Schema.NullOr(Grant);
+const sameGrant = Schema.toEquivalence(AudioGrant);
+const AudioChoice = Schema.NullOr(
+  Schema.Union([Grant, Schema.Struct({ pending: Grant, previous: AudioGrant })]),
 );
+type AudioChoice = typeof AudioChoice.Type;
+const savedKey = (id: string) => `${AUDIO_KEY}:saved:${id}`;
+const pendingGrant = (choice: AudioChoice) =>
+  choice && "pending" in choice ? choice.pending : null;
+const activeGrant = (choice: AudioChoice, saved: boolean) =>
+  choice && "pending" in choice ? (saved ? choice.pending : choice.previous) : choice;
 const CleanupGrant = Schema.NullOr(Schema.String);
-const decodeAudioGrant = Schema.decodeSync(Schema.fromJsonString(AudioGrant));
+const decodeChoice = Schema.decodeSync(Schema.fromJsonString(AudioChoice));
+
+function isSaved(id: string | undefined) {
+  return !!id && window.localStorage.getItem(savedKey(id)) === "true";
+}
 
 export function useAudioGrant() {
-  return useLocalStorage(AUDIO_KEY, null, AudioGrant)[0];
+  const [choice] = useLocalStorage(AUDIO_KEY, null, AudioChoice);
+  const id = pendingGrant(choice)?.id;
+  const saved = useSyncExternalStore(
+    (notify) => (id ? subscribeLocalStorageKey(savedKey(id), notify) : () => {}),
+    () => isSaved(id),
+    () => false,
+  );
+  return activeGrant(choice, saved);
+}
+
+function replaceChoice(choice: AudioChoice) {
+  const old = pendingGrant(readLocalStorageValue(AUDIO_KEY, null, AudioChoice));
+  writeLocalStorageValue(AUDIO_KEY, choice, null, AudioChoice);
+  if (old && pendingGrant(getLocalStorageItem(AUDIO_KEY, AudioChoice))?.id !== old.id)
+    window.localStorage.removeItem(savedKey(old.id));
 }
 
 export function chooseAudioDestination(destination: VoiceTranscriptionDestination | null) {
-  writeLocalStorageValue(
-    AUDIO_KEY,
-    destination && { id: randomUUID(), destination },
-    null,
-    AudioGrant,
-  );
+  replaceChoice(destination && { id: randomUUID(), destination });
+}
+
+export function pendingCloudAudioChoice(
+  destination: Extract<VoiceTranscriptionDestination, { kind: "cloud" }>,
+) {
+  const choice = getLocalStorageItem(AUDIO_KEY, AudioChoice);
+  const pending = { id: randomUUID(), destination };
+  replaceChoice({ pending, previous: activeGrant(choice, isSaved(pendingGrant(choice)?.id)) });
+  // A late response can acknowledge only its own choice, never write the destination another tab picked.
+  return () => {
+    if (pendingGrant(getLocalStorageItem(AUDIO_KEY, AudioChoice))?.id === pending.id)
+      writeLocalStorageValue(savedKey(pending.id), true, false, Schema.Boolean);
+  };
 }
 
 // Bind this recording to this act of consent, even if the user later reselects the same destination.
 export function bindAudioGrant(id: string) {
   try {
-    const raw = window.localStorage.getItem(AUDIO_KEY);
-    if (!raw || decodeAudioGrant(raw)?.id !== id) return () => false;
+    let cachedRaw: string | null = null;
+    let choice: AudioChoice = null;
+    const current = () => {
+      const raw = window.localStorage.getItem(AUDIO_KEY);
+      if (raw !== cachedRaw) {
+        choice = raw ? decodeChoice(raw) : null;
+        cachedRaw = raw;
+      }
+      return activeGrant(choice, isSaved(pendingGrant(choice)?.id));
+    };
+    const bound = current();
+    if (bound?.id !== id) return () => false;
     return () => {
       try {
-        return window.localStorage.getItem(AUDIO_KEY) === raw;
+        return sameGrant(current(), bound);
       } catch {
         return false;
       }

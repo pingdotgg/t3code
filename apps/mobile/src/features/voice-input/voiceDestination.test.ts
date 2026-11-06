@@ -2,7 +2,12 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { chooseVoiceDestination, voiceGrantAtom, voiceRouteAtom } from "./voiceDestination";
+import {
+  chooseVoiceDestination,
+  pendingCloudVoiceChoice,
+  voiceGrantAtom,
+  voiceRouteAtom,
+} from "./voiceDestination";
 import { readVoiceGrant } from "./voiceGrantStorage";
 
 const mocks = vi.hoisted(() => ({
@@ -213,6 +218,30 @@ it("keeps local as the default and never reuses consent for an offline or resele
     await expect(current!.prepare(options)).rejects.toThrow("Your transcription choice changed.");
   } finally {
     unmount();
+    appAtomRegistry.reset();
+  }
+});
+
+it("a late cloud key save cannot override a newer destination choice", () => {
+  const host = EnvironmentId.make("my-server");
+  try {
+    chooseVoiceDestination(null);
+    const first = pendingCloudVoiceChoice(host, "openai");
+    chooseVoiceDestination(null);
+    first();
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();
+    expect(JSON.parse(mocks.write.mock.lastCall![1])).toBeNull();
+
+    const older = pendingCloudVoiceChoice(host, "openai");
+    const newer = pendingCloudVoiceChoice(host, "xai");
+    older();
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();
+    newer();
+    const grant = appAtomRegistry.get(voiceGrantAtom);
+    older();
+    expect(appAtomRegistry.get(voiceGrantAtom)).toBe(grant);
+    expect(grant?.destination).toEqual({ kind: "cloud", environmentId: host, provider: "xai" });
+  } finally {
     appAtomRegistry.reset();
   }
 });

@@ -27,7 +27,7 @@ import { Chip } from "../../components/ui/Chip";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import {
-  chooseVoiceDestination,
+  pendingCloudVoiceChoice,
   cloudVoiceConnectionAtom,
   cloudVoiceKeysAtom,
   runSpeech,
@@ -78,9 +78,9 @@ function CloudChoices({ environment, active }: Props) {
         ? draft.trim()
         : undefined;
   const [saving, setSaving] = useState(false);
-  const enable = (provider: CloudSpeechProvider) => {
+  const enable = (commit: () => void) => {
     try {
-      chooseVoiceDestination(id, provider);
+      commit();
     } catch {
       Dialog.alert(
         "Could not enable cloud dictation",
@@ -100,6 +100,7 @@ function CloudChoices({ environment, active }: Props) {
   };
   const changeKey = async (provider: CloudSpeechProvider, value: SettingsSecretValue | null) => {
     if (!connection || !canManage || saving) return;
+    const commit = value !== null && editing?.enable ? pendingCloudVoiceChoice(id, provider) : null;
     setSaving(true);
     try {
       await runSpeech(setCloudSpeechKey(connection, provider, value));
@@ -112,7 +113,7 @@ function CloudChoices({ environment, active }: Props) {
       return;
     }
     setSaving(false);
-    if (value !== null && editing?.enable) enable(provider);
+    if (commit) enable(commit);
     setDraft("");
     setEditing(null);
     reload();
@@ -162,7 +163,7 @@ function CloudChoices({ environment, active }: Props) {
               title: `Use ${label} for dictation?`,
               message: `${disclosure} Select This device to stop sharing.`,
               confirmText: `Use ${label}`,
-              onConfirm: () => enable(provider),
+              onConfirm: () => enable(pendingCloudVoiceChoice(id, provider)),
             });
           }}
         />

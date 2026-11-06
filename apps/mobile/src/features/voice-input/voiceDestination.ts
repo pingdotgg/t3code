@@ -38,10 +38,13 @@ export const voiceGrantAtom = Atom.make((get) => {
   return AsyncResult.getOrElse(get(storedGrant), () => null);
 });
 
+let choiceRevision = 0;
+
 export function chooseVoiceDestination(
   environmentId: EnvironmentId | null,
   provider?: CloudSpeechProvider,
 ) {
+  choiceRevision++;
   // A failed change must not leave the old destination armed in this session.
   appAtomRegistry.set(choice, null);
   const grant: VoiceGrant | null =
@@ -55,6 +58,13 @@ export function chooseVoiceDestination(
         };
   writeVoiceGrant(grant);
   appAtomRegistry.set(choice, grant);
+}
+
+export function pendingCloudVoiceChoice(id: EnvironmentId, provider: CloudSpeechProvider) {
+  const revision = ++choiceRevision;
+  return () => {
+    if (revision === choiceRevision) chooseVoiceDestination(id, provider);
+  };
 }
 
 const native = requireOptionalNativeModule<{

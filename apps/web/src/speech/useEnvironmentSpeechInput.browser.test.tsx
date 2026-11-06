@@ -6,7 +6,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
-  type EnvironmentId,
+  EnvironmentId,
   type ProjectId,
   type SpeechCustomWords,
   type SpeechPostProcessingOptions,
@@ -15,7 +15,12 @@ import {
 
 import { act, render } from "../../test/render";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
-import { chooseAudioDestination, chooseTranscriptCleanup, bindAudioGrant } from "./voiceConsent";
+import {
+  chooseAudioDestination,
+  chooseTranscriptCleanup,
+  bindAudioGrant,
+  pendingCloudAudioChoice,
+} from "./voiceConsent";
 import { writeBrowserClientSettings } from "../clientPersistenceStorage";
 
 const mocks = vi.hoisted(() => ({
@@ -367,7 +372,15 @@ it("revokes across windows even before the storage event and survives stale pref
     const grant = JSON.parse(storage.getItem(key)!) as { id: string };
     const canSend = bindAudioGrant(grant.id);
     expect(canSend()).toBe(true);
+    const saved = pendingCloudAudioChoice({
+      kind: "cloud",
+      provider: "openai",
+      environmentId: EnvironmentId.make("env-a"),
+    });
+    expect(canSend()).toBe(true);
     storage.removeItem(key);
+    saved();
+    expect(storage.getItem(key)).toBeNull();
     expect(canSend()).toBe(false);
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
     await vi.waitFor(() => expect(mocks.voice.available).toBe(false));
