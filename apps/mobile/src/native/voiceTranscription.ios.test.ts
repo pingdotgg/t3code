@@ -276,13 +276,13 @@ describe("getLocalVoiceTranscriber", () => {
   });
 
   it("fails on a chosen locale the device cannot transcribe instead of falling back", async () => {
-    mocks.prepare.mockRejectedValue(
-      Object.assign(new Error("unsupported"), { code: "AppleTranscriptionUnsupportedLocale" }),
-    );
+    useLanguages(["en-US"], "en-US");
+    mocks.prepare.mockRejectedValue(unsupportedLocale());
     const options = { signal: new AbortController().signal };
 
     const error = await getVoiceTranscriberForLocale("de-DE")!
       .prepare(options)
+      .then((prepared) => prepared.transcribe("file:///voice.m4a", options))
       .catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(VoiceTranscriptionError);
