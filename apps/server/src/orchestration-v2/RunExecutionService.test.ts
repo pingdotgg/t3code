@@ -4453,77 +4453,86 @@ it.effect("reschedules idle text when a newer snapshot precedes a failed write's
   }),
 );
 
-it.effect(
-  "keeps a failing idle write's backoff and warning limit when another message's succeeds",
-  () =>
-    Effect.gen(function* () {
-      const key = "idle-flush-unrelated-success";
-      const ids = backgroundScenarioIds(key);
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-      const markers = yield* Queue.unbounded<void>();
-      const failingAttempts = yield* Queue.unbounded<number>();
-      const otherWritten = yield* Deferred.make<void>();
-      const recovered = yield* Deferred.make<void>();
-      const attempts = yield* Ref.make(0);
-      let warnings = 0;
-      const message = (id: string, role: "assistant" | "user", text: string) =>
-        streamedMessageEvent({
-          id: `message:${key}:${id}`,
-          threadId: ids.threadId,
-          runId: ids.runId,
-          role,
-          text,
-          streaming: role === "assistant",
-        });
-      const marker = message("marker", "user", "marker");
-      const readPast = (...items: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
-        Queue.offerAll(events, [...items, marker]).pipe(Effect.andThen(Queue.take(markers)));
-      const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
-        onIngest: (event) =>
-          Effect.gen(function* () {
-            if (event.type !== "message.updated") return;
-            if (event.message.role === "user") return yield* Queue.offer(markers, undefined);
-            if (event.message.text === "Other partial")
-              return yield* Deferred.succeed(otherWritten, undefined);
-            const attempt = yield* Ref.updateAndGet(attempts, (n) => n + 1);
-            yield* Queue.offer(failingAttempts, attempt);
-            if (attempt <= 2) return yield* Effect.die(new Error("disk I/O error"));
-            yield* Deferred.succeed(recovered, undefined);
-          }),
-      }).pipe(
-        Effect.provide(
-          Logger.layer(
-            [
-              Logger.make(({ logLevel }) => {
-                if (logLevel === "Warn") warnings += 1;
-              }),
-            ],
-            { mergeWithExisting: false },
-          ),
+it.effect("keeps a failing idle write's backoff and caps warnings across other messages", () =>
+  Effect.gen(function* () {
+    const key = "idle-flush-unrelated-success";
+    const ids = backgroundScenarioIds(key);
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+    const markers = yield* Queue.unbounded<void>();
+    const failingAttempts = yield* Queue.unbounded<number>();
+    const otherWritten = yield* Deferred.make<void>();
+    const recovered = yield* Deferred.make<void>();
+    const anotherFailed = yield* Deferred.make<void>();
+    const attempts = yield* Ref.make(0);
+    let warnings = 0;
+    const message = (id: string, role: "assistant" | "user", text: string) =>
+      streamedMessageEvent({
+        id: `message:${key}:${id}`,
+        threadId: ids.threadId,
+        runId: ids.runId,
+        role,
+        text,
+        streaming: role === "assistant",
+      });
+    const marker = message("marker", "user", "marker");
+    const readPast = (...items: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+      Queue.offerAll(events, [...items, marker]).pipe(Effect.andThen(Queue.take(markers)));
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
+      onIngest: (event) =>
+        Effect.gen(function* () {
+          if (event.type !== "message.updated") return;
+          if (event.message.role === "user") return yield* Queue.offer(markers, undefined);
+          if (event.message.text === "Other partial")
+            return yield* Deferred.succeed(otherWritten, undefined);
+          if (event.message.text === "Another failing partial") {
+            yield* Deferred.succeed(anotherFailed, undefined);
+            return yield* Effect.die(new Error("disk I/O error"));
+          }
+          const attempt = yield* Ref.updateAndGet(attempts, (n) => n + 1);
+          yield* Queue.offer(failingAttempts, attempt);
+          if (attempt <= 2) return yield* Effect.die(new Error("disk I/O error"));
+          yield* Deferred.succeed(recovered, undefined);
+        }),
+    }).pipe(
+      Effect.provide(
+        Logger.layer(
+          [
+            Logger.make(({ logLevel }) => {
+              if (logLevel === "Warn") warnings += 1;
+            }),
+          ],
+          { mergeWithExisting: false },
         ),
-        Effect.forkChild,
-      );
+      ),
+      Effect.forkChild,
+    );
 
-      yield* readPast(message("failing", "assistant", "Failing partial"));
-      yield* TestClock.adjust("800 millis");
-      assert.equal(yield* Queue.take(failingAttempts), 1);
-      // Due before the failing write's 1s retry.
-      yield* readPast(message("other", "assistant", "Other partial"));
-      yield* TestClock.adjust("800 millis");
-      yield* Deferred.await(otherWritten);
-      yield* TestClock.adjust("200 millis");
-      assert.equal(yield* Queue.take(failingAttempts), 2);
-      // A second failure backs off 2s; the other message's success must not restart at 1s.
-      yield* TestClock.adjust("1 second");
-      yield* readPast();
-      assert.equal(yield* Ref.get(attempts), 2);
-      assert.equal(warnings, 1);
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(recovered);
+    yield* readPast(message("failing", "assistant", "Failing partial"));
+    yield* TestClock.adjust("800 millis");
+    assert.equal(yield* Queue.take(failingAttempts), 1);
+    // Due before the failing write's 1s retry.
+    yield* readPast(message("other", "assistant", "Other partial"));
+    yield* TestClock.adjust("800 millis");
+    yield* Deferred.await(otherWritten);
+    yield* TestClock.adjust("200 millis");
+    assert.equal(yield* Queue.take(failingAttempts), 2);
+    // A second failure backs off 2s; the other message's success must not restart at 1s.
+    yield* TestClock.adjust("1 second");
+    yield* readPast();
+    assert.equal(yield* Ref.get(attempts), 2);
+    assert.equal(warnings, 1);
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(recovered);
 
-      yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
-      yield* Fiber.join(scenario);
-    }),
+    yield* readPast(message("another", "assistant", "Another failing partial"));
+    yield* TestClock.adjust("800 millis");
+    yield* Deferred.await(anotherFailed);
+    yield* readPast();
+    assert.equal(warnings, 1);
+
+    yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
+    yield* Fiber.join(scenario);
+  }),
 );
 
 function streamedMessageEvent(input: {
