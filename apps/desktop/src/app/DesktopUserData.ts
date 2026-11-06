@@ -1,9 +1,10 @@
-import { T3_LEARN_ELECTRON_USER_DATA } from "@t3tools/shared/t3LearnIdentity";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+
+import { migrateElectronUserData } from "./DesktopRenameMigration.ts";
 
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
   "DesktopUserDataInitializationError",
@@ -41,8 +42,17 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     if (!input.isDevelopment) {
-      // T3 Learn has no earlier profile; T3 Code's must stay T3 Code's.
-      return path.join(input.appDataDirectory, T3_LEARN_ELECTRON_USER_DATA);
+      return yield* migrateElectronUserData(input).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError((cause) =>
+          DesktopUserDataInitializationError.fromFileSystem(
+            cause,
+            "inspect",
+            input.appDataDirectory,
+          ),
+        ),
+      );
     }
     const legacyPath = path.join(input.appDataDirectory, "T3 Code (Dev)");
     const hasLegacy = yield* fs

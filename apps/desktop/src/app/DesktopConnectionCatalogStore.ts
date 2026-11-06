@@ -13,8 +13,10 @@ import {
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -25,6 +27,8 @@ import * as Schema from "effect/Schema";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopLegacySecretKey from "./DesktopLegacySecretKey.ts";
+import { backupOnce } from "./DesktopBackup.ts";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -46,6 +50,12 @@ const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
 
+const decodeRuntimeConnectionCatalogDocumentJson = Schema.decodeEffect(
+  RuntimeConnectionCatalogDocumentJson,
+);
+const validateJson = (value: string) =>
+  decodeRuntimeConnectionCatalogDocumentJson(value).pipe(Effect.as(value));
+
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
   "encode-document",
@@ -65,6 +75,7 @@ const DesktopConnectionCatalogStoreProtectionOperation = Schema.Literals([
   "check-encryption-availability",
   "encrypt-catalog",
   "decrypt-catalog",
+  "backup-catalog",
 ]);
 
 export class DesktopConnectionCatalogStoreWriteError extends Schema.TaggedError<DesktopConnectionCatalogStoreWriteError>()(
@@ -381,6 +392,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+  const legacySecretKey = yield* DesktopLegacySecretKey.DesktopLegacySecretKey;
   const random = yield* SecureRandom.SecureRandom;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
@@ -418,6 +430,82 @@ export const make = Effect.gen(function* () {
       document: { version: 1, encryptedCatalog },
       suffix,
     });
+  });
+
+  const backupCatalog = backupOnce(fileSystem, catalogPath, `${catalogPath}.pre-ominax`).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopConnectionCatalogStoreProtectionError({
+          operation: "backup-catalog",
+          catalogPath,
+          cause,
+        }),
+    ),
+  );
+
+  const recoverQuarantinedCatalog = Effect.gen(function* () {
+    if (!(yield* encryptionAvailable)) return Option.none<string>();
+    const directory = path.dirname(catalogPath);
+    const prefix = `${path.basename(catalogPath)}.undecryptable-`;
+    const names = yield* fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+    // Newest first: a quarantined catalog is newer than the pre-migration backup.
+    const candidates = [
+      ...names
+        .filter((name) => name.startsWith(prefix))
+        .toSorted()
+        .reverse()
+        .map((name) => path.join(directory, name)),
+      `${catalogPath}.pre-ominax`,
+    ];
+    for (const candidate of candidates) {
+      const document = yield* readDocument(fileSystem, candidate).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (Option.isNone(document)) continue;
+      const encrypted = yield* decodeSecretBytes(candidate, document.value.encryptedCatalog).pipe(
+        Effect.option,
+      );
+      if (Option.isNone(encrypted)) continue;
+      const current = yield* Effect.exit(
+        safeStorage.decryptString(encrypted.value).pipe(Effect.flatMap(validateJson)),
+      );
+      if (Exit.isSuccess(current)) {
+        yield* writeCatalog(current.value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopConnectionCatalogStoreProtectionError({
+                operation: "encrypt-catalog",
+                catalogPath,
+                cause,
+              }),
+          ),
+        );
+        return Option.some(current.value);
+      }
+      if (
+        !environment.isDevelopment &&
+        (environment.platform === "darwin" || environment.platform === "linux")
+      ) {
+        const legacy = yield* legacySecretKey.decrypt(encrypted.value);
+        if (Option.isSome(legacy)) {
+          const valid = yield* validateJson(legacy.value).pipe(Effect.option);
+          if (Option.isSome(valid)) {
+            yield* writeCatalog(valid.value).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new DesktopConnectionCatalogStoreProtectionError({
+                    operation: "encrypt-catalog",
+                    catalogPath,
+                    cause,
+                  }),
+              ),
+            );
+            return Option.some(valid.value);
+          }
+        }
+      }
+    }
+    return Option.none<string>();
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
@@ -465,26 +553,78 @@ export const make = Effect.gen(function* () {
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
       if (Option.isNone(document)) {
+        const recovered = yield* recoverQuarantinedCatalog;
+        if (Option.isSome(recovered)) return recovered;
         return yield* migrateLegacyCatalog;
       }
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
-      const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
-        Effect.flatMap((encryptedCatalog) =>
-          safeStorage.decryptString(encryptedCatalog).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreProtectionError({
-                  operation: "decrypt-catalog",
-                  catalogPath,
-                  cause,
-                }),
-            ),
+      const encryptedCatalog = yield* decodeSecretBytes(
+        catalogPath,
+        document.value.encryptedCatalog,
+      );
+      const currentResult = yield* Effect.exit(
+        safeStorage.decryptString(encryptedCatalog).pipe(
+          Effect.flatMap(validateJson),
+          Effect.mapError(
+            (cause) =>
+              new DesktopConnectionCatalogStoreProtectionError({
+                operation: "decrypt-catalog",
+                catalogPath,
+                cause,
+              }),
           ),
         ),
       );
-      return Option.some(decrypted);
+      if (Exit.isSuccess(currentResult)) return Option.some(currentResult.value);
+
+      if (
+        !environment.isDevelopment &&
+        (environment.platform === "darwin" || environment.platform === "linux")
+      ) {
+        const legacyResult = yield* legacySecretKey.decrypt(encryptedCatalog);
+        if (Option.isSome(legacyResult)) {
+          const validLegacy = yield* validateJson(legacyResult.value).pipe(Effect.option);
+          if (Option.isSome(validLegacy)) {
+            yield* backupCatalog;
+            yield* writeCatalog(validLegacy.value).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new DesktopConnectionCatalogStoreProtectionError({
+                    operation: "encrypt-catalog",
+                    catalogPath,
+                    cause,
+                  }),
+              ),
+            );
+            return Option.some(validLegacy.value);
+          }
+        }
+      }
+
+      if (!environment.isDevelopment) {
+        const preferred = `${catalogPath}.pre-ominax`;
+        const backupPath = Option.isSome(yield* fileSystem.readFile(preferred).pipe(Effect.option))
+          ? `${catalogPath}.undecryptable-${yield* Clock.currentTimeMillis}`
+          : preferred;
+        yield* fileSystem.rename(catalogPath, backupPath).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("could not quarantine an undecryptable connection catalog", {
+              catalogPath,
+              backupPath,
+              cause,
+            }),
+          ),
+        );
+        yield* Effect.logWarning("connection catalog could not be decrypted; starting empty", {
+          catalogPath,
+          backupPath,
+        });
+        return Option.none<string>();
+      }
+
+      return yield* Effect.failCause(currentResult.cause);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {

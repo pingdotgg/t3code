@@ -38,7 +38,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("renderPrivileg
         "[Service]\nMemoryLow=2G\nOOMScoreAdjust=-900\n",
       );
       expect(theo.managerDefaults.path).toBe(
-        "/home/theo/.config/systemd/user.conf.d/90-t3learn-protect.conf",
+        "/home/theo/.config/systemd/user.conf.d/90-ominax-protect.conf",
       );
       expect(theo.oomUnits).toEqual(["user@1000.service", "tailscaled.service", "ssh.service"]);
 
@@ -79,7 +79,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("renderPrivileg
         expect(result.status).toBe(0);
       };
       const exists = (unit: string) =>
-        NodeFS.existsSync(NodePath.join(systemUnitDir, `${unit}.d`, "90-t3learn-protect.conf"));
+        NodeFS.existsSync(NodePath.join(systemUnitDir, `${unit}.d`, "90-ominax-protect.conf"));
 
       runScript(theo, "apply");
       runScript(plan(1001, []), "apply");
@@ -99,6 +99,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("renderPrivileg
 
       runScript(undo(1001), "undo");
       for (const { path } of undo(1001).system) expect(NodeFS.existsSync(path)).toBe(false);
+      expect(ServiceProtection.renderPrivilegedScript(undo(1001), "undo")).toContain(
+        "90-t3learn-protect.conf",
+      );
       expect(NodeFS.existsSync(NodePath.join(systemUnitDir, "user.slice.d"))).toBe(false);
       expect(NodeFS.readFileSync(unrelated, "utf8")).toBe("[Service]\nNice=1\n");
     } finally {

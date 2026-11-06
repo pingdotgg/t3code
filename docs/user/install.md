@@ -1,4 +1,4 @@
-> **OminaX:** This guide describes upstream T3 Code. For OminaX, use the fork installers and releases in the [OminaX README](../../README.md); update the Linux launcher with `t3-learn update --yes` (or set `T3CODE_HOME=~/.t3-learn` when using the plain CLI).
+> **OminaX:** This guide describes upstream T3 Code. For OminaX, use the fork installers and releases in the [OminaX README](../../README.md); update the Linux launcher with `ominax update --yes` (or set `T3CODE_HOME=~/.ominax` when using the plain CLI).
 
 # Install T3 Code
 
@@ -12,25 +12,31 @@ launch T3 Code and configure providers afterwards.
 
 ## Command line
 
-OminaX's command is `t3-learn`. Install OminaX from the
+OminaX's command is `ominax`. Install OminaX from the
 [README](../../README.md#install), then turn the command on in **Settings → About**
-([The `t3-learn` command](#the-t3-learn-command)).
+([The `ominax` command](#the-ominax-command)).
 
-| Task                                             | Command                                                                       |
-| ------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Start the server and open the web app            | `t3-learn`                                                                    |
-| Start the server without a browser               | `t3-learn serve`                                                              |
-| Use it from your other devices                   | `t3-learn up` ([details](./remote-access.md))                                 |
-| Keep it running in the background (macOS, Linux) | `t3-learn service install` ([details](./background-service.md))               |
-| Move to the newest release                       | `t3-learn update`                                                             |
-| Reclaim database space                           | `t3-learn doctor` ([details](./background-service.md#reclaim-database-space)) |
-| Remove it again                                  | `t3-learn uninstall`                                                          |
+```sh
+curl -fsSL https://github.com/aabdel0181/ominax/releases/latest/download/install.sh | sh
+```
 
-Run `t3-learn help` or `t3-learn --help` for the full reference. To start in a new working
-directory, use an explicit path such as `t3-learn ./my-project`. A bare directory name
+On Windows, run `irm https://github.com/aabdel0181/ominax/releases/latest/download/install.ps1 | iex` in PowerShell.
+
+| Task                                             | Command                                                                     |
+| ------------------------------------------------ | --------------------------------------------------------------------------- |
+| Start the server and open the web app            | `ominax`                                                                    |
+| Start the server without a browser               | `ominax serve`                                                              |
+| Use it from your other devices                   | `ominax up` ([details](./remote-access.md))                                 |
+| Keep it running in the background (macOS, Linux) | `ominax service install` ([details](./background-service.md))               |
+| Move to the newest release                       | `ominax update`                                                             |
+| Reclaim database space                           | `ominax doctor` ([details](./background-service.md#reclaim-database-space)) |
+| Remove it again                                  | `ominax uninstall`                                                          |
+
+Run `ominax help` or `ominax --help` for the full reference. To start in a new working
+directory, use an explicit path such as `ominax ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `t3-learn` or `t3-learn start` reports an already running server, connect to that server
+If `ominax` or `ominax start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
@@ -89,13 +95,13 @@ Home Manager, update your configuration's nixpkgs input or channel and rebuild.
 Nix manages both the desktop app and the bundled
 `t3` command; use Nix to update them instead of the in-app updater or `t3 update`.
 
-### The `t3-learn` command
+### The `ominax` command
 
-The desktop app includes the `t3-learn` command-line tool. To run it from any
+The desktop app includes the `ominax` command-line tool. To run it from any
 terminal, open **Settings → About** and choose **Install** next to
-**t3-learn command**. On macOS and Linux it adds a `t3-learn` link to a folder on your
+**ominax command**. On macOS and Linux it adds a `ominax` link to a folder on your
 `PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If another `t3-learn`
+terminal afterwards. **Remove** takes it off again. If another `ominax`
 runs first in a new terminal, Settings → About says where it is.
 
 ### Windows Subsystem for Linux
@@ -110,11 +116,11 @@ take longer.
 With the desktop app already running on the same machine:
 
 ```bash
-t3-learn app
+ominax app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3-learn app ../my-project`, to open another directory. It requires
+Pass a path, such as `ominax app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 

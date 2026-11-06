@@ -98,8 +98,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
       const command = yield* commandIn({ home });
-      const link = path.join(home, ".local", "bin", "t3-learn");
-      const launcher = path.join(home, ".t3-learn", "bin", "t3-learn");
+      const link = path.join(home, ".local", "bin", "ominax");
+      const legacyLink = path.join(home, ".local", "bin", "t3-learn");
+      const launcher = path.join(home, ".t3-learn", "bin", "ominax");
 
       expect(yield* command.state).toEqual({
         supported: true,
@@ -111,10 +112,12 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(installed.installedPath).toBe(link);
       expect(installed.launcherPath).toBe(launcher);
       expect(yield* fs.readLink(link)).toBe(launcher);
+      expect(yield* fs.readLink(legacyLink)).toBe(launcher);
       expect((yield* command.install).installedPath).toBe(link);
 
       expect((yield* command.uninstall).installedPath).toBeNull();
       expect(yield* fs.exists(link)).toBe(false);
+      expect(yield* fs.exists(legacyLink)).toBe(false);
       expect(yield* fs.exists(launcher)).toBe(true);
     }).pipe(Effect.scoped),
   );
@@ -126,19 +129,19 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const home = yield* fs.makeTempDirectoryScoped();
       const env: NodeJS.ProcessEnv = { PATH: "" };
       const command = yield* commandIn({ home, env });
-      const theirs = path.join(home, ".local", "bin", "t3-learn");
+      const theirs = path.join(home, ".local", "bin", "ominax");
       yield* fs.makeDirectory(path.dirname(theirs), { recursive: true });
       yield* fs.writeFileString(theirs, "npm's t3-learn\n");
       yield* fs.makeDirectory(path.join(home, "bin"), { recursive: true });
-      yield* fs.symlink(path.join(home, "gone"), path.join(home, "bin", "t3-learn"));
+      yield* fs.symlink(path.join(home, "gone"), path.join(home, "bin", "ominax"));
 
       const error = yield* Effect.flip(command.install);
-      expect(error.message).toContain("Another t3-learn command is already installed");
+      expect(error.message).toContain("Another ominax command is already installed");
       yield* command.uninstall;
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3-learn\n");
-      expect(yield* fs.readLink(path.join(home, "bin", "t3-learn"))).toBe(path.join(home, "gone"));
+      expect(yield* fs.readLink(path.join(home, "bin", "ominax"))).toBe(path.join(home, "gone"));
 
-      const launcher = path.join(home, ".t3-learn", "bin", "t3-learn");
+      const launcher = path.join(home, ".t3-learn", "bin", "ominax");
       yield* fs.writeFileString(launcher, "npm's t3-learn\n");
       env.PATH = path.dirname(launcher);
       expect(yield* command.state).toMatchObject({ onPath: false, shadowedBy: launcher });
@@ -159,10 +162,83 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
       expect((yield* after.state).installedPath).toBe(link);
       expect((yield* after.install).installedPath).toBe(link);
-      expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "t3-learn"));
+      expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "ominax"));
       yield* after.uninstall;
-      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3-learn"))).toBe(false);
-      expect(yield* fs.exists(path.join(home, "bin", "t3-learn"))).toBe(false);
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "ominax"))).toBe(false);
+      expect(yield* fs.exists(path.join(home, "bin", "ominax"))).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("repoints an old-app t3-learn link to the new launcher", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const old = yield* commandIn({ home, baseDir: path.join(home, ".t3-learn") });
+      yield* old.install;
+      const legacy = path.join(home, ".local", "bin", "t3-learn");
+      const oldLauncher = path.join(home, ".t3-learn", "bin", "t3-learn");
+      yield* fs.writeFileString(
+        oldLauncher,
+        "# Written by T3 Learn: runs the desktop app's bundled t3 CLI.\n",
+      );
+      yield* fs.remove(legacy);
+      yield* fs.symlink(oldLauncher, legacy);
+      yield* fs.remove(path.join(home, ".local", "bin", "ominax"));
+      const current = yield* commandIn({ home, baseDir: path.join(home, ".ominax") });
+      yield* current.install;
+      expect(yield* fs.readLink(legacy)).toBe(path.join(home, ".ominax", "bin", "ominax"));
+      expect(yield* fs.readLink(path.join(home, ".local", "bin", "ominax"))).toBe(
+        path.join(home, ".ominax", "bin", "ominax"),
+      );
+      expect((yield* current.state).installedPath).toBe(path.join(home, ".local", "bin", "ominax"));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("repairs a legacy bundled shim and external t3-learn alias after upgrade", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const baseDir = path.join(home, ".ominax");
+      const oldShim = path.join(baseDir, "bin", "t3-learn");
+      const externalLegacy = path.join(home, ".local", "bin", "t3-learn");
+      yield* fs.makeDirectory(path.dirname(oldShim), { recursive: true });
+      yield* fs.writeFileString(
+        oldShim,
+        "#!/bin/sh\n# Written by T3 Learn: runs the desktop app's bundled t3 CLI.\n",
+        { mode: 0o755 },
+      );
+      yield* fs.makeDirectory(path.dirname(externalLegacy), { recursive: true });
+      yield* fs.symlink(oldShim, externalLegacy);
+      const command = yield* commandIn({
+        home,
+        baseDir,
+        env: { PATH: path.dirname(externalLegacy) },
+      });
+
+      expect((yield* command.state).installedPath).toBeNull();
+      const installed = yield* command.install;
+      const launcher = path.join(baseDir, "bin", "ominax");
+      expect(installed.installedPath).toBe(path.join(home, ".local", "bin", "ominax"));
+      expect(yield* fs.readLink(path.join(home, ".local", "bin", "t3-learn"))).toBe(launcher);
+      expect(yield* fs.readLink(oldShim)).toBe(launcher);
+      expect(yield* fs.readFileString(launcher)).toContain("Written by OminaX");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves a foreign t3-learn alias untouched", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const legacy = path.join(home, ".local", "bin", "t3-learn");
+      yield* fs.makeDirectory(path.dirname(legacy), { recursive: true });
+      yield* fs.writeFileString(legacy, "foreign\n", { mode: 0o755 });
+      const command = yield* commandIn({ home, env: { PATH: path.dirname(legacy) } });
+      yield* command.install;
+      expect(yield* fs.readFileString(legacy)).toBe("foreign\n");
+      expect(yield* fs.readLink(path.join(home, ".local", "bin", "ominax"))).toContain("ominax");
     }).pipe(Effect.scoped),
   );
 
@@ -173,21 +249,21 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const home = yield* fs.makeTempDirectoryScoped();
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);
-      yield* fs.writeFileString(path.join(shadow, "t3-learn"), "#!/bin/sh\n", { mode: 0o755 });
+      yield* fs.writeFileString(path.join(shadow, "ominax"), "#!/bin/sh\n", { mode: 0o755 });
       const env = { PATH: [shadow, path.join(home, ".local", "bin")].join(":") };
 
       const command = yield* commandIn({ home, env });
-      const theirs = path.join(shadow, "t3-learn");
+      const theirs = path.join(shadow, "ominax");
       expect((yield* command.state).shadowedBy).toBe(theirs);
       const error = yield* Effect.flip(command.install);
       expect(error.message).toContain(theirs);
-      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3-learn"))).toBe(false);
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "ominax"))).toBe(false);
 
       yield* fs.remove(theirs);
       const installed = yield* command.install;
       expect(installed).toMatchObject({
         onPath: true,
-        installedPath: path.join(home, ".local", "bin", "t3-learn"),
+        installedPath: path.join(home, ".local", "bin", "ominax"),
       });
       expect(installed.shadowedBy).toBeUndefined();
     }).pipe(Effect.scoped),
@@ -214,10 +290,10 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* command.state).shadowedBy).toBeUndefined();
       expect(yield* command.install).toMatchObject({
         onPath: true,
-        installedPath: path.join(home, ".local", "bin", "t3-learn"),
+        installedPath: path.join(home, ".local", "bin", "ominax"),
       });
       yield* command.uninstall;
-      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3-learn"))).toBe(false);
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "ominax"))).toBe(false);
       expect(yield* fs.readLink(t3CodeLink)).toBe(t3CodeLauncher);
     }).pipe(Effect.scoped),
   );
@@ -232,25 +308,25 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         const folder = path.join(home, "folder");
         const plain = path.join(home, "plain");
         const shadow = path.join(home, "shadow");
-        yield* fs.makeDirectory(path.join(folder, "t3-learn"), { recursive: true });
+        yield* fs.makeDirectory(path.join(folder, "ominax"), { recursive: true });
         yield* fs.makeDirectory(plain);
-        yield* fs.writeFileString(path.join(plain, "t3-learn"), "notes\n");
+        yield* fs.writeFileString(path.join(plain, "ominax"), "notes\n");
         // Root can execute mode 0o601; other users must honor the owner permissions.
-        yield* fs.chmod(path.join(plain, "t3-learn"), process.getuid?.() === 0 ? 0o600 : 0o601);
+        yield* fs.chmod(path.join(plain, "ominax"), process.getuid?.() === 0 ? 0o600 : 0o601);
         yield* fs.makeDirectory(shadow);
-        yield* fs.writeFileString(path.join(shadow, "t3-learn"), "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.writeFileString(path.join(shadow, "ominax"), "#!/bin/sh\n", { mode: 0o755 });
         const env = { PATH: [folder, plain, shadow, path.join(home, ".local", "bin")].join(":") };
 
         const command = yield* commandIn({ home, env });
-        expect((yield* command.state).shadowedBy).toBe(path.join(shadow, "t3-learn"));
+        expect((yield* command.state).shadowedBy).toBe(path.join(shadow, "ominax"));
 
         const error = yield* Effect.flip(command.install);
-        expect(error.message).toContain(path.join(shadow, "t3-learn"));
+        expect(error.message).toContain(path.join(shadow, "ominax"));
 
         yield* fs.remove(shadow, { recursive: true });
         expect(yield* command.install).toMatchObject({
           onPath: true,
-          installedPath: path.join(home, ".local", "bin", "t3-learn"),
+          installedPath: path.join(home, ".local", "bin", "ominax"),
         });
       }).pipe(Effect.scoped),
   );
@@ -262,7 +338,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const home = yield* fs.makeTempDirectoryScoped();
-        const launcher = path.join(home, ".t3-learn", "bin", "t3-learn");
+        const launcher = path.join(home, ".t3-learn", "bin", "ominax");
         const env = { PATH: [path.dirname(launcher), path.join(home, ".local", "bin")].join(":") };
 
         const command = yield* commandIn({ home, env });
@@ -271,7 +347,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         expect(yield* fs.exists(launcher)).toBe(true);
         expect(installed).toMatchObject({
           onPath: true,
-          installedPath: path.join(home, ".local", "bin", "t3-learn"),
+          installedPath: path.join(home, ".local", "bin", "ominax"),
         });
         expect(installed.shadowedBy).toBeUndefined();
         expect(yield* command.state).toEqual(installed);
@@ -305,7 +381,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           baseDir: `${home}/.t3-learn`,
           platform: "win32",
         }),
-      ).replace(/[\\/]t3-learn\.cmd$/, "");
+      ).replace(/[\\/]ominax\.cmd$/, "");
       yield* command.install;
       expect(registry.path).toBe(`${userPath};${launcherDir}`);
       yield* command.uninstall;

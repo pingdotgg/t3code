@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 import type { DesktopCaptureHelperState } from "@t3tools/contracts";
+import { T3_LEARN_EXECUTABLE_NAME, T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdentity";
 
 import { escapeDesktopEntryExecArgument } from "../app/DesktopLinuxUrlHandler.ts";
 import type { LinuxWindowSnapshot } from "./LinuxSnapShot.ts";
@@ -24,10 +25,23 @@ export type KdeCapturePaths = { readonly bundle: string; readonly dataHome: stri
 
 export function kdeCapturePaths(paths: KdeCapturePaths) {
   return {
-    executable: NodePath.join(paths.dataHome, "t3learn", "kde-capture", KDE_CAPTURE_EXECUTABLE),
+    executable: NodePath.join(
+      paths.dataHome,
+      T3_LEARN_EXECUTABLE_NAME,
+      "kde-capture",
+      KDE_CAPTURE_EXECUTABLE,
+    ),
     desktop: NodePath.join(paths.dataHome, "applications", DESKTOP_FILE),
   };
 }
+
+const legacyKdeCaptureExecutable = (paths: KdeCapturePaths) =>
+  NodePath.join(
+    paths.dataHome,
+    T3_LEARN_LEGACY.executableName,
+    "kde-capture",
+    KDE_CAPTURE_EXECUTABLE,
+  );
 
 function kdeCaptureDesktopEntry(executable: string): string {
   return [
@@ -156,6 +170,7 @@ export class KdeCaptureSetup {
       await NodeFSP.unlink(executable).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
       });
+      await NodeFSP.rm(legacyKdeCaptureExecutable(this.paths), { force: true });
     } else {
       const bundle = await regularFile(this.paths.bundle);
       if (!bundle)
@@ -179,6 +194,8 @@ export class KdeCaptureSetup {
         await NodeFSP.rm(stagedDesktop, { force: true });
         await NodeFSP.rm(staging, { recursive: true, force: true });
       }
+      const legacy = legacyKdeCaptureExecutable(this.paths);
+      if (legacy !== executable) await NodeFSP.rm(legacy, { force: true });
     }
     // KService must see the new desktop entry before KWin checks the executable.
     await run("kbuildsycoca6", ["--noincremental"]);

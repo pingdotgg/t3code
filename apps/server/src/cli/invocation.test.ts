@@ -51,9 +51,9 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         yield* rootCommand({
           node: "/home/theo/.local/node/bin/node",
           entry: "/home/theo/.local/lib/node_modules/t3/dist/bin.mjs",
-          path: yield* pathWith("t3-learn"),
+          path: yield* pathWith("ominax"),
         }),
-      ).toBe('sudo env "PATH=$PATH" t3-learn browser setup');
+      ).toBe('sudo env "PATH=$PATH" ominax browser setup');
     }).pipe(Effect.scoped),
   );
 
@@ -64,22 +64,22 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         yield* rootCommand({
           node: "/home/theo/.local/node/bin/node",
           entry: "/home/theo/.local/lib/node_modules/t3/dist/bin.mjs",
-          path: yield* pathWith("t3-learn"),
+          path: yield* pathWith("ominax"),
           args,
         }),
-      ).toBe(`sudo env "PATH=$PATH" t3-learn browser setup --base-dir '/srv/t3 home'`);
+      ).toBe(`sudo env "PATH=$PATH" ominax browser setup --base-dir '/srv/t3 home'`);
       expect(
         yield* rootCommand({ node: "/opt/t3/t3", entry: "/opt/t3/t3", executable: true, args }),
       ).toBe("sudo /opt/t3/t3 browser setup --base-dir '/srv/t3 home'");
     }).pipe(Effect.scoped),
   );
 
-  it.effect("names this install's launcher when t3-learn is not on PATH", () =>
+  it.effect("names this install's launcher when ominax is not on PATH", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
-      const shim = path.join(home, ".local bin", "t3-learn");
+      const shim = path.join(home, ".local bin", "ominax");
       yield* fs.makeDirectory(path.dirname(shim), { recursive: true });
       yield* fs.writeFileString(shim, "#!/bin/sh\n", { mode: 0o755 });
       const desktop = {
@@ -95,16 +95,16 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         `sudo '${shim}' browser setup`,
       );
 
-      // A `t3-learn` on PATH that is not this install's link belongs to another install.
-      expect(yield* rootCommand({ ...desktop, path: yield* pathWith("t3-learn") })).toBe(
+      // A `ominax` on PATH that is not this install's link belongs to another install.
+      expect(yield* rootCommand({ ...desktop, path: yield* pathWith("ominax") })).toBe(
         `sudo '${shim}' browser setup`,
       );
 
-      // The link the app installs onto PATH leads to its own launcher, so plain t3-learn is right.
+      // The link the app installs onto PATH leads to its own launcher, so plain ominax is right.
       const linked = yield* fs.makeTempDirectoryScoped();
-      yield* fs.symlink(shim, path.join(linked, "t3-learn"));
+      yield* fs.symlink(shim, path.join(linked, "ominax"));
       expect(yield* rootCommand({ ...desktop, path: linked })).toBe(
-        'sudo env "PATH=$PATH" t3-learn browser setup',
+        'sudo env "PATH=$PATH" ominax browser setup',
       );
 
       expect(
@@ -121,7 +121,7 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
           path: yield* pathWith("t3"),
           env: { T3CODE_CLI_PATH: path.join(home, "gone") },
         }),
-      ).toBe('sudo env "PATH=$PATH" t3-learn browser setup');
+      ).toBe('sudo env "PATH=$PATH" ominax browser setup');
     }).pipe(Effect.scoped),
   );
 });
@@ -132,7 +132,7 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
-      const shim = path.join(home, "t3-learn.cmd");
+      const shim = path.join(home, "ominax.cmd");
       yield* fs.writeFileString(shim, "@echo off\r\n");
       const hostCommand = (platform: NodeJS.Platform, env: Record<string, string>) =>
         resolveHostCliCommand("doctor", ["--base-dir", "C:\\Users\\Jane Doe\\.t3"]).pipe(
@@ -149,7 +149,7 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
         `& "${shim}" doctor "--base-dir" "C:\\Users\\Jane Doe\\.t3"`,
       );
       expect((yield* hostCommand("win32", {})).command).toBe(
-        't3-learn doctor "--base-dir" "C:\\Users\\Jane Doe\\.t3"',
+        'ominax doctor "--base-dir" "C:\\Users\\Jane Doe\\.t3"',
       );
       expect(
         (yield* resolveHostCliCommand("doctor", ["--base-dir", "C:\\T3\\\u201CArchive\u201D"]).pipe(
@@ -159,7 +159,7 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
           Effect.provideService(HostProcess.Arguments, ["C:\\t3.exe", "C:\\bin.mjs"]),
           Effect.provideService(HostProcess.IsExecutable, false),
         )).command,
-      ).toBe('t3-learn doctor "--base-dir" "C:\\T3\\\u201C\u201CArchive\u201D\u201D"');
+      ).toBe('ominax doctor "--base-dir" "C:\\T3\\\u201C\u201CArchive\u201D\u201D"');
       expect((yield* hostCommand("linux", { T3CODE_CLI_PATH: shim })).command).toMatch(
         / doctor --base-dir 'C:\\Users\\Jane Doe\\\.t3'$/,
       );

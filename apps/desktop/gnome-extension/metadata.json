@@ -4,5 +4,5 @@
   "description": "Allows OminaX to capture the focused window, identify it for optional accessibility text, and animate it into OminaX. Disable this extension to revoke access.",
   "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
   "version": 3,
-  "url": "https://github.com/aabdel0181/t3-learn"
+  "url": "https://github.com/aabdel0181/ominax"
 }

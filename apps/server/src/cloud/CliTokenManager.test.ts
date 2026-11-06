@@ -224,7 +224,7 @@ it.effect.each([
       const error = yield* manager.getExisting.pipe(Effect.flip);
       assert.instanceOf(error, CliTokenManager.CloudCliCredentialRefreshError);
       assert.equal(error.requiresLogin, requiresLogin);
-      assert.equal(error.message.includes("t3-learn connect login"), requiresLogin);
+      assert.equal(error.message.includes("ominax connect login"), requiresLogin);
       assert.equal(error.message.includes("OAuth error: invalid_grant"), diagnostic);
       assert.notInclude(error.message, "private");
       assert.equal(error.message.includes("OAuth error:"), diagnostic);

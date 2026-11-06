@@ -122,19 +122,19 @@ describe("DesktopClerk", () => {
       name: "packaged macOS",
       isDevelopment: false,
       platform: "darwin" as const,
-      userData: "/tmp/app-data/t3learn",
+      userData: "/tmp/app-data/ominax",
     },
     {
       name: "packaged Linux",
       isDevelopment: false,
       platform: "linux" as const,
-      userData: "/tmp/app-data/t3learn",
+      userData: "/tmp/app-data/ominax",
     },
     {
       name: "packaged Windows",
       isDevelopment: false,
       platform: "win32" as const,
-      userData: "/tmp/app-data/t3learn",
+      userData: "/tmp/app-data/ominax",
     },
     {
       name: "development",
@@ -284,7 +284,7 @@ describe("DesktopClerk", () => {
 
         assert.isTrue(Exit.hasInterrupts(exit));
         assert.deepEqual(events, [
-          "setPath:userData:/tmp/app-data/t3learn",
+          "setPath:userData:/tmp/app-data/ominax",
           "requestSingleInstanceLock",
           "quit",
         ]);

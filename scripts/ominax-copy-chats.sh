@@ -14,16 +14,18 @@
 #
 #   T3_LEARN_COPY_FROM   T3 Code's home folder (default ~/.t3)
 #   T3_LEARN_CHECKOUT    checkout at the installed tag (default: the one holding this script)
-#   T3_LEARN_COPY_TO     T3 Learn's home folder (default ~/.t3-learn)
-#   T3_LEARN_UNIT        T3 Learn's systemd user unit (default t3learn.service)
+#   T3_LEARN_COPY_TO     OminaX's home folder (default ~/.ominax, or ~/.t3-learn before the rename)
+#   T3_LEARN_UNIT        OminaX's systemd user unit (default ominax.service, or t3learn.service before the rename)
 #   T3_LEARN_PORT        port of that unit (default 3780)
 set -euo pipefail
 
 CHECKOUT=${T3_LEARN_CHECKOUT:-$(cd "$(dirname "$0")/.." && pwd)}
 SOURCE=${T3_LEARN_COPY_FROM:-$HOME/.t3}
-LEARN=${T3_LEARN_COPY_TO:-$HOME/.t3-learn}
+LEARN=${T3_LEARN_COPY_TO:-$HOME/.ominax}
+[ -n "${T3_LEARN_COPY_TO:-}" ] || [ -e "$LEARN" ] || LEARN=$HOME/.t3-learn
 STAGE=$LEARN-staging
-UNIT=${T3_LEARN_UNIT:-t3learn.service}
+UNIT=${T3_LEARN_UNIT:-ominax.service}
+[ -n "${T3_LEARN_UNIT:-}" ] || [ -f "$HOME/.config/systemd/user/$UNIT" ] || UNIT=t3learn.service
 PORT=${T3_LEARN_PORT:-3780}
 SANDBOX_PORT=3781
 LOG=$STAGE-boot.log

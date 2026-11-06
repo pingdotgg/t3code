@@ -226,7 +226,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(urls.length).toBeGreaterThan(0);
       for (const url of urls)
         expect(url).toMatch(
-          /^https:\/\/github\.com\/aabdel0181\/t3-learn\/releases\/download\/v1\.1\.0\//,
+          /^https:\/\/github\.com\/aabdel0181\/ominax\/releases\/download\/v1\.1\.0\//,
         );
     }),
   );

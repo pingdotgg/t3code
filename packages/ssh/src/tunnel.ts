@@ -4,7 +4,9 @@ import type {
 } from "@t3tools/contracts";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
-import { T3_LEARN_HOME_DIRECTORY } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_HOME_DIRECTORY, T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdentity";
+
+const REMOTE_HOME_SELECTION = `T3_SERVER_HOME="$(if [ -d "$HOME/${T3_LEARN_HOME_DIRECTORY}" ]; then printf '%s' "$HOME/${T3_LEARN_HOME_DIRECTORY}"; elif [ -d "$HOME/${T3_LEARN_LEGACY.homeDirectory}" ]; then printf '%s' "$HOME/${T3_LEARN_LEGACY.homeDirectory}"; else printf '%s' "$HOME/${T3_LEARN_HOME_DIRECTORY}"; fi)"`;
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -420,6 +422,7 @@ ensure_remote_node_path() {
 
 const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
+${REMOTE_HOME_SELECTION}
 @@T3_NODE_ENV_SCRIPT@@
 T3_NODE_SCRIPT_PATH=@@T3_NODE_SCRIPT_PATH@@
 if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
@@ -440,13 +443,13 @@ fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
-T3_RUNTIME_DIR="$HOME/${T3_LEARN_HOME_DIRECTORY}/runtime/versions/$T3_ARCHIVE_VERSION"
+T3_RUNTIME_DIR="$T3_SERVER_HOME/runtime/versions/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
   [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
 if ! t3_runtime_ready; then
-  mkdir -p "$HOME/${T3_LEARN_HOME_DIRECTORY}/runtime/versions"
-  T3_LOCK="$HOME/${T3_LEARN_HOME_DIRECTORY}/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+  mkdir -p "$T3_SERVER_HOME/runtime/versions"
+  T3_LOCK="$T3_SERVER_HOME/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
   # uutils mkdir can report success on EEXIST, so use shell noclobber.
   # An empty lock gets a short grace period for its owner to publish a PID.
   T3_LOCK_WAITED=0
@@ -487,7 +490,7 @@ if ! t3_runtime_ready; then
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-  T3_STAGING="$(mktemp -d "$HOME/${T3_LEARN_HOME_DIRECTORY}/runtime/versions/.staging-XXXXXX")"
+  T3_STAGING="$(mktemp -d "$T3_SERVER_HOME/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
@@ -525,10 +528,11 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
 const REMOTE_LAUNCH_SCRIPT = `set -eu
+${REMOTE_HOME_SELECTION}
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-STATE_DIR="$HOME/${T3_LEARN_HOME_DIRECTORY}/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/${T3_LEARN_HOME_DIRECTORY}"
+STATE_DIR="$T3_SERVER_HOME/ssh-launch/$STATE_KEY"
+DEFAULT_SERVER_HOME="$T3_SERVER_HOME"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -724,8 +728,9 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/${T3_LEARN_HOME_DIRECTORY}/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/${T3_LEARN_HOME_DIRECTORY}"
+${REMOTE_HOME_SELECTION}
+STATE_DIR="$T3_SERVER_HOME/ssh-launch/@@T3_STATE_KEY@@"
+DEFAULT_SERVER_HOME="$T3_SERVER_HOME"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
@@ -737,7 +742,8 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/${T3_LEARN_HOME_DIRECTORY}/ssh-launch/@@T3_STATE_KEY@@"
+${REMOTE_HOME_SELECTION}
+STATE_DIR="$T3_SERVER_HOME/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -760,7 +766,8 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/${T3_LEARN_HOME_DIRECTORY}/ssh-launch/@@T3_STATE_KEY@@"
+${REMOTE_HOME_SELECTION}
+STATE_DIR="$T3_SERVER_HOME/ssh-launch/@@T3_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true

@@ -32,7 +32,7 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
     program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
     baseDir,
     logPath: `${baseDir}/userdata/logs/boot-service.log`,
-    unitPath: "/home/theo/.config/systemd/user/t3learn.service",
+    unitPath: "/home/theo/.config/systemd/user/ominax.service",
   });
 
   expect(
@@ -59,7 +59,7 @@ it("describes the unit as OminaX, not T3 Code", () => {
     program: ["/home/theo/.t3-learn/runtime/versions/1.2.3/t3", "__service-launcher"],
     baseDir: "/home/theo/.t3-learn",
     logPath: "/home/theo/.t3-learn/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3learn.service",
+    unitPath: "/home/theo/.config/systemd/user/ominax.service",
   });
   expect(unit.split("\n")).toContain("Description=OminaX server");
 });
@@ -152,13 +152,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const failed = command === control.failCommand;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
-      if (!failed && command === "systemctl --user enable t3learn.service") control.enabled = true;
-      if (!failed && command === "systemctl --user restart t3learn.service") control.active = true;
+      if (!failed && command === "systemctl --user enable ominax.service") control.enabled = true;
+      if (!failed && command === "systemctl --user restart ominax.service") control.active = true;
       // A timed-out stop may still stop the service.
-      if (command === "systemctl --user stop t3learn.service") control.active = false;
+      if (command === "systemctl --user stop ominax.service") control.active = false;
       if (
         control.stateAfterStop !== undefined &&
-        (command === "systemctl --user stop t3learn.service" ||
+        (command === "systemctl --user stop ominax.service" ||
           command.startsWith("launchctl bootout --wait "))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
@@ -205,7 +205,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     environmentPath: string | undefined = installerPath,
     cliVersion = "1.2.3",
     serviceBaseDir = baseDir,
-    insideService = false,
+    insideService: string | boolean = false,
     hostExecPath = "/usr/bin/t3",
   ) =>
     Effect.gen(function* () {
@@ -238,7 +238,12 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
-                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3learn.service" } : {}),
+                ...(insideService
+                  ? {
+                      T3_BOOT_SERVICE_UNIT:
+                        insideService === true ? "ominax.service" : insideService,
+                    }
+                  : {}),
               },
             }),
           ),
@@ -313,7 +318,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         );
         expect(yield* fs.readFileString(statePath)).toBe(before);
         expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
-        expect(commands).not.toContain("systemctl --user stop t3learn.service");
+        expect(commands).not.toContain("systemctl --user stop ominax.service");
       }),
   );
 
@@ -353,6 +358,105 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("migrates and removes a legacy unit during install and uninstall", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const installed = yield* service.install();
+      const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
+      yield* fs.rename(installed.unitPath, legacyPath);
+      yield* fs.makeDirectory(`${legacyPath}.d`, { recursive: true });
+      yield* fs.writeFileString(
+        `${legacyPath}.d/90-t3learn-protect.conf`,
+        "[Service]\nOOMScoreAdjust=-900\n",
+      );
+      commands.length = 0;
+
+      const migrated = yield* makeService();
+      expect(yield* migrated.status).toMatchObject({ installed: true, unitPath: legacyPath });
+      yield* migrated.install();
+      expect(yield* fs.exists(legacyPath)).toBe(false);
+      expect(commands).toContain("systemctl --user disable --now t3learn.service");
+      expect(yield* fs.exists(installed.unitPath)).toBe(true);
+      expect(yield* fs.readFileString(`${installed.unitPath}.d/90-ominax-protect.conf`)).toContain(
+        "OOMScoreAdjust=-900",
+      );
+      expect(yield* fs.exists(`${legacyPath}.d`)).toBe(false);
+
+      yield* fs.writeFileString(legacyPath, yield* fs.readFileString(installed.unitPath));
+      expect(yield* migrated.uninstall).toBe(true);
+      expect(yield* fs.exists(legacyPath)).toBe(false);
+      expect(yield* fs.exists(installed.unitPath)).toBe(false);
+    }),
+  );
+
+  it.effect("keeps and restarts a legacy unit when its install is refused", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const installed = yield* service.install();
+      const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
+      yield* fs.rename(installed.unitPath, legacyPath);
+      yield* fs.writeFileString(
+        statePath,
+        JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.3",
+          update: {
+            id: "u",
+            fromVersion: "1.2.3",
+            targetVersion: "1.2.4",
+            dbPath: "/tmp/state.sqlite",
+            status: "pending",
+          },
+        }),
+      );
+      commands.length = 0;
+
+      const error = yield* (yield* makeService()).install().pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceUpdatePendingError");
+      expect(yield* fs.exists(legacyPath)).toBe(true);
+      expect(yield* fs.exists(installed.unitPath)).toBe(false);
+      expect(commands).toContain("systemctl --user restart t3learn.service");
+    }),
+  );
+
+  it.effect("falls back to the legacy unit when the new one fails to start", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, control, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const installed = yield* service.install();
+      const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
+      yield* fs.rename(installed.unitPath, legacyPath);
+      commands.length = 0;
+      control.failCommand = `systemctl --user restart ${path.basename(installed.unitPath)}`;
+
+      yield* (yield* makeService()).install().pipe(Effect.flip);
+      expect(yield* fs.exists(legacyPath)).toBe(true);
+      expect(yield* fs.exists(installed.unitPath)).toBe(false);
+      expect(commands).not.toContain("systemctl --user disable --now t3learn.service");
+      expect(commands).toContain("systemctl --user restart t3learn.service");
+    }),
+  );
+
+  it.effect("install with start=false rewrites a legacy unit in place", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const installed = yield* service.install();
+      const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
+      yield* fs.rename(installed.unitPath, legacyPath);
+      commands.length = 0;
+
+      yield* (yield* makeService()).install({ start: false });
+      expect(yield* fs.exists(installed.unitPath)).toBe(false);
+      expect(yield* fs.readFileString(legacyPath)).toContain(
+        "T3_BOOT_SERVICE_UNIT=t3learn.service",
+      );
+      expect(commands.some((command) => command.includes("t3learn.service"))).toBe(false);
+    }),
+  );
+
   it.effect.each([
     "unset",
     "empty",
@@ -389,7 +493,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           : path.join(home, ".config"),
         "systemd",
         "user",
-        "t3learn.service",
+        "ominax.service",
       );
       expect(yield* service.status).toMatchObject({ installed: false, unitPath });
       const plan = yield* service.install();
@@ -435,7 +539,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.exists(unitPath)).toBe(false);
       expect((yield* discoveredService.status).installed).toBe(false);
       // systemd can take 90s to stop, exceeding the runner's 60s default.
-      expect(timeouts.get("systemctl --user disable --now t3learn.service")).toEqual(
+      expect(timeouts.get("systemctl --user disable --now ominax.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -508,9 +612,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           ),
         ).toEqual(
           platform === "linux"
-            ? ["systemctl --user stop t3learn.service", "systemctl --user restart t3learn.service"]
+            ? ["systemctl --user stop ominax.service", "systemctl --user restart ominax.service"]
             : [
-                "launchctl bootout --wait gui/501/io.github.aabdel0181.t3learn.service",
+                "launchctl bootout --wait gui/501/io.github.aabdel0181.ominax.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
               ],
         );
@@ -645,7 +749,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(failure).toBe("repair failed");
       expect(control.active).toBe(true);
 
-      control.failCommand = "systemctl --user stop t3learn.service";
+      control.failCommand = "systemctl --user stop ominax.service";
       let ran = false;
       const stopFailure = yield* service
         .withStopped(
@@ -666,11 +770,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
       expect(commands).toEqual([
-        "systemctl --user is-enabled t3learn.service",
-        "systemctl --user is-active t3learn.service",
-        "systemctl --user stop t3learn.service",
+        "systemctl --user is-enabled ominax.service",
+        "systemctl --user is-active ominax.service",
+        "systemctl --user stop ominax.service",
         "repair",
-        "systemctl --user restart t3learn.service",
+        "systemctl --user restart ominax.service",
       ]);
       expect(control.active).toBe(true);
       control.enabled = false;
@@ -680,8 +784,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       control.enabled = false;
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
-      expect(commands).toContain("systemctl --user stop t3learn.service");
-      expect(commands).not.toContain("systemctl --user restart t3learn.service");
+      expect(commands).toContain("systemctl --user stop ominax.service");
+      expect(commands).not.toContain("systemctl --user restart ominax.service");
       expect(control.active).toBe(false);
       control.enabled = true;
       control.active = true;
@@ -728,7 +832,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       expect(yield* fs.readFileString(statePath)).toBe(state);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
-      expect(commands).not.toContain("systemctl --user stop t3learn.service");
+      expect(commands).not.toContain("systemctl --user stop ominax.service");
       expect(result).toMatchObject({ handedOff: true, logPath: plan.logPath });
       const handoffs = invocations.filter(({ command }) => command === "systemd-run");
       expect(handoffs).toHaveLength(1);
@@ -754,7 +858,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(statePath)).toBe(state);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(control.active).toBe(true);
-      expect(commands).not.toContain("systemctl --user stop t3learn.service");
+      expect(commands).not.toContain("systemctl --user stop ominax.service");
     }),
   );
 
@@ -767,7 +871,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const state = yield* fs.readFileString(statePath);
         const marker = `${plan.baseDir}/runtime/${SERVICE_RESTART_PENDING_FILE}`;
         yield* fs.writeFileString(marker, "1.2.3\n");
-        const inside = yield* makeService(undefined, "1.2.3", undefined, true);
+        const inside = yield* makeService(undefined, "1.2.3", undefined, "t3learn.service");
         commands.length = 0;
         control.failCommand = "systemctl --user daemon-reload";
 
@@ -781,8 +885,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const outcome = yield* inside.restart;
         expect(commands).toEqual([
           "systemctl --user daemon-reload",
-          "systemctl --user enable t3learn.service",
-          "systemctl --user restart --no-block t3learn.service",
+          "systemctl --user enable ominax.service",
+          "systemctl --user restart --no-block ominax.service",
         ]);
         expect(outcome).toBe("queued");
         expect(yield* fs.readFileString(statePath)).toBe(state);
@@ -804,9 +908,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
         ),
       ).toEqual([
-        "systemctl --user stop t3learn.service",
+        "systemctl --user stop ominax.service",
         "systemctl --user daemon-reload",
-        "systemctl --user restart t3learn.service",
+        "systemctl --user restart ominax.service",
       ]);
     }),
   );
@@ -838,8 +942,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
           ),
         ).toEqual([
-          "systemctl --user stop t3learn.service",
-          "systemctl --user restart t3learn.service",
+          "systemctl --user stop ominax.service",
+          "systemctl --user restart ominax.service",
         ]);
       }
     }),
@@ -853,7 +957,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       expect(
         plan.unitPath.endsWith(
-          path.join("Library", "LaunchAgents", "io.github.aabdel0181.t3learn.service.plist"),
+          path.join("Library", "LaunchAgents", "io.github.aabdel0181.ominax.service.plist"),
         ),
       ).toBe(true);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
@@ -875,7 +979,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
       expect(
-        timeouts.get("launchctl bootout --wait gui/501/io.github.aabdel0181.t3learn.service"),
+        timeouts.get("launchctl bootout --wait gui/501/io.github.aabdel0181.ominax.service"),
       ).toEqual(Duration.seconds(120));
     }),
   );
@@ -959,7 +1063,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
-      control.failCommand = "launchctl bootout --wait gui/501/io.github.aabdel0181.t3learn.service";
+      control.failCommand = "launchctl bootout --wait gui/501/io.github.aabdel0181.ominax.service";
 
       yield* service.install();
       expect((yield* service.status).current).toBe(true);

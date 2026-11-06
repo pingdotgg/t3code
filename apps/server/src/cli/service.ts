@@ -204,7 +204,7 @@ const serviceReconcileFlags = {
 
 const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pipe(
   Command.withDescription(
-    `Install T3 Code as a background service for this user. \`${T3_LEARN_COMMAND} up\` also chooses how your other devices reach it.`,
+    `Install ${T3_LEARN_PRODUCT_NAME} as a background service for this user. \`${T3_LEARN_COMMAND} up\` also chooses how your other devices reach it.`,
   ),
   Command.withHandler((flags) =>
     runServiceCommand(
@@ -279,7 +279,7 @@ const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe
 );
 
 const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).pipe(
-  Command.withDescription("Stop and remove the T3 Code background service."),
+  Command.withDescription(`Stop and remove the ${T3_LEARN_PRODUCT_NAME} background service.`),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
@@ -313,7 +313,9 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
 );
 
 const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
-  Command.withDescription("Show whether the T3 Code background service is installed."),
+  Command.withDescription(
+    `Show whether the ${T3_LEARN_PRODUCT_NAME} background service is installed.`,
+  ),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
@@ -353,7 +355,7 @@ const serviceProtectCommand = Command.make("protect", {
   ),
 }).pipe(
   Command.withDescription(
-    "Protect the T3 Code server from agents under memory pressure (Linux with systemd). Asks for sudo.",
+    `Protect the ${T3_LEARN_PRODUCT_NAME} server from agents under memory pressure (Linux with systemd). Asks for sudo.`,
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -362,7 +364,7 @@ const serviceProtectCommand = Command.make("protect", {
       // Before resolving config, which creates T3 directories that root would then own.
       if ((yield* HostProcess.UserId) === 0) {
         return yield* Console.log(
-          `Run \`${T3_LEARN_COMMAND} service protect\` as the user that runs T3 Code, without sudo. It asks for sudo when it needs root.`,
+          `Run \`${T3_LEARN_COMMAND} service protect\` as the user that runs ${T3_LEARN_PRODUCT_NAME}, without sudo. It asks for sudo when it needs root.`,
         );
       }
       return yield* runServiceCommand(
@@ -408,8 +410,8 @@ const serviceProtectCommand = Command.make("protect", {
 
           yield* Console.log(
             [
-              "Keeps T3 Code running when agents fill this machine's memory:",
-              "  - reserves memory for the T3 Code server, so the kernel takes memory from agents first",
+              `Keeps ${T3_LEARN_PRODUCT_NAME} running when agents fill this machine's memory:`,
+              `  - reserves memory for the ${T3_LEARN_PRODUCT_NAME} server, so the kernel takes memory from agents first`,
               "  - makes the out-of-memory killer pick agents before the server",
               `It adds systemd drop-in files and changes nothing else. Undo with \`${T3_LEARN_COMMAND} service protect --undo\`.`,
             ].join("\n"),
@@ -437,7 +439,7 @@ const serviceProtectCommand = Command.make("protect", {
           if (!(yield* confirm(flags.yes, "Apply these settings?"))) return;
           yield* ServiceProtection.applyProtection(plan);
           yield* Console.log(
-            `Protected T3 Code. Memory protection applies now; the server takes its OOM score after \`${T3_LEARN_COMMAND} service restart\`. Undo with \`${T3_LEARN_COMMAND} service protect --undo\`.`,
+            `Protected ${T3_LEARN_PRODUCT_NAME}. Memory protection applies now; the server takes its OOM score after \`${T3_LEARN_COMMAND} service restart\`. Undo with \`${T3_LEARN_COMMAND} service protect --undo\`.`,
           );
         }).pipe(Effect.provide(ProcessRunner.layer)),
       );
@@ -446,7 +448,7 @@ const serviceProtectCommand = Command.make("protect", {
 );
 
 export const serviceCommand = Command.make("service").pipe(
-  Command.withDescription("Manage the T3 Code background service."),
+  Command.withDescription(`Manage the ${T3_LEARN_PRODUCT_NAME} background service.`),
   Command.withSubcommands([
     serviceInstallCommand,
     serviceRestartCommand,

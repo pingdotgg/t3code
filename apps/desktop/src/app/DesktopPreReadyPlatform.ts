@@ -16,6 +16,7 @@ import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import { T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdentity";
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -93,6 +94,26 @@ export const make = Effect.gen(function* () {
           "applications",
         );
         NodeFS.mkdirSync(applicationsDir, { recursive: true });
+        const legacyDesktopEntryPath = NodePath.posix.join(
+          applicationsDir,
+          T3_LEARN_LEGACY.linuxDesktopEntry,
+        );
+        try {
+          const legacyContent = NodeFS.readFileSync(legacyDesktopEntryPath, "utf8");
+          const executableTargets = [
+            process.execPath,
+            Option.getOrUndefined(linuxDesktopEntryConfig.launcherPath),
+            Option.getOrUndefined(linuxDesktopEntryConfig.appImagePath),
+          ].filter((target): target is string => target !== undefined);
+          if (
+            DesktopEarlyElectronStartup.isOwnedLegacyLinuxDesktopEntry({
+              content: legacyContent,
+              executableTargets,
+            })
+          ) {
+            NodeFS.rmSync(legacyDesktopEntryPath, { force: true });
+          }
+        } catch {}
         const iconPath = Electron.app.isPackaged
           ? NodePath.posix.join(
               applicationsDir,
@@ -127,7 +148,7 @@ export const make = Effect.gen(function* () {
                   () => linuxDesktopEntryConfig.appImagePath,
                 ),
               ) ?? process.execPath,
-            scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
+            scheme: ElectronProtocol.getDesktopLinkSchemes(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
           }),
           "utf8",

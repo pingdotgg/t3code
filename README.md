@@ -11,38 +11,40 @@ See [Side chats](docs/user/side-chats.md) for settings and provider details.
 **macOS and Linux**
 
 ```bash
-curl -fsSL https://github.com/aabdel0181/t3-learn/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/aabdel0181/ominax/releases/latest/download/install.sh | sh
 ```
 
 **Windows** (in PowerShell)
 
 ```powershell
-irm https://github.com/aabdel0181/t3-learn/releases/latest/download/install.ps1 | iex
+irm https://github.com/aabdel0181/ominax/releases/latest/download/install.ps1 | iex
 ```
 
 OminaX opens when the installer finishes. After that, open it like any other app; it updates itself. You also need at least one provider set up, such as Claude Code or Codex (see [Installation](#installation)).
 
-**Already using T3 Code?** Run the same command. OminaX installs next to T3 Code instead of over it, and keeps its own projects and settings in `~/.t3-learn`. T3 Code keeps its threads, settings, updates and `t3` command, and both apps can run at once. Providers you're already signed in to work in both.
+The installer uses `OMINAX_*` environment variables. The old `T3LEARN_*` names still work, and `t3-learn` remains a command alias for `ominax`.
+
+**Already using T3 Code?** Run the same command. OminaX installs next to T3 Code instead of over it, and keeps its own projects and settings in `~/.ominax`. T3 Code keeps its threads, settings, updates and `t3` command, and both apps can run at once. Providers you're already signed in to work in both.
 
 <details>
 <summary>Other ways to install, and how to remove it</summary>
 
-- **Download it yourself** from [Releases](https://github.com/aabdel0181/t3-learn/releases/latest): `.dmg` for macOS, `.exe` for Windows, `.deb` or `.AppImage` for Linux. These builds are not signed. macOS blocks the app the first time you open it: go to **System Settings → Privacy & Security** and choose **Open Anyway**. Windows may warn that it doesn't recognize the app: choose **More info → Run anyway**. The install command avoids both prompts.
+- **Download it yourself** from [Releases](https://github.com/aabdel0181/ominax/releases/latest): `.dmg` for macOS, `.exe` for Windows, `.deb` or `.AppImage` for Linux. These builds are not signed. macOS blocks the app the first time you open it: go to **System Settings → Privacy & Security** and choose **Open Anyway**. Windows may warn that it doesn't recognize the app: choose **More info → Run anyway**. The install command avoids both prompts.
 - **macOS updates:** because the app isn't signed, macOS may ask once after an update to let OminaX use its saved keychain item. Choose **Always Allow**. Screen Recording permission, used for window capture, has to be turned on again.
-- **Linux:** the command installs the `.deb` where `apt` and `sudo` are available, so the app keeps Chromium's sandbox, and an AppImage in your home folder otherwise. Set `T3LEARN_FORMAT=appimage` or `T3LEARN_FORMAT=deb` to choose.
-- **A specific version:** set `T3LEARN_VERSION`, for example `T3LEARN_VERSION=0.1.3-learn.1`.
-- **Remove it:** on macOS and Linux, run the install command with `sh -s -- --uninstall` in place of `sh`. On Windows, uninstall **OminaX** from **Settings → Apps**. Your projects and settings stay in `~/.t3-learn`; delete that folder to remove them too.
-- **From source:** you need [`vp`](#install-vp). Run `vp i`, then `vp run --filter t3 build`, then `vp env exec -- node apps/server/dist/bin.mjs serve --base-dir ~/.t3-learn`, and open the pairing URL it prints.
+- **Linux:** the command installs the `.deb` where `apt` and `sudo` are available, so the app keeps Chromium's sandbox, and an AppImage in your home folder otherwise. Set `OMINAX_FORMAT=appimage` or `OMINAX_FORMAT=deb` to choose.
+- **A specific version:** set `OMINAX_VERSION`, for example `OMINAX_VERSION=0.1.3-learn.1`.
+- **Remove it:** on macOS and Linux, run the install command with `sh -s -- --uninstall` in place of `sh`. On Windows, uninstall **OminaX** from **Settings → Apps**. Your projects and settings stay in `~/.ominax`; delete that folder to remove them too.
+- **From source:** you need [`vp`](#install-vp). Run `vp i`, then `vp run --filter t3 build`, then `vp env exec -- node apps/server/dist/bin.mjs serve --base-dir ~/.ominax`, and open the pairing URL it prints.
 
 </details>
 
 ### Updating
 
-New OminaX versions are released automatically from `main` after CI and the install tests pass. The app shows an update button that updates the app and its connected server together. On the server box, update the launcher with `t3-learn update --yes`; with the plain CLI, point `T3CODE_HOME` at `~/.t3-learn` first.
+New OminaX versions are released automatically from `main` after CI and the install tests pass. The app shows an update button that updates the app and its connected server together. On the server box, update the launcher with `ominax update --yes`; with the plain CLI, point `T3CODE_HOME` at `~/.ominax` first.
 
-The phone app pairs with OminaX the same way it pairs with T3 Code. T3 Connect isn't available in OminaX's builds. To use OminaX's command line, choose **Install** next to **t3-learn command** in **Settings → About**.
+The phone app pairs with OminaX the same way it pairs with T3 Code. T3 Connect isn't available in OminaX's builds. To use OminaX's command line, choose **Install** next to **ominax command** in **Settings → About**.
 
-**Want an agent to set it up, with your T3 Code chats along?** Give it [Set up OminaX with an agent](docs/user/t3-learn-agent-setup.md).
+**Want an agent to set it up, with your T3 Code chats along?** Give it [Set up OminaX with an agent](docs/user/ominax-agent-setup.md).
 
 ---
 

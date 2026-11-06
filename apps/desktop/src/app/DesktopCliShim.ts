@@ -1,4 +1,8 @@
-import { T3_LEARN_COMMAND, T3_LEARN_HOME_ENV } from "@t3tools/shared/t3LearnIdentity";
+import {
+  T3_LEARN_COMMAND,
+  T3_LEARN_HOME_ENV,
+  T3_LEARN_LEGACY,
+} from "@t3tools/shared/t3LearnIdentity";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,8 +14,12 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-// Installed launchers carry this text and are matched on it, so it keeps the pre-OminaX name.
-export const MARKER = "Written by T3 Learn: runs the desktop app's bundled t3 CLI.";
+export const MARKER = "Written by OminaX: runs the desktop app's bundled t3 CLI.";
+export const LEGACY_MARKER = "Written by T3 Learn: runs the desktop app's bundled t3 CLI.";
+const MARKERS = [MARKER, LEGACY_MARKER] as const;
+
+export const isOurLauncher = (content: string) =>
+  MARKERS.some((marker) => content.includes(marker));
 
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
@@ -42,6 +50,8 @@ export const renderCliShim = (input: {
     return [
       "@echo off",
       `rem ${MARKER}`,
+      // Builds before the rename recognise their launcher by this line; keep it so a rollback can update it.
+      `rem ${LEGACY_MARKER}`,
       // Delayed expansion would rewrite `!name!` in paths and arguments.
       "setlocal EnableExtensions DisableDelayedExpansion",
       // Ctrl-C skips codepage restoration, so switch to UTF-8 only for non-ASCII install paths.
@@ -52,8 +62,9 @@ export const renderCliShim = (input: {
           ]
         : []),
       `set "T3CODE_CLI_PATH=${cmdText(input.shimPath)}"`,
-      // An exported T3CODE_HOME belongs to T3 Code; T3LEARN_HOME overrides this install's home.
+      // An exported T3CODE_HOME belongs to T3 Code; either OminaX home variable overrides this install's home.
       `set "T3CODE_HOME=${cmdText(input.t3Home)}"`,
+      `if defined ${T3_LEARN_LEGACY.homeEnv} set "T3CODE_HOME=%${T3_LEARN_LEGACY.homeEnv}%"`,
       `if defined ${T3_LEARN_HOME_ENV} set "T3CODE_HOME=%${T3_LEARN_HOME_ENV}%"`,
       'set "ELECTRON_RUN_AS_NODE=1"',
       // Electron's Windows executable starts without stdin; this tells the CLI to reopen the console.
@@ -74,9 +85,10 @@ export const renderCliShim = (input: {
   const header = [
     "#!/bin/sh",
     `# ${MARKER}`,
+    `# ${LEGACY_MARKER}`,
     `export T3CODE_CLI_PATH=${shellWord(input.shimPath)}`,
     `home=${shellWord(input.t3Home)}`,
-    `export T3CODE_HOME="\${${T3_LEARN_HOME_ENV}:-$home}"`,
+    `export T3CODE_HOME="\${${T3_LEARN_HOME_ENV}:-\${${T3_LEARN_LEGACY.homeEnv}:-$home}}"`,
     "export ELECTRON_RUN_AS_NODE=1",
     `app=${shellWord(target.kind === "appimage" ? target.appImage : target.executable)}`,
     'if [ ! -x "$app" ]; then',
@@ -123,6 +135,13 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
     environment.platform === "win32" ? `${T3_LEARN_COMMAND}.cmd` : T3_LEARN_COMMAND,
   );
 
+const legacyLauncherPath = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
+  environment.path.join(
+    environment.baseDir,
+    "bin",
+    environment.platform === "win32" ? `${T3_LEARN_LEGACY.command}.cmd` : T3_LEARN_LEGACY.command,
+  );
+
 export const install = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (!environment.isPackaged) return Option.none<string>();
@@ -130,6 +149,7 @@ export const install = Effect.gen(function* () {
   const path = environment.path;
   const windows = environment.platform === "win32";
   const shimPath = launcherPath(environment);
+  const oldShimPath = legacyLauncherPath(environment);
   const entry = path.join(environment.serverRoot, SERVER_ENTRY);
   const target: CliShimTarget = windows
     ? { kind: "windows", executable: process.execPath, entry }
@@ -145,7 +165,7 @@ export const install = Effect.gen(function* () {
 
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    if (Option.isSome(existing) && !existing.value.includes(MARKER)) {
+    if (Option.isSome(existing) && !isOurLauncher(existing.value)) {
       yield* logWarning("leaving a t3 launcher the app did not write", { shimPath });
       return Option.none<string>();
     }
@@ -155,6 +175,34 @@ export const install = Effect.gen(function* () {
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });
+    }
+    if (windows) {
+      const legacyContent = renderCliShim({
+        target,
+        shimPath: oldShimPath,
+        t3Home: environment.baseDir,
+      });
+      const oldExisting = yield* fs.readFileString(oldShimPath).pipe(Effect.option);
+      if (Option.isNone(oldExisting) || isOurLauncher(oldExisting.value)) {
+        if (Option.getOrUndefined(oldExisting) !== legacyContent) {
+          yield* fs.makeDirectory(path.dirname(oldShimPath), { recursive: true });
+          const staging = `${oldShimPath}.${process.pid}.tmp`;
+          yield* fs.writeFileString(staging, legacyContent, { mode: 0o755 });
+          yield* fs.rename(staging, oldShimPath);
+        }
+      }
+    } else {
+      const oldExisting = yield* fs.readLink(oldShimPath).pipe(Effect.option);
+      if (Option.isSome(oldExisting) && oldExisting.value === shimPath) {
+        return Option.some(shimPath);
+      }
+      const oldFile = yield* fs.readFileString(oldShimPath).pipe(Effect.option);
+      if (Option.isSome(oldFile) && !isOurLauncher(oldFile.value)) {
+        yield* logWarning("leaving a t3 launcher the app did not write", { shimPath: oldShimPath });
+        return Option.some(shimPath);
+      }
+      yield* fs.remove(oldShimPath, { force: true }).pipe(Effect.ignore);
+      yield* fs.symlink(shimPath, oldShimPath);
     }
     return Option.some(shimPath);
   }).pipe(

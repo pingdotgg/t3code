@@ -10,13 +10,27 @@ import type { LinuxWindowSnapshot } from "./LinuxSnapShot.ts";
 import { CaptureSetupRequiredError, readPortalPng } from "./linuxCaptureSession.ts";
 import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 import { HYPRLAND_CAPTURE_ACTION } from "./linuxCaptureSession.ts";
+import { T3_LEARN_EXECUTABLE_NAME, T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdentity";
 export { isHyprlandCaptureSession } from "./linuxCaptureSession.ts";
 
 export const HYPRLAND_CAPTURE_EXECUTABLE = "t3-hyprland-snap-shot";
 export type HyprlandCapturePaths = { readonly bundle: string; readonly dataHome: string };
 export function hyprlandCaptureExecutable(paths: HyprlandCapturePaths) {
-  return NodePath.join(paths.dataHome, "t3learn", "hyprland-capture", HYPRLAND_CAPTURE_EXECUTABLE);
+  return NodePath.join(
+    paths.dataHome,
+    T3_LEARN_EXECUTABLE_NAME,
+    "hyprland-capture",
+    HYPRLAND_CAPTURE_EXECUTABLE,
+  );
 }
+
+const legacyHyprlandCaptureExecutable = (paths: HyprlandCapturePaths) =>
+  NodePath.join(
+    paths.dataHome,
+    T3_LEARN_LEGACY.executableName,
+    "hyprland-capture",
+    HYPRLAND_CAPTURE_EXECUTABLE,
+  );
 
 function hyprlandCaptureBinding(appId: string, lua: boolean): string {
   if (!/^[A-Za-z0-9_.-]+$/.test(appId)) throw new Error("Invalid capture application ID.");
@@ -128,6 +142,7 @@ export class HyprlandCaptureSetup {
     await regularFile(executable);
     if (action === "remove-hyprland-helper") {
       await NodeFSP.rm(executable, { force: true });
+      await NodeFSP.rm(legacyHyprlandCaptureExecutable(this.paths), { force: true });
       return;
     }
     const bundle = await regularFile(this.paths.bundle);
@@ -138,6 +153,7 @@ export class HyprlandCaptureSetup {
       const staged = NodePath.join(staging, HYPRLAND_CAPTURE_EXECUTABLE);
       await NodeFSP.writeFile(staged, bundle, { mode: 0o755, flag: "wx" });
       await NodeFSP.rename(staged, executable);
+      await NodeFSP.rm(legacyHyprlandCaptureExecutable(this.paths), { force: true });
     } finally {
       await NodeFSP.rm(staging, { recursive: true, force: true });
     }

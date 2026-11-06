@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopLegacySecretKey from "../app/DesktopLegacySecretKey.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "./DesktopSavedEnvironments.ts";
 
@@ -62,6 +63,7 @@ function layerSafeStorageFor(input: {
   readonly available: boolean;
   readonly availabilityError?: unknown;
   readonly decryptError?: unknown;
+  readonly decryptValue?: string;
 }) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable:
@@ -81,6 +83,8 @@ function layerSafeStorageFor(input: {
           }),
         );
       }
+
+      if (input.decryptValue !== undefined) return Effect.succeed(input.decryptValue);
 
       const decoded = textDecoder.decode(value);
       if (!decoded.startsWith("enc:")) {
@@ -102,6 +106,8 @@ function layer(
     readonly availableSecretStorage?: boolean;
     readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
+    readonly decryptValue?: string;
+    readonly legacyDecrypt?: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>>;
   },
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
@@ -125,12 +131,16 @@ function layer(
     available: options?.availableSecretStorage ?? true,
     availabilityError: options?.availabilityError,
     decryptError: options?.decryptError,
+    ...(options?.decryptValue === undefined ? {} : { decryptValue: options.decryptValue }),
   });
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
     layerSafeStorage,
     NodeServices.layer,
     fileSystemLayer,
+    Layer.succeed(DesktopLegacySecretKey.DesktopLegacySecretKey, {
+      decrypt: options?.legacyDecrypt ?? (() => Effect.succeedNone),
+    }),
   );
 
   return DesktopSavedEnvironments.layer.pipe(Layer.provideMerge(layerDependencies));
@@ -142,6 +152,8 @@ const withSavedEnvironments = <A, E, R>(
     readonly availableSecretStorage?: boolean;
     readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
+    readonly decryptValue?: string;
+    readonly legacyDecrypt?: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>>;
   },
 ) =>
   Effect.gen(function* () {
@@ -215,6 +227,69 @@ describe("DesktopSavedEnvironments", () => {
         );
       }),
       { availableSecretStorage: false },
+    ),
+  );
+
+  it.effect("migrates a legacy encrypted secret and backs up the registry", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("legacy")));
+        const original = yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath);
+        assert.deepEqual(
+          yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+          Option.some("legacy-token"),
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(
+            `${environment.savedEnvironmentRegistryPath}.pre-ominax`,
+          ),
+          original,
+        );
+      }),
+      {
+        decryptError: new Error("new key unavailable"),
+        legacyDecrypt: () => Effect.succeedSome("legacy-token"),
+      },
+    ),
+  );
+
+  it.effect("tries the legacy key when the current key returns garbage UTF-8", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("garbage")));
+        assert.deepEqual(
+          yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+          Option.some("legacy-token"),
+        );
+      }),
+      {
+        decryptValue: "\ufffd",
+        legacyDecrypt: () => Effect.succeedSome("legacy-token"),
+      },
+    ),
+  );
+
+  it.effect("rejects replacement characters from the legacy key", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("garbage")));
+        const error = yield* savedEnvironments
+          .getSecret(savedRegistryRecord.environmentId)
+          .pipe(Effect.flip);
+        assert.instanceOf(
+          error,
+          DesktopSavedEnvironments.DesktopSavedEnvironmentSecretProtectionError,
+        );
+      }),
+      {
+        decryptError: new Error("new key unavailable"),
+        legacyDecrypt: () => Effect.succeedSome("\ufffd"),
+      },
     ),
   );
 });

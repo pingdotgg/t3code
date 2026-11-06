@@ -19,10 +19,10 @@ const notOnPath = (launcherPath: string | null): DesktopCliCommandState => ({
 });
 
 describe("resolveTriageCommand", () => {
-  it("prefers t3-learn on PATH, then the desktop launcher", async () => {
+  it("prefers ominax on PATH, then the desktop launcher", async () => {
     const onPath = { ...notOnPath("/home/me/.t3/bin/t3"), onPath: true };
     await expect(resolveTriageCommand(desktopWith(async () => onPath))).resolves.toBe(
-      "t3-learn triage",
+      "ominax triage",
     );
     await expect(
       resolveTriageCommand(desktopWith(async () => notOnPath("/home/me/.t3/bin/t3"))),
@@ -43,20 +43,20 @@ describe("resolveTriageCommand", () => {
     ).resolves.toBe("& 'C:\\Users\\Jo O''Neil\\.t3\\bin\\t3.cmd' triage");
   });
 
-  it("falls back to t3-learn without a usable desktop launcher", async () => {
+  it("falls back to ominax without a usable desktop launcher", async () => {
     using _warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await expect(resolveTriageCommand(undefined)).resolves.toBe("t3-learn triage");
-    await expect(resolveTriageCommand({} as DesktopBridge)).resolves.toBe("t3-learn triage");
+    await expect(resolveTriageCommand(undefined)).resolves.toBe("ominax triage");
+    await expect(resolveTriageCommand({} as DesktopBridge)).resolves.toBe("ominax triage");
     await expect(resolveTriageCommand(desktopWith(async () => notOnPath(null)))).resolves.toBe(
-      "t3-learn triage",
+      "ominax triage",
     );
     const staleWindowsPathEntry = { ...notOnPath(null), supported: true, onPath: true };
     await expect(
       resolveTriageCommand(desktopWith(async () => staleWindowsPathEntry)),
-    ).resolves.toBe("t3-learn triage");
+    ).resolves.toBe("ominax triage");
     await expect(
       resolveTriageCommand(desktopWith(() => Promise.reject(new Error("ipc closed")))),
-    ).resolves.toBe("t3-learn triage");
+    ).resolves.toBe("ominax triage");
   });
 });
 

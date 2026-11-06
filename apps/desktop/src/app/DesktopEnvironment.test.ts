@@ -68,8 +68,8 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.t3-learn/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3-learn/userdata");
+      assert.equal(development.stateDir, "/Users/alice/.ominax/dev");
+      assert.equal(production.stateDir, "/Users/alice/.ominax/userdata");
     }),
   );
 
@@ -84,7 +84,7 @@ describe("DesktopEnvironment", () => {
         { ...homes, VITE_DEV_SERVER_URL: "http://localhost:5173" },
       );
 
-      assert.equal(inherited.stateDir, "/Users/alice/.t3-learn/userdata");
+      assert.equal(inherited.stateDir, "/Users/alice/.ominax/userdata");
       assert.equal(production.stateDir, "/Users/alice/learn/userdata");
       assert.equal(development.stateDir, "/Users/alice/.t3/userdata");
     }),
