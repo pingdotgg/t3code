@@ -526,6 +526,7 @@ export const WS_METHODS = {
   serverGetChatSyncStatus: "server.getChatSyncStatus",
   knowledgeList: "knowledge.list",
   knowledgeRemove: "knowledge.remove",
+  learnFeatureUsed: "learn.featureUsed",
   coursesList: "courses.list",
   coursesRemove: "courses.remove",
   visualsClear: "visuals.clear",
@@ -842,6 +843,24 @@ const WsKnowledgeRemoveRpc = Rpc.make(WS_METHODS.knowledgeRemove, {
   payload: KnowledgeMapRemoveInput,
   success: KnowledgeMapEntries,
   error: Schema.Union([KnowledgeMapError, EnvironmentAuthorizationError]),
+});
+// Client-only feature use for analytics; closed enums only, so no text can reach it.
+const WsLearnFeatureUsedRpc = Rpc.make(WS_METHODS.learnFeatureUsed, {
+  payload: Schema.Union([
+    Schema.Struct({
+      feature: Schema.Literal("whats_new.action"),
+      variant: Schema.Literals([
+        "new-lesson",
+        "side-chats",
+        "what-you-know",
+        "quiz-cards",
+        "courses",
+        "chat-sync",
+      ]),
+    }),
+    Schema.Struct({ feature: Schema.Literal("knowledge_map.view") }),
+  ]),
+  error: EnvironmentAuthorizationError,
 });
 const WsCoursesListRpc = Rpc.make(WS_METHODS.coursesList, {
   payload: Schema.Struct({}),
@@ -2097,6 +2116,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetChatSyncStatusRpc,
   WsKnowledgeListRpc,
   WsKnowledgeRemoveRpc,
+  WsLearnFeatureUsedRpc,
   WsCoursesListRpc,
   WsCoursesRemoveRpc,
   WsVisualsClearRpc,

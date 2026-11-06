@@ -89,6 +89,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetChatSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.knowledgeList]: AuthOrchestrationReadScope,
   [WS_METHODS.knowledgeRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.learnFeatureUsed]: AuthOrchestrationReadScope,
   [WS_METHODS.coursesList]: AuthOrchestrationReadScope,
   [WS_METHODS.coursesRemove]: AuthSettingsWriteScope,
   [WS_METHODS.visualsClear]: AuthSettingsWriteScope,

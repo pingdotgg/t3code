@@ -118,7 +118,11 @@ are recorded by the dispatch handler, which can tell a retry apart.
 the methods and commands, and takes variants only from closed contract enums,
 so paths, ids, and text never reach analytics. Guests of a shared thread have no
 WebSocket connection, so the guest share service records their joins and messages
-itself, with no `surface`.
+itself, with no `surface`. UI-only uses (What's new, viewing the knowledge map) have no
+server request of their own, so clients report them through `learn.featureUsed`, whose
+payload is only closed enums. A quiz answer keeps only its grade, and a side chat that a
+lesson message finishes by itself is counted from the events that dispatch committed, so
+the Orchestrator stays free of analytics.
 
 Agent tool events report driver kinds, never instance ids: users name
 instances, so an instance id can identify an account or employer.

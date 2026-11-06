@@ -1211,6 +1211,10 @@ export function createServerEnvironmentAtoms<R, E>(
     onSuccess: ({ environmentId }, registry) =>
       Effect.sync(() => registry.refresh(knowledgeMap({ environmentId, input: {} }))),
   });
+  const reportFeatureUsed = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:learn-feature-used",
+    tag: WS_METHODS.learnFeatureUsed,
+  });
   const courses = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:server:courses",
     tag: WS_METHODS.coursesList,
@@ -1258,6 +1262,7 @@ export function createServerEnvironmentAtoms<R, E>(
     chatSyncStatus,
     knowledgeMap,
     removeKnowledge,
+    reportFeatureUsed,
     courses,
     removeCourse,
     clearVisuals,
