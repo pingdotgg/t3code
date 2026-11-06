@@ -34,6 +34,7 @@ import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { useLayoutPane } from "../layout/layoutPaneContext";
+import { copyLayoutFilePath } from "../layout/PaneTabs";
 import type { LauncherSurfaceKind } from "./SurfaceLauncher";
 import { THREAD_TERMINAL_SURFACE_ID } from "../layout/layoutModel";
 import { runInNewLayoutTab } from "../layout/layoutStore";
@@ -45,8 +46,6 @@ import {
 import { showThreadChatBeside } from "../layout/openRules";
 import { shortcutLabelForCommand } from "../keybindings";
 import { readLocalApi } from "../localApi";
-import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { randomUUID } from "../lib/utils";
 import {
   isAtomCommandInterrupted,
@@ -555,14 +554,7 @@ function ThreadSurfacePane({
       onCloseOtherSurfaces={noop}
       onCloseSurfacesToRight={noop}
       onCloseAllSurfaces={noop}
-      onCopyFilePath={(path) =>
-        void navigator.clipboard?.writeText(
-          formatFilePathForClipboard(
-            path,
-            resolvePathLinkTarget(path, context.gitCwd ?? context.workspaceRoot ?? ""),
-          ),
-        )
-      }
+      onCopyFilePath={(path) => copyLayoutFilePath(threadRef, path)}
       onAddBrowser={() => openers.open("browser")}
       onAddBrowserInProfile={(profileId) => openers.open("browser", profileId)}
       onNewThread={
