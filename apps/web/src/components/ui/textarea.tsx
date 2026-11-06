@@ -9,7 +9,13 @@ type TextareaProps = React.ComponentProps<"textarea"> & {
   unstyled?: boolean;
 };
 
-function Textarea({ className, size = "default", unstyled = false, ...props }: TextareaProps) {
+function Textarea({
+  className,
+  size = "default",
+  unstyled = false,
+  rows,
+  ...props
+}: TextareaProps) {
   return (
     <span
       className={
@@ -26,11 +32,21 @@ function Textarea({ className, size = "default", unstyled = false, ...props }: T
         render={(defaultProps) => (
           <textarea
             className={cn(
-              "field-sizing-content min-h-17.5 max-h-64 w-full rounded-[inherit] px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] outline-none wrap-anywhere max-sm:min-h-20.5",
-              size === "sm" &&
-                "min-h-16.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] max-sm:min-h-19.5",
+              "field-sizing-content max-h-64 w-full rounded-[inherit] px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] outline-none wrap-anywhere",
+              rows === undefined && "min-h-17.5 max-sm:min-h-20.5",
+              size === "sm" && "px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)]",
+              size === "sm" && rows === undefined && "min-h-16.5 max-sm:min-h-19.5",
             )}
+            // field-sizing: content ignores `rows`, so an explicit row count sets the minimum height.
+            style={
+              rows === undefined
+                ? undefined
+                : {
+                    minHeight: `calc(${rows}lh + 2 * (var(--spacing) * ${size === "sm" ? 1 : 1.5} - 1px))`,
+                  }
+            }
             data-slot="textarea"
+            rows={rows}
             {...mergeProps(defaultProps, props)}
           />
         )}

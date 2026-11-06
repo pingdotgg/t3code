@@ -1,6 +1,6 @@
 import { Chip } from "../../components/ui/Chip";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
-import type { PullRequestListEntry } from "@t3tools/contracts";
+import type { PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
 import { View } from "react-native";
 import { PullRequestCardGroup, PullRequestCardRow } from "./PullRequestControls";
 import { PullRequestStackCard } from "./PullRequestStackCard";
@@ -14,11 +14,14 @@ export function PullRequestOverviewLoading({
   params,
   stack,
 }: {
-  readonly summary: PullRequestListEntry;
+  readonly summary: PullRequestListEntry | PullRequestSummary;
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
 }) {
-  const review = pullRequestListReviewStatus(summary);
+  const review = pullRequestListReviewStatus({
+    reviewDecision: summary.reviewDecision ?? undefined,
+    viewerReviewRequested: "viewerReviewRequested" in summary && summary.viewerReviewRequested,
+  });
   const conflicting = summary.mergeability === "conflicting";
   const clean = summary.mergeability === "mergeable";
   return (
@@ -89,7 +92,7 @@ export function PullRequestOverviewLoading({
           <View className="h-11 rounded-xl bg-subtle-strong" />
         </View>
       </PullRequestCardGroup>
-      {summary.labels.length ? (
+      {"labels" in summary && summary.labels.length ? (
         <View className="flex-row flex-wrap gap-2">
           {summary.labels.map((label) => (
             <Chip key={label.name} label={label.name} size="small" />

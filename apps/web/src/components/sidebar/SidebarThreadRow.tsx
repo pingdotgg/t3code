@@ -195,6 +195,7 @@ const SIDEBAR_STATUSES: Record<
   { readonly label: string; readonly Icon: typeof CircleDashedIcon; readonly className: string }
 > = {
   working: { label: "Working", Icon: CircleDashedIcon, className: "text-info-foreground" },
+  preparing: { label: "Setting up", Icon: CircleDashedIcon, className: "text-info-foreground" },
   waiting: { label: "Waiting", Icon: CircleDotDashedIcon, className: "text-muted-foreground" },
   approval: { label: "Approval", Icon: ShieldQuestionIcon, className: "text-warning-foreground" },
   input: {
@@ -241,7 +242,8 @@ function SidebarStatusLabel(props: {
     >
       <status.Icon aria-hidden className={props.compact ? "size-3 shrink-0" : "size-4 shrink-0"} />
       {props.label ?? status.label}
-      {!props.compact && (props.kind === "working" || props.kind === "waiting") ? (
+      {!props.compact &&
+      (props.kind === "working" || props.kind === "preparing" || props.kind === "waiting") ? (
         <span aria-hidden>
           <WorkingDuration startedAt={props.workingStartedAt} />
         </span>
@@ -1015,7 +1017,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
               : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
     shouldRecede &&
-      status === "working" &&
+      (status === "preparing" || status === "working") &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
@@ -1346,7 +1348,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         kind={topStatus}
                         label={topStatusLabel}
                         workingStartedAt={
-                          topStatus === "working"
+                          topStatus === "working" || topStatus === "preparing"
                             ? resolveWorkingStartedAt(thread)
                             : topStatus === "waiting"
                               ? (thread.latestRun?.completedAt ?? null)
@@ -1520,7 +1522,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         kind={topStatus}
                         label={topStatusLabel}
                         workingStartedAt={
-                          topStatus === "working"
+                          topStatus === "working" || topStatus === "preparing"
                             ? resolveWorkingStartedAt(thread)
                             : topStatus === "waiting"
                               ? (thread.latestRun?.completedAt ?? null)
