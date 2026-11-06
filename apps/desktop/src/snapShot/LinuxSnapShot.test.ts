@@ -14,23 +14,13 @@ import {
 } from "dbus-next";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-const { connect, resize, imageSize } = vi.hoisted(() => ({
-  connect: vi.fn(),
-  resize: vi.fn(() => ({ toPNG: () => Buffer.from("resized") })),
-  imageSize: { width: 800, height: 600 },
-}));
+const { connect } = vi.hoisted(() => ({ connect: vi.fn() }));
 vi.mock("dbus-next", async (original) => ({
   ...(await original<typeof import("dbus-next")>()),
   sessionBus: connect,
 }));
-vi.mock("electron", () => ({
-  nativeImage: {
-    createFromBuffer: () => ({
-      isEmpty: () => false,
-      getSize: () => imageSize,
-      resize,
-    }),
-  },
+vi.mock("./LinuxCaptureResize.ts", () => ({
+  resizeLinuxCaptureInRenderer: async (png: Buffer) => png,
 }));
 
 import { captureLinuxWindow, getLinuxCaptureSupport, readPortalPng } from "./LinuxSnapShot.ts";
@@ -153,8 +143,6 @@ beforeEach(async () => {
   directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-portal-test-"));
   bus.uri = NodeURL.pathToFileURL(NodePath.join(directory, "image.png")).href;
   await NodeFSP.writeFile(NodePath.join(directory, "image.png"), png);
-  imageSize.width = 800;
-  imageSize.height = 600;
   vi.stubEnv("FLATPAK_ID", "");
   vi.stubEnv("SNAP", "");
   vi.stubEnv("NIRI_SOCKET", "");
