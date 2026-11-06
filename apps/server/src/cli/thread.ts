@@ -619,12 +619,14 @@ const resolveRemoteProject = Effect.fn("cli.thread.resolveRemoteProject")(functi
   }
   const matches = there.filter((project) => project.repositoryIdentity?.canonicalKey === key);
   if (matches.length === 1) return matches[0]!.id;
+  const named = (projects: typeof there) =>
+    projects.map((project) => `${project.title} (${project.id})`).join(", ");
   return yield* new ThreadRemoteProjectError({
     environmentId,
     detail:
       matches.length === 0
-        ? `No project there has ${here.title}'s repository.`
-        : `Several projects there have ${here.title}'s repository: ${matches.map((project) => `${project.title} (${project.id})`).join(", ")}.`,
+        ? `No project there has ${here.title}'s repository.${there.length === 0 ? "" : ` Projects there: ${named(there)}.`}`
+        : `Several projects there have ${here.title}'s repository: ${named(matches)}.`,
   });
 });
 
@@ -773,8 +775,9 @@ const threadListCommand = Command.make("list", {
         for (const { label, threads } of listed) {
           for (const thread of threads) {
             const where = label === null ? "" : `${label}  `;
+            const project = flags.allProjects ? `${thread.projectId}  ` : "";
             yield* Console.log(
-              `${where}${thread.threadId}  ${thread.status.padEnd(11)}  ${thread.title}`,
+              `${where}${project}${thread.threadId}  ${thread.status.padEnd(11)}  ${thread.title}`,
             );
           }
         }
