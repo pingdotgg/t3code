@@ -6,6 +6,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
@@ -521,6 +522,7 @@ export const layer: Layer.Layer<
           readonly title: string;
           readonly error: Error;
           readonly message?: string;
+          readonly failure?: OrchestrationV2ProviderFailure;
         }) {
           const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
           yield* settleRunBeforeStart({
@@ -532,18 +534,20 @@ export const layer: Layer.Layer<
             item: {
               type: "error",
               title: failed.title,
-              failure: makeProviderFailure({
-                cause: failed.error,
-                message:
-                  failed.message ??
-                  knownProviderFailureMessage(failed.error) ??
-                  (nestedCause instanceof Error
-                    ? nestedCause.message
-                    : typeof nestedCause === "string"
-                      ? nestedCause
-                      : failed.error.message),
-                class: "provider_error",
-              }),
+              failure:
+                failed.failure ??
+                makeProviderFailure({
+                  cause: failed.error,
+                  message:
+                    failed.message ??
+                    knownProviderFailureMessage(failed.error) ??
+                    (nestedCause instanceof Error
+                      ? nestedCause.message
+                      : typeof nestedCause === "string"
+                        ? nestedCause
+                        : failed.error.message),
+                  class: "provider_error",
+                }),
             },
           });
         },
@@ -808,15 +812,18 @@ export const layer: Layer.Layer<
       );
       if (sessionResult._tag === "Failure") {
         const failure = sessionResult.failure;
-        const requiresSignIn =
-          "cause" in failure &&
-          isProviderAdapterOpenSessionError(failure.cause) &&
-          failure.cause.requiresSignIn === true;
-        if (input.willRetry === true && !requiresSignIn) return yield* failure;
+        const openFailure =
+          "cause" in failure && isProviderAdapterOpenSessionError(failure.cause)
+            ? failure.cause
+            : undefined;
+        const requiresSignIn = openFailure?.requiresSignIn === true;
+        const rateLimited = openFailure?.failure?.class === "usage_limit";
+        if (input.willRetry === true && !requiresSignIn && !rateLimited) return yield* failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",
           error: sessionResult.failure,
+          ...(openFailure?.failure === undefined ? {} : { failure: openFailure.failure }),
         });
         return;
       }

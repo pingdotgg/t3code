@@ -1,7 +1,11 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
 import * as NodeFSP from "node:fs/promises";
 
-import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  AntigravityAuthMethod,
+  OrchestrationV2ProviderFailure,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Digest from "effect/crypto/Digest";
@@ -17,6 +21,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
@@ -161,9 +166,32 @@ function authSupportError(detail: string) {
   return new AcpErrors.AcpTransportError({ detail, cause: undefined });
 }
 
+function isAntigravityLicensingRateLimit(error: unknown): boolean {
+  return (
+    isAcpRequestError(error) &&
+    error.method === "authenticate" &&
+    error.errorMessage.startsWith("Gemini Enterprise license resolution failed (HTTP 429)")
+  );
+}
+
+export function antigravitySessionOpenFailure(
+  cause: unknown,
+): OrchestrationV2ProviderFailure | undefined {
+  if (!isAntigravityLicensingRateLimit(cause)) return undefined;
+  return makeProviderFailure({
+    class: "usage_limit",
+    message:
+      "Antigravity's Gemini Enterprise license check is rate limited. Wait before retrying; signing in again will not reset this limit.",
+    code: "RATE_LIMIT_EXCEEDED",
+    retryable: true,
+  });
+}
+
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
   return (
-    (isAcpRequestError(error) && error.code === -32000) ||
+    (isAcpRequestError(error) &&
+      error.code === -32000 &&
+      !isAntigravityLicensingRateLimit(error)) ||
     (isAcpTransportError(error) && error.detail === ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)
   );
 }

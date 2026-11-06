@@ -43,7 +43,10 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
-import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
+import {
+  antigravitySessionOpenFailure,
+  isAntigravitySignInRequiredError,
+} from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -273,6 +276,7 @@ export function makeAntigravityAcpAdapterFlavor(
     // ACP 1.3.0 treats /compact as ordinary model input.
     supportsCompaction: false,
     requiresSignIn: isAntigravitySignInRequiredError,
+    openSessionFailure: antigravitySessionOpenFailure,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
