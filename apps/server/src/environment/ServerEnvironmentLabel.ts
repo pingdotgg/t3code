@@ -55,10 +55,11 @@ function parseMachineInfoValue(raw: string, key: string): string | null {
       continue;
     }
     const value = trimmed.slice(key.length + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    if (value.startsWith('"') && value.endsWith('"')) {
+      // systemd writes ", \, ` and $ escaped inside double quotes; other backslashes stay, as in sh.
+      return normalizeLabel(value.slice(1, -1).replace(/\\(["\\`$])/g, "$1"));
+    }
+    if (value.startsWith("'") && value.endsWith("'")) {
       return normalizeLabel(value.slice(1, -1));
     }
     return normalizeLabel(value);
