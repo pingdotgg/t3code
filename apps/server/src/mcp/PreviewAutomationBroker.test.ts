@@ -1241,7 +1241,7 @@ it.effect("a late tab-not-found reply keeps a tab another call made current", ()
         .pipe(Effect.forkScoped);
       yield* Deferred.await(explicitSeen);
       const implicit = yield* broker
-        .invoke({ scope, operation: "snapshot", input: { marker: "implicit" } })
+        .invoke<void>({ scope, operation: "snapshot", input: { marker: "implicit" } })
         .pipe(Effect.flip, Effect.forkScoped);
       yield* Deferred.await(implicitSeen);
       yield* Deferred.succeed(releaseExplicit, undefined);
