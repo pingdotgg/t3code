@@ -109,6 +109,7 @@ export function applyUsageLimitsUpdate(input: {
     previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
+    ...(previous?.refreshAfter !== undefined ? { refreshAfter: previous.refreshAfter } : {}),
     ...(previous?.stale ? { stale: true } : {}),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
@@ -133,7 +134,11 @@ export function resolveUsageLimitsAfterProbe(input: {
   const { published, probed } = input;
   if (published?.credentialFingerprint !== probed?.credentialFingerprint) return probed;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
-    return { ...published, stale: true };
+    return {
+      ...published,
+      stale: true,
+      ...(probed.refreshAfter !== undefined ? { refreshAfter: probed.refreshAfter } : {}),
+    };
   }
   if (
     published &&

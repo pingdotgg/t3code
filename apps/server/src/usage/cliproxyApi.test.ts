@@ -225,6 +225,9 @@ describe("CLIProxyAPI built-in management API", () => {
         expect(cached.map((account) => account.usageLimits.checkedAt)).toEqual(
           first.map((account) => account.usageLimits.checkedAt),
         );
+        expect(cached.map((account) => account.usageLimits.refreshAfter)).toEqual([
+          300_000, 300_000,
+        ]);
         expect(
           test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
         ).toHaveLength(2);

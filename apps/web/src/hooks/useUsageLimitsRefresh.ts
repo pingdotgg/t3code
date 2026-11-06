@@ -1,3 +1,6 @@
+import { AsyncResult } from "effect/reactivity";
+import { usageRefreshDeadline } from "@t3tools/client-runtime/state/usage";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRouterState } from "@tanstack/react-router";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { useAtomValue } from "@effect/atom-react";
@@ -25,7 +28,27 @@ export function useUsageLimitsRefresh(
       return refresh({
         environmentId,
         input: driver ? { usage: true, usageProviders: [driver] } : { instanceId, usage: true },
-      });
+      }).then((result) =>
+        AsyncResult.isSuccess(result)
+          ? usageRefreshDeadline([
+              ...result.value.providers
+                .filter((provider) =>
+                  driver ? provider.driver === driver : provider.instanceId === instanceId,
+                )
+                .map((provider) => provider.usageLimits),
+              ...(driver
+                ? (
+                    appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))
+                      ?.usageLimitSources ?? []
+                  ).flatMap((source) =>
+                    source.accounts
+                      .filter((account) => account.driver === driver)
+                      .map((account) => account.usageLimits),
+                  )
+                : []),
+            ])
+          : undefined,
+      );
     },
     {
       enabled: enabled && connected && chatVisible && instanceId !== null,
@@ -34,6 +57,7 @@ export function useUsageLimitsRefresh(
         ...(driver ? [JSON.stringify([environmentId, driver])] : []),
         JSON.stringify([environmentId, driver, instanceId]),
       ],
+      refreshDeadline: (result) => (typeof result === "number" ? result : undefined),
       refreshOnShow: true,
       refreshWhileIdle: true,
     },

@@ -1,10 +1,15 @@
-import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import * as Cause from "effect/Cause";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-type RefreshResult = AsyncResult.AsyncResult<void, string>;
+type RefreshResult = AsyncResult.AsyncResult<{ providers: readonly ServerProvider[] }, string>;
 
 const state = vi.hoisted(() => ({
   providers: [] as Array<{ instanceId: ProviderInstanceId; driver: ProviderDriverKind }>,
@@ -38,7 +43,7 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 
-const success: RefreshResult = AsyncResult.success(undefined);
+const success: RefreshResult = AsyncResult.success({ providers: [] });
 const failure: RefreshResult = AsyncResult.failure(Cause.fail("offline"));
 
 function setup(refresh: (environmentId: string) => Promise<RefreshResult>) {

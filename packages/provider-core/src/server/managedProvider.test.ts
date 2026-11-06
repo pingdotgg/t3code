@@ -156,7 +156,10 @@ describe("makeManagedServerProvider", () => {
             initialSnapshot: () => Effect.succeed(initialSnapshot),
             checkProvider: Effect.gen(function* () {
               if (yield* UsagePolling) yield* Ref.update(reads, (n) => n + 1);
-              return refreshedSnapshot;
+              return {
+                ...refreshedSnapshot,
+                usageLimits: { checkedAt: refreshedSnapshot.checkedAt, windows: [] },
+              };
             }),
           }).pipe(Effect.provideService(UsagePolling, true));
           yield* provider.refresh;
@@ -165,7 +168,12 @@ describe("makeManagedServerProvider", () => {
             concurrency: "unbounded",
           }).pipe(Effect.provideService(UsagePolling, true));
           assert.strictEqual(yield* Ref.get(reads), 1);
-          yield* TestClock.adjust("5 minutes");
+          assert.strictEqual((yield* provider.getSnapshot).usageLimits?.refreshAfter, 300_000);
+          yield* TestClock.adjust("4 minutes");
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(reads), 1);
+          assert.strictEqual((yield* provider.getSnapshot).usageLimits?.refreshAfter, 300_000);
+          yield* TestClock.adjust("1 minute");
           yield* provider.refresh;
           assert.strictEqual(yield* Ref.get(reads), 1);
           yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true));
@@ -227,7 +235,7 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* Ref.get(reads), 1);
           const unchanged = yield* provider.refresh;
           if (transition === "auth-type") {
-            assert.deepStrictEqual(unchanged.usageLimits, limits);
+            assert.deepStrictEqual(unchanged.usageLimits, { ...limits, refreshAfter: 300_000 });
             assert.strictEqual(unchanged.auth.workspaceId, "ws-a");
           }
           yield* Ref.set(
@@ -288,6 +296,7 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* Ref.get(reads), 3);
           assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
             ...good,
+            refreshAfter: 600_000,
             stale: true,
           });
         }),
@@ -923,7 +932,7 @@ describe("makeManagedServerProvider", () => {
         assert.strictEqual(yield* provider.getSnapshot, partial);
         assert.deepStrictEqual(
           (yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true))).usageLimits,
-          failedLimits,
+          { ...failedLimits, refreshAfter: 300_000 },
         );
 
         const completeLimits = {
@@ -937,7 +946,7 @@ describe("makeManagedServerProvider", () => {
         yield* TestClock.adjust("5 minutes");
         assert.deepStrictEqual(
           (yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true))).usageLimits,
-          completeLimits,
+          { ...completeLimits, refreshAfter: 600_000 },
         );
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),

@@ -11,6 +11,7 @@ function Probe(props: {
   readonly refreshOnShow?: boolean;
   readonly refreshWhileIdle?: boolean;
   readonly refreshKeys?: readonly string[];
+  readonly refreshDeadline?: () => number | undefined;
 }) {
   useLiveRefresh(props.refresh, {
     key: props.viewKey,
@@ -18,6 +19,7 @@ function Probe(props: {
     ...(props.intervalMs !== undefined ? { intervalMs: props.intervalMs } : {}),
     refreshWhileIdle: props.refreshWhileIdle ?? false,
     ...(props.refreshKeys ? { refreshKeys: props.refreshKeys } : {}),
+    ...(props.refreshDeadline ? { refreshDeadline: props.refreshDeadline } : {}),
     ...(props.refreshOnShow !== undefined ? { refreshOnShow: props.refreshOnShow } : {}),
   });
   return null;
@@ -60,10 +62,14 @@ describe("useLiveRefresh", () => {
     },
   );
 
-  it.each(["reenabled", "remounted", "another entry point"])(
+  it.each(["reenabled", "remounted", "another entry point", "another client"])(
     "keeps the completed usage deadline when %s",
     async (lifecycle) => {
-      const refresh = vi.fn();
+      let sampledAt = 4_000_000;
+      const refresh = vi.fn(() => {
+        if (lifecycle === "another client" && Date.now() - sampledAt >= 300_000)
+          sampledAt = Date.now();
+      });
       let otherEntry = false;
       using _timers = fakeTimers({ now: 4_000_000 });
       const probe = (enabled: boolean) => (
@@ -71,6 +77,9 @@ describe("useLiveRefresh", () => {
           refresh={refresh}
           viewKey={`completed-usage:${lifecycle}:${otherEntry}`}
           {...(lifecycle === "another entry point" ? { refreshKeys: ["completed-provider"] } : {})}
+          {...(lifecycle === "another client"
+            ? { refreshDeadline: () => sampledAt + 300_000 }
+            : {})}
           enabled={enabled}
           refreshOnShow
           refreshWhileIdle
@@ -81,13 +90,13 @@ describe("useLiveRefresh", () => {
       expect(refresh).toHaveBeenCalledTimes(1);
       await screen.rerender(lifecycle !== "reenabled" ? <></> : probe(false));
       await act(() => vi.advanceTimersByTime(4 * 60_000));
-      otherEntry = lifecycle === "another entry point";
+      otherEntry = lifecycle === "another entry point" || lifecycle === "another client";
       await screen.rerender(probe(true));
-      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(refresh).toHaveBeenCalledTimes(lifecycle === "another client" ? 2 : 1);
       await act(() => vi.advanceTimersByTime(60_000));
-      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(refresh).toHaveBeenCalledTimes(lifecycle === "another client" ? 3 : 2);
       await act(() => vi.advanceTimersByTime(5 * 60_000));
-      expect(refresh).toHaveBeenCalledTimes(3);
+      expect(refresh).toHaveBeenCalledTimes(lifecycle === "another client" ? 4 : 3);
     },
   );
 

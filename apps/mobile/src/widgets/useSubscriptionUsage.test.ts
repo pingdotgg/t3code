@@ -59,7 +59,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
     input: { readonly environmentId: string },
   ) => {
     fixture.refreshed.push(input.environmentId);
-    return Promise.resolve(AsyncResult.success(undefined));
+    return Promise.resolve(AsyncResult.success({ providers: [] }));
   },
 }));
 

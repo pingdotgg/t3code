@@ -5,8 +5,12 @@ import {
   type ProviderDriverKind,
 } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { refreshUsageLimits, usageLimitsRefreshDelay } from "@t3tools/client-runtime/state/usage";
-import { Atom, type AtomRegistry } from "effect/reactivity";
+import {
+  refreshUsageLimits,
+  usageLimitsRefreshDelay,
+  usageRefreshDeadline,
+} from "@t3tools/client-runtime/state/usage";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { serverEnvironment } from "../../state/server";
 
@@ -51,23 +55,60 @@ function environmentLimitsRefreshKeys(
 export async function refreshEnvironmentLimits(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
-  options: { readonly automatic?: boolean; readonly afterPending?: boolean } = {},
+  options: {
+    readonly automatic?: boolean;
+    readonly afterPending?: boolean;
+    readonly instanceId?: ProviderInstanceId;
+    readonly driver?: ProviderDriverKind;
+  } = {},
 ): Promise<void> {
   if (!isAppActive()) return;
-  // One refresh runs per environment at a time, so results land in the order
-  // they were started and the newest outcome always wins.
   const result = await refreshUsageLimits(
     environmentId,
     () =>
       runAtomCommand(
         registry,
         serverEnvironment.refreshProviders,
-        { environmentId, input: { usage: true } },
+        {
+          environmentId,
+          input: options.driver
+            ? { usage: true, usageProviders: [options.driver] }
+            : { usage: true, ...(options.instanceId ? { instanceId: options.instanceId } : {}) },
+        },
         { reportFailure: false },
       ),
     options.automatic,
     options.afterPending,
-    { key: "", resources: environmentLimitsRefreshKeys(registry, environmentId) },
+    {
+      ...(options.instanceId
+        ? instanceLimitsRefreshSelection(options.instanceId, options.driver)
+        : { key: "", resources: environmentLimitsRefreshKeys(registry, environmentId) }),
+      refreshDeadline: (result) =>
+        AsyncResult.isSuccess(result)
+          ? usageRefreshDeadline([
+              ...result.value.providers
+                .filter((provider) =>
+                  options.driver
+                    ? provider.driver === options.driver
+                    : options.instanceId === undefined ||
+                      provider.instanceId === options.instanceId,
+                )
+                .map((provider) => provider.usageLimits),
+              ...(
+                registry.get(serverEnvironment.configValueAtom(environmentId))?.usageLimitSources ??
+                []
+              ).flatMap((source) =>
+                source.accounts
+                  .filter((account) =>
+                    options.driver
+                      ? account.driver === options.driver
+                      : options.instanceId === undefined,
+                  )
+                  .map((account) => account.usageLimits),
+              ),
+            ])
+          : undefined,
+    },
   );
   if (result === undefined) return;
   registry.set(limitsRefreshFailedAtom(environmentId), result._tag === "Failure");

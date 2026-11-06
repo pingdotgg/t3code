@@ -1,3 +1,4 @@
+import { AsyncResult } from "effect/reactivity";
 import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -13,7 +14,15 @@ const mocks = vi.hoisted(() => ({
   banner: vi.fn<(id: string, report: { createdAt: string }) => { id: string }>(),
 }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => mocks.refresh }));
-vi.mock("../state/server", () => ({ serverEnvironment: { refreshProviders: {} } }));
+vi.mock("../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    serverEnvironment: {
+      refreshProviders: {},
+      configValueAtom: () => Atom.make({ usageLimitSources: [] }),
+    },
+  };
+});
 vi.mock("../state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
   const presentation = Atom.make({ connection: { phase: "connected" } });
@@ -21,7 +30,7 @@ vi.mock("../state/presentation", async () => {
 });
 
 function setup() {
-  mocks.refresh.mockReset();
+  mocks.refresh.mockReset().mockResolvedValue(AsyncResult.success({ providers: [] }));
   mocks.banner.mockReset().mockImplementation((id) => ({ id }));
   return mocks;
 }

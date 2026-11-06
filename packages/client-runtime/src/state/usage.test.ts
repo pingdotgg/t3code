@@ -242,6 +242,15 @@ describe("limits refresh cooldown", () => {
   it("keeps a provider's deadline when a wider refresh runs before it is due", async () => {
     const id = EnvironmentId.make("limits-shared-deadlines");
     using now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const remote = EnvironmentId.make("limits-remote-client");
+    now.mockReturnValue(4 * 60_000);
+    await refreshUsageLimits(remote, async () => 300_000, true, false, {
+      key: "",
+      resources: ["claude"],
+      refreshDeadline: (deadline) => deadline,
+    });
+    expect(usageLimitsRefreshDelay(remote, "claude")).toBe(60_000);
+    now.mockReturnValue(0);
     await refreshUsageLimits(id, async () => "claude", true, false, {
       key: "thread",
       resources: ["claude"],

@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   ServerProvider,
+  ServerProviderUsageLimits,
   UsageModelFilter,
   UsageSummary,
   UsageSummaryInput,
@@ -52,6 +53,18 @@ export function usageSummaryInput(
   return modelFilter === undefined ? input : { ...input, modelFilter };
 }
 
+export function usageRefreshDeadline(
+  limits: Iterable<ServerProviderUsageLimits | undefined>,
+): number | undefined {
+  // @effect-diagnostics-next-line globalDate:off
+  const now = Date.now();
+  const deadlines = Array.from(limits, (reading) => reading?.refreshAfter).filter(
+    (deadline): deadline is number =>
+      deadline !== undefined && Number.isFinite(deadline) && deadline > now,
+  );
+  return deadlines.length ? Math.min(...deadlines) : undefined;
+}
+
 const limitsRefreshAfter = new Map<string, number>();
 const limitsRefreshes = new Map<string, Promise<unknown>>();
 
@@ -75,7 +88,13 @@ export async function refreshUsageLimits<A>(
   refresh: () => Promise<A>,
   automatic = false,
   afterPending = false,
-  selectionKey: string | { readonly key: string; readonly resources: readonly string[] } = "",
+  selectionKey:
+    | string
+    | {
+        readonly key: string;
+        readonly resources: readonly string[];
+        readonly refreshDeadline?: (result: A) => number | undefined;
+      } = "",
 ): Promise<A | undefined> {
   const selections =
     typeof selectionKey === "string"
@@ -102,12 +121,21 @@ export async function refreshUsageLimits<A>(
     typeof selectionKey === "string"
       ? selections
       : selections.filter((selection) => usageLimitsRefreshDelay(environmentId, selection) === 0);
+  let deadline: number | undefined;
   const current = Promise.resolve()
     .then(refresh)
+    .then((result) => {
+      if (typeof selectionKey !== "string") deadline = selectionKey.refreshDeadline?.(result);
+      return result;
+    })
     .finally(() => {
       limitsRefreshes.delete(key);
       // @effect-diagnostics-next-line globalDate:off
-      const refreshAfter = Date.now() + 5 * 60_000;
+      const finishedAt = Date.now();
+      const refreshAfter =
+        deadline !== undefined && deadline > finishedAt
+          ? Math.min(deadline, finishedAt + 5 * 60_000)
+          : finishedAt + 5 * 60_000;
       for (const selection of refreshedSelections)
         limitsRefreshAfter.set(JSON.stringify([environmentId, selection]), refreshAfter);
     });

@@ -216,7 +216,11 @@ it.effect.each(["listing", "quota", "changed-account"] as const)(
         );
       if (failure === "quota")
         expect(failed.accounts.map((account) => account.usageLimits)).toEqual(
-          prior.accounts.map((account) => ({ ...account.usageLimits, stale: true })),
+          prior.accounts.map((account) => ({
+            ...account.usageLimits,
+            refreshAfter: 600_000,
+            stale: true,
+          })),
         );
       if (failure === "listing") expect(failed.error).toContain("401");
       else expect(failed.error).toBeUndefined();

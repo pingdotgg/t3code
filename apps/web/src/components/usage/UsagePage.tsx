@@ -19,6 +19,7 @@ import * as Cause from "effect/Cause";
 import {
   cursorKeychainAccessEnvironments,
   refreshUsageLimits,
+  usageRefreshDeadline,
 } from "@t3tools/client-runtime/state/usage";
 import {
   updatingProvidersLabel,
@@ -282,6 +283,28 @@ export function UsagePage() {
     ).then((result) => {
       setLimitsNow(Date.now());
       if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+      return usageRefreshDeadline([
+        ...result.value.flatMap((response) =>
+          response !== undefined && AsyncResult.isSuccess(response)
+            ? response.value.providers
+                .filter((provider) => visibleDrivers.includes(provider.driver))
+                .map((provider) => provider.usageLimits)
+            : [],
+        ),
+        ...Array.from(presentationsWithProviders).flatMap(([environmentId, presentation]) =>
+          presentation.connection.phase === "connected" &&
+          (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId))
+            ? (
+                appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))
+                  ?.usageLimitSources ?? []
+              ).flatMap((source) =>
+                source.accounts
+                  .filter((account) => visibleDrivers.includes(account.driver))
+                  .map((account) => account.usageLimits),
+              )
+            : [],
+        ),
+      ]);
     });
   const onUsageKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (
@@ -371,6 +394,7 @@ export function UsagePage() {
           ]
         : [],
     ),
+    refreshDeadline: (result) => (typeof result === "number" ? result : undefined),
     refreshOnShow: true,
     refreshWhileIdle: true,
   });

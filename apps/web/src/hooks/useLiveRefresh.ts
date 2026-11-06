@@ -78,6 +78,7 @@ export function useLiveRefresh(
     readonly key?: string;
     /** Shared deadlines for resources read by this view. */
     readonly refreshKeys?: readonly string[];
+    readonly refreshDeadline?: (result: unknown) => number | undefined;
     /** `null` turns off the periodic refresh, for a read too costly to repeat unasked. */
     readonly intervalMs?: number | null;
     /**
@@ -103,6 +104,7 @@ export function useLiveRefresh(
     if (sharedKeys === undefined) lastRefreshedAtByView.set(viewId, now);
     return refresh();
   });
+  const serverDeadline = useEffectEvent((result: unknown) => options.refreshDeadline?.(result));
   const fallbackViewId = useId();
   const viewId = key ?? fallbackViewId;
 
@@ -136,10 +138,21 @@ export function useLiveRefresh(
           (key) => now - (lastRefreshedAtByView.get(key) ?? -Infinity) >= refreshFloorMs,
         );
         for (const key of refreshedKeys) lastRefreshedAtByView.set(key, now);
-        result = Promise.resolve(runRefresh(viewId, now)).finally(() => {
-          pendingRefreshesByView.delete(requestKey);
-          for (const key of refreshedKeys) lastRefreshedAtByView.set(key, Date.now());
-        });
+        let deadline: number | undefined;
+        result = Promise.resolve(runRefresh(viewId, now))
+          .then((value) => {
+            deadline = serverDeadline(value);
+            return value;
+          })
+          .finally(() => {
+            pendingRefreshesByView.delete(requestKey);
+            const completedAt = Date.now();
+            const observedAt =
+              deadline !== undefined && deadline > completedAt
+                ? Math.min(completedAt, deadline - refreshFloorMs)
+                : completedAt;
+            for (const key of refreshedKeys) lastRefreshedAtByView.set(key, observedAt);
+          });
         pendingRefreshesByView.set(requestKey, result);
       }
       pending = true;

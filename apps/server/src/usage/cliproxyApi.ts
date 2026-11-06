@@ -15,6 +15,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
+import * as MutableHashMap from "effect/MutableHashMap";
+import * as Option from "effect/Option";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
@@ -354,12 +356,17 @@ export const makeCliproxyApi = Effect.gen(function* () {
         ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
         : {}),
     };
+    const usageKey = yield* encodeJson({
+      hub,
+      account,
+      url:
+        account.provider === "claude"
+          ? "https://api.anthropic.com/api/oauth/usage"
+          : `${CODEX_BASE}/usage`,
+    }).pipe(Effect.orDie);
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const { body, checkedAt } = yield* Cache.get(
-          usageCache,
-          yield* encodeJson({ hub, account, url: "https://api.anthropic.com/api/oauth/usage" }),
-        );
+        const { body, checkedAt } = yield* Cache.get(usageCache, usageKey);
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -391,10 +398,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           }).limits,
         };
       }
-      const { body, checkedAt } = yield* Cache.get(
-        usageCache,
-        yield* encodeJson({ hub, account, url: `${CODEX_BASE}/usage` }),
-      );
+      const { body, checkedAt } = yield* Cache.get(usageCache, usageKey);
       const usage = yield* decodeCodexUsage(body);
       const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
         window
@@ -447,10 +451,19 @@ export const makeCliproxyApi = Effect.gen(function* () {
           message: "The hub could not read this account's usage.",
         }),
       })),
-      Effect.map((result) => ({
-        ...result,
-        usageLimits: { ...result.usageLimits, credentialFingerprint },
-      })),
+      Effect.map((result) => {
+        const refreshAfter = Option.getOrUndefined(
+          MutableHashMap.get(usageCache.map, usageKey),
+        )?.expiresAt;
+        return {
+          ...result,
+          usageLimits: {
+            ...result.usageLimits,
+            credentialFingerprint,
+            ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+          },
+        };
+      }),
     );
   });
 

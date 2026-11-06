@@ -217,7 +217,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           workspaceId && !probedSnapshot.auth.workspaceId
             ? { ...probedSnapshot, auth: { ...probedSnapshot.auth, workspaceId } }
             : probedSnapshot,
-          usageLimits,
+          usageLimits === undefined || usageRefreshAfter === 0
+            ? usageLimits
+            : { ...usageLimits, refreshAfter: usageRefreshAfter },
         );
         return [
           { snapshot, generation },
