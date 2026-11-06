@@ -1,4 +1,7 @@
-import { EMPTY_TERMINAL_SESSION_STATE } from "@t3tools/client-runtime/state/terminal";
+import {
+  EMPTY_TERMINAL_SESSION_STATE,
+  type TerminalSessionState,
+} from "@t3tools/client-runtime/state/terminal";
 import {
   EnvironmentId,
   ThreadId,
@@ -16,6 +19,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 
 const fixture = vi.hoisted(() => ({
   statusByThreadId: new Map<string, "running" | "exited">(),
+  sessions: new Map<string, Atom.Writable<TerminalSessionState>>(),
   pendingSurfaces: [] as Array<() => void>,
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
   reportedSize: null as { cols: number; rows: number } | null,
@@ -55,13 +59,15 @@ vi.mock("~/terminal/ghostty/surface", () => ({
 vi.mock("../state/terminalSessions", async () => {
   const Atom = await import("effect/reactivity/Atom");
   const sessions = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.family((threadId: ThreadId) =>
-      Atom.make({
+    Atom.family((threadId: ThreadId) => {
+      const session = Atom.make<TerminalSessionState>({
         ...EMPTY_TERMINAL_SESSION_STATE,
         status: fixture.statusByThreadId.get(threadId) ?? "closed",
         version: 1,
-      }),
-    ),
+      });
+      fixture.sessions.set(threadId, session);
+      return session;
+    }),
   );
   return {
     attachedTerminalSessionAtom: (environmentId: EnvironmentId, terminal: { threadId: ThreadId }) =>
@@ -296,15 +302,26 @@ it("resends the terminal size after a resize request fails", async () => {
   expect(resizes).toEqual([resize, resize]);
 });
 
-it("stops resending when the resize keeps failing", async () => {
+it("resends a failed resize once in each writable session", async () => {
   const { other: threadRef } = setup();
   const resizes: unknown[] = [];
+  const failure = AsyncResult.failure(Cause.die(new Error("resize rejected")));
+  let failFirstResize = () => {};
   fixture.runResize = (input) => {
     resizes.push(input);
-    return Promise.resolve(AsyncResult.failure(Cause.die(new Error("resize rejected"))));
+    if (resizes.length > 1) return Promise.resolve(failure);
+    return new Promise((resolve) => {
+      failFirstResize = () => resolve(failure);
+    });
   };
+  const running = (generation: number): TerminalSessionState => ({
+    ...EMPTY_TERMINAL_SESSION_STATE,
+    status: "running",
+    version: 1,
+    output: { ...EMPTY_TERMINAL_SESSION_STATE.output, generation },
+  });
   await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
-  using _timers = fakeTimers();
+  const session = fixture.sessions.get(threadRef.threadId)!;
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
@@ -312,8 +329,14 @@ it("stops resending when the resize keeps failing", async () => {
     fixture.reportedSize = { cols: 57, rows: 41 };
     fixture.surfaceOptions.at(-1)!.onResize(57, 41);
   });
+  // The first request fails while the attachment reconnects, so its retry is not sent.
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(10_000);
+    appAtomRegistry.set(session, { ...running(1), version: 0 });
+    failFirstResize();
   });
-  expect(resizes).toHaveLength(2);
+  expect(resizes).toHaveLength(1);
+  await act(async () => {
+    appAtomRegistry.set(session, running(2));
+  });
+  expect(resizes).toHaveLength(3);
 });
