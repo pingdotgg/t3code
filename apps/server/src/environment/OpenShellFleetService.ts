@@ -51,6 +51,7 @@ const GATEWAY_CREDENTIAL_SLOT = "openshell-gateway-credential";
 const isDriverError = Schema.is(OpenShellGatewayDriverError);
 
 const offHere = "OpenShell fleet management is off here.";
+const fleetOperationFailed = "The fleet operation failed.";
 
 export class OpenShellFleetDisabled extends Schema.TaggedError<OpenShellFleetDisabled>()(
   "OpenShellFleetDisabled",
@@ -78,9 +79,6 @@ export type OpenShellFleetError =
   | OpenShellFleetDisabled
   | OpenShellFleetSpawnRefused
   | OpenShellFleetOperationFailed;
-
-const describe = (cause: unknown, fallback: string): string =>
-  cause instanceof Error ? cause.message : fallback;
 
 /**
  * The OpenShell fleet on this managing instance (spec sections 5 and 6). The
@@ -146,10 +144,11 @@ const make = Effect.gen(function* () {
 
   const failDisabled = (message: string) => new OpenShellFleetDisabled({ message });
 
+  /** A stable message for callers; the underlying detail stays in the cause. */
   const failed = (operation: OpenShellFleetOperationFailed["operation"], cause: unknown) =>
     new OpenShellFleetOperationFailed({
       operation,
-      message: describe(cause, "The fleet operation failed."),
+      message: fleetOperationFailed,
       cause,
     });
 
@@ -195,16 +194,17 @@ const make = Effect.gen(function* () {
    * not set means "no credential"; a read that failed is a typed fleet error,
    * never silently treated as unset.
    */
-  const gatewayCredential: Effect.Effect<string | undefined, OpenShellFleetError> = Effect.gen(
-    function* () {
-      const stored = yield* secrets
-        .get(GATEWAY_CREDENTIAL_SLOT)
-        .pipe(Effect.mapError((cause) => failed("spawn", cause)));
-      return Option.isSome(stored) ? new TextDecoder().decode(stored.value) : undefined;
-    },
-  );
+  const gatewayCredential = Effect.fn("OpenShellFleetService.gatewayCredential")(function* (
+    operation: OpenShellFleetOperationFailed["operation"],
+  ) {
+    const stored = yield* secrets
+      .get(GATEWAY_CREDENTIAL_SLOT)
+      .pipe(Effect.mapError((cause) => failed(operation, cause)));
+    return Option.isSome(stored) ? new TextDecoder().decode(stored.value) : undefined;
+  });
 
   const openClient = Effect.fn("OpenShellFleetService.openClient")(function* (
+    operation: OpenShellFleetOperationFailed["operation"],
     gatewayUrl: string,
     credential: string | undefined,
   ) {
@@ -215,7 +215,7 @@ const make = Effect.gen(function* () {
             ? { gatewayUrl }
             : { gatewayUrl, oidcTokenProvider: () => Promise.resolve(credential) },
         ),
-      catch: (cause) => failed("spawn", cause),
+      catch: (cause) => failed(operation, cause),
     });
     return client;
   });
@@ -258,10 +258,12 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const buildDriver = Effect.gen(function* () {
+  const buildDriver = Effect.fn("OpenShellFleetService.buildDriver")(function* (
+    operation: OpenShellFleetOperationFailed["operation"],
+  ) {
     const { gatewayUrl, openshell } = yield* gatewaySettings;
-    const credential = yield* gatewayCredential;
-    const client = yield* openClient(gatewayUrl, credential);
+    const credential = yield* gatewayCredential(operation);
+    const client = yield* openClient(operation, gatewayUrl, credential);
     const context = yield* Effect.context<never>();
     // The driver's collaborators are Promise-shaped because the OpenShell SDK
     // is; they run these Effects on the surrounding services rather than a
@@ -309,15 +311,16 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const driverFor: Effect.Effect<OpenShellGatewayDriver, OpenShellFleetError> = Effect.gen(
-    function* () {
-      const cached = yield* Ref.get(cachedDriver);
-      if (Option.isSome(cached)) return yield* cached.value;
-      const built = yield* Effect.cached(buildDriver);
-      yield* Ref.set(cachedDriver, Option.some(built));
-      return yield* built;
-    },
-  );
+  /** A cached build is only reused while the settings guard passes on every call. */
+  const driverFor = Effect.fn("OpenShellFleetService.driverFor")(function* (
+    operation: OpenShellFleetOperationFailed["operation"],
+  ) {
+    const cached = yield* Ref.get(cachedDriver);
+    if (Option.isSome(cached)) return yield* cached.value;
+    const built = yield* Effect.cached(buildDriver(operation));
+    yield* Ref.set(cachedDriver, Option.some(built));
+    return yield* built;
+  });
 
   const spawnWorker: OpenShellFleetService["Service"]["spawnWorker"] = Effect.fn(
     "OpenShellFleetService.spawnWorker",
@@ -336,7 +339,10 @@ const make = Effect.gen(function* () {
         message: `Worker policy ${runtimeMode} is broader than this caller's ${input.runtimeModeCeiling} ceiling.`,
       });
     }
-    const driver = yield* driverFor;
+    // The guard runs per call, so disabling OpenShell after first use also
+    // stops spawns; the driver itself is cached and would outlive a flip.
+    yield* gatewaySettings;
+    const driver = yield* driverFor("spawn");
     const options: GatewayDriverSpawnOptionsWithCeiling = {
       ...(input.clientRequestId === undefined ? {} : { idempotencyKey: input.clientRequestId }),
       runtimeModeCeiling: input.runtimeModeCeiling,
@@ -365,7 +371,8 @@ const make = Effect.gen(function* () {
   const removeWorker: OpenShellFleetService["Service"]["removeWorker"] = Effect.fn(
     "OpenShellFleetService.removeWorker",
   )(function* (input): Effect.fn.Return<GatewayDriverRemoveResult, OpenShellFleetError> {
-    const driver = yield* driverFor;
+    yield* gatewaySettings;
+    const driver = yield* driverFor("remove");
     const options: GatewayDriverRemoveOptions = {
       ...(input.drainTimeoutMs === undefined ? {} : { timeoutMs: input.drainTimeoutMs }),
       ...(input.force === undefined ? {} : { force: input.force }),
@@ -380,7 +387,8 @@ const make = Effect.gen(function* () {
     ReadonlyArray<OpenShellFleetWorkerStatus>,
     OpenShellFleetError
   > {
-    const driver = yield* driverFor;
+    yield* gatewaySettings;
+    const driver = yield* driverFor("list");
     return yield* callDriver("list", () =>
       driver.status(input.workerClass === undefined ? {} : { workerClass: input.workerClass }),
     );

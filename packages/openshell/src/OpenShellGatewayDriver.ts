@@ -380,6 +380,10 @@ export class OpenShellGatewayDriver implements GatewayDriver {
       [MANAGED_BY_LABEL]: this.managedBy,
       [WORKER_CLASS_LABEL]: spec.workerClass,
     };
+    // A retry with the same idempotency key may return an already-registered
+    // sandbox, so a policy failure keeps it: deleting could destroy a live
+    // worker without drain and strand its fleet row.
+    const preExisting = (await this.client.get(name)) !== null;
     const created = await this.client.createFromTemplate({
       template,
       name,
@@ -387,18 +391,35 @@ export class OpenShellGatewayDriver implements GatewayDriver {
       requestId: idempotencyKey,
     });
 
-    // Policy translation (spec section 5.2): the conservative default guards
-    // against a caller that forgot the mode (see sandboxPolicyForRuntimeMode).
-    // A sandbox whose policy cannot be set is deleted again, because it would
-    // otherwise exist without a fleet row: invisible to status, TTL and removal.
+    // Policy translation (spec section 5.2). A sandbox this attempt created
+    // but whose policy cannot be set is deleted again: it would otherwise be
+    // invisible to status, TTL and removal.
     try {
       await this.client.setPolicy(created.name, sandboxPolicyForRuntimeMode(runtimeMode));
     } catch (cause) {
-      await this.client.deleteSandbox(created.name).catch(() => "already_absent" as const);
+      if (preExisting) {
+        throw new OpenShellGatewayDriverError({
+          reason: "gateway",
+          message:
+            `The sandbox policy could not be set for the existing sandbox ${created.name}; ` +
+            "it was kept, because a previous attempt may already have registered it.",
+          cause,
+        });
+      }
+      let deleteFailure: unknown;
+      try {
+        await this.client.deleteSandbox(created.name);
+      } catch (deleteCause) {
+        deleteFailure = deleteCause;
+      }
       throw new OpenShellGatewayDriverError({
         reason: "gateway",
-        message: `The sandbox policy could not be set; ${created.name} was deleted again.`,
-        cause,
+        message:
+          deleteFailure === undefined
+            ? `The sandbox policy could not be set; ${created.name} was deleted again.`
+            : `The sandbox policy could not be set and ${created.name} could not be deleted; ` +
+              "it remains for the orphan sweep to reclaim.",
+        cause: deleteFailure === undefined ? cause : { cause, deleteFailure },
       });
     }
     const ready = await this.client.waitReady(created.name, IMAGE_PREP_TIMEOUT_SECS);

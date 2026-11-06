@@ -193,6 +193,30 @@ const toSandboxView = (sandbox: OpenShellSdkSandbox): OpenShellSandboxView => {
 const templateFromUnknown = Schema.decodeUnknownSync(OpenShellSandboxTemplate);
 
 /**
+ * Normalizes a gateway delete answer to the contracts' typed outcomes. SDK 0.1.7
+ * answers with an object ({ outcome }); older shapes answered with the string
+ * alone. Throws when the answer is unreadable, so a delete never lies.
+ */
+export const parseDeleteOutcome = (
+  result: unknown,
+): "completed" | "accepted" | "already_absent" => {
+  const raw =
+    typeof result === "string"
+      ? result
+      : ((result as { outcome?: unknown }).outcome ?? (result as { status?: unknown }).status);
+  if (typeof raw !== "string") {
+    throw new Error(
+      `The gateway returned an unreadable deletion outcome: ${JSON.stringify(result)}`,
+    );
+  }
+  const normalized = raw.toLowerCase();
+  if (normalized !== "completed" && normalized !== "accepted" && normalized !== "already_absent") {
+    throw new Error(`The gateway returned an unknown deletion outcome: ${raw}`);
+  }
+  return normalized;
+};
+
+/**
  * Connects the real SDK and adapts it to {@link OpenShellGatewayClient}. The
  * delete outcome is lowercased to the contracts' typed values.
  */
@@ -248,26 +272,7 @@ export const connectOpenShellGateway = async (
           ? undefined
           : { request_id: requestOptions.requestId },
       );
-      // SDK 0.1.7 answers with an object ({ outcome }); older shapes answered with
-      // the string alone. Both are read, so a successful delete never throws.
-      const raw =
-        typeof result === "string"
-          ? result
-          : ((result as { outcome?: unknown }).outcome ?? (result as { status?: unknown }).status);
-      if (typeof raw !== "string") {
-        throw new Error(
-          `The gateway returned an unreadable deletion outcome: ${JSON.stringify(result)}`,
-        );
-      }
-      const normalized = raw.toLowerCase();
-      if (
-        normalized !== "completed" &&
-        normalized !== "accepted" &&
-        normalized !== "already_absent"
-      ) {
-        throw new Error(`The gateway returned an unknown deletion outcome: ${raw}`);
-      }
-      return normalized;
+      return parseDeleteOutcome(result);
     },
     waitReady: async (name, timeoutSecs) =>
       toSandboxView(await client.sandbox.waitReady(name, timeoutSecs)),
