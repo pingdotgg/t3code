@@ -820,6 +820,74 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
+  it.effect("reads commit stats alongside later activity pages", () =>
+    Effect.gen(function* () {
+      const laterPageStarted = yield* Deferred.make<void>();
+      const statsStarted = yield* Deferred.make<void>();
+      const activityPage = (head: boolean) => ({
+        data: {
+          repository: {
+            pullRequest: {
+              ...(head
+                ? {
+                    author: null,
+                    commits: {
+                      nodes: [
+                        {
+                          commit: {
+                            id: "node-regular",
+                            oid: "regular",
+                            messageHeadline: "regular",
+                            committedDate: "2026-07-05T00:00:00Z",
+                            parents: { totalCount: 1 },
+                            authors: { nodes: [] },
+                          },
+                        },
+                      ],
+                    },
+                  }
+                : {}),
+              comments: {
+                nodes: [],
+                pageInfo: head ? { hasNextPage: true, endCursor: "c1" } : lastPage,
+              },
+              reviews: { nodes: [], pageInfo: lastPage },
+            },
+          },
+        },
+      });
+      mockedExecute.mockImplementation((call) => {
+        if (matches(call, "PullRequestCommitStats")) {
+          return Deferred.succeed(statsStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(laterPageStarted)),
+            Effect.as(
+              output(
+                encodeJson({
+                  data: {
+                    nodes: [{ __typename: "Commit", oid: "regular", additions: 3, deletions: 1 }],
+                  },
+                }),
+              ),
+            ),
+          );
+        }
+        const head = call.kind === "graphql" && call.variables?.["head"] === true;
+        return head
+          ? Effect.succeed(output(encodeJson(activityPage(true))))
+          : Deferred.succeed(laterPageStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(statsStarted)),
+              Effect.as(output(encodeJson(activityPage(false)))),
+            );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const activity = yield* cli.getPullRequestActivity(pullRequestInput);
+
+      expect(activity.commits[0]).toMatchObject({ additions: 3, deletions: 1 });
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+    }),
+  );
+
   it.effect("loads the complete hover card with one GraphQL request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -1996,6 +2064,84 @@ layer("GitHubPullRequestApi.layer", (it) => {
       },
     },
   });
+
+  it.effect.each([
+    { queued: false, field: "mergePullRequest", state: "MERGED", autoMergeRequest: null },
+    {
+      queued: true,
+      field: "enablePullRequestAutoMerge",
+      state: "OPEN",
+      autoMergeRequest: { mergeMethod: "MERGE" },
+    },
+  ] as const)(
+    "returns the pull request from GitHub's $field reply",
+    ({ queued, field, state, autoMergeRequest }) =>
+      Effect.gen(function* () {
+        const mergedAt = state === "MERGED" ? "2026-10-27T11:59:00Z" : null;
+        route(
+          ["query PullRequestActionState", actionState({ isMergeQueueEnabled: queued })],
+          [
+            field + "(",
+            {
+              data: {
+                [field]: {
+                  pullRequest: {
+                    number: 7,
+                    title: "Pull request 7",
+                    url: "https://github.com/acme/web/pull/7",
+                    headRefName: "feat/page",
+                    baseRefName: "main",
+                    state,
+                    isDraft: false,
+                    updatedAt: "2026-10-27T12:00:00Z",
+                    mergedAt,
+                    closedAt: mergedAt,
+                    headRefOid: "response-head",
+                    author: { __typename: "User", login: "alice", avatarUrl: "", name: null },
+                    autoMergeRequest,
+                  },
+                },
+              },
+            },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        expect(yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" })).toEqual({
+          number: 7,
+          title: "Pull request 7",
+          url: "https://github.com/acme/web/pull/7",
+          headBranch: "feat/page",
+          baseBranch: "main",
+          state: state.toLowerCase(),
+          isDraft: false,
+          updatedAt: "2026-10-27T12:00:00Z",
+          mergedAt,
+          closedAt: mergedAt,
+          author: { login: "alice", name: null, avatarUrl: null },
+          headSha: "response-head",
+          autoMergeEnabled: queued,
+          ...(queued ? { autoMergeMethod: "merge" } : {}),
+        });
+        // The action-state read and the mutation; no re-read of the pull request.
+        expect(mockedExecute).toHaveBeenCalledTimes(2);
+      }),
+  );
+
+  it.effect("succeeds without a summary when GitHub's merge reply does not decode", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ isMergeQueueEnabled: false })],
+        [
+          "mergePullRequest(",
+          { data: { mergePullRequest: { pullRequest: { state: "MERGING" } } } },
+        ],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(
+        yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
+      ).toBeUndefined();
+    }),
+  );
 
   it.effect.each([
     {
@@ -3299,7 +3445,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
           Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const read = cli.listReviewThreadComments(pullRequestInput);
+        const read = cli.listReviewThreadComments({
+          ...pullRequestInput,
+          repository: `acme/refused-threads-${later}`,
+        });
         const conversation = yield* read;
         expect(
           variablesOf("ReviewThreads").map((v) => [v["after"], v["requestedReviewers"]]),
@@ -3327,7 +3476,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         yield* read;
         expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({
           after: null,
-          requestedReviewers: 50,
+          requestedReviewers: 0,
         });
       }),
   );
@@ -3375,7 +3524,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 checkSuite: { workflowRun: { workflow: { name: "windows" } } },
                               }),
                             ],
-                            pageInfo: { hasNextPage: false },
+                            pageInfo: { hasNextPage: false, endCursor: null },
                           },
                         },
                       },
@@ -3412,7 +3561,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
   );
 
   it.effect.each([false, true])(
-    "reads every check when the combined response has another page (reviewer refusal: %s)",
+    "continues after the core check page without reading it twice (reviewer refusal: %s)",
     (refused) =>
       Effect.gen(function* () {
         if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
@@ -3427,13 +3576,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                         commit: {
                           statusCheckRollup: {
                             contexts: {
-                              nodes: [
-                                checkRun({
-                                  name: "first",
-                                  status: "COMPLETED",
-                                  conclusion: "SUCCESS",
-                                }),
-                              ],
+                              nodes: [checkRun({ name: "first", conclusion: "SUCCESS" })],
                               pageInfo: { hasNextPage: true, endCursor: "c1" },
                             },
                           },
@@ -3448,19 +3591,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
         );
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
-            output(
-              checkContextsPage(
-                [
-                  checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
-                  checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
-                ],
-                null,
-              ),
-            ),
+            output(checkContextsPage([checkRun({ name: "last", conclusion: "FAILURE" })], null)),
           ),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const read = cli.getPullRequestDetail(pullRequestInput);
+        const read = cli.getPullRequestDetail({
+          ...pullRequestInput,
+          repository: `acme/refused-checks-${refused}`,
+        });
         const detail = yield* read;
         expect(detail.reviewRequestLogins).toEqual([]);
         expect(detail.reviewRequestTeams).toEqual([]);
@@ -3469,18 +3607,19 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks).toHaveLength(2);
+        expect(detail.checks.map((check) => check.name).sort()).toEqual(["first", "last"]);
         expect(detail.checksState).toBe("failing");
         expect(detail.checksTruncated).toBe(false);
-        // The whole rollup is walked from its start, so no check is counted twice or skipped.
-        expect(variablesOf("CheckContexts")).toEqual([expect.objectContaining({ number: 7 })]);
-        expect(variablesOf("CheckContexts")[0]).not.toHaveProperty("after");
+        expect(variablesOf("CheckContexts")).toEqual([
+          expect.objectContaining({ number: 7, after: "c1" }),
+        ]);
         expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
 
         if (refused) {
           mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
           yield* read;
-          expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ requestedReviewers: 100 });
+          expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ requestedReviewers: 0 });
+          expect(mockedExecute).toHaveBeenCalledTimes(4);
         }
       }),
   );
@@ -3498,7 +3637,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   statusCheckRollup: {
                     contexts: {
                       nodes: [],
-                      pageInfo: { hasNextPage: true },
+                      pageInfo: { hasNextPage: true, endCursor: "c1" },
                     },
                   },
                 },
@@ -3514,7 +3653,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         const error = yield* Effect.flip(
           cli.getPullRequestDetail({
             cwd: "/w",
-            repository: "acme/web",
+            repository: `acme/head-changed-${refused}`,
             host: "github.com",
             number: 7,
           }),
