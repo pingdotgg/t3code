@@ -193,7 +193,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
   }
   if (phase === "idle") {
     return (
-      <Button size="sm" variant="outline" onClick={() => void start()}>
+      <Button size="sm" variant="secondary" onClick={() => void start()}>
         <MicIcon />
         Test microphone
       </Button>
