@@ -3793,7 +3793,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           effects,
         );
       }
+      // Stop already cancels buffered notifications; skip the runs it cancelled.
+      const stillQueuedRunIds = stopsForQuestion
+        ? new Set(
+            (yield* getProjectionWithPendingEvents(command.threadId, events)).runs
+              .filter((run) => run.status === "queued")
+              .map((run) => run.id),
+          )
+        : undefined;
       for (const run of automaticQueuedRuns) {
+        if (stillQueuedRunIds !== undefined && !stillQueuedRunIds.has(run.id)) continue;
         yield* dispatchQueuedRunCancel(
           {
             type: "queued-run.cancel",

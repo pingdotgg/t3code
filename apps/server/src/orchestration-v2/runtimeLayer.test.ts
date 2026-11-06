@@ -2049,6 +2049,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       readonly approval?: boolean;
       readonly queuedMessage?: boolean;
       readonly unanswerable?: boolean;
+      readonly queuedNotification?: boolean;
       /** "idle": the run and turn have ended; "otherTurn": the run runs but the question's turn ended. */
       readonly turnState?: "idle" | "otherTurn";
     } = {},
@@ -2247,6 +2248,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         dispatchMode: { type: "queue_after_active" },
       });
     }
+    if (options.queuedNotification === true) {
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "provider",
+        commandId: CommandId.make(`${name}-notification`),
+        threadId,
+        messageId: MessageId.make(`${name}-notification`),
+        text: "Background task finished.",
+        notification: {
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: "Background task finished",
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+      });
+    }
     return { threadId, run, requestId, nodeId, itemId };
   });
 
@@ -2347,6 +2366,35 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           assert.deepEqual(yield* outbox.listByCommandId(settleCommandId), []);
         }
       }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("cancels automatic queued work when settling mid-question", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const { threadId, run } = yield* seedLiveQuestion("runtime-settle-question-notification", {
+        queuedNotification: true,
+      });
+      const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.filter(
+        (candidate) => candidate.status === "queued",
+      );
+      assert.lengthOf(queued, 1);
+      const settleCommandId = CommandId.make("runtime-settle-question-notification-settle");
+      yield* orchestrator.dispatch({ type: "thread.settle", commandId: settleCommandId, threadId });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settled.thread.settledOverride, "settled");
+      assert.equal(
+        settled.runs.find((candidate) => candidate.id === queued[0]!.id)?.status,
+        "cancelled",
+      );
+      assert.isFalse(settled.runs.some((candidate) => candidate.status === "queued"));
+      const effectTypes = (yield* outbox.listByCommandId(settleCommandId)).map(
+        (effect) => effect.request.type,
+      );
+      assert.include(effectTypes, "provider-turn.interrupt");
+      assert.notInclude(effectTypes, "provider-turn.start");
+      assert.notEqual(run.id, queued[0]!.id);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("delivers the cancel for a live question when no turn is left to stop", () =>
