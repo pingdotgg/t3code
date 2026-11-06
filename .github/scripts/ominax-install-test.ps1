@@ -88,7 +88,10 @@ if ($Scenario -eq "fresh") {
     $previousRunning = Wait-Server $newData $previous
     Log "OminaX $previousRunning is running"
     Plant-Learning
-    if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") { node apps/desktop/scripts/plant-saved-connection.mjs plant }
+    if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") {
+      node apps/desktop/scripts/plant-saved-connection.mjs plant
+      if ($LASTEXITCODE -ne 0) { Fail "planting the saved connection failed" }
+    }
   } else {
     Log "No distinct previous promoted release; installing OminaX $Version fresh"
   }

@@ -173,7 +173,6 @@ if [ "$scenario" = service ]; then
   if systemctl --user is-enabled t3learn.service >/dev/null 2>&1 || systemctl --user is-active t3learn.service >/dev/null 2>&1; then
     fail "legacy t3learn.service remains after migration"
   fi
-  systemctl --user disable t3learn.service >/dev/null 2>&1 || true
   systemctl --user stop ominax.service >/dev/null 2>&1 || true
   log "PASS"
   exit 0
@@ -307,7 +306,7 @@ elif [ "$scenario" = appimage ]; then
 else
   ! installed ominax || fail "the ominax package is still installed"
 fi
-[ -d "$HOME/.ominax/userdata" ] || [ -L "$HOME/.t3-learn" ] || [ -d "$HOME/.t3-learn/userdata" ] || fail "uninstall removed OminaX's data"
+[ -d "$HOME/.ominax/userdata" ] || fail "uninstall removed OminaX's data"
 check_learning "uninstall"
 if [ "$scenario" = next-to-t3-code ]; then
   [ "$(wait_for_server "$HOME/.t3" "$t3code_version")" = "$t3code_version" ] || fail "T3 Code stopped after uninstalling OminaX"
