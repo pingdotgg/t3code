@@ -313,6 +313,102 @@ function makeProviderThread(input: {
   };
 }
 
+// A Codex native subagent's provider thread is owned by its child app thread
+// but reachable from the parent's projection through the subagent record.
+const makeNativeChildFixture = Effect.fnUntraced(function* () {
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const now = yield* DateTime.now;
+  const parentThreadId = ThreadId.make("native-parent");
+  const childThreadId = ThreadId.make("native-child");
+  const providerSessionId = idAllocator.derive.providerSession({
+    providerInstanceId: modelSelection.instanceId,
+  });
+  const childThreadEvent = yield* makeThreadCreatedEvent({
+    idAllocator,
+    threadId: childThreadId,
+    now,
+  });
+  const childProviderThread = makeProviderThread({
+    idAllocator,
+    threadId: childThreadId,
+    providerSessionId,
+    nativeThreadId: "native-child-thread",
+    now,
+  });
+  const parentRunId = idAllocator.derive.run({ threadId: parentThreadId, ordinal: 1 });
+  yield* eventSink.write({
+    events: [
+      yield* makeThreadCreatedEvent({ idAllocator, threadId: parentThreadId, now }),
+      {
+        ...childThreadEvent,
+        payload: {
+          ...childThreadEvent.payload,
+          createdBy: "agent",
+          creationSource: "provider",
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId,
+            relationshipToParent: "subagent",
+            rootThreadId: parentThreadId,
+          },
+        },
+      },
+      {
+        id: yield* idAllocator.allocate.event({ threadId: childThreadId }),
+        type: "provider-thread.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: childProviderThread,
+      },
+      {
+        id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+        type: "subagent.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.nodeFromProviderItem({
+            driver: CODEX_DRIVER,
+            nativeItemId: "native-child-task",
+          }),
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId: idAllocator.derive.rootNode({ runId: parentRunId }),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver: CODEX_DRIVER,
+          providerInstanceId: modelSelection.instanceId,
+          providerThreadId: childProviderThread.id,
+          childThreadId,
+          nativeTaskRef: {
+            driver: CODEX_DRIVER,
+            nativeId: "native-child-task",
+            strength: "strong",
+          },
+          prompt: "Reply READY",
+          title: "Native child",
+          model: null,
+          status: "completed",
+          result: "READY",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      },
+    ],
+  });
+  const parent = { threadId: parentThreadId, providerSessionId };
+  const runtime = yield* manager.open({ ...parent, modelSelection, runtimePolicy });
+  const resumeChild = runtime.resumeThread({
+    providerThread: childProviderThread,
+    threadId: childThreadId,
+    modelSelection,
+    runtimePolicy,
+  });
+  return { manager, parent, resumeChild };
+});
+
 function unimplemented(detail: string) {
   return Effect.fail(
     new ProviderAdapter.ProviderAdapterProtocolError({
@@ -539,8 +635,7 @@ function layerTest(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-          getInstance: () => Effect.succeed(undefined),
+          getInstance: () => Effect.undefined,
         }),
         layerConfiguredEventSink,
         IdAllocator.layer,
@@ -3413,6 +3508,153 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 detaching a parent keeps an attached delegated child's thread loaded",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-delegated-child",
+        });
+        const parentThreadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-delegated-child-parent",
+          projectId,
+        });
+        const childThreadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-delegated-child-child",
+          projectId,
+        });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const parentProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: parentThreadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-parent",
+        });
+        const childProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: childThreadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-child",
+        });
+        const childRunId = idAllocator.derive.run({ threadId: childThreadId, ordinal: 2 });
+        const parentRunId = idAllocator.derive.run({ threadId: parentThreadId, ordinal: 1 });
+        const subagentId = idAllocator.derive.rootNode({ runId: childRunId });
+
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: parentThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: childThreadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+              type: "provider-thread.updated",
+              threadId: parentThreadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: parentProviderThread,
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: childThreadId }),
+              type: "provider-thread.updated",
+              threadId: childThreadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: childProviderThread,
+            },
+            // The delegated task record already finished; the child was then sent a
+            // follow-up and is running a later turn of its own.
+            {
+              id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              nodeId: subagentId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: subagentId,
+                threadId: parentThreadId,
+                runId: null,
+                parentNodeId: idAllocator.derive.rootNode({ runId: parentRunId }),
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: CODEX_DRIVER,
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: childProviderThread.id,
+                childThreadId,
+                nativeTaskRef: null,
+                prompt: "Delegated work",
+                title: "Delegated child",
+                model: modelSelection.model,
+                status: "completed",
+                result: "first result",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: childThreadId }),
+              type: "provider-turn.updated",
+              threadId: childThreadId,
+              runId: childRunId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: {
+                id: idAllocator.derive.providerTurn({
+                  driver: CODEX_DRIVER,
+                  nativeTurnId: "native-child-turn",
+                }),
+                providerThreadId: childProviderThread.id,
+                nodeId: idAllocator.derive.rootNode({ runId: childRunId }),
+                runAttemptId: null,
+                nativeTurnRef: null,
+                ordinal: 2,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+          ],
+        });
+        yield* manager.open({
+          threadId: parentThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: childThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        yield* manager.detach({ providerSessionId, threadId: parentThreadId });
+
+        const afterParentDetach = yield* Ref.get(state);
+        assert.equal(afterParentDetach.interruptCount, 0);
+        assert.deepEqual(afterParentDetach.unloadedNativeThreadIds, ["native-parent"]);
+
+        yield* manager.detach({ providerSessionId, threadId: childThreadId });
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-parent",
+          "native-child",
+        ]);
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 invalidates only errored threads and keeps reusable session errors cached",
   () =>
     Effect.gen(function* () {
@@ -3530,6 +3772,40 @@ it.effect(
       });
 
       yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps an attached native child loaded when its parent detaches",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const { manager, parent, resumeChild } = yield* makeNativeChildFixture();
+        yield* resumeChild;
+        yield* manager.detach(parent);
+
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        // The child's next turn trusts the manager's loaded cache, so the
+        // native thread must still be loaded for that turn to be heard.
+        yield* resumeChild;
+        assert.equal((yield* Ref.get(state)).resumeCount, 1);
+        assert.isTrue(yield* manager.isLive(parent.providerSessionId));
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })), Effect.scoped);
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 unloads an unattached native child when its parent detaches",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const { manager, parent } = yield* makeNativeChildFixture();
+        yield* manager.detach(parent);
+
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-child-thread"]);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })), Effect.scoped);
     }),
 );
 

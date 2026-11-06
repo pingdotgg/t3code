@@ -1,0 +1,673 @@
+---
+title: Hillclimbing distilled
+date: 2026-10-24T16:00:00Z
+excerpt: We asked an agent for a benchmark dashboard, then kept pushing it to drive every number on it lower. The result is 123 commits that cut distilled's bundles by a third, its added latency by four fifths and its import memory by three quarters. Distilled now adds 5 to 109 times less latency per call than the official AWS, Cloudflare and GCP SDKs, and stays ahead with every response validated.
+---
+
+import StatGrid from "../../../components/blog/StatGrid.astro";
+import VendorGrid from "../../../components/blog/VendorGrid.astro";
+import BarChart from "../../../components/blog/BarChart.astro";
+import BenchChart from "../../../components/blog/bench/BenchChart.astro";
+import StubWalkthrough from "../../../components/blog/StubWalkthrough.astro";
+import DedupeFigure from "../../../components/blog/DedupeFigure.astro";
+import BarrelFigure from "../../../components/blog/BarrelFigure.astro";
+
+Every Alchemy resource talks to its cloud through
+[distilled](https://distilled.cloud), our Effect-native SDKs covering
+88 providers. Bindings use it too: under the hood, a binding makes HTTP
+calls to the cloud's API, so every Worker or Lambda with a binding
+bundles distilled.
+
+That puts distilled's size in every deploy and every bundle, and until
+recently it was heavy: one API call bundled to 57 KB, and importing all
+of AWS took 227 MB of memory.
+
+So we hillclimbed it. We built a benchmark for every SDK, put it on a
+dashboard, and pointed an agent at it with one job: make every number
+go down. It ran the benchmark after every change, kept what helped and
+dropped what didn't. Over 123 commits and 84 benchmark runs, a
+single call's bundle shrank by a third and
+importing all of AWS went from 227 MB to 13.9 MB.
+
+<StatGrid
+  title="Distilled today vs distilled before this work"
+  stats={[
+    { value: "−33%", label: "bundle size", detail: "57.1 → 38.3 KB gzip" },
+    { value: "−79%", label: "added latency per call", detail: "19.5 → 4.0 µs" },
+    { value: "−74%", label: "import memory", detail: "2.15 → 0.57 MB" },
+    { value: "16×", label: "less memory to import all of AWS", detail: "227 → 13.9 MB" },
+  ]}
+/>
+
+These are medians over 98 "programs": one credentials layer plus one
+operation, for every SDK and every wire protocol it uses. Here is how
+that compares with the official SDKs today:
+
+<VendorGrid />
+
+## How we kept score
+
+We can't make AWS or Cloudflare faster, only the SDK in front of them,
+so real API calls would only add noise. Effect helps here: every
+distilled request goes through the `HttpClient` service, so the
+benchmark swaps in a fake one that answers instantly:
+
+```ts
+const MockHttp = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(request, new Response(canned.body, canned)),
+    ),
+  ),
+);
+```
+
+That leaves only distilled's own cost: bundle size, added latency per
+call, import memory and a few more. Each one is measured twice. The
+second time turns on **strict mode**, where distilled checks every
+response against the API spec before your code sees it, so a missing
+or mistyped field fails right away as a typed error. Strict mode costs
+time and bytes, so it gets its own dotted line on the charts.
+
+Of all those numbers, memory mattered most to us. It matters for your
+Workers and Lambdas, but it also limits how we build Alchemy itself.
+Our [resource factory](/blog/2026-07-02-cloudflare-resource-factory)
+runs many agents at once, and each one type-checks, imports every
+provider and runs live tests. On our machines memory runs out before
+CPU does, so halving the heap lets us run about twice as many agents.
+
+Every run lands on a dashboard that lives in the distilled repo, one
+dot per commit, so each chart reads like a loss curve. The benchmarks
+now run on every distilled PR too, so a regression shows up before it
+merges.
+
+The whole project came down to one dashboard and one chat thread. With
+every change on a chart, we could follow the work without reading a
+single diff. Our job became checking in every 30 minutes or so: is it
+still on track, and are the changes extreme enough? They often
+weren't. The rest of this post climbs from the fixes any reviewer
+would approve to the ones that only happened because we kept telling
+the agent to get weirder.
+
+How we said it mattered. The louder and stranger our messages got,
+the bolder the ideas the agent came back with. Each section below
+opens with a real message from the thread, typos included.
+
+<BenchChart chart="memory" />
+
+## The sane fixes
+
+> hillclimb optimizing bundle size and memory footprint; be ambitious,
+> dont be afraid to boil the ocean
+
+This part you can get by just telling an agent to optimize. It follows
+the worst number on the dashboard back to its cause, fixes it, runs the
+benchmark again, and repeats. That loop never stopped. It kept running
+in the main thread the whole time, even while other agents went off to
+try much stranger ideas, which we'll get to.
+
+### Small imports with big bills
+
+The single worst line was in a tiny file:
+
+```ts
+import { Effect, Predicate } from "effect";
+```
+
+In a bundler that's fine. In Node, importing from the `effect` package
+root loads every Effect module, and that line cost 3.3 MB and 36 ms on
+every import of every SDK. Importing `effect/Effect` and
+`effect/Predicate` directly fixed it. That's how the Effect team
+recommends importing anyway, and the Effect language service has a
+rule for it (`importFromBarrel`). We just don't run it on generated
+code. The same pattern hid in smaller
+places: `effect/Config` for a few environment variables, `Schedule`
+for retries, `Stream.flatMap` for pagination. Each now has a small
+replacement in core, and your own `ConfigProvider` or `Schedule` still
+works.
+
+<BarrelFigure />
+
+### One `/*@__PURE__*/` does not cover its arguments
+
+A bundle with only EC2's `describeRegions` still kept 1,695 schemas.
+The generator marked each top-level call `/*@__PURE__*/`, but that
+marker only covers the outer call. The calls in its arguments still
+count as side effects, so the bundler keeps everything they reference:
+
+```ts
+// Foo is never used, so the bundler tries to drop it.
+const Foo = /*@__PURE__*/ S.Struct({ // dropped: marked pure
+  items: S.Array(Big.pipe(S.optional)), // unused, but kept: not marked
+});
+```
+
+The generator now marks every nested call too, so the whole thing
+goes:
+
+```ts
+const Foo = /*@__PURE__*/ S.Struct({
+  items: /*@__PURE__*/ S.Array(/*@__PURE__*/ Big.pipe(S.optional)),
+});
+```
+
+The EC2 bundle dropped from 137 KB to 75 KB.
+
+### A tree-shaking bug in rolldown
+
+Every program that made an HTTP call kept about 15 KB gzip of Effect
+Schema, even ones that never validated anything, because of one rarely used class in
+Effect's HTTP client. Rolldown 1.2.5 and 1.2.6 failed to tree-shake
+it, and 1.2.7 fixed that. That one upgrade is the cliff in this chart:
+
+<BenchChart chart="bundle" />
+
+At this point the agent said the numbers looked good and suggested
+stopping. Every agent does this. It finds the safe wins, reports them,
+and waits.
+
+## Stranger, but defensible
+
+> Okay can you keep improving, we want all of these wayyyy wayyyy lower.
+> Do insane stuff, hillclimb the f\*\*\* out of this
+
+The sane fixes left the numbers better, but still far from where we
+wanted them. So every time the agent reported progress, we asked for
+something bigger and stranger, and fed it hunches we couldn't prove
+yet: that the specs were full of duplicate shapes, and that schemas
+were most of the cost. The agent measured each hunch first, then
+turned the ones that held up into code.
+
+### One em dash doubles a module's memory
+
+V8 keeps every module's source text in memory. If one character is
+outside Latin-1, it stores the whole file at two bytes per character.
+Escaping three characters in S3's module cut its import memory from
+2,240 KB to 1,570 KB. Shipped code is now Latin-1 only, and a test
+enforces it.
+
+### The same schema, thousands of times
+
+API specs are repetitive. Stripe alone has 12,529 named shapes, and
+most of them are copies: dozens of enums that are all just "a string",
+empty response objects, and the same struct redeclared on every
+endpoint. Each copy became its own object at import.
+
+The generator now keeps one of each. Comparing shapes field by field
+breaks down when shapes refer to themselves, so it uses the algorithm
+compilers use to shrink state machines,
+[partition refinement](https://en.wikipedia.org/wiki/DFA_minimization#Moore's_algorithm):
+assume everything of the same kind is the same, then keep splitting
+groups until every member of a group points at the same groups. A
+split can make the shapes that point at it split in the next round,
+so changes ripple up one level at a time. Shapes that only point at
+themselves never split, so recursion just works.
+Stripe went from 12,529 shapes to 2,720, and its import memory from
+9.9 MB to 0.86 MB.
+
+<DedupeFigure />
+
+### Faster calls
+
+Every call used to run as a generator, with one `yield*` per step:
+
+```ts
+Effect.gen(function* () {
+  const protocol = yield* Protocol;
+  const client = yield* HttpClient.HttpClient;
+  const request = yield* protocol.encode({ input, inputAst, config });
+  const response = yield* client.execute(request);
+  return yield* protocol.decode({ response, outputAst, errors, config });
+});
+```
+
+Each `yield*` is a trip through Effect's runtime, and encode and decode
+were generators too. Now, on the first call of an operation, the
+protocol compiles a plan for its schemas: which fields go in the path,
+the query and the body. Every later call builds the request from that
+plan with plain JavaScript, sends it, and decodes the same way. The
+only effect left in the middle is the HTTP request.
+
+This is added latency per call across the whole project. The strict
+line took longer to come down, for reasons the next section explains.
+
+<BenchChart chart="speed" />
+
+### Faster, smaller AWS signing
+
+AWS also signs every request, and signing was the single most
+expensive part of an AWS call. SigV4 used to take six async WebCrypto
+steps, each one a promise round trip. Switching to synchronous hashing
+with `node:crypto` alone took S3 `listBuckets` from 352 µs to 149 µs
+of added latency, DynamoDB `listTables` from 218 µs to 103 µs and STS
+`getCallerIdentity` from 282 µs to 125 µs. Preparing keys once and
+building the canonical request without parsing URLs took the rest.
+S3 `listBuckets` now adds 19.4 µs. A side-by-side check of 33,798 cases
+across 24 AWS services gave identical requests and results.
+
+Synchronous hashing has a trade-off: it blocks the event loop while it
+runs. For a request, that's a few microseconds of hashing, less than
+one async round trip, which also costs a trip through the event loop
+and evicts whatever was in the CPU cache. A huge request body is where
+blocking would start to matter. The hashing goes through a swappable
+`Crypto` service, so runtimes without Node use WebCrypto, and you can
+plug in your own.
+
+We also pulled the signer out into its own small package,
+`@distilled.cloud/aws4signer`. Cloudflare R2 speaks the S3 API and
+needs SigV4 signing too, so code that signs R2 requests no longer
+pulls in the rest of the AWS SDK.
+
+### Where that left us
+
+Before the big rewrites started, the numbers already looked like a
+finished project. Compared with where we began, added latency per
+call was down from 17.3 µs to 10.7 µs, and import memory from 2.10 MB
+to 0.84 MB. Most people would stop here.
+
+The bundle barely moved, though: 57.0 KB to 54.0 KB. Every program
+still carried Effect Schema, whether it validated anything or not. To
+fix that, we had to stop tuning distilled and start replacing parts of
+it.
+
+## Experiments, and our own schema library
+
+> experiments should be radical shifts boiling the ocean; ambitious
+> sh\*t; agents are phenomenal and can do extreme things
+
+The biggest wins came from ideas that might not work, and trying one
+can take a long time. If the one agent doing the work stops to try it,
+everything else stops too. So we told it to keep the main thread on
+the slowest number and hand radical ideas to new agents. That split
+the work into three roles that run at the same time:
+
+1. **The main thread hillclimbs.** It runs the benchmark after every
+   change, picks the worst number, and fixes it with small, safe
+   commits. Along the way it writes down the wild ideas it doesn't
+   have time for.
+2. **Subagents chase the wild ideas.** Each one gets its own worktree
+   and one idea: lazy error classes, bundling each SDK into a few
+   files, rewriting the AWS call path, Node-only service stubs. It
+   builds the idea for real and benchmarks it as an experiment
+   against the current head. The dashboard keeps experiments off the
+   timeline and shows each one next to its baseline.
+3. **The main thread merges what worked.** An experiment that beats
+   its baseline without regressing anything else gets merged. One that
+   doesn't stays behind as a data point, so nobody tries it again.
+
+An experiment is just a benchmark run with a name:
+
+```sh
+pnpm bench -- --experiment "schema-free generated code"
+```
+
+It stays off the commit timeline and shows up on every chart as a flat
+dashed line, so we could see at a glance whether an idea beat the
+branch:
+
+<BenchChart chart="experiments" />
+
+While a subagent worked on a big bet, the main thread kept landing
+small wins. 38 of our 84 benchmark runs were experiments. Some ideas
+took three or four experiments to try different implementations, and
+we kept the best one. The biggest experiment was replacing Effect Schema, and the dashed line
+at the bottom of the chart above is the version that won.
+
+### Why Effect Schema had to go
+
+Every generated schema was a real Effect Schema object. That put about
+37 KB gzip of Schema code into every bundle, and built thousands of
+schema objects at import. Most of that was never used. Encoding a
+request and reading a response only need the schema's *structure*:
+field names, which field goes in the path or a header, how a timestamp
+is formatted, and so on. Effect Schema's parser only matters when you turn on
+strict validation.
+
+We didn't set out to write a schema library. The agent tried
+everything else first, on real shapes from EC2, S3, DynamoDB, Stripe
+and Cloudflare Workers. Stripe, after dedupe:
+
+<div class="alc-ours-last">
+
+| Option | Import memory | First-use memory | µs per validation | 1-op bundle gz |
+| --- | ---: | ---: | ---: | ---: |
+| Effect Schema (lazy) | 0.86 MB | 11.3 MB | 24 | 27.5 KB |
+| valibot | 20 MB | 0.2 MB | 25 | 6.0 KB |
+| zod/mini (before dedupe) | 114 MB | 0.7 MB | 40 | 9.3 KB |
+| TypeBox (before dedupe) | 14 MB | 1.9 MB | 206 | 27.9 KB |
+| schema-lite (ours) | 2.3 MB | 0.17 MB | 13 | 4.6 KB |
+
+</div>
+
+Every library lost on at least one axis we cared about. Effect's own
+compilers didn't help either: the ahead-of-time compiler can't compile
+through recursive shapes, so it generated 4.6 MB of code for EC2, and
+the JIT mode doubled first-use memory. An earlier attempt,
+[PR #671](https://github.com/alchemy-run/distilled/pull/671), replaced
+schemas with descriptors that only carry wire metadata. It was small,
+but it couldn't validate, so strict mode broke.
+
+### Our problem is smaller
+
+A general schema library has to handle any schema a user can write:
+transformations, refinements, defaults, branded types, async checks,
+self-referencing structures in full generality, and detailed error
+reports for all of it. That machinery costs bytes and memory.
+
+Distilled needs almost none of it. Every schema is generated from an
+API spec and fixed at build time. They use about a dozen node kinds:
+strings, numbers, booleans, literals, structs, arrays, records, unions
+and optional fields. A recursive shape is just a named reference to
+another generated shape. And there is only one question to answer:
+does this decoded JSON match the shape the spec promised? So we wrote
+`@distilled.cloud/core/schema-lite`: plain data, plus one small
+validator.
+
+### Same API, plain objects
+
+schema-lite is a small subset of Effect Schema. It exports the
+functions generated code already calls (`Struct`, `Array`, `optional`,
+`Union`, `suspend` and so on) with the same names and types, so the
+switch was one import line in every generated file:
+
+```diff lang="ts"
+-import * as S from "@distilled.cloud/core/schema";
++import * as S from "@distilled.cloud/core/schema-lite";
+```
+
+If you know Effect Schema, you can read distilled's generated code.
+What changed is what each call returns: a plain object with the same
+fields as an Effect Schema AST node, and nothing else.
+
+```ts
+S.Struct({ id: S.String, tags: S.optional(S.Array(S.String)) });
+
+// builds this, and only this:
+{
+  _tag: "Objects",
+  propertySignatures: [
+    { name: "id", type: { _tag: "String" } },
+    {
+      name: "tags",
+      type: {
+        _tag: "Union",
+        context: { isOptional: true },
+        types: [
+          { _tag: "Arrays", elements: [], rest: [{ _tag: "String" }] },
+          { _tag: "Undefined" },
+        ],
+      },
+    },
+  ],
+}
+```
+
+### Protocols run unchanged
+
+Distilled's protocol code (REST and AWS's six wire protocols) already
+worked by walking the AST: `_tag`, `propertySignatures`,
+`annotations`. A lite node has exactly those fields, so the protocols
+didn't need to know anything changed. AWS also needs to turn
+timestamps and base64 blobs into wire values, and lite nodes carry
+that in an `encoding` field with the same shape Effect uses. We
+checked the switch by encoding 1,516 requests and decoding 426
+responses through both implementations. The bytes were identical.
+
+### Strict mode, and still faster than the official SDKs
+
+Official SDKs trust the API. Providers change their APIs without
+warning, smaller ones especially (*cough* Cloudflare *cough*). The
+request still succeeds, so bad data flows into your app until
+something breaks far from the cause. Strict mode turns that into a
+controlled failure: a typed `ParseError` with the path to the bad
+field, right at the call. It's one line:
+
+```ts
+program.pipe(Effect.provide(ResponseValidation.strict));
+```
+
+Under schema-lite, each node compiles once into a small checker, and
+the compiler itself only loads if you turn strict mode on. A test
+checks that it accepts and rejects exactly what Effect Schema does.
+
+Distilled also types **every error**, so each operation ships the full
+union of errors it can fail with. We kept both, and compared them with
+the official AWS SDK v3, `cloudflare` and `@google-cloud/storage`
+packages, each imported the way its users would:
+
+<BarChart
+  title="Bundle size of one call (gzip)"
+  unit=" KB"
+  decimals={1}
+  series={[
+    { name: "official SDK", tone: "official" },
+    { name: "distilled", tone: "distilled" },
+    { name: "distilled, strict", tone: "strict" },
+  ]}
+  rows={[
+    { label: "S3 ListBuckets", values: [157.0, 61.0, 62.3], note: "2.5× smaller" },
+    { label: "DynamoDB", values: [144.8, 53.8, 55.2], note: "2.6× smaller" },
+    { label: "KMS", values: [134.1, 53.2, 54.5], note: "2.5× smaller" },
+    { label: "STS", values: [130.1, 55.2, 56.6], note: "2.3× smaller" },
+    { label: "EC2", values: [265.2, 55.1, 56.5], note: "4.7× smaller" },
+    { label: "Lambda", values: [141.3, 55.0, 56.4], note: "2.5× smaller" },
+    { label: "Cloudflare Workers", values: [124.5, 55.8, 57.4], note: "2.2× smaller" },
+    { label: "GCP Storage", values: [239.1, 39.7, 41.3], note: "5.8× smaller" },
+  ]}
+  caption="The ratio compares the official SDK with distilled in strict mode."
+/>
+
+<BarChart
+  title="Latency each SDK adds to one call (p50)"
+  unit=" µs"
+  decimals={1}
+  cap={160}
+  series={[
+    { name: "official SDK", tone: "official" },
+    { name: "distilled", tone: "distilled" },
+    { name: "distilled, strict", tone: "strict" },
+  ]}
+  rows={[
+    { label: "S3 ListBuckets", values: [140.2, 19.4, 22.0], note: "6.4× faster" },
+    { label: "DynamoDB", values: [87.3, 14.3, 15.5], note: "5.6× faster" },
+    { label: "KMS", values: [83.0, 14.4, 16.4], note: "5.1× faster" },
+    { label: "STS", values: [93.2, 16.1, 16.6], note: "5.6× faster" },
+    { label: "EC2", values: [97.3, 16.1, 18.4], note: "5.3× faster" },
+    { label: "Lambda", values: [79.3, 15.3, 16.1], note: "4.9× faster" },
+    { label: "Cloudflare Workers", values: [15.5, 3.0, 1.0], note: "5.1× faster" },
+    { label: "GCP Storage", values: [673.9, 6.2, 7.0], note: "96× faster" },
+  ]}
+  caption="GCP's official bar is cut to fit. The ratio compares the official SDK with the slower of distilled's two modes. Differences of a microsecond or two, like Cloudflare's strict bar, are within run-to-run noise."
+/>
+
+Distilled with strict mode on is still 5 to 96 times faster per call
+than official SDKs that check nothing.
+
+Per call isn't the whole story for a CLI or a Lambda function. What
+they wait for is the cold start: import the SDK, set up a client and
+make the first call, in a fresh process. Bundled the way Alchemy
+deploys to Lambda and Workers, distilled starts 2.0× faster than the
+official SDK on AWS, 3.0× on Cloudflare and 1.2× on GCP. We measured
+this with a separate local harness that isn't part of the benchmark
+suite yet.
+
+Unbundled, in plain `node_modules` like a CLI, distilled is slower on
+AWS (107.5 ms against 42.8 ms) and GCP (96.0 ms against 67.2 ms), and
+still faster on Cloudflare (94.3 ms against 156.2 ms), because Node
+spends about 77 ms loading Effect's ~150 separate modules, which a
+bundle turns into one file.
+
+The first call on its own is about 1.5 ms slower in distilled on
+Cloudflare. The official SDK is a thin wrapper around `fetch`, and
+about 0.9 ms of the gap is the tracing span Effect opens for every
+request.
+
+## Meta tree shaking
+
+> SURELY we can't be at the limit yet! KEEP GOING, like ride this crazy
+> wave all the way into the volcano mannnnnnnn! kawabunga!
+
+That is the most unhinged message we sent the whole time, and it
+produced the most unhinged idea. Importing all of AWS still took
+35 MB, and the agent had told us that was close to the floor. After
+the volcano message, it came back with this: do a bundler's tree
+shaking at run time, inside Node, on code that was never bundled.
+
+### Operations as data
+
+Importing a service used to build every operation in it. EC2 has
+hundreds of operations and AWS about 19,500. Now each operation waits
+until someone calls it. We call this meta tree shaking. In spirit, the
+published JavaScript looks like this:
+
+```js
+let built;
+export const getDomain = (input) => {
+  // First call: build the real operation, then remember it.
+  built ??= API.make(() => ({
+    input: GetDomainRequest,
+    output: Domain,
+    errors: [UnknownResendError],
+    protocol: ResendProtocol,
+  }));
+  return built(input);
+};
+```
+
+The real output stores the description as a short string instead of
+code, because a string takes less memory than the code that builds
+the same object. Error classes work the same way, so a call that
+succeeds never builds one.
+
+### Tree shaking at run time
+
+A bundler drops unused code before you deploy. The Alchemy CLI doesn't
+bundle, so we do the same cut at run time instead. Every service ships
+as two files: a tiny **stub** that Node loads, and the **full module**,
+which stays on disk with an index at the end saying where each
+operation's bytes are and what it needs. This is the real start of the
+stub for Fly.io's `machines` service, exactly as it ships:
+
+```js
+import{$L}from"../_bundle/lazy.js";
+const{o:$o,e:$e,E:$E}=/*@__PURE__*/$L("../services.full/machines.js","ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",55605,7533);
+```
+
+Yes, that's 99 `o`s, one empty placeholder per operation. No human
+would write this, and no human has to read it. The two numbers say
+where the index is. The index looks like this:
+
+```txt
+#    name           bytes          needs
+44   getMachine     19123..19407   13 sdk.js helpers, __d6
+60   listMachines   25842..26325   16 sdk.js helpers, __d6
+110  __d6           48375..48982   8 sdk.js helpers, __d3, __d5, __d4, __d22
+```
+
+That's the dependency graph a bundler builds, written down for Node.
+The first call to a placeholder reads just that operation's bytes, then
+follows `needs` the same way. Helpers in `sdk.js` are already loaded
+with the stub, so they cost nothing.
+
+### No `eval`, ever
+
+Reading part of a JavaScript file and running it sounds like it needs
+`eval` or `new Function`. That would ruin the whole idea. Every `eval`
+makes V8 parse and compile new code, which costs the time and memory
+we were trying to save. It also means running bytes read from disk as
+code, which security tools flag and many runtimes block outright.
+
+So the full module never stores operations as code. It stores them as
+data. This is the real entry for `getMachine`:
+
+```txt
+{input:#1,output:#9:4,errors:[$10,$11],protocol:$12,retry:$13}
+```
+
+`#1` is another entry in the same operation, and `#9:4` is an entry in
+the shared holder for `Machine`. `$10` to `$13` are values already in
+memory: the two error classes, the protocol and the retry policy. The
+loader is a small interpreter for this format. It reads the bytes,
+follows the references and calls the same schema-lite functions the
+code would have called, so the result is identical. Nothing it reads
+from disk is ever run as code, and V8 never compiles a single extra
+line.
+
+Step through a real traced run that calls `getMachine`, then
+`listMachines`, then `getMachine` again. If you want to see how
+unhinged it really is, tick the box under the figure for the shipped
+code:
+
+<StubWalkthrough />
+
+Three calls read 13,629 of the file's 63,178 bytes, and 7,533 of those
+are the index.
+
+Don't worry: none of this touches your code unless you ask for it.
+Stubs load only when Node resolves with the `distilled-lazy` export
+condition (`node --conditions=distilled-lazy`). Plain Node and every
+bundler get the normal full module.
+
+### Importing a whole provider
+
+Programs that import a whole provider are where meta tree shaking pays
+off most. AWS went from 227 MB to 13.9 MB.
+
+<BarChart
+  title="Memory to import every service of a provider"
+  unit=" MB"
+  decimals={1}
+  series={[
+    { name: "before", tone: "before" },
+    { name: "after", tone: "distilled" },
+  ]}
+  rows={[
+    { label: "AWS (438)", values: [227, 13.9], note: "16× less" },
+    { label: "GCP (318)", values: [111, 9.4], note: "12× less" },
+    { label: "Azure (224)", values: [112, 8.0], note: "14× less" },
+    { label: "Cloudflare (129)", values: [76, 3.2], note: "24× less" },
+  ]}
+  caption="Import time fell too: AWS from 1.61 s to 0.14 s, Cloudflare from 0.63 s to 0.05 s."
+/>
+
+<BenchChart chart="providerHeap" />
+
+The same metric summed over every provider: 924 MB at the start of the
+branch, 94 MB at the end.
+
+Most of what's left for AWS is V8 itself. Every module Node loads
+costs about 4.8 KB, and every named export about 325 bytes, even if
+nothing reads it. All of AWS is 438 modules and tens of thousands of
+exports, which comes to about 10 MB before any distilled code runs.
+The only way below that is to export fewer names, which is an API
+change.
+
+## Breaking changes
+
+:::caution
+These shipped in `@distilled.cloud/*` `1.0.0-rc.16`.
+
+- Schema values are no longer exported. Use `op.input` and
+  `op.output`.
+- Error classes do not validate their fields on construction.
+  `ParseError.cause` is a `SchemaMismatch` with a path.
+- `SigV4.SigningKeyCache` is a plain store.
+- `lib/` is bundled, minified, generated output.
+
+`instanceof`, `_tag`, `Effect.catchTag` and the TypeScript types for
+errors work as before.
+:::
+
+## Try meta tree shaking in Alchemy
+
+The Alchemy CLI ships with meta tree shaking turned off. To opt in,
+pass `--fast-distilled`, or set `ALCHEMY_FAST_DISTILLED=1`:
+
+```sh
+alchemy deploy --fast-distilled
+```
+
+The flag makes the CLI load distilled with the `distilled-lazy`
+condition, so every provider your app imports starts as a stub. It
+applies under Node. Under Bun it has no effect.
