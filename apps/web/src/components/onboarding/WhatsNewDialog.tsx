@@ -13,7 +13,7 @@ import {
   WELCOME_GUIDE_SEEN_STORAGE_KEY,
 } from "./WelcomeGuideDialog";
 import { environmentPresentations } from "~/state/presentation";
-import { resolveWhatsNewGuides, whatsNewGuides, type WhatsNewGuide } from "./whatsNewGuides";
+import { resolveWhatsNewGuides, type WhatsNewGuide } from "./whatsNewGuides";
 import { useClientSettings } from "~/hooks/useSettings";
 import { Button } from "../ui/button";
 import { Dialog, DialogDescription } from "../ui/dialog";
@@ -22,6 +22,8 @@ import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } fro
 const WHATS_NEW_SEEN_STORAGE_KEY = "t3learn:whats-new-seen:v1";
 const WhatsNewSeenSchema = Schema.NullOr(Schema.Array(Schema.String));
 const nullableStringSchema = Schema.NullOr(Schema.String);
+// Pinned to v1: the welcome key can be bumped, but only installs from before What's new have this one.
+const LEGACY_WELCOME_GUIDE_SEEN_STORAGE_KEY = "t3learn:welcome-guide-seen:v1";
 const useWhatsNewRequest = create<{ requested: boolean }>(() => ({ requested: false }));
 
 export function openWhatsNew() {
@@ -42,6 +44,11 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
     null,
     nullableStringSchema,
   );
+  const [legacyWelcomeSeenAt] = useLocalStorage(
+    LEGACY_WELCOME_GUIDE_SEEN_STORAGE_KEY,
+    null,
+    nullableStringSchema,
+  );
   const setupDone = useClientSettings((settings) => settings.onboardingCompletedAt !== null);
   const sideChatsAvailable = useAtomValue(sideChatsAvailableAtom);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
@@ -53,7 +60,7 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
   const [dismissed, setDismissed] = useState(false);
   const resolved = resolveWhatsNewGuides({
     seen,
-    existingInstall: welcomeSeenAt !== null,
+    existingInstall: legacyWelcomeSeenAt !== null,
     chatSyncAvailable,
   });
 
@@ -73,7 +80,7 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
     (hostedStatic || setupDone) &&
     sideChatsAvailable;
   const guides = requested
-    ? whatsNewGuides.filter((guide) => guide.action !== "chat-sync" || chatSyncAvailable)
+    ? resolveWhatsNewGuides({ seen: [], existingInstall: true, chatSyncAvailable }).guides
     : resolved.guides;
   if (!requested && !autoOpen) return null;
   if (guides.length === 0) return null;
@@ -97,21 +104,22 @@ function WhatsNewDialog({
   const [step, setStep] = useState(0);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const nextRef = useRef<HTMLButtonElement>(null);
-  const last = step === guides.length - 1;
-  const guide = guides[step]!;
+  // The chat-sync guide can drop out while open (its environment disconnects).
+  const index = Math.min(step, guides.length - 1);
+  const last = index === guides.length - 1;
+  const guide = guides[index]!;
 
   const runAction = () => {
     onClose();
     queueMicrotask(() => {
       switch (guide.action) {
         case "new-lesson":
-        case "quiz-cards":
-          if (!document.querySelector<HTMLButtonElement>('[aria-label="New lesson"]')) {
-            openCommandPalette({ query: "New lesson" });
-          } else {
-            document.querySelector<HTMLButtonElement>('[aria-label="New lesson"]')?.click();
-          }
+        case "quiz-cards": {
+          const button = document.querySelector<HTMLButtonElement>('[aria-label="New lesson"]');
+          if (button) button.click();
+          else openCommandPalette({ query: "New lesson" });
           break;
+        }
         case "side-chats":
           openWelcomeGuide();
           break;
@@ -138,12 +146,12 @@ function WhatsNewDialog({
           <WizardSteps
             label="What's new progress"
             steps={guides.map((item) => item.title)}
-            currentStep={step}
+            currentStep={index}
             onStepChange={setStep}
           />
         </WizardHeader>
         <WizardPanel>
-          <GuideClip guide={guide} reducedMotion={reducedMotion} />
+          <GuideClip key={guide.id} guide={guide} reducedMotion={reducedMotion} />
           <DialogDescription render={<div />} aria-live="polite">
             <h3 className="text-lg font-semibold tracking-tight text-foreground">{guide.title}</h3>
             <p className="text-sm leading-relaxed text-muted-foreground">{guide.benefit}</p>
@@ -158,8 +166,8 @@ function WhatsNewDialog({
         >
           <Button
             variant="outline"
-            className={step === 0 ? "invisible" : undefined}
-            onClick={() => setStep((current) => current - 1)}
+            className={index === 0 ? "invisible" : undefined}
+            onClick={() => setStep(index - 1)}
           >
             Back
           </Button>
@@ -167,7 +175,7 @@ function WhatsNewDialog({
           <Button
             ref={nextRef}
             variant="outline"
-            onClick={last ? onClose : () => setStep((current) => current + 1)}
+            onClick={last ? onClose : () => setStep(index + 1)}
           >
             {last ? "Done" : "Next"}
           </Button>
