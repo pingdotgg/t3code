@@ -150,6 +150,8 @@ export const withVibeAppServerClient = Effect.fn("VibeAppServerSupport.withVibeA
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawn.command, [...spawn.args], {
+          // A server that ignores SIGTERM must not block scope close (and the request timeout).
+          forceKillAfter: "1 second",
           ...(spawn.cwd !== undefined ? { cwd: spawn.cwd } : {}),
           ...(spawn.env !== undefined ? { env: spawn.env } : {}),
         }),
@@ -206,7 +208,7 @@ export const withVibeAppServerClient = Effect.fn("VibeAppServerSupport.withVibeA
       );
     });
     return yield* use(client, init.serverInfo).pipe(
-      Effect.ensuring(child.kill().pipe(Effect.ignore)),
+      Effect.ensuring(child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore)),
     );
   },
 );
