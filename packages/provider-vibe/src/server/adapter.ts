@@ -726,12 +726,16 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       const threadCwd = ensureInput.runtimePolicy.cwd ?? cwd;
       const nativeId = ensureInput.existingProviderThread?.nativeThreadRef?.nativeId ?? undefined;
       const mcpSession = yield* mcpSessions.read(ensureInput.threadId);
+      const worktree = yield* vibeWorktreeInputForCwd(threadCwd).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
       const agentConfig = {
         mcpServers: vibeMcpServers(mcpSession),
         cwd: threadCwd,
         headless: true,
         trustWorkspace: options.settings.trustWorkspace,
-        worktree: vibeWorktreeInputForCwd(threadCwd),
+        worktree,
         agent: agent.agent,
         autoApprove: agent.autoApprove,
       };
