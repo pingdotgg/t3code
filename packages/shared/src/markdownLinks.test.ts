@@ -32,6 +32,12 @@ describe("inlineCodeFilePathCandidate", () => {
     // regression: #28555 relative ranges are file references
     ["src/foo.py:67-69", "src/foo.py:67-69"],
     ["foo.py:1-3", "foo.py:1-3"],
+    // regression: #30757 an agent's shortened path is not a file
+    ["/tmp/claude-1000/...", null],
+    ["/tmp/claude-1000/...:12", null],
+    ["/tmp/.../scratchpad/notes.md", null],
+    ["~/projects/…/notes.md", null],
+    ["src/.../main.ts", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
