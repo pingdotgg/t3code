@@ -268,13 +268,15 @@ export const make = Effect.gen(function* () {
   const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
     get(name).pipe(
       // Older builds could persist a 0-byte secret, which is never a usable key. Re-read under
-      // the permit so a caller that saw the empty file cannot remove a key another caller created.
+      // the permit, and keep it until an interrupted removal settles, so a caller that saw the
+      // empty file cannot remove a key another caller created.
       Effect.filterOrElse(isMissingOrNonEmpty, () =>
         emptySecretRepair.withPermits(1)(
           get(name).pipe(
             Effect.filterOrElse(isMissingOrNonEmpty, () =>
               remove(name).pipe(Effect.as(Option.none<Uint8Array>())),
             ),
+            Effect.uninterruptible,
           ),
         ),
       ),
