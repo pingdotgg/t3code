@@ -233,52 +233,55 @@ it("shows a lineage thread's full title in its tooltip", async () => {
   );
 });
 
-it("moves Disconnect to Side chats when the thread has no lineage", async () => {
-  setup();
-  state.commandSucceeds = true;
-  state.projection = {
-    ...(state.projection as Record<string, unknown>),
-    thread: {
-      id: threadId,
-      title: "Main",
-      activeProviderThreadId: null,
-      lineage: {},
-      forkedFrom: null,
-    },
-  };
-  state.relatedShells = [
-    {
-      id: "side",
-      title: "Side question",
-      lineage: {
-        parentThreadId: threadId,
-        relationshipToParent: "fork",
-        rootThreadId: threadId,
-        sideChat: true,
+it.each([true, false])(
+  "keeps Disconnect for a thread with only side chats (Side chats shown: %s)",
+  async (showSideChats) => {
+    setup();
+    state.commandSucceeds = true;
+    state.projection = {
+      ...(state.projection as Record<string, unknown>),
+      thread: {
+        id: threadId,
+        title: "Main",
+        activeProviderThreadId: null,
+        lineage: {},
+        forkedFrom: null,
       },
-    },
-  ];
-  await using screen = await render(
-    <ToastProvider timeout={0}>
-      <ThreadRelationshipsPanel
-        environmentId={environmentId}
-        threadId={threadId}
-        showLineage
-        showSideChats
-      />
-    </ToastProvider>,
-  );
+    };
+    state.relatedShells = [
+      {
+        id: "side",
+        title: "Side question",
+        lineage: {
+          parentThreadId: threadId,
+          relationshipToParent: "fork",
+          rootThreadId: threadId,
+          sideChat: true,
+        },
+      },
+    ];
+    await using screen = await render(
+      <ToastProvider timeout={0}>
+        <ThreadRelationshipsPanel
+          environmentId={environmentId}
+          threadId={threadId}
+          showLineage
+          showSideChats={showSideChats}
+        />
+      </ToastProvider>,
+    );
 
-  await expect.element(screen.getByRole("region", { name: "Side chats" })).toBeVisible();
-  await expect.element(screen.getByRole("region", { name: "Lineage" })).not.toBeInTheDocument();
-  await screen
-    .getByRole("region", { name: "Side chats" })
-    .getByRole("button", { name: "More thread actions" })
-    .click();
-  await expect
-    .element(page.getByRole("menuitem", { name: "Disconnect agent session" }))
-    .toBeVisible();
-});
+    const [shown, hidden] = showSideChats ? ["Side chats", "Lineage"] : ["Lineage", "Side chats"];
+    await expect.element(screen.getByRole("region", { name: hidden })).not.toBeInTheDocument();
+    await screen
+      .getByRole("region", { name: shown })
+      .getByRole("button", { name: "More thread actions" })
+      .click();
+    await expect
+      .element(page.getByRole("menuitem", { name: "Disconnect agent session" }))
+      .toBeVisible();
+  },
+);
 
 it("shows a side chat's full title in its tooltip", async () => {
   setup();

@@ -580,6 +580,7 @@ export function ThreadRelationshipsPanel(props: {
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
 
+  const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const lineageVisible =
     props.showLineage &&
     (related.length > 0 ||
@@ -588,8 +589,9 @@ export function ThreadRelationshipsPanel(props: {
       runningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
-      delegatedFrom !== undefined);
-  const sideChatsVisible = props.showSideChats && sideChats.length > 0;
+      delegatedFrom !== undefined ||
+      // Disconnect lives in a heading; keep this one when hidden Side chats can't hold it.
+      (canDetach && sideChats.length > 0 && !sideChatsVisible));
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
   if (!lineageVisible && !sideChatsVisible) {
