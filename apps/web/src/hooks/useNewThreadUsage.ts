@@ -26,12 +26,16 @@ export function useNewThreadUsage(
     environmentId,
     input?.defaultSelection,
     input?.fallbackSelection,
-    input?.providers.find((provider) => provider.instanceId === input.defaultSelection?.instanceId)
-      ?.auth,
+    input?.providers
+      .filter(
+        (provider) =>
+          provider.instanceId === input.defaultSelection?.instanceId ||
+          provider.instanceId === input.fallbackSelection?.instanceId,
+      )
+      .map((provider) => [provider.instanceId, provider.auth]),
   ]);
   const [completed, setCompleted] = useState<{
     key: string;
-    baseline: readonly ServerProvider[];
     providers: readonly ServerProvider[];
   } | null>(null);
   const refresh = useEffectEvent(
@@ -48,9 +52,8 @@ export function useNewThreadUsage(
   useEffect(() => {
     if (!enabled || !input) return;
     let active = true;
-    const baseline = input.providers;
     void Promise.resolve(refresh()).then((providers) => {
-      if (active && providers) setCompleted({ key, baseline, providers });
+      if (active && providers) setCompleted({ key, providers });
     });
     return () => {
       active = false;
@@ -58,10 +61,20 @@ export function useNewThreadUsage(
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- quota demand follows selection/account identity; config updates only replace its cached reading
   }, [enabled, key]);
   return {
-    providers:
-      completed?.key === key && completed.baseline === input?.providers
-        ? completed.providers
-        : (input?.providers ?? []),
+    providers: (input?.providers ?? []).map((provider) => {
+      const reading =
+        completed?.key === key &&
+        (provider.instanceId === input?.defaultSelection?.instanceId ||
+          provider.instanceId === input?.fallbackSelection?.instanceId)
+          ? completed.providers.find((result) => result.instanceId === provider.instanceId)
+              ?.usageLimits
+          : undefined;
+      return reading &&
+        (!provider.usageLimits ||
+          Date.parse(reading.checkedAt) > Date.parse(provider.usageLimits.checkedAt))
+        ? { ...provider, usageLimits: reading }
+        : provider;
+    }),
     pending: enabled && completed?.key !== key,
   };
 }
