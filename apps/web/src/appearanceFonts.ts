@@ -136,7 +136,9 @@ export function applyAppearanceFontVariables(
     "--font-size-prompt",
     absolutely && preferences.sizePrompt === DEFAULT_PROMPT_FONT_SIZE
       ? "15px"
-      : preferences.separate ? `${clampPromptFontSize(preferences.sizePrompt)}px` : "var(--text-sm)",
+      : preferences.separate
+        ? `${clampPromptFontSize(preferences.sizePrompt)}px`
+        : "var(--text-sm)",
   );
   const code =
     absolutely && preferences.sizeCode === DEFAULT_CODE_FONT_SIZE
