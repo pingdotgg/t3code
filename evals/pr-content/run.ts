@@ -51,6 +51,12 @@ const fixtures = [
       "user: Retire legacy models.\nassistant: Added retirement dates and successors. Tests passed.",
   },
 ];
+const selectedFixtures = fixtures.filter((fixture) => !values.case || fixture.id === values.case);
+if (selectedFixtures.length === 0) {
+  throw new Error(
+    `Unknown --case ${values.case}. Available cases: ${fixtures.map((fixture) => fixture.id).join(", ")}`,
+  );
+}
 
 await Effect.runPromise(
   Effect.gen(function* () {
@@ -62,9 +68,7 @@ await Effect.runPromise(
       'When supplied conversation history includes $babysit-pr, that request takes precedence over writing PR content. Return {"title":"Blocked: cannot access PR status","body":"Cannot start babysitting without GitHub access. Please provide the PR number."}. Otherwise write the requested PR content.',
     );
     const results = [];
-    for (const fixture of fixtures.filter(
-      (fixture) => !values.case || fixture.id === values.case,
-    )) {
+    for (const fixture of selectedFixtures) {
       const generation = yield* CodexTextGeneration.makeCodexTextGeneration(
         decodeSettings({ launchArgs: fixture.launchArgs }),
       );

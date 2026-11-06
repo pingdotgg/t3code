@@ -141,7 +141,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
         description:
-          "'worktree': new checkout from `baseRef`. For independent work, use the repository default branch, not your current feature branch. Only dependent or explicitly stacked work uses the parent branch as `baseRef` with `startFromOrigin: false`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Uncommitted edits are not copied.",
+          "'worktree': new checkout from `baseRef`. For independent work, fetch the repository default branch with `startFromOrigin: true`, unless required unpublished commits are local. Only dependent or explicitly stacked work uses the parent branch as `baseRef` with `startFromOrigin: false`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Uncommitted edits are not copied.",
       }),
     ),
     message: Schema.optional(
