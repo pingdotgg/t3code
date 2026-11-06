@@ -113,7 +113,8 @@ import {
 } from "./features/settings/ScheduledTaskPickerScreens";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
-import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
+import { SettingsVoiceRouteScreen } from "./features/settings/SettingsVoiceRouteScreen";
+import { SettingsVoiceModelsRouteScreen } from "./features/settings/SettingsVoiceModelsRouteScreen";
 import {
   SettingsOpenSourceLicenseRouteScreen,
   SettingsOpenSourceLicensesRouteScreen,
@@ -265,10 +266,14 @@ const SETTINGS_SCREENS = {
     linking: "settings/keyboard",
     options: settingsPage("Keyboard"),
   }),
-  SettingsMicrophone: createNativeStackScreen({
-    screen: SettingsMicrophoneRouteScreen,
-    linking: "settings/microphone",
-    options: settingsPage("Microphone"),
+  SettingsVoice: createNativeStackScreen({
+    screen: SettingsVoiceRouteScreen,
+    linking: { path: "settings/voice", alias: ["settings/microphone"] },
+    options: settingsPage("Voice"),
+  }),
+  SettingsVoiceModels: createNativeStackScreen({
+    screen: SettingsVoiceModelsRouteScreen,
+    options: SEARCH_SHEET_ROUTE,
   }),
   SettingsFollowUp: createNativeStackScreen({
     screen: SettingsFollowUpRouteScreen,
