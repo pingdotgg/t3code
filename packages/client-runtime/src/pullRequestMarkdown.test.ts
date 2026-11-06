@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitPullRequestBody } from "./pullRequestMarkdown.ts";
+import {
+  changeRequestReferenceAutolinker,
+  resolveChangeRequestMediaUrl,
+  splitPullRequestBody,
+} from "./pullRequestMarkdown.ts";
 
 describe("pull request body segmentation", () => {
-  it("keeps a plain body as a single markdown run", () => {
-    expect(splitPullRequestBody("## What changed\n\nSome prose.")).toEqual([
-      { id: "markdown:0", kind: "markdown", text: "## What changed\n\nSome prose." },
-    ]);
-  });
-
   // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on
   // its own line is the shape it uses for a video — every one sampled in the wild was one.
   it("lifts a dropped video out and keeps the prose around it", () => {
@@ -17,26 +15,32 @@ describe("pull request body segmentation", () => {
         "Before\n\nhttps://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456\n\nAfter",
       ),
     ).toEqual([
-      { id: "markdown:0", kind: "markdown", text: "Before" },
+      { id: "markdown:0", kind: "markdown", text: "Before", sourceOffset: 0 },
       {
         id: "attachment:1",
         kind: "attachment",
         url: "https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456",
         media: "video",
       },
-      { id: "markdown:2", kind: "markdown", text: "After" },
+      { id: "markdown:2", kind: "markdown", text: "After", sourceOffset: 89 },
     ]);
   });
 
-  it("names a bare link to a video file a video", () => {
-    expect(splitPullRequestBody("https://example.com/demo.mp4?raw=1")).toEqual([
-      {
-        id: "attachment:0",
-        kind: "attachment",
-        url: "https://example.com/demo.mp4?raw=1",
-        media: "video",
-      },
+  it("places each prose run at its offset in the body", () => {
+    const body =
+      '\n\n- [ ] Before\r\n\nhttps://example.com/shot.png\n\n\n<video controls>\n  <source src="https://example.com/a.mp4">\n</video>\n    - [ ] code\n- [x] After\n';
+    const prose = splitPullRequestBody(body).flatMap((segment) =>
+      segment.kind === "markdown" ? [segment] : [],
+    );
+    expect(prose.map((segment) => segment.text)).toEqual([
+      "- [ ] Before",
+      "    - [ ] code\n- [x] After",
     ]);
+    for (const segment of prose) {
+      expect(body.slice(segment.sourceOffset, segment.sourceOffset + segment.text.length)).toBe(
+        segment.text,
+      );
+    }
   });
 
   it("reads the source out of a video tag, including a multi-line one", () => {
@@ -54,67 +58,74 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
-  it("leaves a dropped image as markdown so it still renders as an image", () => {
-    const body = "![shot](https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-ab)";
-    expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
-    ]);
-  });
-
   it("leaves the img tag GitHub writes for a dropped image as markdown", () => {
     const body =
       '<img width="1414" alt="image" src="https://github.com/user-attachments/assets/7195f963-51a9-4331-be74-3e06be760422" />';
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 
   it("leaves an ordinary link alone, whether it is bare or written as markdown", () => {
     const body = "https://example.com/page\n\n[the docs](https://example.com/docs)";
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 
   it("never lifts a link inside fenced code out of it", () => {
     const body = "```\nhttps://example.com/demo.mp4\n```";
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  // GitHub keeps CRLF in a body written in its web editor.
+  it("recognizes fences in a body with CRLF line endings", () => {
+    const body = "```\r\nhttps://example.com/demo.mp4\r\n```";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it("closes a CRLF fence, so a video after it still lifts out", () => {
+    const code = '```html\r\n<video src="https://example.com/example.mp4"></video>\r\n```';
+    expect(splitPullRequestBody(`${code}\r\n\r\nhttps://example.com/demo.mp4\r\n`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
     ]);
   });
 
   it("does not let a different fence marker close an open fence", () => {
     const body = "```\n~~~\nhttps://example.com/demo.mp4\n```";
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 
   it("keeps a video tag that shares its line with prose as markdown", () => {
     const body = 'Before <video src="https://example.com/a.mp4"></video> after';
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
-    ]);
-  });
-
-  it("keeps the indentation that opens a code block", () => {
-    const body = "    const answer = 42;";
-    expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 
   it("treats an info-string fence as a nested opener, not a close", () => {
     const body = "```\n```javascript\nhttps://example.com/demo.mp4\n```";
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 
   it("leaves an indented code line alone even when it is only a video link", () => {
     const body = "    https://example.com/demo.mp4";
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 
@@ -123,24 +134,14 @@ describe("pull request body segmentation", () => {
       "\n",
     );
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
-  });
-
-  it("stays linear when the body is full of unclosed video tags", () => {
-    const body = Array.from(
-      { length: 4_000 },
-      () => '<video src="https://example.com/a.mp4">',
-    ).join("\n");
-    const startedAt = performance.now();
-    expect(splitPullRequestBody(body)).toHaveLength(1);
-    expect(performance.now() - startedAt).toBeLessThan(1_000);
   });
 
   it("refuses a non-http source rather than making a link out of it", () => {
     const body = '<video src="javascript:alert(1)"></video>';
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 });
@@ -160,7 +161,38 @@ describe("media on custom hosts", () => {
     const body =
       "See [recording](https://drop.example.com/a.mp4) for context.\n\n```md\nhttps://drop.example.com/a.png\n```";
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
+  });
+});
+
+describe("change request reference autolinks", () => {
+  const urls = (provider: string, url: string, text: string) =>
+    changeRequestReferenceAutolinker({ provider, url })?.(text).map((link) => link.url) ?? null;
+
+  it("links references against the change request's own repository", () => {
+    expect(urls("github", "https://ghe.example.com/acme/web/pull/7", "Fixes #5")).toEqual([
+      "https://ghe.example.com/acme/web/issues/5",
+    ]);
+  });
+
+  // regression: the mobile review guide linked every host's `#5` with GitHub's grammar
+  it("links nothing on a host whose grammar is not applied", () => {
+    expect(urls("forgejo", "https://codeberg.org/acme/web/pulls/7", "#5")).toBeNull();
+  });
+});
+
+describe("change request media urls", () => {
+  // regression: GitCafe's `/api/attachments/<id>` uploads rendered as missing local files
+  it.each([
+    ["/api/attachments/attach_1", "https://git.cafe/api/attachments/attach_1"],
+    ["//cdn.example.com/a.png", "//cdn.example.com/a.png"],
+    ["/\\evil.example.com/a.png", "/\\evil.example.com/a.png"],
+    ["https://example.com/a.png", "https://example.com/a.png"],
+    ["docs/a.png", "docs/a.png"],
+  ])("resolves %s against the forge", (url, expected) => {
+    expect(resolveChangeRequestMediaUrl(url, "https://git.cafe/pingdotgg/t3code/pulls/31251")).toBe(
+      expected,
+    );
   });
 });

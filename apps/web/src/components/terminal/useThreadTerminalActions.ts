@@ -24,12 +24,7 @@ export interface TerminalLaunchLocation {
   readonly worktreePath: string | null;
 }
 
-/**
- * Opens and closes a thread's terminal sessions. Every surface that hosts a
- * terminal (the drawer, a right panel tab, the setup flow, script runs) goes
- * through here, so ids are allocated from one view of the thread's terminals
- * and every new session starts with the same cwd and environment.
- */
+/** Allocate terminal ids and launch locations centrally so all surfaces share one view of sessions. */
 export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   const openTerminalCommand = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
@@ -59,10 +54,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   const canWrite = () =>
     threadRef !== null && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
 
-  // Every client-side id source participates: the server list lags fresh opens,
-  // and an id collision attaches two viewports to one PTY session. Without a
-  // readable session list the next free number may already be taken on the
-  // server, so the id gets a unique suffix.
+  // Server lists lag and colliding ids share a PTY; without read access, suffix ids to avoid unseen sessions.
   const allocateTerminalId = () => {
     const ids = new Set([
       ...(knownSessions ?? []).map((session) => session.target.terminalId),
@@ -89,11 +81,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         }
       : null;
 
-  /**
-   * Starts a session for `terminalId` on the server. `place` records the id in
-   * the surface that will show it, before the open resolves, so the viewport
-   * mounts while the session starts.
-   */
+  /** place mounts the destination before the server open resolves. */
   const launchTerminal = (input: {
     readonly place: (terminalId: string) => void;
     readonly terminalId?: string;
@@ -125,10 +113,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   };
 
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
-  const closeTerminalSession = (terminalId: string) => {
-    if (!threadRef || !canWrite()) return;
-    const environmentId = threadRef.environmentId;
-    const threadId = threadRef.threadId;
+  const closeTerminalSession = (terminalId: string, target = threadRef) => {
+    if (!target || !readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
+    const environmentId = target.environmentId;
+    const threadId = target.threadId;
     void (async () => {
       const closeResult = await closeTerminalCommand({
         environmentId,

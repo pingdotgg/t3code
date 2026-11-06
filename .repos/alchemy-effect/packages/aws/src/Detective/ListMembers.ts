@@ -1,0 +1,37 @@
+import type * as detective from "@distilled.cloud/aws/detective";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Graph } from "./Graph.ts";
+
+/**
+ * Runtime binding for `detective:ListMembers`.
+ *
+ * Lists the behavior graph's member accounts — invited and enabled alike —
+ * so an admin-account function can audit coverage of the security fleet.
+ * The graph ARN is injected from the bound {@link Graph}.
+ * Provide the implementation with
+ * `Effect.provide(AWS.Detective.ListMembersHttp)`.
+ * ### Administering Member Accounts
+ * **Example:** List Member Accounts
+ * ```typescript
+ * // init
+ * const listMembers = yield* AWS.Detective.ListMembers(graph);
+ *
+ * // runtime
+ * const { MemberDetails } = yield* listMembers();
+ * ```
+ *
+ * @binding
+ */
+export interface ListMembers extends Binding.Service<
+  ListMembers,
+  "AWS.Detective.ListMembers",
+  (
+    graph: Graph,
+  ) => Effect.Effect<
+    (
+      request?: Omit<detective.ListMembersRequest, "GraphArn">,
+    ) => Effect.Effect<detective.ListMembersResponse, detective.ListMembersError>
+  >
+> {}
+export const ListMembers = Binding.Service<ListMembers>("AWS.Detective.ListMembers");

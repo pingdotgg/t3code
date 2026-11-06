@@ -1,8 +1,12 @@
 import type {
+  DeviceBootError,
   DeviceHostId,
+  DeviceHostUnavailableError,
   DeviceHostSummary,
+  DeviceOperationError,
   DevicePlatform,
   DevicePlatformAvailability,
+  DeviceSummary,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -71,9 +75,88 @@ export interface AgentDeviceEndpoint {
   readonly entryPath: string;
 }
 
+export type HostDevice = Omit<DeviceSummary, "hostId">;
+
+/** Where a device is being opened from, for hosts whose devices depend on the project. */
+export interface DeviceOpenContext {
+  readonly workspaceRoot?: string | undefined;
+}
+
+export type AgentDaemonEndpoint = Pick<AgentDeviceEndpoint, "baseUrl" | "token">;
+
+export interface AgentDeviceBinding extends AgentDaemonEndpoint {
+  /** Null when the session alone picks the device and selector flags would be refused. */
+  readonly agentDeviceId: string | null;
+  /** The one session the device is leased to, shared by every thread. */
+  readonly session?: string;
+  /** agent-device state holding that session's connection. */
+  readonly stateDir?: string;
+  /** agent-device accepts installs into the session only from the directory that opened it. */
+  readonly installDirectory?: string;
+}
+
+/** Where the proxy sends a device hub request, for hosts that serve several upstreams. */
+export interface HubUpstream {
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly protocols: ReadonlyArray<string>;
+}
+
+/** Discovery and lifecycle for the devices a ready host can run. */
+export interface DeviceOperations {
+  readonly list: Effect.Effect<
+    {
+      readonly devices: ReadonlyArray<HostDevice>;
+      readonly detail: string | undefined;
+      /** Some Android virtual devices could not be listed; the rest are. */
+      readonly androidDiscoveryIncomplete?: boolean;
+    },
+    DeviceOperationError
+  >;
+  /**
+   * Boots the device and prepares its stream. Android AVDs change id when they
+   * boot (AVD name to emulator serial), so the returned id is authoritative.
+   */
+  readonly boot: (
+    device: HostDevice,
+    context?: DeviceOpenContext,
+  ) => Effect.Effect<string, DeviceOperationError | DeviceBootError | DeviceHostUnavailableError>;
+  /** Prepares the stream of a device that is already booted. */
+  readonly attach: (device: HostDevice) => Effect.Effect<void, DeviceOperationError>;
+  readonly shutdown: (device: {
+    readonly id: string;
+    readonly platform: DevicePlatform;
+  }) => Effect.Effect<void, DeviceOperationError>;
+  readonly screenshot: (device: HostDevice) => Effect.Effect<Uint8Array, DeviceOperationError>;
+  /**
+   * For hosts that run one agent-device daemon per device instead of one per
+   * host. `agentDeviceId` is the id agent-device selects the device by, when
+   * it differs from the host's device id.
+   */
+  readonly agentEndpoint?: (
+    deviceId: string,
+  ) => Effect.Effect<AgentDeviceBinding, DeviceHostUnavailableError>;
+  /**
+   * Set by hosts that end devices on their own (EAS stops sessions at their
+   * limits), so a session on a device the host stops listing is dropped.
+   */
+  readonly endsDevices?: boolean;
+}
+
 export interface DeviceHostReady {
   readonly nodePath: string;
+  /**
+   * Ends an agent-device session on the daemon that serves `deviceId`. Hosts
+   * with a shared daemon provide it only while that daemon runs; hosts with a
+   * daemon per device succeed when the device's daemon is gone. Cleanup never
+   * starts a daemon or a device.
+   */
+  readonly releaseAgentSession?: (
+    session: string,
+    deviceId: string,
+  ) => Effect.Effect<void, DeviceOperationError>;
   readonly hub: DeviceHubEndpoint;
+  readonly devices: DeviceOperations;
   readonly run: (
     command: string,
     args: ReadonlyArray<string>,
@@ -83,16 +166,24 @@ export interface DeviceHostReady {
     readonly serveSimAxSettings: string | null;
     readonly serveSimCli: string | null;
   };
+  /** Routes proxied hub requests itself; otherwise they go to `hub.origin`. */
+  readonly upstream?: (
+    hubPath: string,
+    search: URLSearchParams,
+  ) => Effect.Effect<HubUpstream | null>;
 }
 
 export interface DeviceHostAgentReady extends DeviceHostReady {
-  readonly agentDevice: AgentDeviceEndpoint;
+  /** Null when each device has its own daemon; see `DeviceOperations.agentEndpoint`. */
+  readonly agentDevice: AgentDeviceEndpoint | null;
 }
 
 export class DeviceHost extends Context.Service<
   DeviceHost,
   {
     readonly id: DeviceHostId;
+    /** The name errors and the Device panel show for this host. */
+    readonly label: string;
     readonly summary: Effect.Effect<DeviceHostSummary>;
     readonly inspect?: Effect.Effect<DeviceHostSummary, DeviceHostError>;
     readonly platformAvailability: (

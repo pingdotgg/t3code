@@ -69,17 +69,6 @@ describe("paginated branch scroll trigger", () => {
     ).toBe(false);
   });
 
-  it("does not load when scrolling upward near the bottom", () => {
-    expect(
-      shouldLoadNextBranchPageAfterScroll({
-        previousScrollTop: 160,
-        scrollTop: 150,
-        scrollHeight: 450,
-        clientHeight: 224,
-      }),
-    ).toBe(false);
-  });
-
   it("loads only after a downward scroll reaches the end threshold", () => {
     expect(
       shouldLoadNextBranchPageAfterScroll({

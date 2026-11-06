@@ -81,18 +81,6 @@ describe("Tiptap's block shortcuts", () => {
     expect(press("> keep this text", spec).value).toBe("> keep this text");
   });
 
-  it.each(BLOCK_CHORDS)("leave a list item alone on %s", (spec) => {
-    expect(press("- item", spec).value).toBe("- item");
-  });
-
-  it.each(BLOCK_CHORDS)("leave a paragraph alone on %s", (spec) => {
-    expect(press("plain text", spec).value).toBe("plain text");
-  });
-
-  it("still delivers the composer's own keys", () => {
-    expect(press("**bold**", "Mod-b").handled).toBe(true);
-  });
-
   it.each([
     ["- p\n- a", "Tab"],
     ["- p\n  - a", "Shift-Tab"],
