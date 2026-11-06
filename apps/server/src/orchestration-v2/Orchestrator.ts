@@ -6516,7 +6516,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       isProviderSwitch &&
       activeProviderThread.nativeThreadRef !== null &&
       providerSwitchPlan?.transition.type === "restart_and_resume";
-    const sessionsToDetach = uniqueSessions([
+    const releasableSessions = uniqueSessions([
       ...projection.providerSessions.filter(
         (session) =>
           providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
@@ -6525,8 +6525,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
       ...(freshContext ? sessionsReleasedByFreshContext(projection, activeProviderThread) : []),
     ]);
-    for (const detaching of sessionsToDetach) {
-      if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
+    // Nobody watches a scheduled fire to wait or press Stop. Like a queued fresh start, it
+    // leaves a busy session up and runs in a new one instead of being refused.
+    const keepsBusySessions = freshContext && command.scheduledTaskId !== undefined;
+    const sessionsToDetach: Array<OrchestrationV2ProviderSession> = [];
+    for (const detaching of releasableSessions) {
+      if (!(yield* sessionHasBackgroundWork(detaching, projection.providerThreads))) {
+        sessionsToDetach.push(detaching);
+      } else if (!keepsBusySessions) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
