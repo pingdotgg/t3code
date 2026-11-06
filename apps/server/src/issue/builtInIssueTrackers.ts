@@ -5,7 +5,10 @@ import * as GitLabIssueTrackerDriver from "@t3tools/source-control-gitlab/server
 import type { IssueTrackerDriver } from "@t3tools/issue-tracker-core/server/driver";
 import * as LinearIssueTrackerDriver from "@t3tools/issue-tracker-linear/server/issueTrackerDriver";
 
+import * as JiraIssueTrackerDriver from "@t3tools/issue-tracker-jira/server/issueTrackerDriver";
+
 const drivers = [
+  JiraIssueTrackerDriver.driver,
   GitHubIssueTrackerDriver.driver,
   GitLabIssueTrackerDriver.driver,
   AzureDevOpsIssueTrackerDriver.driver,

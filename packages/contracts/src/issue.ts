@@ -131,7 +131,11 @@ export const IssueListEntry = Schema.Struct({
 });
 export type IssueListEntry = typeof IssueListEntry.Type;
 
+export const IssueCommentVisibility = Schema.Literals(["public", "internal", "restricted"]);
+export type IssueCommentVisibility = typeof IssueCommentVisibility.Type;
+
 export const IssueComment = Schema.Struct({
+  visibility: Schema.optional(IssueCommentVisibility),
   id: TrimmedNonEmptyString,
   author: Schema.NullOr(IssueActor),
   body: Schema.String,
@@ -188,6 +192,7 @@ export type IssueLinkedPullRequest = typeof IssueLinkedPullRequest.Type;
  * service refuses a call outside these before it reaches the driver.
  */
 export const IssueCapabilities = Schema.Struct({
+  internalComments: Schema.optional(Schema.Boolean),
   create: Schema.Boolean,
   /** Title and body can be rewritten after filing. */
   edit: Schema.Boolean,
@@ -229,7 +234,36 @@ export const IssueViewerPermissions = Schema.Struct({
 });
 export type IssueViewerPermissions = typeof IssueViewerPermissions.Type;
 
+export const IssueProperty = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  value: Schema.Json,
+});
+export type IssueProperty = typeof IssueProperty.Type;
+
+export const IssueRelatedIssue = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  scope: TrimmedNonEmptyString,
+  title: Schema.String,
+  url: TrimmedNonEmptyString,
+  relation: TrimmedNonEmptyString,
+  state: Schema.optional(IssueState),
+});
+export type IssueRelatedIssue = typeof IssueRelatedIssue.Type;
+
+export const IssueWebLink = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+});
+export type IssueWebLink = typeof IssueWebLink.Type;
+
 export const IssueDetail = Schema.Struct({
+  nativeId: Schema.optional(TrimmedNonEmptyString),
+  properties: Schema.optional(Schema.Array(IssueProperty).check(Schema.isMaxLength(2_000))),
+  relatedIssues: Schema.optional(Schema.Array(IssueRelatedIssue).check(Schema.isMaxLength(2_000))),
+  relatedIssuesTruncated: Schema.optional(Schema.Boolean),
+  webLinks: Schema.optional(Schema.Array(IssueWebLink).check(Schema.isMaxLength(2_000))),
+  webLinksTruncated: Schema.optional(Schema.Boolean),
   ...IssueSummary.fields,
   projectId: ProjectId,
   projectTitle: TrimmedNonEmptyString,
@@ -339,6 +373,7 @@ export const IssueCreateResult = Schema.Struct({
 export type IssueCreateResult = typeof IssueCreateResult.Type;
 
 export const IssueCommentInput = Schema.Struct({
+  visibility: Schema.optional(Schema.Literals(["public", "internal"])),
   ...IssueRef.fields,
   body: CommentBody,
 });
@@ -552,6 +587,7 @@ export function threadIssueRefOf(link: ThreadIssueLink): IssueRef {
  * client needs to draw the connect flow for any such tracker without knowing which one it is.
  */
 export const StandaloneIssueTrackerDescriptor = Schema.Struct({
+  environmentLogin: Schema.optional(TrimmedNonEmptyString),
   tracker: IssueTrackerKind,
   displayName: TrimmedNonEmptyString,
   /** Where the tracker is served from; what `IssueRef.host` carries for its issues. */

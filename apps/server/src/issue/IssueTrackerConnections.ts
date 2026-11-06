@@ -98,7 +98,7 @@ const make = Effect.gen(function* () {
       Effect.catch((error) =>
         Effect.succeed<IssueTrackerConnection>({
           ...api.standalone,
-          connected: true,
+          connected: !api.standalone.environmentLogin,
           account: null,
           detail: IssueService.trackerDetail(error),
           scopes: [],
@@ -107,14 +107,16 @@ const make = Effect.gen(function* () {
     );
 
   const current = (api: StandaloneIssueTrackerApi) =>
-    secrets.get(issueTrackerSecretName(api.kind)).pipe(
-      Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")),
-      Effect.flatMap((stored) =>
-        Option.isNone(stored)
-          ? Effect.succeed(disconnected(api))
-          : status(api, new TextDecoder().decode(stored.value)),
-      ),
-    );
+    api.standalone.environmentLogin
+      ? status(api, "")
+      : secrets.get(issueTrackerSecretName(api.kind)).pipe(
+          Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")),
+          Effect.flatMap((stored) =>
+            Option.isNone(stored)
+              ? Effect.succeed(disconnected(api))
+              : status(api, new TextDecoder().decode(stored.value)),
+          ),
+        );
 
   const list: IssueTrackerConnections["Service"]["list"] = Effect.all({
     trackers: Effect.forEach(registry.standalone, current, { concurrency: 4 }),
@@ -142,6 +144,12 @@ const make = Effect.gen(function* () {
     "IssueTrackerConnections.connect",
   )(function* (input) {
     const api = yield* requireTracker(input.tracker);
+    if (api.standalone.environmentLogin)
+      return yield* new IssueTrackerConnectionError({
+        tracker: api.kind,
+        reason: "rejected",
+        detail: api.standalone.environmentLogin,
+      });
     if (input.token === null) return yield* disconnect(api);
     const probe = yield* api.probeCredential(input.token).pipe(
       Effect.mapError(

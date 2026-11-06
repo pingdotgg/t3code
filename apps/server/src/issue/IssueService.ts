@@ -199,11 +199,14 @@ const make = Effect.gen(function* () {
         const binding = bound.get(project.id);
         const api = binding === undefined ? null : registry.get(binding.tracker);
         if (binding === undefined || api === null || !isStandaloneIssueTracker(api)) return null;
+        const target = api.resolveScope
+          ? api.resolveScope(binding.scope)
+          : { host: api.standalone.host, scope: binding.scope };
+        if (target === null) return null;
         return {
-          canonicalKey: `${binding.tracker}:${api.standalone.host}/${binding.scope}`.toLowerCase(),
+          canonicalKey: `${binding.tracker}:${target.host}/${target.scope}`.toLowerCase(),
           tracker: binding.tracker,
-          host: api.standalone.host,
-          scope: binding.scope,
+          ...target,
         };
       }),
       Effect.orElseSucceed(() => null),
@@ -527,6 +530,8 @@ const make = Effect.gen(function* () {
             new IssueOperationError({ operation: "comment", detail: "A comment needs some text." }),
           );
         }
+        if (input.visibility === "internal" && !project.api.capabilities.internalComments)
+          return Effect.fail(unsupported("comment", "internal comments"));
         return project.api.comment === undefined || !project.api.capabilities.comment
           ? Effect.fail(unsupported("comment", "comments"))
           : project.api
@@ -536,6 +541,7 @@ const make = Effect.gen(function* () {
                 scope: project.scope,
                 key: input.key,
                 body: input.body,
+                visibility: input.visibility,
               })
               .pipe(Effect.mapError(toIssueError("comment")));
       }),
@@ -632,7 +638,7 @@ const make = Effect.gen(function* () {
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
       const own = preferFirst(
-        onTracker.filter((project) => project.scope.toLowerCase() === parsed.scope),
+        onTracker.filter((project) => project.scope.toLowerCase() === parsed.scope.toLowerCase()),
       );
       const lender = own ?? preferFirst(onTracker);
       if (lender === undefined) {

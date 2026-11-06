@@ -26,9 +26,7 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
  * trusted on any hostname; `/issues/` is generic enough that it is only believed from a GitHub-ish
  * or Forgejo-ish host, since Forgejo and Gitea write it on any domain.
  *
- * Standalone trackers (Linear's `linear.app/<team>/issue/ENG-123`, Jira's `/browse/ENG-123`)
- * are not recognised yet: their scope is a team or project key the URL only partly carries, so
- * resolving one needs the project binding that layer adds.
+ * Jira Cloud browse links carry the project key in the issue key.
  */
 export function parseIssueUrl(targetUrl: string): IssueLink | null {
   let url: URL;
@@ -39,6 +37,16 @@ export function parseIssueUrl(targetUrl: string): IssueLink | null {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const host = url.hostname.toLowerCase();
+  if (/^[a-z0-9-]+\.atlassian\.net$/.test(host)) {
+    const jira = /^\/browse\/([A-Z][A-Z0-9_]*-[1-9]\d*)\/?$/.exec(url.pathname);
+    if (jira)
+      return {
+        tracker: "jira",
+        host,
+        scope: jira[1]!.slice(0, jira[1]!.lastIndexOf("-")),
+        key: jira[1]!,
+      };
+  }
 
   // GitLab, self-hosted included: /{group}/[{subgroup}/...]{repo}/-/issues/{n}
   const gitlab = /^\/([^/]+(?:\/[^/]+)+)\/-\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname);

@@ -37,6 +37,15 @@ const issue = (
   title: `Issue ${identifier}`,
   url: `https://linear.app/acme/issue/${identifier}`,
   description: "body",
+  priorityLabel: "High",
+  estimate: 3,
+  dueDate: "2026-11-15",
+  cycle: { number: 12, name: "Sprint 12" },
+  project: { name: "Payments" },
+  parent: null,
+  children: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+  relations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+  inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
   createdAt: "2026-07-01T00:00:00.000Z",
   updatedAt: "2026-07-02T00:00:00.000Z",
   completedAt: null,
@@ -54,7 +63,7 @@ const bareDetail = (identifier: string) =>
   issue(identifier, {
     comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
     reactions: [],
-    attachments: { nodes: [] },
+    attachments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
     history: { nodes: [] },
   });
 
@@ -169,6 +178,14 @@ describe("LinearIssueTracker", () => {
         T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
         T3Issue: () => ({
           issue: issue("ENG-7", {
+            relations: {
+              nodes: [{ id: "rel1", type: "blocks", relatedIssue: issue("ENG-8") }],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+            inverseRelations: {
+              nodes: [{ id: "rel2", type: "blocks", issue: issue("OPS-9") }],
+              pageInfo: { hasNextPage: true, endCursor: "more" },
+            },
             comments: {
               nodes: [
                 {
@@ -188,6 +205,7 @@ describe("LinearIssueTracker", () => {
               { id: "r4", emoji: "🤷", user: THEO },
             ],
             attachments: {
+              pageInfo: { hasNextPage: false, endCursor: null },
               nodes: [
                 {
                   url: "https://github.com/acme/web/pull/12",
@@ -221,7 +239,18 @@ describe("LinearIssueTracker", () => {
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("usr_julius");
+      expect(detail.properties).toContainEqual({
+        id: "priority",
+        label: "Priority",
+        value: "High",
+      });
+      expect(detail.properties).toContainEqual({ id: "estimate", label: "Estimate", value: 3 });
       expect(detail.commentsCursor).toBe("cmt_cur");
+      expect(detail.relatedIssues?.map((issue) => [issue.key, issue.relation])).toEqual([
+        ["ENG-8", "Blocks"],
+        ["OPS-9", "Blocked by"],
+      ]);
+      expect(detail.relatedIssuesTruncated).toBe(true);
       expect(detail.comments[0]?.reactions).toEqual([
         { content: "thumbs-up", count: 1, actors: [], viewerHasReacted: true },
       ]);

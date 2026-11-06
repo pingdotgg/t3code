@@ -192,6 +192,17 @@ export function RightPanelSurfaceContent(props: {
             key: surface.key,
           }}
           threadRef={threadRef}
+          onSelectIssue={(reference) =>
+            useRightPanelStore.getState().openIssue(threadRef, {
+              projectId: reference.projectId,
+              tracker: reference.tracker,
+              scope: reference.scope,
+              key: reference.key,
+              ...(reference.host ? { host: reference.host } : {}),
+              environmentId:
+                (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId,
+            })
+          }
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
               projectId: reference.projectId,

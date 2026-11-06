@@ -104,9 +104,66 @@ query T3Issues($first: Int!, $after: String, $filter: IssueFilter!) {
   }
 }
 
+fragment LinearRelatedIssue on Issue {
+  identifier
+  title
+  url
+  team {
+    key
+  }
+  state {
+    ...LinearWorkflowState
+  }
+}
+
 query T3Issue($id: String!, $comments: Int!) {
   issue(id: $id) {
     ...LinearIssue
+    priorityLabel
+    estimate
+    dueDate
+    cycle {
+      number
+      name
+    }
+    project {
+      name
+    }
+    parent {
+      ...LinearRelatedIssue
+    }
+    children(first: 100) {
+      nodes {
+        ...LinearRelatedIssue
+      }
+      pageInfo {
+        ...LinearPageInfo
+      }
+    }
+    relations(first: 100) {
+      nodes {
+        id
+        type
+        relatedIssue {
+          ...LinearRelatedIssue
+        }
+      }
+      pageInfo {
+        ...LinearPageInfo
+      }
+    }
+    inverseRelations(first: 100) {
+      nodes {
+        id
+        type
+        issue {
+          ...LinearRelatedIssue
+        }
+      }
+      pageInfo {
+        ...LinearPageInfo
+      }
+    }
     comments(first: $comments, orderBy: createdAt) {
       nodes {
         ...LinearComment
@@ -119,6 +176,9 @@ query T3Issue($id: String!, $comments: Int!) {
       ...LinearReaction
     }
     attachments(first: 50) {
+      pageInfo {
+        ...LinearPageInfo
+      }
       nodes {
         url
         title

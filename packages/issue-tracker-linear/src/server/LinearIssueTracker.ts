@@ -23,6 +23,7 @@ import {
   type IssueReaction,
   type IssueReactionContent,
   type IssueState,
+  type IssueRelatedIssue,
   type IssueTemplate,
   type IssueViewerPermissions,
   type StandaloneIssueTrackerDescriptor,
@@ -34,6 +35,7 @@ import {
 } from "@t3tools/issue-tracker-core/server/IssueTracker";
 
 import * as LinearApi from "./LinearApi.ts";
+import type { LinearRelatedIssue } from "./LinearApi.graphql.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: LinearApi.KIND,
@@ -112,6 +114,17 @@ function toState(state: LinearApi.LinearWorkflowState): IssueState {
 }
 
 /** Linear identifies people by id, so that is the login; the display name is what people see. */
+function relatedIssue(issue: LinearRelatedIssue, relation: string): IssueRelatedIssue {
+  return {
+    key: issue.identifier,
+    scope: issue.team.key,
+    title: issue.title,
+    url: issue.url,
+    relation,
+    state: toState(issue.state),
+  };
+}
+
 function toActor(user: LinearApi.LinearUser): IssueActor {
   return {
     login: user.id,
@@ -440,6 +453,62 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         return {
           ...toSummary(issue, issue.comments.nodes.length),
           body: issue.description ?? "",
+          nativeId: issue.id,
+          properties: [
+            { id: "status", label: "Status", value: issue.state.name },
+            { id: "priority", label: "Priority", value: issue.priorityLabel },
+            {
+              id: "assignee",
+              label: "Assignee",
+              value: issue.assignee ? userName(issue.assignee) : null,
+            },
+            { id: "team", label: "Team", value: issue.team.key },
+            { id: "project", label: "Project", value: issue.project?.name ?? null },
+            {
+              id: "cycle",
+              label: "Cycle",
+              value: issue.cycle ? issue.cycle.name || `Cycle ${issue.cycle.number}` : null,
+            },
+            { id: "estimate", label: "Estimate", value: issue.estimate },
+            { id: "dueDate", label: "Due date", value: issue.dueDate },
+            { id: "labels", label: "Labels", value: issue.labels.nodes.map((label) => label.name) },
+            { id: "createdAt", label: "Created", value: issue.createdAt },
+            { id: "updatedAt", label: "Updated", value: issue.updatedAt },
+          ],
+          relatedIssues: [
+            ...(issue.parent ? [relatedIssue(issue.parent, "Parent")] : []),
+            ...issue.children.nodes.map((child) => relatedIssue(child, "Sub-issue")),
+            ...issue.relations.nodes.map((link) =>
+              relatedIssue(
+                link.relatedIssue,
+                {
+                  blocks: "Blocks",
+                  duplicate: "Duplicates",
+                  related: "Related",
+                  similar: "Similar",
+                }[link.type] ?? link.type,
+              ),
+            ),
+            ...issue.inverseRelations.nodes.map((link) =>
+              relatedIssue(
+                link.issue,
+                {
+                  blocks: "Blocked by",
+                  duplicate: "Duplicated by",
+                  related: "Related",
+                  similar: "Similar",
+                }[link.type] ?? link.type,
+              ),
+            ),
+          ],
+          relatedIssuesTruncated:
+            issue.children.pageInfo.hasNextPage ||
+            issue.relations.pageInfo.hasNextPage ||
+            issue.inverseRelations.pageInfo.hasNextPage,
+          webLinks: issue.attachments.nodes
+            .filter((link) => /^https?:\/\//i.test(link.url) && !PULL_REQUEST_URL.test(link.url))
+            .map((link) => ({ title: link.title || link.url, url: link.url })),
+          webLinksTruncated: issue.attachments.pageInfo.hasNextPage,
           viewer,
           viewerPermissions: VIEWER_PERMISSIONS,
           reactions: toReactions(issue.reactions, viewer),

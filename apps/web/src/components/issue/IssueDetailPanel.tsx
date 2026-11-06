@@ -39,6 +39,18 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Badge } from "../ui/badge";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { IssuePropertiesTab } from "./IssuePropertiesTab";
+import { IssuePropertyValue } from "./IssuePropertyValue";
+import { IssueLinks } from "./IssueLinks";
+import {
+  issueIdentityKey,
+  pinnedIssueProperties,
+  readIssuePins,
+  toggleIssuePin,
+  writeIssuePins,
+} from "./issuePinPreferences";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -502,12 +514,14 @@ export function IssueDetailPanel({
   reference,
   threadRef = null,
   onSelectPullRequest,
+  onSelectIssue,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   threadRef?: ScopedThreadRef | null;
   /** Opens a linked change request beside this one; absent, the link goes to the host. */
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
+  onSelectIssue?: ((reference: IssueRef) => void) | undefined;
 }) {
   const detailQuery = useEnvironmentQuery(
     issueEnvironment.detail({ environmentId, input: reference }),
@@ -519,6 +533,14 @@ export function IssueDetailPanel({
     projects.find((p) => p.environmentId === environmentId && p.id === reference.projectId)
       ?.workspaceRoot ?? "";
 
+  const [propertyView, setPropertyView] = useState<{
+    key: string;
+    tab: "summary" | "properties";
+  } | null>(null);
+  const [pinPreferences, setPinPreferences] = useState<{
+    key: string;
+    ids: ReadonlyArray<string>;
+  } | null>(null);
   const [older, setOlder] = useState<{
     readonly seed: string | null;
     readonly comments: ReadonlyArray<IssueComment>;
@@ -548,6 +570,22 @@ export function IssueDetailPanel({
     }
     return <PullRequestDetailGhost />;
   }
+
+  const pinIdentity = {
+    provider: detail.tracker,
+    host: detail.host,
+    id: detail.nativeId ?? `${detail.scope}/${detail.key}`,
+  };
+  const pinKey = issueIdentityKey(pinIdentity);
+  const pins = pinPreferences?.key === pinKey ? pinPreferences.ids : readIssuePins(pinIdentity);
+  const pinnedProperties = pinnedIssueProperties(detail.properties ?? [], pins);
+  const activeTab =
+    detail.properties !== undefined && propertyView?.key === pinKey ? propertyView.tab : "summary";
+  const togglePin = (id: string) => {
+    const ids = toggleIssuePin(pins, id);
+    writeIssuePins(pinIdentity, ids);
+    setPinPreferences({ key: pinKey, ids });
+  };
 
   // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
   const olderComments = older?.seed === detail.commentsCursor ? older.comments : [];
@@ -593,11 +631,14 @@ export function IssueDetailPanel({
     });
   };
 
-  const submitComment = async () => {
+  const submitComment = async (visibility: "public" | "internal" = "public") => {
     const body = draft.trim();
     if (body.length === 0 || submitting) return;
     setSubmitting(true);
-    const result = await comment({ environmentId, input: { ...reference, body: draft } });
+    const result = await comment({
+      environmentId,
+      input: { ...reference, body: draft, visibility },
+    });
     setSubmitting(false);
     if (result._tag === "Failure") {
       toastManager.add({
@@ -703,7 +744,43 @@ export function IssueDetailPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
+      {detail.properties !== undefined ? (
+        <nav
+          aria-label="Issue tabs"
+          className="flex items-center gap-2 border-b border-border/60 px-4 py-2"
+        >
+          <span className="text-xs text-muted-foreground">{detail.displayKey}</span>
+          <ToggleGroup
+            size="segmented"
+            variant="segmented"
+            value={[activeTab]}
+            onValueChange={(next) => {
+              const tab = next[0];
+              if (tab === "summary" || tab === "properties") setPropertyView({ key: pinKey, tab });
+            }}
+          >
+            <Toggle value="summary">Summary</Toggle>
+            <Toggle value="properties">Properties</Toggle>
+          </ToggleGroup>
+        </nav>
+      ) : null}
+      {activeTab === "properties" && detail.properties !== undefined ? (
+        <div className="min-h-0 flex-1">
+          <IssuePropertiesTab
+            key={pinKey}
+            provider={detail.tracker}
+            properties={detail.properties}
+            pinnedFieldIds={pins}
+            onTogglePin={togglePin}
+          />
+        </div>
+      ) : null}
+      <div
+        className={cn(
+          "scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto",
+          activeTab !== "summary" && "hidden",
+        )}
+      >
         <div className="flex flex-col gap-4 px-4 pt-3 pb-4">
           <PullRequestDetailTitleRow className="gap-2">
             <IssueStateGlyph state={detail.state} />
@@ -834,6 +911,24 @@ export function IssueDetailPanel({
             ) : null}
           </div>
 
+          {pinnedProperties.length > 0 ? (
+            <section aria-label="Pinned properties">
+              <dl className="grid gap-2 text-xs">
+                {pinnedProperties.map((property) => (
+                  <div
+                    key={property.id}
+                    className="grid grid-cols-[minmax(6rem,30%)_minmax(0,1fr)] gap-3"
+                  >
+                    <dt className="text-muted-foreground">{property.label}</dt>
+                    <dd className="min-w-0">
+                      <IssuePropertyValue value={property.value} />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+
           <section className="group flex flex-col gap-2 rounded-lg border border-border/60 p-3">
             <div className="flex items-start gap-1">
               <span className="min-w-0 flex-1 text-xs text-muted-foreground">Description</span>
@@ -875,6 +970,8 @@ export function IssueDetailPanel({
               />
             ) : null}
           </section>
+
+          <IssueLinks detail={detail} reference={reference} onSelectIssue={onSelectIssue} />
 
           {detail.linkedPullRequests.length > 0 ? (
             <section className="flex flex-col gap-1">
@@ -928,6 +1025,11 @@ export function IssueDetailPanel({
                 >
                   <PullRequestMetaLine className="text-xs text-muted-foreground">
                     <PullRequestActorLabel actor={item.comment.author} />
+                    {item.comment.visibility === "internal" ? (
+                      <Badge variant="secondary">Internal</Badge>
+                    ) : item.comment.visibility === "restricted" ? (
+                      <Badge variant="outline">Restricted</Badge>
+                    ) : null}
                     {item.comment.url ? (
                       <InlineButton
                         className="text-muted-foreground"
@@ -972,7 +1074,7 @@ export function IssueDetailPanel({
         </div>
       </div>
 
-      {detail.capabilities.comment ? (
+      {activeTab === "summary" && detail.capabilities.comment ? (
         <form
           className="flex flex-col gap-2 border-t border-border/60 px-4 py-3"
           onSubmit={(event) => {
@@ -994,7 +1096,18 @@ export function IssueDetailPanel({
               }
             }}
           />
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {detail.capabilities.internalComments ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canComment || submitting || draft.trim().length === 0}
+                onClick={() => void submitComment("internal")}
+              >
+                Add internal note
+              </Button>
+            ) : null}
             <Button
               type="submit"
               size="sm"
