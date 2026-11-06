@@ -1650,6 +1650,7 @@ export default function ThreadTerminalDrawer({
   const splitDirection =
     resolvedTerminalGroups[resolvedActiveGroupIndex]?.splitDirection ?? "horizontal";
   const hasTerminalSidebar = normalizedTerminalIds.length > 1;
+  const terminalActionsStrip = useClientSettings((settings) => settings.terminalActionsStrip);
   const showGroupHeaders =
     resolvedTerminalGroups.length > 1 ||
     resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
@@ -1904,7 +1905,7 @@ export default function ThreadTerminalDrawer({
       <div
         className={cn(
           "min-h-0 w-full flex-1",
-          !hasTerminalSidebar && "bg-(--terminal-background) pt-8",
+          terminalActionsStrip && !hasTerminalSidebar && "bg-(--terminal-background) pt-8",
         )}
       >
         <div

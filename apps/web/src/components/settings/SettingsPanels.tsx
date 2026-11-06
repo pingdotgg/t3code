@@ -533,6 +533,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.chatWorkingShimmer !== DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer
       ? ["Working shimmer"]
       : []),
+    ...(settings.terminalActionsStrip !== DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip
+      ? ["Terminal actions strip"]
+      : []),
     ...(settings.sidebarHideLoneProvider !== DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider
       ? ["Hide lone provider logo"]
       : []),
@@ -664,6 +667,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       windowTitleWaitingCount: DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount,
       sidebarHideLoneProvider: DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider,
       chatWorkingShimmer: DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer,
+      terminalActionsStrip: DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip,
       composerQuietStopWhileWaiting: DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1175,6 +1179,31 @@ export function GeneralSettingsPanel() {
                 updateSettings({ chatWorkingShimmer: Boolean(checked) })
               }
               aria-label="Working shimmer"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("terminal-actions-strip")}
+          description="Keep the terminal's actions in a strip above it, so they never cover output. It costs about two terminal rows."
+          resetAction={
+            settings.terminalActionsStrip !== DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip ? (
+              <SettingResetButton
+                label="terminal actions strip"
+                onClick={() =>
+                  updateSettings({
+                    terminalActionsStrip: DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.terminalActionsStrip}
+              onCheckedChange={(checked) =>
+                updateSettings({ terminalActionsStrip: Boolean(checked) })
+              }
+              aria-label="Terminal actions strip"
             />
           }
         />

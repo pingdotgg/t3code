@@ -66,6 +66,7 @@ describe("opt-in display settings", () => {
     expect(decoded.windowTitleWaitingCount).toBe(false);
     expect(decoded.sidebarHideLoneProvider).toBe(false);
     expect(decoded.chatWorkingShimmer).toBe(false);
+    expect(decoded.terminalActionsStrip).toBe(false);
     expect(decoded.composerQuietStopWhileWaiting).toBe(false);
   });
 });

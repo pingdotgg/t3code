@@ -665,6 +665,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "terminal-actions-strip",
+    title: "Terminal actions strip",
+    to: "/settings/general",
+    searchTerms: ["terminal actions buttons strip overlap output first line"],
+  },
+  {
     id: "chat-working-shimmer",
     title: "Working shimmer",
     to: "/settings/general",

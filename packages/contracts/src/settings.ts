@@ -495,6 +495,7 @@ export const ClientSettingsSchema = Schema.Struct({
   windowTitleWaitingCount: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarHideLoneProvider: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   chatWorkingShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  terminalActionsStrip: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   composerQuietStopWhileWaiting: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1889,6 +1890,7 @@ export const ClientSettingsPatch = Schema.Struct({
   windowTitleWaitingCount: Schema.optionalKey(Schema.Boolean),
   sidebarHideLoneProvider: Schema.optionalKey(Schema.Boolean),
   chatWorkingShimmer: Schema.optionalKey(Schema.Boolean),
+  terminalActionsStrip: Schema.optionalKey(Schema.Boolean),
   composerQuietStopWhileWaiting: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
