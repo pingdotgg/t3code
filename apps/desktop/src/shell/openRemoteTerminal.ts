@@ -8,9 +8,11 @@ import { resolveSshCommand } from "@t3tools/ssh/command";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Base64 from "effect/encoding/Base64";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as CommandLine from "effect/process/CommandLine";
 
 const LINUX_TERMINAL_COMMANDS = [
   "xdg-terminal-exec",
@@ -83,13 +85,21 @@ export const windowsTerminalRemoteArgs = (
   ...sshArgs.map(escapeWindowsTerminalArg),
 ];
 
+/**
+ * Start-Process joins ArgumentList array elements with spaces and does not
+ * re-quote them. Serialize once for CommandLineToArgvW, then pass that string
+ * as a single ArgumentList value so spaces/quotes/backslashes survive.
+ */
+export const serializeWindowsSshArgumentList = (sshArgs: ReadonlyArray<string>): string =>
+  sshArgs.map((arg) => Result.getOrThrow(CommandLine.quote(arg, { format: "windows" }))).join(" ");
+
 /** Avoids cmd.exe parsing so metacharacters in host/path stay SSH argv. */
 export const powerShellStartRemoteArgs = (
   sshCommand: string,
   sshArgs: ReadonlyArray<string>,
 ): ReadonlyArray<string> => {
-  const argumentList = sshArgs.map(escapePowerShellStringLiteral).join(",");
-  const script = `$ProgressPreference = 'SilentlyContinue'; Start-Process -FilePath ${escapePowerShellStringLiteral(sshCommand)} -ArgumentList @(${argumentList})`;
+  const argumentList = escapePowerShellStringLiteral(serializeWindowsSshArgumentList(sshArgs));
+  const script = `$ProgressPreference = 'SilentlyContinue'; Start-Process -FilePath ${escapePowerShellStringLiteral(sshCommand)} -ArgumentList ${argumentList}`;
   return [...POWERSHELL_ARGUMENTS_PREFIX, encodeUtf16LeBase64(script)];
 };
 
