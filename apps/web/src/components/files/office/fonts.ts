@@ -1,4 +1,5 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
+import { pipe } from "effect/Function";
 import type { BundledFontProvider } from "@betteroffice/docx/layout";
 import {
   loadBundledFontBytes,
@@ -23,9 +24,9 @@ export function wordFonts(): BundledFontProvider {
 
   return {
     resolve: (family, bold, italic) =>
-      loader(shippedFace(resolveMetricCompatFace(family, bold, italic))),
+      pipe(resolveMetricCompatFace(family, bold, italic), shippedFace, loader),
     resolveFamily: (family, bold, italic) =>
-      loader(shippedFace(resolveBundledFamilyFace(family, bold, italic))),
+      pipe(resolveBundledFamilyFace(family, bold, italic), shippedFace, loader),
     resolveScriptFallback: (script, bold, italic) => loader(scriptFace(script, bold, italic)),
     resolveLastResort: (family, bold, italic) => () =>
       loadFace(lastResortFace(family, bold, italic, "word")),
