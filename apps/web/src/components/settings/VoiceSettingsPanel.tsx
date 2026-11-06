@@ -5,875 +5,1134 @@ import {
   getEnvironmentSpeechStatus,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
-  updateEnvironmentSpeechCustomWords,
-  updateEnvironmentSpeechModelDirectories,
-  updateEnvironmentSpeechFillerWordRemoval,
   updateEnvironmentSpeechAcceleration,
   updateEnvironmentSpeechModelUnloadTimeout,
-  updateEnvironmentSpeechLanguage,
-  updateEnvironmentSpeechTranslation,
 } from "@t3tools/client-runtime/voice-input";
-import type {
-  EnvironmentId,
-  EnvironmentSpeechModel,
-  EnvironmentSpeechStatus,
-  SpeechAcceleration,
-  SpeechCustomWords,
-  SpeechModelUnloadTimeout,
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import {
+  AuthSettingsWriteScope,
+  DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
+  type EnvironmentId,
+  type EnvironmentSpeechModel,
+  type EnvironmentSpeechStatus,
+  type ProjectId,
+  type SpeechAcceleration,
+  type SpeechCustomWords,
+  type SpeechModelUnloadTimeout,
+  type VoiceShortcutMode,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
+import { createModelSelection } from "@t3tools/shared/model";
+import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
 import {
   AudioLinesIcon,
   CheckIcon,
-  ChevronDownIcon,
   DownloadIcon,
-  GaugeIcon,
-  GlobeIcon,
-  HardDriveIcon,
-  InfoIcon,
   LanguagesIcon,
+  MicIcon,
   RefreshCwIcon,
-  TargetIcon,
+  StarIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import {
-  useClientSettings,
-  useClientSettingsHydrated,
-  updateClientSettings,
-} from "../../hooks/useSettings";
-import { useStableCallback } from "../../hooks/useStableCallback";
-import { ensureLocalApi } from "../../localApi";
+  chooseAudioDestination,
+  chooseTranscriptCleanup,
+  useCleanupGrant,
+} from "../../speech/voiceConsent";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { runtime } from "../../lib/runtime";
-import { cn } from "../../lib/utils";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { usePreparedConnection } from "../../state/session";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionState,
+} from "../../modelSelection";
+import { providerInstanceEntriesFor } from "../../providerInstances";
+import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
+import { useEnvironmentScope } from "../../state/session";
+import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import {
+  useEnvironmentSpeechInput,
+  useVoiceTranscriptionDestination,
+} from "../../speech/useEnvironmentSpeechInput";
+import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
+import { VoiceInputSetup } from "../chat/VoiceInputSetup";
 import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import {
-  Select,
-  SelectButton,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
-import {
-  Combobox,
-  ComboboxEmpty,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxPopup,
-  ComboboxSearchInput,
-  ComboboxTrigger,
-} from "../ui/combobox";
-import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
 import { Text } from "../ui/text";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
-import { VoiceModelDownloadProgress } from "../chat/VoiceModelDownloadProgress";
+import { MicrophoneTest } from "./MicrophoneTest";
+import { LanguageRow, ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
+import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
+import { AdvancedSettings } from "./AdvancedSettings";
+import {
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  SettingResetButton,
+  SettingsNote,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSearchTarget,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { VoicePostProcessingSettings } from "./VoicePostProcessingSettings";
+import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
+import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
+const OFF = "off";
 const SYSTEM_DEFAULT = "system-default";
-const PRIMARY_ENVIRONMENT = "primary-environment";
-const deviceValue = (id: string) => `device:${id}`;
-const environmentValue = (id: EnvironmentId) => `environment:${id}`;
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
-const MODEL_FOLDER_PATH_PATTERN = /^(\/|\\\\|[A-Za-z]:[/\\])/;
-const MODEL_FOLDER_LIMIT = 20;
-const normalizeDictionaryTerm = (value: string) =>
-  value
-    .replace(/[<>"']/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .normalize("NFC");
-const prepareBulkWords = (draft: string, words: SpeechCustomWords) => {
-  const seen = new Set(
+const SHORTCUT_MODE_LABELS: Record<VoiceShortcutMode, string> = {
+  auto: "Auto: press to toggle, hold to record",
+  hold: "Hold: record while held",
+  toggle: "Toggle: press to start, press again to stop",
+};
+const UNLOAD_LABELS: Record<SpeechModelUnloadTimeout, string> = {
+  never: "Never",
+  immediately: "Immediately",
+  min_2: "After 2 minutes",
+  min_5: "After 5 minutes",
+  min_10: "After 10 minutes",
+  min_15: "After 15 minutes",
+  hour_1: "After 1 hour",
+};
+const normalizeTerm = (value: string) => value.replace(/\s+/g, " ").trim().normalize("NFC");
+const spellingsOf = (words: SpeechCustomWords) =>
+  new Set(
     words.flatMap(({ term, aliases }) =>
-      [term, ...aliases].map((value) => value.toLocaleLowerCase()),
+      [term, ...aliases].map((spelling) => spelling.toLocaleLowerCase()),
     ),
   );
-  const entries: SpeechCustomWords[number][] = [];
-  let duplicates = 0;
-  let tooLong = 0;
-  let overLimit = 0;
-  let invalid = 0;
-  for (const line of draft.split(/\r\n?|\n/)) {
-    if (!line.trim()) continue;
-    const term = normalizeDictionaryTerm(line);
-    if (!term) {
-      invalid++;
-      continue;
-    }
-    if (term.length > 50) {
-      tooLong++;
-      continue;
-    }
-    const key = term.toLocaleLowerCase();
-    if (seen.has(key)) {
-      duplicates++;
-      continue;
-    }
-    seen.add(key);
-    if (words.length + entries.length >= 100) {
-      overLimit++;
-      continue;
-    }
-    entries.push({ term, aliases: [] });
-  }
-  return { entries, duplicates, tooLong, overLimit, invalid };
-};
-const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
-const languageLabel = (code: string) => languageNames.of(code) ?? code;
-// Ethnologue 2026 total speakers, for languages that map clearly to our model codes.
-// https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers#Ethnologue_(2026)
-const rankedLanguageCodes = [
-  "en",
-  "zh",
-  "hi",
-  "es",
-  "fr",
-  "bn",
-  "pt",
-  "id",
-  "ur",
-  "ru",
-  "de",
-  "ja",
-  "mr",
-  "vi",
-  "te",
-  "sw",
-  "ha",
-  "tr",
-  "tl",
-  "ta",
-  "jw",
-  "ko",
-  "am",
-  "th",
-  "it",
-  "gu",
-  "kn",
-  "yo",
-] as const;
-const languageRanks = new Map<string, number>(
-  rankedLanguageCodes.map((code, rank) => [code, rank]),
-);
-const compareLanguages = (a: string, b: string) => {
-  const aRank = languageRanks.get(a);
-  const bRank = languageRanks.get(b);
-  if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
-  if (aRank !== undefined) return -1;
-  if (bRank !== undefined) return 1;
-  return languageLabel(a).localeCompare(languageLabel(b));
-};
-// Handy's editorial model order (catalog dated 2026-08-17).
-const modelRanks = new Map<string, number>(
-  [
-    "parakeet-unified-en-0.6b",
-    "nemotron-3.5-asr-streaming-0.6b",
-    "canary-180m-flash",
-    "cohere-transcribe-03-2026",
-    "whisper-medium",
-    "Voxtral-Mini-4B-Realtime-2602",
-    "parakeet-tdt-0.6b-v3",
-    "parakeet-tdt-0.6b-v2",
-    "Qwen3-ASR-0.6B",
-    "Fun-ASR-MLT-Nano-2512",
-  ].map((slug, index) => [`handy-computer/${slug}-gguf`, index + 1]),
-);
 const modelSortOrder = (model: EnvironmentSpeechModel) => {
   if (model.active) return 0;
   if (model.state === "installed") return 1;
   if (model.state === "downloading" || model.state === "verifying") return 2;
-  return 3;
-};
-const SHORT_MODEL_LIST_SIZE = 5;
-const shortModelList = (sortedModels: readonly EnvironmentSpeechModel[]) => {
-  const downloadable = sortedModels.filter((model) => model.state === "downloadable");
-  const recommended = downloadable.filter((model) => model.recommended);
-  return [
-    ...sortedModels.filter((model) => model.state !== "downloadable"),
-    ...(recommended.length > 0 ? recommended : downloadable).slice(0, SHORT_MODEL_LIST_SIZE),
-  ];
+  return model.recommended ? 3 : 4;
 };
 
-function ModelRow(props: {
+type ModelCardProps = {
   readonly model: EnvironmentSpeechModel;
+  readonly comparisonLanguages: readonly string[];
   readonly busy: boolean;
-  readonly starting: boolean;
-  readonly cancelledDownload: boolean;
-  readonly failedDownload: boolean;
+  readonly canCancel: boolean;
   readonly onDownload: () => void;
   readonly onSelect: () => void;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
-}) {
-  const { model } = props;
-  const downloading =
-    props.starting || model.state === "downloading" || model.state === "verifying";
+  readonly testControls?: ReactNode;
+  readonly children?: ReactNode;
+};
+
+function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) {
   return (
-    <SettingsRow
-      title={
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span>{model.name}</span>
-          {model.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
-        </span>
-      }
-      description={model.description}
-      status={
-        !downloading ? (
-          <Text variant="meta" tone="muted" numeric>
-            {formatSize(model.size)}
-          </Text>
-        ) : undefined
-      }
-      control={
-        <div className="flex shrink-0 items-center gap-1">
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  size="icon-sm"
-                  variant="ghost-muted"
-                  aria-label={`Details for ${model.name}`}
-                />
-              }
-            >
-              <InfoIcon className="size-3.5" />
-            </PopoverTrigger>
-            <PopoverContent align="end" width="md">
-              <p className="text-label">{model.name}</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {model.supportsStreaming ? (
-                  <Badge variant="secondary">
-                    <AudioLinesIcon className="mr-1 size-3" />
-                    Streaming
-                  </Badge>
-                ) : null}
-                {model.supportsTranslation ? (
-                  <Badge variant="secondary">
-                    <LanguagesIcon className="mr-1 size-3" />
-                    Translate
-                  </Badge>
-                ) : null}
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
-                <span className="inline-flex items-center gap-1">
-                  <GlobeIcon className="size-3" />
-                  {model.languages.length === 1
-                    ? languageLabel(model.languages[0]!)
-                    : `${model.languages.length} languages`}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <HardDriveIcon className="size-3" />
-                  {formatSize(model.size)}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <TargetIcon className="size-3" />
-                  Accuracy {model.accuracy}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <GaugeIcon className="size-3" />
-                  Speed {model.speed}
-                </span>
-              </div>
-            </PopoverContent>
-          </Popover>
-          {downloading ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              aria-label={`Cancel ${model.name} download`}
-              onClick={props.onCancel}
-            >
-              <XIcon className="size-3.5" />
-              Cancel
-            </Button>
-          ) : model.state === "downloadable" ? (
-            <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onDownload}>
-              {props.failedDownload ? (
-                <RefreshCwIcon className="size-3.5" />
-              ) : (
-                <DownloadIcon className="size-3.5" />
-              )}
-              {props.failedDownload ? "Retry download" : "Download"}
-            </Button>
-          ) : !model.active ? (
-            <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onSelect}>
-              Use model
-            </Button>
-          ) : (
-            <Button size="sm" variant="secondary" disabled>
-              <CheckIcon className="size-3.5" />
-              Selected
-            </Button>
-          )}
-          {model.state === "installed" && !model.shared ? (
-            <Button
-              size="icon-sm"
-              variant="ghost-destructive"
-              disabled={props.busy || downloading}
-              aria-label={`Delete ${model.name}`}
-              onClick={props.onDelete}
-            >
-              <Trash2Icon className="size-3.5" />
-            </Button>
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="secondary" />}>
+        {props.icon}
+        {props.label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function ModelCard(props: ModelCardProps) {
+  const { model } = props;
+  const downloading = model.state === "downloading" || model.state === "verifying";
+  const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
+  return (
+    <div className="flex flex-wrap items-start gap-2 px-3 py-2.5 sm:px-4">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Text variant="label">{model.name}</Text>
+          {model.recommended ? (
+            <ModelBadge
+              icon={<StarIcon />}
+              label="Recommended"
+              tooltip="A good default pick for the languages it covers."
+            />
+          ) : null}
+          {model.supportsStreaming ? (
+            <ModelBadge
+              icon={<AudioLinesIcon />}
+              label="Live preview"
+              tooltip="Shows words in your draft as you speak, before the recording finishes."
+            />
+          ) : null}
+          {model.supportsTranslation ? (
+            <ModelBadge
+              icon={<LanguagesIcon />}
+              label="Translate"
+              tooltip="Can write English text from speech in another language. Turn on Translate to English to use it."
+            />
           ) : null}
         </div>
+        <p className="mt-0.5 text-meta text-muted-foreground">{model.description}</p>
+        <ModelBenchmarks
+          model={model}
+          languages={props.comparisonLanguages}
+          facts={[
+            ...(model.languages.length > 1
+              ? [`${model.languages.length} languages`]
+              : model.benchmark
+                ? []
+                : [languageLabel(model.languages[0] ?? "")]),
+            formatSize(model.size),
+          ]}
+        />
+        {downloading ? (
+          <div className="mt-2">
+            <div
+              role="progressbar"
+              aria-label={`${model.name} download progress`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progress)}
+              className="h-1 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className="h-full bg-primary transition-[width] duration-200"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="mt-1 text-caption text-muted-foreground">
+              {model.state === "verifying"
+                ? "Verifying download…"
+                : `${Math.round(progress)}% downloaded`}
+            </p>
+          </div>
+        ) : null}
+      </div>
+      <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
+        {props.testControls}
+        {downloading ? (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Cancel ${model.name} download`}
+            disabled={!props.canCancel}
+            onClick={props.onCancel}
+          >
+            <XIcon />
+          </Button>
+        ) : model.state === "downloadable" ? (
+          <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onDownload}>
+            <DownloadIcon />
+            Download
+          </Button>
+        ) : model.active ? (
+          <Button size="sm" variant="secondary" disabled>
+            <CheckIcon />
+            Selected
+          </Button>
+        ) : (
+          <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onSelect}>
+            Use model
+          </Button>
+        )}
+        {model.state === "installed" ? (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={props.busy}
+            aria-label={`Delete ${model.name}`}
+            onClick={props.onDelete}
+          >
+            <Trash2Icon />
+          </Button>
+        ) : null}
+      </div>
+      {props.children}
+    </div>
+  );
+}
+
+function DictionaryEditor(props: {
+  readonly label: string;
+  readonly words: SpeechCustomWords;
+  readonly disabled?: boolean;
+  readonly onChange: (words: SpeechCustomWords) => void;
+}) {
+  const { words, label, disabled = false, onChange } = props;
+  const [termDraft, setTermDraft] = useState("");
+  const [aliasDraft, setAliasDraft] = useState<{ term: string; value: string } | null>(null);
+  const spellings = spellingsOf(words);
+  const seen = new Set(spellings);
+  const newTerms = termDraft
+    .split(/[,\n]/)
+    .map(normalizeTerm)
+    .filter((term) => {
+      const key = term.toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const canAddTerm =
+    !disabled &&
+    newTerms.length > 0 &&
+    newTerms.every((term) => term.length <= 50) &&
+    words.length + newTerms.length <= 100;
+  const addTerm = () => {
+    if (!canAddTerm) return;
+    onChange([...words, ...newTerms.map((term) => ({ term, aliases: [] }))]);
+    setTermDraft("");
+  };
+  const addAlias = () => {
+    if (!aliasDraft) return;
+    const value = normalizeTerm(aliasDraft.value);
+    if (!value || value.length > 50 || spellings.has(value.toLocaleLowerCase())) return;
+    onChange(
+      words.map((entry) =>
+        entry.term === aliasDraft.term && entry.aliases.length < 8
+          ? { term: entry.term, aliases: [...entry.aliases, value] }
+          : entry,
+      ),
+    );
+    setAliasDraft(null);
+  };
+  return (
+    <>
+      <div className="flex items-start gap-1.5">
+        <Textarea
+          value={termDraft}
+          rows={1}
+          maxLength={5_100}
+          disabled={disabled}
+          placeholder="Add words or phrases, separated by commas or line breaks"
+          aria-label={`Add a word or phrase to the ${label}`}
+          onChange={(event) => setTermDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey) return;
+            event.preventDefault();
+            addTerm();
+          }}
+        />
+        <Button type="button" disabled={!canAddTerm} onClick={addTerm}>
+          Add
+        </Button>
+      </div>
+      {words.length > 0 ? (
+        <ul aria-label={`${label} entries`} className="mt-3 flex flex-wrap gap-1.5">
+          {words.map(({ term, aliases }) => (
+            <li
+              key={term}
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 py-0.5 pl-2 pr-0.5 text-meta"
+            >
+              <Text variant="meta" tone="strong">
+                {term}
+              </Text>
+              {aliases.length > 0 ? (
+                <span className="text-muted-foreground">← {aliases.join(", ")}</span>
+              ) : null}
+              {aliasDraft?.term === term ? (
+                <Input
+                  autoFocus
+                  value={aliasDraft.value}
+                  maxLength={50}
+                  aria-label={`Alias for ${term}`}
+                  placeholder="Misspelling"
+                  className="w-32"
+                  onChange={(event) => setAliasDraft({ term, value: event.target.value })}
+                  onBlur={() => setAliasDraft(null)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setAliasDraft(null);
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    addAlias();
+                  }}
+                />
+              ) : (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={disabled || aliases.length >= 8}
+                  aria-label={`Add an alias for ${term}`}
+                  onClick={() => setAliasDraft({ term, value: "" })}
+                >
+                  Alias
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost-muted"
+                disabled={disabled}
+                aria-label={`Remove ${term}`}
+                onClick={() => onChange(words.filter((entry) => entry.term !== term))}
+              >
+                <XIcon />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+/** Vocabulary stored on the environment with the project, read by everyone who dictates there. */
+function ProjectDictionaryRow() {
+  const scope = useOptionalSettingsScope();
+  const words = useScopedSettings((settings) => settings.speechProjectCustomWords);
+  const updateScopedSettings = useUpdateScopedSettings();
+  if (scope === null) return null;
+  const isProjectScope = scope.scope.kind === "project" || scope.scope.kind === "checkout";
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["speechProjectCustomWords"]}
+      {...searchableSetting("speech-project-dictionary")}
+      title={isProjectScope ? "Project dictionary" : "Shared dictionary"}
+      description={
+        isProjectScope
+          ? `Saved with ${scope.scope.label} on its environment. Everyone who dictates in this project gets these spellings, along with their own dictionary. Project spellings win when the two overlap.`
+          : "Saved on the environment and used in every project there, along with each person’s own dictionary. Pick a project above to limit these words to one project."
+      }
+      control={
+        <Text variant="meta" tone="muted" numeric>
+          {words.length} {words.length === 1 ? "entry" : "entries"}
+        </Text>
       }
     >
-      {downloading ? (
-        <div className="py-2">
-          <VoiceModelDownloadProgress model={props.starting ? null : model} size={model.size} />
-        </div>
-      ) : props.failedDownload && model.state === "downloadable" ? (
-        <div className="py-2">
-          <Text variant="meta" tone="destructive" render={<p role="alert" />}>
-            Could not download the model. Check this environment's connection and try again.
-          </Text>
-        </div>
-      ) : props.cancelledDownload && model.state === "downloadable" ? (
-        <div className="py-2">
-          <Text variant="meta" tone="muted" render={<p role="status" />}>
-            Download cancelled. You can start again.
-          </Text>
-        </div>
-      ) : null}
+      <div className="mt-2 pb-3.5">
+        <DictionaryEditor
+          label={isProjectScope ? "project dictionary" : "shared dictionary"}
+          words={words}
+          disabled={scope.connectedEnvironments.length === 0}
+          onChange={(next) => updateScopedSettings({ speechProjectCustomWords: next })}
+        />
+      </div>
     </SettingsRow>
   );
 }
 
-export function VoiceSettingsPanel() {
-  const clientSettingsHydrated = useClientSettingsHydrated();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { environments } = useEnvironments();
-  const selectedEnvironmentId = useClientSettings(
-    (settings) => settings.voiceTranscriptionEnvironmentId,
+/** Cleanup runs on the draft's environment, so its model is an environment setting there. */
+function CleanupModelRow() {
+  const { environment, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const providersByEnvironment = useEnvironmentProviders();
+  const providers =
+    (environment?.serverConfig
+      ? providersByEnvironment.get(environment.environmentId)
+      : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const textGenerationProviders = providers.filter(
+    (provider) => provider.supportsTextGeneration !== false,
   );
-  const environmentId = clientSettingsHydrated
-    ? (selectedEnvironmentId ?? primaryEnvironmentId)
-    : null;
-  const prepared = Option.getOrNull(usePreparedConnection(environmentId));
-  const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
-  const voiceShortcutMode = useClientSettings((settings) => settings.voiceShortcutMode);
-  const [status, setStatus] = useState<{
-    readonly prepared: NonNullable<typeof prepared>;
-    readonly value: EnvironmentSpeechStatus;
-  } | null>(null);
-  const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
-  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
-  const [loadingMicrophones, setLoadingMicrophones] = useState(true);
-  const [operation, setOperation] = useState<string | null>(null);
-  const [cancelledDownload, setCancelledDownload] = useState<{
-    prepared: NonNullable<typeof prepared>;
-    modelId: string;
-  } | null>(null);
-  const [failedDownloads, setFailedDownloads] = useState<{
-    prepared: NonNullable<typeof prepared>;
-    modelIds: ReadonlySet<string>;
-  } | null>(null);
-  const [customWordDraft, setCustomWordDraft] = useState("");
-  const [modelFolderDraft, setModelFolderDraft] = useState("");
-  const [bulkWordsDraft, setBulkWordsDraft] = useState("");
-  const [bulkWordsOpen, setBulkWordsOpen] = useState(false);
-  const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({});
-  const [languageSearch, setLanguageSearch] = useState("");
-  const [modelSearch, setModelSearch] = useState("");
-  const [showAllModels, setShowAllModels] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState<{
-    readonly environmentId: EnvironmentId | null;
-    readonly code: string;
-  } | null>(null);
-
-  const loadMicrophones = useStableCallback(() =>
-    (navigator.mediaDevices?.enumerateDevices() ?? Promise.resolve([]))
-      .then((devices) => {
-        setMicrophones(devices.filter((device) => device.kind === "audioinput"));
-      })
-      .catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not list microphones",
-          description: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => setLoadingMicrophones(false)),
-  );
-  const refreshMicrophones = () => {
-    setLoadingMicrophones(true);
-    return loadMicrophones();
-  };
-
-  const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate asynchronous model responses when their connection is replaced or the panel unmounts.
-  useLayoutEffect(() => {
-    connectionEpoch.current = { prepared };
-    return () => {
-      connectionEpoch.current = null;
-    };
-  }, [prepared]);
-
-  const refreshModels = useStableCallback(() => {
-    if (!prepared) return Promise.resolve();
-    const epoch = connectionEpoch.current;
-    if (epoch?.prepared !== prepared) return Promise.resolve();
-    return Promise.all([
-      runtime.runPromise(getEnvironmentSpeechStatus(prepared)),
-      runtime.runPromise(getEnvironmentSpeechModels(prepared)),
-    ])
-      .then(([nextStatus, nextModels]) => {
-        if (connectionEpoch.current !== epoch) return;
-        setStatus({ prepared, value: nextStatus });
-        setModels(nextModels.models);
-      })
-      .catch((error) => {
-        if (connectionEpoch.current !== epoch) return;
-        throw error;
-      });
-  });
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to microphone hardware changes for the lifetime of the settings panel.
-  useEffect(() => {
-    void loadMicrophones();
-    const mediaDevices = navigator.mediaDevices;
-    if (!mediaDevices) return;
-    const handleDeviceChange = () => {
-      setLoadingMicrophones(true);
-      void loadMicrophones();
-    };
-    mediaDevices.addEventListener("devicechange", handleDeviceChange);
-    return () => mediaDevices.removeEventListener("devicechange", handleDeviceChange);
-  }, [loadMicrophones]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read speech status and models when the external environment connection changes.
-  useEffect(() => {
-    if (!prepared) return;
-    void refreshModels().catch(() => {
-      setStatus(null);
-      setModels([]);
-    });
-  }, [prepared, refreshModels]);
-  const hasDownloads = models.some(
-    (model) => model.state === "downloading" || model.state === "verifying",
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Follow downloads started by setup or another client as well as this panel's own operations.
-  useEffect(() => {
-    if (!prepared || (!operation && !hasDownloads)) return;
-    let refreshInFlight = false;
-    const timer = window.setInterval(() => {
-      if (refreshInFlight) return;
-      refreshInFlight = true;
-      void refreshModels()
-        .catch(() => undefined)
-        .finally(() => {
-          refreshInFlight = false;
-        });
-    }, 350);
-    return () => window.clearInterval(timer);
-  }, [hasDownloads, operation, prepared, refreshModels]);
-
-  const reportModelError = (error: unknown) => {
-    toastManager.add({
-      type: "error",
-      title: "Could not update transcription model",
-      description: error instanceof Error ? error.message : String(error),
-    });
-  };
-  const markDownloadFailed = (modelId: string, failed: boolean) => {
-    if (!prepared) return;
-    setFailedDownloads((current) => {
-      const modelIds = new Set(current?.prepared === prepared ? current.modelIds : []);
-      if (failed) modelIds.add(modelId);
-      else modelIds.delete(modelId);
-      return { prepared, modelIds };
-    });
-  };
-  const runModelOperation = (modelId: string, run: () => Promise<unknown>, kind?: "download") => {
-    if (kind === "download") {
-      markDownloadFailed(modelId, false);
-      setCancelledDownload(null);
-    }
-    setOperation(modelId);
-    void run()
-      .then(refreshModels)
-      .catch((error) => {
-        if (kind === "download") markDownloadFailed(modelId, true);
-        else reportModelError(error);
-      })
-      .finally(() => setOperation(null));
-  };
-  const selectedIsUnavailable = Boolean(
-    selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
-  );
-  const unavailableSelectedEnvironmentId =
-    selectedEnvironmentId !== null &&
-    !environments.some((environment) => environment.environmentId === selectedEnvironmentId)
-      ? selectedEnvironmentId
-      : null;
-  const primaryEnvironment = environments.find(
-    (environment) => environment.environmentId === primaryEnvironmentId,
-  );
-  const selectedEnvironmentLabel = selectedEnvironmentId
-    ? (environments.find((environment) => environment.environmentId === selectedEnvironmentId)
-        ?.label ?? "Selected environment (Unavailable)")
-    : primaryEnvironment
-      ? `${primaryEnvironment.label} (Primary)`
-      : "Primary environment";
-  const selectedMicrophoneLabel = selectedMicrophone
-    ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
-      "Selected microphone (Unavailable)")
-    : "System default";
-  const currentStatus = status?.prepared === prepared ? status.value : null;
-  const customWords = currentStatus?.supported ? currentStatus.customWords : [];
-  const modelDirectories = currentStatus?.supported ? (currentStatus.modelDirectories ?? []) : [];
-  const removeFillerWords = currentStatus?.supported ? currentStatus.removeFillerWords : true;
-  const acceleration = currentStatus?.supported ? currentStatus.acceleration : "auto";
-  const modelUnloadTimeout = currentStatus?.supported ? currentStatus.modelUnloadTimeout : "min_15";
-  const gpuDevices = currentStatus?.supported ? currentStatus.gpuDevices : [];
-  const normalizedCustomWord = normalizeDictionaryTerm(customWordDraft);
-  const bulkWords = prepareBulkWords(bulkWordsDraft, customWords);
-  const updateCustomWords = (words: SpeechCustomWords, onSuccess?: () => void) => {
-    if (!prepared) return;
-    setOperation("custom-words");
-    void runtime
-      .runPromise(updateEnvironmentSpeechCustomWords(prepared, words))
-      .then((value) => {
-        setStatus({ prepared, value });
-        onSuccess?.();
-      })
-      .catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not update dictionary",
-          description: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => setOperation(null));
-  };
-  const updateModelFolders = (directories: string[], onSuccess?: () => void) => {
-    if (!prepared) return;
-    setOperation("model-folders");
-    void runtime
-      .runPromise(updateEnvironmentSpeechModelDirectories(prepared, directories))
-      .then(() => {
-        onSuccess?.();
-        return refreshModels();
-      })
-      .catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not update model folders",
-          description: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => setOperation(null));
-  };
-  const addModelFolder = () => {
-    const folder = modelFolderDraft.trim();
-    if (!MODEL_FOLDER_PATH_PATTERN.test(folder) || modelDirectories.length >= MODEL_FOLDER_LIMIT)
-      return;
-    updateModelFolders([...modelDirectories, folder], () => setModelFolderDraft(""));
-  };
-  const removeModelFolder = (folder: string) => {
-    updateModelFolders(modelDirectories.filter((entry) => entry !== folder));
-  };
-  const addCustomWord = () => {
-    if (
-      !normalizedCustomWord ||
-      normalizedCustomWord.length > 50 ||
-      customWords.length >= 100 ||
-      customWords.some(({ term, aliases }) =>
-        [term, ...aliases].some(
-          (spelling) => spelling.toLocaleLowerCase() === normalizedCustomWord.toLocaleLowerCase(),
-        ),
-      )
-    )
-      return;
-    updateCustomWords([...customWords, { term: normalizedCustomWord, aliases: [] }]);
-    setCustomWordDraft("");
-  };
-  const addBulkWords = () => {
-    if (!currentStatus?.supported || operation !== null || bulkWords.entries.length === 0) return;
-    updateCustomWords([...customWords, ...bulkWords.entries], () => {
-      setBulkWordsDraft("");
-      setBulkWordsOpen(false);
-    });
-  };
-  const addAlias = (term: string, draft: string) => {
-    updateCustomWords(
-      customWords.map((entry) =>
-        entry.term === term ? { ...entry, aliases: [...entry.aliases, draft] } : entry,
+  const instanceEntries = providerInstanceEntriesFor(textGenerationProviders, settings, null);
+  const hasProvider = instanceEntries.some((entry) => entry.enabled && entry.isAvailable);
+  const dedicated = settings.speechPostProcessingModelSelection !== null;
+  const selection = resolveAppModelSelectionState(
+    {
+      ...settings,
+      textGenerationModelSelection: resolveSpeechPostProcessingModelSelection(
+        settings,
+        textGenerationProviders,
       ),
-      () => setAliasDrafts((drafts) => ({ ...drafts, [term]: "" })),
-    );
+    },
+    textGenerationProviders,
+  );
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    textGenerationProviders,
+    selection.instanceId,
+    selection.model,
+  );
+  const instanceEntry = instanceEntries.find((entry) => entry.instanceId === selection.instanceId);
+  const modelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
+  const setModel = (next: ReturnType<typeof createModelSelection>) => {
+    const reason = modelDisabledReason(next.instanceId, next.model);
+    if (reason) {
+      toastManager.add({ type: "error", title: "Cleanup model not saved", description: reason });
+      return;
+    }
+    updateSettings({ speechPostProcessingModelSelection: next });
   };
-  const currentModels = currentStatus?.supported ? models : [];
-  const activeModel = currentModels.find((model) => model.active);
-  const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort(
-    compareLanguages,
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["speechPostProcessingModelSelection"]}
+      {...searchableSetting("speech-post-processing-model")}
+      title="Cleanup model"
+      description={
+        dedicated
+          ? `Drafts on ${environment?.label ?? "this environment"} use this model for cleanup instead of the environment’s text generation model.`
+          : `Cleanup currently uses the text generation model on ${environment?.label ?? "this environment"}. Pick another model if you want a cheaper or faster one.`
+      }
+      resetAction={
+        dedicated ? (
+          <SettingResetButton
+            label="cleanup model"
+            onClick={() => updateSettings({ speechPostProcessingModelSelection: null })}
+          />
+        ) : null
+      }
+      control={
+        connectedEnvironments.length === 0 ? (
+          <Text tone="muted">Connect an environment first.</Text>
+        ) : !hasProvider || !instanceEntry ? (
+          <Text tone="muted">No providers available.</Text>
+        ) : (
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <ProviderModelPicker
+              environmentId={environment?.environmentId ?? null}
+              activeInstanceId={selection.instanceId}
+              model={selection.model}
+              lockedProvider={null}
+              instanceEntries={instanceEntries}
+              modelOptionsByInstance={modelOptionsByInstance}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              getModelDisabledReason={modelDisabledReason}
+              onInstanceModelChange={(instanceId, model) =>
+                setModel(createModelSelection(instanceId, model))
+              }
+            />
+            <TraitsPicker
+              provider={instanceEntry.driverKind}
+              models={instanceEntry.models}
+              model={selection.model}
+              modelOptions={selection.options ?? []}
+              allowPromptInjectedEffort={false}
+              planModeEnabled={settings.planModeEnabled}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              onModelOptionsChange={(options) =>
+                setModel(createModelSelection(selection.instanceId, selection.model, options))
+              }
+            />
+          </div>
+        )
+      }
+    />
   );
-  const searchTerm = languageSearch.trim().toLocaleLowerCase();
-  const matchingLanguages = searchTerm
-    ? languages.filter(
-        (code) =>
-          code.toLocaleLowerCase().includes(searchTerm) ||
-          languageLabel(code).toLocaleLowerCase().includes(searchTerm),
-      )
-    : languages;
-  const language =
-    selectedLanguage?.environmentId === environmentId && languages.includes(selectedLanguage.code)
-      ? selectedLanguage.code
-      : (activeModel?.languages[0] ?? languages[0]);
-  const modelsForLanguage = currentModels.filter((model) =>
-    model.languages.includes(language ?? ""),
+}
+
+function useVoiceModels(prepared: PreparedConnection | null) {
+  const canManage = useEnvironmentScope(prepared?.environmentId ?? null, AuthSettingsWriteScope);
+  const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
+  const [status, setStatus] = useState<EnvironmentSpeechStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [requestedDownload, setRequestedDownload] = useState<string | null>(null);
+  const [actionConnection, setActionConnection] = useState(prepared);
+  if (actionConnection !== prepared) {
+    setActionConnection(prepared);
+    setBusy(false);
+    setRequestedDownload(null);
+    setModels([]);
+    setStatus(null);
+  }
+  const epoch = useRef(0);
+  const refreshRevision = useRef(0);
+  const refresh = useStableCallback(
+    async (connection: PreparedConnection, mode: "foreground" | "progress") => {
+      const current = epoch.current;
+      const revision = ++refreshRevision.current;
+      try {
+        const [nextStatus, nextModels] = await Promise.all([
+          runtime.runPromise(getEnvironmentSpeechStatus(connection)),
+          runtime.runPromise(getEnvironmentSpeechModels(connection, mode === "foreground")),
+        ]);
+        if (current !== epoch.current || revision !== refreshRevision.current) return;
+        setStatus(nextStatus);
+        setModels((previous) => {
+          if (mode === "foreground") return nextModels.models;
+          const benchmarks = new Map(previous.map((model) => [model.id, model.benchmark]));
+          return nextModels.models.map((model) => {
+            const benchmark = benchmarks.get(model.id);
+            return benchmark ? { ...model, benchmark } : model;
+          });
+        });
+      } catch (error) {
+        if (mode === "progress") return;
+        if (current !== epoch.current || revision !== refreshRevision.current) return;
+        toastManager.add({
+          type: "error",
+          title: "Could not load transcription models",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
   );
-  const modelSearchTerm = modelSearch.trim().toLocaleLowerCase();
-  const matchingModels = modelsForLanguage
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's model catalog when its connection becomes available
+  useEffect(() => {
+    epoch.current += 1;
+    if (prepared) void refresh(prepared, "foreground");
+    return () => {
+      epoch.current += 1;
+    };
+  }, [prepared, refresh]);
+  const downloading =
+    requestedDownload !== null ||
+    models.some((model) => model.state === "downloading" || model.state === "verifying");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls progress while a local request or the environment reports an active download
+  useEffect(() => {
+    if (!prepared || !downloading) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      await refresh(prepared, "progress");
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 1_000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [downloading, prepared, refresh]);
+
+  const run = async (label: string, work: () => Promise<unknown>, downloadId?: string) => {
+    if (!prepared || !canManage) return;
+    const current = epoch.current;
+    if (downloadId) setRequestedDownload(downloadId);
+    else setBusy(true);
+    try {
+      await work();
+    } catch (error) {
+      if (current === epoch.current)
+        toastManager.add({
+          type: "error",
+          title: label,
+          description: error instanceof Error ? error.message : String(error),
+        });
+    }
+    if (current === epoch.current) {
+      if (downloadId) setRequestedDownload(null);
+      else setBusy(false);
+      await refresh(prepared, "foreground");
+    }
+  };
+  return {
+    models,
+    status,
+    run,
+    controlsDisabled: busy || downloading || !canManage,
+    canCancel: canManage && !busy,
+    requestedDownload,
+  };
+}
+
+type VoiceModels = ReturnType<typeof useVoiceModels>;
+
+function AdvancedSpeechSettings({
+  prepared,
+  catalog,
+}: {
+  prepared: PreparedConnection;
+  catalog: VoiceModels;
+}) {
+  const { run, controlsDisabled, status } = catalog;
+  if (!status?.supported) return null;
+  const supported = status;
+  return (
+    <AdvancedSettings targetIds={[searchableSetting("speech-hardware").id]}>
+      <SettingsRow
+        {...searchableSetting("speech-hardware")}
+        title="Hardware"
+        description="Auto uses the environment’s GPU when it has one."
+        control={
+          <Select
+            value={supported.acceleration}
+            disabled={controlsDisabled}
+            onValueChange={(value) => {
+              if (value)
+                void run("Could not change transcription hardware", () =>
+                  runtime.runPromise(
+                    updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
+                  ),
+                );
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Transcription hardware" className="max-w-72">
+              <SelectValue>
+                {supported.acceleration === "auto"
+                  ? "Auto"
+                  : supported.acceleration === "cpu"
+                    ? "CPU"
+                    : (supported.gpuDevices.find(
+                        (device) => `gpu:${device.id}` === supported.acceleration,
+                      )?.name ?? "Selected GPU")}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="cpu">CPU</SelectItem>
+              {supported.gpuDevices.map((device) => (
+                <SelectItem key={device.id} value={`gpu:${device.id}`}>
+                  {device.name}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        title="Unload model"
+        description="Release the model’s memory on the environment after it sits idle."
+        control={
+          <Select
+            value={supported.modelUnloadTimeout}
+            disabled={controlsDisabled}
+            onValueChange={(value) => {
+              if (value)
+                void run("Could not change when the model unloads", () =>
+                  runtime.runPromise(
+                    updateEnvironmentSpeechModelUnloadTimeout(
+                      prepared,
+                      value as SpeechModelUnloadTimeout,
+                    ),
+                  ),
+                );
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Unload model" className="max-w-72">
+              <SelectValue>{UNLOAD_LABELS[supported.modelUnloadTimeout]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {(Object.keys(UNLOAD_LABELS) as SpeechModelUnloadTimeout[]).map((timeout) => (
+                <SelectItem key={timeout} value={timeout}>
+                  {UNLOAD_LABELS[timeout]}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+    </AdvancedSettings>
+  );
+}
+
+function SpeechModelBrowser(props: {
+  prepared: PreparedConnection;
+  catalog: VoiceModels;
+  testEnvironmentId: EnvironmentId;
+  projectId: ProjectId | null;
+  projectName: string | null;
+}) {
+  const {
+    prepared,
+    catalog: { status, models, run, controlsDisabled, canCancel, requestedDownload },
+  } = props;
+  const [search, setSearch] = useState("");
+  const [languageSearch, setLanguageSearch] = useState("");
+  const [selection, setSelection] = useState<string[] | null>(null);
+  const preferred = navigator.languages.map((language) => language.toLowerCase().split("-")[0]!);
+  const supportedLanguages = [...new Set(models.flatMap((model) => model.languages))];
+  const defaultLanguage = preferred.find((code) => supportedLanguages.includes(code));
+  const selectedLanguages = selection ?? (defaultLanguage ? [defaultLanguage] : []);
+  const languages = orderSpeechLanguages(supportedLanguages, preferred);
+  const needle = languageSearch.trim().toLocaleLowerCase();
+  const visibleLanguages = languages.filter(
+    (code) =>
+      !needle || code.includes(needle) || languageLabel(code).toLocaleLowerCase().includes(needle),
+  );
+  const query = search.trim().toLocaleLowerCase();
+  const sortedModels = models
     .filter(
       (model) =>
-        !modelSearchTerm ||
-        `${model.name} ${model.description}`.toLocaleLowerCase().includes(modelSearchTerm),
+        selectedLanguages.every((language) => model.languages.includes(language)) &&
+        (!query || (model.name + " " + model.description).toLocaleLowerCase().includes(query)),
     )
-    .sort(
-      (a, b) =>
-        modelSortOrder(a) - modelSortOrder(b) ||
-        (modelRanks.get(a.id) ?? 11) - (modelRanks.get(b.id) ?? 11) ||
-        Number(b.recommended) - Number(a.recommended) ||
-        b.accuracy - a.accuracy ||
-        b.speed - a.speed ||
-        a.name.localeCompare(b.name),
-    );
-  const shortModels = shortModelList(matchingModels);
-  const canShortenModels = !modelSearchTerm && shortModels.length < matchingModels.length;
-  const visibleModels = canShortenModels && !showAllModels ? shortModels : matchingModels;
+    .toSorted((left, right) => modelSortOrder(left) - modelSortOrder(right));
+  const activeModel = models.find((model) => model.active);
+  const renderedModels =
+    activeModel && !sortedModels.includes(activeModel)
+      ? [activeModel, ...sortedModels]
+      : sortedModels;
 
   return (
-    <SettingsPageContainer>
-      <SettingsSection title="Input">
-        <SettingsRow
-          {...searchableSetting("transcription-environment")}
-          title="Transcription environment"
-          description="Where voice models run for all threads."
-          control={
-            <Select
-              disabled={!clientSettingsHydrated || operation !== null}
-              value={
-                selectedEnvironmentId
-                  ? environmentValue(selectedEnvironmentId)
-                  : PRIMARY_ENVIRONMENT
-              }
-              onValueChange={(value) => {
-                if (!value) return;
-                if (value === PRIMARY_ENVIRONMENT) {
-                  void updateClientSettings({ voiceTranscriptionEnvironmentId: null });
-                  return;
-                }
-                const selectedEnvironment = environments.find(
-                  (environment) => environmentValue(environment.environmentId) === value,
-                );
-                if (selectedEnvironment)
-                  void updateClientSettings({
-                    voiceTranscriptionEnvironmentId: selectedEnvironment.environmentId,
-                  });
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Transcription environment" className="max-w-80">
-                <SelectValue>{selectedEnvironmentLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value={PRIMARY_ENVIRONMENT}>
-                  {primaryEnvironment
-                    ? `${primaryEnvironment.label} (Primary)`
-                    : "Primary environment"}
-                </SelectItem>
-                {unavailableSelectedEnvironmentId !== null ? (
-                  <SelectItem value={environmentValue(unavailableSelectedEnvironmentId)}>
-                    Selected environment (Unavailable)
-                  </SelectItem>
-                ) : null}
-                {environments
-                  .filter((environment) => environment.environmentId !== primaryEnvironmentId)
-                  .map((environment) => (
-                    <SelectItem
-                      key={environment.environmentId}
-                      value={environmentValue(environment.environmentId)}
-                    >
-                      {environment.label}
-                    </SelectItem>
-                  ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+    <SettingsSearchTarget
+      {...searchableSetting("speech-models")}
+      className="@container/voice-models"
+    >
+      {status && !status.supported ? (
+        <SettingsNote>This environment can’t transcribe audio: {status.reason}.</SettingsNote>
+      ) : null}
+      {status?.supported ? (
+        <>
+          <div className="border-b border-border/60">
+            <SettingsNote>
+              Pick languages to see models that support all of them. Accuracy is word or character
+              error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
+              Handy’s benchmark GPU.
+            </SettingsNote>
+          </div>
+          <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
+            <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
+              <div className="space-y-2 p-3">
+                <Text variant="label" render={<p />}>
+                  Languages
+                </Text>
+                <Input
+                  size="compact"
+                  aria-label="Search languages"
+                  placeholder="Search languages"
+                  value={languageSearch}
+                  onChange={(e) => setLanguageSearch(e.target.value)}
+                />
+              </div>
+              <div
+                role="group"
+                aria-label="Browse models by language"
+                className="flex gap-1 overflow-x-auto px-2 pb-2 @min-[32rem]/voice-models:h-72 @min-[32rem]/voice-models:flex-col @min-[32rem]/voice-models:overflow-y-auto"
+              >
+                <LanguageRow
+                  label="All languages"
+                  selected={selectedLanguages.length === 0}
+                  onClick={() => setSelection([])}
+                />
+                {visibleLanguages.map((code) => (
+                  <LanguageRow
+                    key={code}
+                    label={languageLabel(code)}
+                    selected={selectedLanguages.includes(code)}
+                    onClick={() =>
+                      setSelection(
+                        selectedLanguages.includes(code)
+                          ? selectedLanguages.filter((language) => language !== code)
+                          : [...selectedLanguages, code],
+                      )
+                    }
+                  />
+                ))}
+                {visibleLanguages.length === 0 && (
+                  <p className="px-2 py-1 text-meta text-muted-foreground">No languages match.</p>
+                )}
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-col">
+              <div className="space-y-2 p-3">
+                <Text variant="label" render={<p />}>
+                  {selectedLanguages.length
+                    ? "Models for " + selectedLanguages.map(languageLabel).join(", ")
+                    : "All models"}
+                </Text>
+                <Input
+                  size="compact"
+                  aria-label="Search transcription models"
+                  placeholder="Search models"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <div
+                className="h-72 overflow-y-auto divide-y divide-border/60"
+                role="region"
+                aria-label="Transcription models"
+                tabIndex={0}
+              >
+                {sortedModels.length === 0 && <SettingsNote>No models match.</SettingsNote>}
+                {renderedModels.map((model) => {
+                  const card: ModelCardProps = {
+                    model:
+                      model.id === requestedDownload && model.state === "downloadable"
+                        ? { ...model, state: "downloading" }
+                        : model,
+                    busy: controlsDisabled,
+                    canCancel,
+                    comparisonLanguages: selectedLanguages,
+                    onDownload: () =>
+                      void run(
+                        "Could not download the model",
+                        () =>
+                          runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
+                        model.id,
+                      ),
+                    onSelect: () =>
+                      void run("Could not select the model", () =>
+                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                      ),
+                    onCancel: () =>
+                      void run("Could not cancel the download", () =>
+                        runtime.runPromise(
+                          cancelEnvironmentSpeechModelDownload(prepared, model.id),
+                        ),
+                      ),
+                    onDelete: () =>
+                      void run("Could not delete the model", () =>
+                        runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
+                      ),
+                  };
+                  return model.active ? (
+                    <TranscriptionTest
+                      key={model.id}
+                      card={card}
+                      hidden={!sortedModels.includes(model)}
+                      environmentId={props.testEnvironmentId}
+                      projectId={props.projectId}
+                      projectName={props.projectName}
+                    />
+                  ) : (
+                    <ModelCard key={model.id} {...card} />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </SettingsSearchTarget>
+  );
+}
 
-        <SettingsRow
-          {...searchableSetting("microphone")}
-          description={
-            selectedIsUnavailable
-              ? "The selected microphone is unavailable. Select another microphone to record."
-              : "Record with this microphone."
-          }
-          control={
-            <div className="flex w-full max-w-80 items-center gap-1.5">
-              <Select
-                value={selectedMicrophone ? deviceValue(selectedMicrophone) : SYSTEM_DEFAULT}
-                disabled={loadingMicrophones}
-                onValueChange={(value) => {
-                  if (value)
-                    updateClientSettings({
-                      voiceMicrophone:
-                        value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
-                    });
+function TranscriptionTest(props: {
+  readonly card: ModelCardProps;
+  readonly hidden: boolean;
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId | null;
+  readonly projectName: string | null;
+}) {
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const draft = transcript ?? "";
+  const [showTranscript, setShowTranscript] = useState(false);
+  const draftRef = useRef(draft);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft to the asynchronous transcription controller
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+  const speech = useEnvironmentSpeechInput({
+    environmentId: props.environmentId,
+    projectId: props.projectId,
+    projectName: props.projectName,
+    ownerKey: JSON.stringify([props.environmentId, props.projectId]),
+    draftText: draft,
+    cleanup: false,
+    readDraft: () => ({
+      text: draftRef.current,
+      selection: { start: draftRef.current.length, end: draftRef.current.length },
+    }),
+    commitDraft: (text) => setTranscript(text),
+  });
+  return (
+    <SettingsSearchTarget {...searchableSetting("transcription-test")} hidden={props.hidden}>
+      <ModelCard
+        {...props.card}
+        testControls={
+          <div className="flex min-w-0 max-w-full items-center gap-1">
+            <ComposerSpeechRecordingPill
+              state={speech.state}
+              progress={null}
+              level={speech.level}
+              onStart={() => void speech.start()}
+              onStop={() => void speech.stop()}
+              onCancel={() => speech.cancel()}
+              onSkipPostProcessing={() => speech.skipPostProcessing()}
+            />
+            {speech.available ? (
+              speech.state.phase === "idle" ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setShowTranscript(true);
+                    void speech.start();
+                  }}
+                >
+                  <MicIcon />
+                  Test model
+                </Button>
+              ) : null
+            ) : (
+              <Text variant="meta" tone="muted">
+                {speech.status?.supported === false
+                  ? speech.status.reason
+                  : "Waiting for the environment to connect"}
+              </Text>
+            )}
+          </div>
+        }
+      >
+        {showTranscript ? (
+          <div className="w-full">
+            <div className="flex items-start gap-2">
+              <p className="min-w-0 flex-1 text-meta text-muted-foreground">
+                Say a sentence in the language above. Cleanup is skipped, so you see exactly what
+                the model heard. The transcript stays on this page.
+              </p>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Close model test"
+                onClick={() => {
+                  speech.cancel();
+                  setShowTranscript(false);
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Microphone" className="min-w-0 flex-1">
-                  <SelectValue
-                    placeholder={loadingMicrophones ? "Finding microphones…" : "Microphone"}
-                  >
-                    {selectedMicrophoneLabel}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
-                  {selectedIsUnavailable ? (
-                    <SelectItem value={deviceValue(selectedMicrophone)}>
-                      Selected microphone (Unavailable)
-                    </SelectItem>
-                  ) : null}
-                  {microphones.map((device, index) => (
-                    <SelectItem key={device.deviceId} value={deviceValue(device.deviceId)}>
-                      {device.label || `Microphone ${index + 1}`}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                disabled={loadingMicrophones}
-                aria-label="Refresh microphones"
-                onClick={() => void refreshMicrophones()}
-              >
-                <RefreshCwIcon className="size-3.5" />
+                <XIcon />
               </Button>
+            </div>
+            {speech.preview || transcript !== null ? (
+              <p
+                role="status"
+                aria-label="Test transcript"
+                className="mt-2 select-text whitespace-pre-wrap break-words text-body leading-relaxed"
+              >
+                {speech.preview ? (
+                  <>
+                    {speech.preview.committed}
+                    <span className="text-muted-foreground">{speech.preview.tentative}</span>
+                  </>
+                ) : (
+                  transcript || "No speech recognized. Try again."
+                )}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </ModelCard>
+      <VoiceInputSetup
+        environmentId={speech.transcriptionEnvironmentId}
+        open={speech.setup.open}
+        step={speech.setup.step}
+        status={speech.status}
+        model={speech.setup.model}
+        downloading={speech.setup.downloading}
+        error={speech.setup.error}
+        onOpenChange={speech.setup.setOpen}
+        onDownload={() => void speech.setup.download()}
+        onCancelDownload={() => void speech.setup.cancelDownload()}
+        onStartRecording={() => void speech.setup.startRecording()}
+      />
+    </SettingsSearchTarget>
+  );
+}
+
+export function VoiceSettingsPanel() {
+  const cleanupEnabled = useCleanupGrant() !== null;
+  const settings = useClientSettings();
+  const settingsScope = useOptionalSettingsScope();
+  const destination = useVoiceTranscriptionDestination();
+  const { environments } = useEnvironments();
+  const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
+  const prepared = destination.prepared;
+  const catalog = useVoiceModels(prepared);
+
+  const refreshMicrophones = useStableCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      setMicrophones(await listBrowserMicrophones());
+    } catch {
+      setMicrophones([]);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to microphone device changes while settings are open
+  useEffect(() => {
+    queueMicrotask(() => void refreshMicrophones());
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices?.addEventListener) return;
+    const onChange = () => void refreshMicrophones();
+    mediaDevices.addEventListener("devicechange", onChange);
+    return () => mediaDevices.removeEventListener("devicechange", onChange);
+  }, [refreshMicrophones]);
+  const modelStatus = catalog.status;
+  const target = settingsScope?.target;
+  const members = settingsScope?.scope.members;
+  const project =
+    members?.find(
+      (member) => member.environmentId === target?.environmentId && member.id === target.projectId,
+    ) ?? members?.[0];
+
+  const selectedMicrophone = settings.voiceMicrophone;
+  const selectedMicrophoneLabel = selectedMicrophone
+    ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
+      "Selected microphone (unavailable)")
+    : "System default";
+  const destinationValue = destination.environmentId ?? OFF;
+  const chosenEnvironment = environments.find(
+    (environment) => environment.environmentId === destination.environmentId,
+  );
+  const chosenUnsupported =
+    chosenEnvironment?.serverConfig != null &&
+    chosenEnvironment.serverConfig.environment.capabilities.voiceTranscription !== true;
+  const model = prepared && modelStatus?.supported ? modelStatus : null;
+
+  return (
+    <SettingsPageContainer
+      searchTargetFallbacks={{
+        "speech-models": prepared ? undefined : "voice-transcription-destination",
+        "speech-hardware": prepared && model ? undefined : "voice-transcription-destination",
+        "transcription-test": !prepared
+          ? "voice-transcription-destination"
+          : !model || model.state === "missing-model"
+            ? "speech-models"
+            : undefined,
+        "speech-post-processing-model":
+          cleanupEnabled && settingsScope ? undefined : "speech-post-processing",
+        "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
+      }}
+    >
+      <SettingsSection id="voice-input" title="Input">
+        <SettingsRow
+          {...searchableSetting("voice-microphone")}
+          title="Microphone"
+          description="System default follows your operating system. Record a ten-second test and play it back here. Test audio stays on this device and is never transcribed."
+          control={
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+              <SettingsSearchTarget {...searchableSetting("microphone-test")}>
+                <MicrophoneTest key={selectedMicrophone} microphoneId={selectedMicrophone} />
+              </SettingsSearchTarget>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <Select
+                  value={selectedMicrophone ? `device:${selectedMicrophone}` : SYSTEM_DEFAULT}
+                  onValueChange={(value) => {
+                    if (value)
+                      void updateClientSettings({
+                        voiceMicrophone:
+                          value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
+                      });
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Microphone" className="max-w-64">
+                    <SelectValue>{selectedMicrophoneLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
+                    {microphones.map((device) => (
+                      <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
+                        {device.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Refresh microphones"
+                  onClick={() => void refreshMicrophones()}
+                >
+                  <RefreshCwIcon />
+                </Button>
+              </div>
             </div>
           }
         />
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
-          title="Recording shortcut"
-          description="Hold or tap to record. Set the shortcut in Keybindings."
+          title="Dictation shortcut"
+          description="How the dictation shortcut starts and stops recording."
           control={
             <Select
-              value={voiceShortcutMode}
+              value={settings.voiceShortcutMode}
               onValueChange={(value) => {
-                if (value === "auto" || value === "hold" || value === "toggle") {
-                  void updateClientSettings({ voiceShortcutMode: value });
-                }
+                if (value)
+                  void updateClientSettings({ voiceShortcutMode: value as VoiceShortcutMode });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Dictation shortcut mode" className="max-w-80">
-                <SelectValue>
-                  {voiceShortcutMode === "auto"
-                    ? "Auto (hold or tap)"
-                    : voiceShortcutMode === "hold"
-                      ? "Hold to record"
-                      : "Toggle recording"}
-                </SelectValue>
+              <SelectTrigger size="sm" aria-label="Dictation shortcut mode" className="max-w-72">
+                <SelectValue>{SHORTCUT_MODE_LABELS[settings.voiceShortcutMode]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="auto">Auto (hold or tap)</SelectItem>
-                <SelectItem value="hold">Hold to record</SelectItem>
-                <SelectItem value="toggle">Toggle recording</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-      </SettingsSection>
-      <SettingsSection title="Transcription">
-        <SettingsRow
-          title="Model"
-          description={
-            currentStatus && !currentStatus.supported
-              ? currentStatus.reason
-              : "Recordings are deleted after transcription."
-          }
-          control={
-            <span className="text-body text-muted-foreground">
-              {currentStatus?.supported
-                ? (activeModel?.name ?? "No model selected")
-                : "Unavailable"}
-            </span>
-          }
-        />
-        <SettingsRow
-          title="Language"
-          description={
-            !activeModel
-              ? "Download a model to choose a language."
-              : activeModel.languages.length === 1
-                ? `This model only supports ${languageLabel(activeModel.languages[0]!)}.`
-                : activeModel.supportsLanguageDetection
-                  ? "Choose your language or detect it automatically."
-                  : "Choose the language you speak."
-          }
-          control={
-            <Select
-              disabled={
-                !prepared ||
-                !activeModel ||
-                activeModel.languages.length === 1 ||
-                operation !== null
-              }
-              value={
-                currentStatus?.supported
-                  ? currentStatus.effectiveLanguage
-                  : (activeModel?.languages[0] ?? "auto")
-              }
-              onValueChange={(value) => {
-                if (!value || !prepared) return;
-                setOperation("language");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechLanguage(prepared, value))
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update transcription language",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-80">
-                <SelectValue>
-                  {currentStatus?.supported && currentStatus.effectiveLanguage === "auto"
-                    ? "Auto"
-                    : languageLabel(
-                        currentStatus?.supported
-                          ? currentStatus.effectiveLanguage
-                          : (activeModel?.languages[0] ?? "en"),
-                      )}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {activeModel?.supportsLanguageDetection ? (
-                  <SelectItem value="auto">Auto</SelectItem>
-                ) : null}
-                {[...(activeModel?.languages ?? [])].sort(compareLanguages).map((code) => (
-                  <SelectItem key={code} value={code}>
-                    {languageLabel(code)}
+                {(Object.keys(SHORTCUT_MODE_LABELS) as VoiceShortcutMode[]).map((mode) => (
+                  <SelectItem key={mode} value={mode}>
+                    {SHORTCUT_MODE_LABELS[mode]}
                   </SelectItem>
                 ))}
               </SelectPopup>
@@ -881,634 +1140,235 @@ export function VoiceSettingsPanel() {
           }
         />
       </SettingsSection>
-      <FoldedSettingsSection
-        id={searchableSetting("local-voice-input").id}
-        headerPlacement="outside"
-        title="Transcription models"
-        summary={activeModel?.name ?? "Choose a model"}
-      >
-        {currentStatus?.supported && prepared ? (
-          <>
-            {currentStatus.modelDirectories !== undefined ? (
-              <SettingsRow
-                title="Model folders"
-                description="Look for downloaded models in these folders on this environment. T3 Code never changes files there."
-                control={
-                  <div className="flex w-full max-w-80 items-center gap-1.5">
-                    <Input
-                      value={modelFolderDraft}
-                      placeholder="Add a folder path"
-                      aria-label="Add a model folder"
-                      disabled={operation !== null}
-                      onChange={(event) => setModelFolderDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        event.preventDefault();
-                        addModelFolder();
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={
-                        operation !== null ||
-                        !MODEL_FOLDER_PATH_PATTERN.test(modelFolderDraft.trim()) ||
-                        modelDirectories.length >= MODEL_FOLDER_LIMIT
-                      }
-                      onClick={addModelFolder}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                }
-              >
-                {modelDirectories.length > 0 ? (
-                  <div
-                    aria-label="Model folders"
-                    className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3"
-                  >
-                    {modelDirectories.map((directory) => (
-                      <Button
-                        key={directory}
-                        type="button"
-                        size="xs"
-                        variant="secondary"
-                        disabled={operation !== null}
-                        aria-label={`Remove folder ${directory}`}
-                        onClick={() => removeModelFolder(directory)}
-                      >
-                        {directory}
-                        <XIcon className="ml-1 size-3" />
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-              </SettingsRow>
-            ) : null}
-            <SettingsRow
-              title="Model language"
-              description="Find models that support your language."
-              control={
-                <Combobox
-                  items={matchingLanguages}
-                  filteredItems={matchingLanguages}
-                  value={language ?? null}
-                  onValueChange={(code) => {
-                    if (code) setSelectedLanguage({ environmentId, code });
-                  }}
-                  onOpenChange={() => setLanguageSearch("")}
-                >
-                  <ComboboxTrigger
-                    aria-label="Browse transcription models by language"
-                    render={<SelectButton size="sm" />}
-                  >
-                    {language ? languageLabel(language) : "Choose language"}
-                  </ComboboxTrigger>
-                  <ComboboxPopup align="end">
-                    <ComboboxSearchInput
-                      aria-label="Search languages"
-                      placeholder="Search languages"
-                      value={languageSearch}
-                      onChange={(event) => setLanguageSearch(event.target.value)}
-                      showClear
-                    />
-                    <ComboboxEmpty>No languages found</ComboboxEmpty>
-                    <ComboboxList>
-                      {(code: string) => (
-                        <ComboboxItem key={code} value={code}>
-                          {languageLabel(code)}
-                        </ComboboxItem>
-                      )}
-                    </ComboboxList>
-                  </ComboboxPopup>
-                </Combobox>
-              }
-            />
-            <SettingsRow
-              title="Search models"
-              control={
-                <div className="flex w-full max-w-80 items-center gap-1">
-                  <Input
-                    type="search"
-                    size="compact"
-                    aria-label="Search transcription models"
-                    placeholder="Search models"
-                    value={modelSearch}
-                    onChange={(event) => setModelSearch(event.target.value)}
-                  />
-                  {modelSearch ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Clear model search"
-                      onClick={() => setModelSearch("")}
-                    >
-                      <XIcon className="size-3.5" />
-                    </Button>
-                  ) : null}
-                </div>
-              }
-            />
-            {visibleModels.map((model) => (
-              <ModelRow
-                key={model.id}
-                model={model}
-                busy={operation !== null || hasDownloads}
-                starting={operation === model.id && model.state === "downloadable"}
-                cancelledDownload={
-                  cancelledDownload?.prepared === prepared && cancelledDownload.modelId === model.id
-                }
-                failedDownload={
-                  failedDownloads?.prepared === prepared && failedDownloads.modelIds.has(model.id)
-                }
-                onDownload={() =>
-                  runModelOperation(
-                    model.id,
-                    async () => {
-                      const result = await runtime.runPromise(
-                        downloadEnvironmentSpeechModel(prepared, model.id),
-                      );
-                      if (
-                        result.models.some(
-                          (candidate) =>
-                            candidate.id === model.id && candidate.state === "installed",
-                        )
-                      ) {
-                        await runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id));
-                      }
-                    },
-                    "download",
-                  )
-                }
-                onSelect={() =>
-                  runModelOperation(model.id, () =>
-                    runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                  )
-                }
-                onCancel={() =>
-                  void runtime
-                    .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
-                    .then(() => setCancelledDownload({ prepared, modelId: model.id }))
-                    .then(refreshModels)
-                    .catch(reportModelError)
-                }
-                onDelete={() =>
-                  void ensureLocalApi()
-                    .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
-                    .then((confirmed) => {
-                      if (confirmed)
-                        runModelOperation(model.id, () =>
-                          runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
-                        );
-                    })
-                }
-              />
-            ))}
-            {canShortenModels ? (
-              <div className="px-3 py-2 sm:px-4">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost-muted"
-                  aria-expanded={showAllModels}
-                  onClick={() => setShowAllModels((open) => !open)}
-                >
-                  {showAllModels ? "Show fewer" : `Show all ${matchingModels.length} models`}
-                  <ChevronDownIcon
-                    aria-hidden
-                    className={cn(
-                      "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
-                      showAllModels && "rotate-180",
-                    )}
-                  />
-                </Button>
-              </div>
-            ) : null}
 
-            {modelsForLanguage.length === 0 ? (
-              <SettingsRow title="No transcription models are available." />
-            ) : visibleModels.length === 0 ? (
-              <SettingsRow title="No models match your search." />
-            ) : null}
-          </>
-        ) : (
-          <SettingsRow
-            title="Models unavailable"
-            description={
-              currentStatus && !currentStatus.supported
-                ? "This environment does not support voice transcription."
-                : "Connect an environment to manage models."
-            }
-          />
-        )}
-      </FoldedSettingsSection>
-      <VoicePostProcessingSettings />
-      <SettingsSection title="Dictionary">
+      <SettingsSection id="voice-transcription" title="Transcription">
         <SettingsRow
-          {...searchableSetting("dictionary")}
-          title="Custom words"
-          description="Help recognize names and uncommon terms. Your project name is included."
+          {...searchableSetting("voice-transcription-destination")}
+          title="Send microphone audio to"
+          description={
+            <>
+              Microphone audio is sent to this environment to transcribe, then discarded. Choose Off
+              to turn voice input off on this device. This choice is saved on this device only.
+            </>
+          }
           control={
-            <div className="w-full max-w-80">
-              <div className="flex items-center gap-1.5">
-                <Input
-                  value={customWordDraft}
-                  maxLength={50}
-                  placeholder="Add a word or phrase"
-                  aria-label="Add a word or phrase"
-                  disabled={!currentStatus?.supported || operation !== null}
-                  onChange={(event) => setCustomWordDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    addCustomWord();
-                  }}
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={
-                    !currentStatus?.supported ||
-                    !normalizedCustomWord ||
-                    normalizedCustomWord.length > 50 ||
-                    customWords.some(({ term, aliases }) =>
-                      [term, ...aliases].some(
-                        (spelling) =>
-                          spelling.toLocaleLowerCase() === normalizedCustomWord.toLocaleLowerCase(),
-                      ),
-                    ) ||
-                    customWords.length >= 100 ||
-                    operation !== null
-                  }
-                  onClick={addCustomWord}
-                >
-                  Add
-                </Button>
-              </div>
-              <div className="mt-1 flex justify-end">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost-muted"
-                  disabled={!currentStatus?.supported || operation !== null}
-                  aria-expanded={bulkWordsOpen}
-                  onClick={() => setBulkWordsOpen((open) => !open)}
-                >
-                  {bulkWordsOpen ? "Hide bulk entry" : "Add multiple words"}
-                </Button>
-              </div>
-            </div>
+            <Select
+              value={destinationValue}
+              onValueChange={(value) => {
+                if (!value) return;
+                chooseAudioDestination(
+                  value === OFF
+                    ? null
+                    : { kind: "environment", environmentId: value as EnvironmentId },
+                );
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Send microphone audio to" className="max-w-72">
+                <SelectValue>
+                  {destinationValue === OFF
+                    ? "Off"
+                    : (chosenEnvironment?.label ?? "Chosen environment (unavailable)")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value={OFF}>Off</SelectItem>
+                {environments.map((environment) => (
+                  <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                    {environment.label}
+                  </SelectItem>
+                ))}
+                {destination.environmentId && !chosenEnvironment ? (
+                  <SelectItem value={destination.environmentId}>
+                    Chosen environment (unavailable)
+                  </SelectItem>
+                ) : null}
+              </SelectPopup>
+            </Select>
           }
         >
-          {bulkWordsOpen ? (
-            <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
-              <p className="text-meta text-muted-foreground">Paste one word or phrase per line.</p>
-              <Textarea
-                value={bulkWordsDraft}
-                maxLength={10_000}
-                placeholder={"T3 Code\nAnother name\nTechnical term"}
-                aria-label="Words to add"
-                disabled={!currentStatus?.supported || operation !== null}
-                onChange={(event) => setBulkWordsDraft(event.target.value)}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div
-                  role="status"
-                  className="flex flex-col gap-0.5 text-meta text-muted-foreground"
-                >
-                  <span>
-                    {bulkWords.entries.length} {bulkWords.entries.length === 1 ? "word" : "words"}{" "}
-                    ready to add
-                  </span>
-                  {bulkWords.duplicates > 0 ? (
-                    <span>
-                      {bulkWords.duplicates} duplicate{bulkWords.duplicates === 1 ? "" : "s"}
-                    </span>
-                  ) : null}
-                  {bulkWords.tooLong > 0 ? (
-                    <span>{bulkWords.tooLong} over 50 characters</span>
-                  ) : null}
-                  {bulkWords.overLimit > 0 ? (
-                    <span>{bulkWords.overLimit} over the 100-word limit</span>
-                  ) : null}
-                  {bulkWords.invalid > 0 ? (
-                    <span>{bulkWords.invalid} empty after cleanup</span>
-                  ) : null}
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={
-                    !currentStatus?.supported ||
-                    bulkWords.entries.length === 0 ||
-                    operation !== null
-                  }
-                  onClick={addBulkWords}
-                >
-                  Add {bulkWords.entries.length} {bulkWords.entries.length === 1 ? "word" : "words"}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-          {customWords.length > 0 ? (
-            <div className="mt-3 border-t border-border/60 pt-3">
-              <p className="mb-2 text-meta text-muted-foreground">
-                Click a word to correct its misspellings.
-              </p>
-              <div aria-label="Dictionary entries" className="flex flex-wrap gap-1.5">
-                {customWords.map(({ term, aliases }) => {
-                  const draft = (aliasDrafts[term] ?? "")
-                    .replace(/[<>"']/g, "")
-                    .replace(/\s+/g, " ")
-                    .trim();
-                  const used = customWords.some((entry) =>
-                    [entry.term, ...entry.aliases].some(
-                      (spelling) => spelling.toLocaleLowerCase() === draft.toLocaleLowerCase(),
-                    ),
-                  );
-                  return (
-                    <Popover key={term}>
-                      <PopoverTrigger
-                        render={<Button type="button" size="xs" variant="secondary" />}
-                        aria-label={`Edit misspellings for ${term}`}
-                      >
-                        {term}
-                        {aliases.length > 0 ? (
-                          <span className="text-muted-foreground">({aliases.length})</span>
-                        ) : null}
-                      </PopoverTrigger>
-                      <PopoverContent align="start" sideOffset={6} width="md">
-                        <div className="mb-3 flex items-center justify-between gap-2">
-                          <span className="text-label">{term}</span>
-                          <Button
-                            type="button"
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            disabled={operation !== null}
-                            aria-label={`Remove ${term}`}
-                            onClick={() =>
-                              updateCustomWords(customWords.filter((item) => item.term !== term))
-                            }
-                          >
-                            <Trash2Icon className="size-3.5" />
-                          </Button>
-                        </div>
-                        <div className="space-y-2">
-                          <p className="text-meta text-muted-foreground">
-                            Add common misspellings to correct them to {term} in the transcript.
-                          </p>
-                          {aliases.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {aliases.map((alias) => (
-                                <Button
-                                  key={alias}
-                                  type="button"
-                                  size="xs"
-                                  variant="secondary"
-                                  disabled={operation !== null}
-                                  aria-label={`Remove alias ${alias} from ${term}`}
-                                  onClick={() =>
-                                    updateCustomWords(
-                                      customWords.map((entry) =>
-                                        entry.term === term
-                                          ? {
-                                              ...entry,
-                                              aliases: entry.aliases.filter(
-                                                (value) => value !== alias,
-                                              ),
-                                            }
-                                          : entry,
-                                      ),
-                                    )
-                                  }
-                                >
-                                  {alias}
-                                  <XIcon className="ml-1 size-3" />
-                                </Button>
-                              ))}
-                            </div>
-                          ) : null}
-                          <div className="flex max-w-80 gap-1.5">
-                            <Input
-                              value={aliasDrafts[term] ?? ""}
-                              maxLength={50}
-                              placeholder="Common mis-transcription"
-                              aria-label={`Transcribed as for ${term}`}
-                              disabled={operation !== null || aliases.length >= 8}
-                              onChange={(event) =>
-                                setAliasDrafts((drafts) => ({
-                                  ...drafts,
-                                  [term]: event.target.value,
-                                }))
-                              }
-                              onKeyDown={(event) => {
-                                if (
-                                  event.key !== "Enter" ||
-                                  !draft ||
-                                  used ||
-                                  aliases.length >= 8 ||
-                                  operation !== null
-                                )
-                                  return;
-                                event.preventDefault();
-                                addAlias(term, draft);
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              disabled={!draft || used || aliases.length >= 8 || operation !== null}
-                              onClick={() => addAlias(term, draft)}
-                            >
-                              Add
-                            </Button>
-                          </div>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  );
-                })}
-              </div>
-            </div>
+          {destination.environmentId && chosenUnsupported ? (
+            <p className="mt-2 text-meta text-destructive-foreground">
+              {chosenEnvironment.label} can’t transcribe audio. Pick an environment that can to use
+              voice input.
+            </p>
           ) : null}
         </SettingsRow>
-      </SettingsSection>
-      <SettingsSection title="Advanced">
+
         <SettingsRow
-          title="Translate to English"
+          {...searchableSetting("speech-language")}
+          title="Language"
           description={
-            !currentStatus?.supported || !currentStatus.supportsTranslation
-              ? "The active model does not support translation."
-              : currentStatus.effectiveLanguage === "en"
-                ? "English speech is transcribed without translation."
-                : "Write your speech in English."
+            model
+              ? `${model.model} ${model.supportsLanguageDetection ? "detects the language automatically" : "uses one fixed language"}.`
+              : "Choose an environment above to see the languages its transcription model supports."
           }
+          control={<SpeechLanguageSelect model={model} />}
+        />
+        {model?.supportsTranslation ? (
+          <SettingsRow
+            title="Translate to English"
+            description="Speak any language and get English text."
+            control={
+              <Switch
+                aria-label="Translate to English"
+                checked={settings.speechTranslateToEnglish}
+                onCheckedChange={(checked) =>
+                  void updateClientSettings({ speechTranslateToEnglish: checked })
+                }
+              />
+            }
+          />
+        ) : null}
+        {prepared ? (
+          <SpeechModelBrowser
+            key={prepared.environmentId}
+            prepared={prepared}
+            catalog={catalog}
+            testEnvironmentId={
+              project?.environmentId ?? target?.environmentId ?? prepared.environmentId
+            }
+            projectId={project?.id ?? null}
+            projectName={project?.title ?? null}
+          />
+        ) : null}
+        {prepared && <AdvancedSpeechSettings prepared={prepared} catalog={catalog} />}
+      </SettingsSection>
+      <SettingsSection id="voice-recognition" title="Transcription options">
+        <SettingsRow
+          {...searchableSetting("speech-silence-filtering")}
+          title="Silence filtering"
+          description="Skip silence and other non-speech audio before transcription, keeping a short buffer so words aren’t cut off."
           control={
             <Switch
-              aria-label="Translate to English"
-              checked={currentStatus?.supported ? currentStatus.translateToEnglish : false}
-              disabled={
-                !prepared ||
-                !currentStatus?.supported ||
-                !currentStatus.supportsTranslation ||
-                operation !== null
+              aria-label="Silence filtering"
+              checked={settings.speechSilenceFiltering}
+              onCheckedChange={(checked) =>
+                void updateClientSettings({ speechSilenceFiltering: checked })
               }
-              onCheckedChange={(enabled) => {
-                if (!prepared) return;
-                setOperation("translation");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechTranslation(prepared, enabled))
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update speech translation",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
             />
           }
         />
-
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
-          description="Leave out hesitation words like um and uh."
+          title="Remove filler words"
+          description="Remove filler words like “um” and “uh” from transcripts."
           control={
             <Switch
               aria-label="Remove filler words"
-              checked={removeFillerWords}
-              disabled={!currentStatus?.supported || operation !== null}
-              onCheckedChange={(enabled) => {
-                if (!prepared) return;
-                setOperation("filler-words");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechFillerWordRemoval(prepared, enabled))
-                  .then((value) => setStatus({ prepared, value }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update filler word removal",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
+              checked={settings.speechRemoveFillerWords}
+              onCheckedChange={(checked) =>
+                void updateClientSettings({ speechRemoveFillerWords: checked })
+              }
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("speech-dictionary")}
+          title="Dictionary"
+          description="Names and terms transcription should spell your way, saved on this device. Add an alias when it keeps hearing a term wrong. The name of the project you dictate in is also sent as a hint."
+          control={
+            <Text variant="meta" tone="muted" numeric>
+              {settings.speechCustomWords.length}{" "}
+              {settings.speechCustomWords.length === 1 ? "entry" : "entries"}
+            </Text>
+          }
+        >
+          <div className="mt-2 pb-3.5">
+            <DictionaryEditor
+              label="dictionary"
+              words={settings.speechCustomWords}
+              onChange={(words) => void updateClientSettings({ speechCustomWords: words })}
+            />
+          </div>
+        </SettingsRow>
+        <ProjectDictionaryRow />
+      </SettingsSection>
 
-        <VoicePostProcessingSettings advanced />
+      <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
-          {...searchableSetting("speech-model-unload")}
-          title="Keep model in memory"
-          description="Unload after this much idle time. Never keeps it loaded until the environment stops."
+          title="Clean up transcripts with a provider"
+          description="Sends each transcript, plus the draft text around your cursor, to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Your audio is never sent. Off by default."
           control={
-            <Select
-              value={modelUnloadTimeout}
-              disabled={!currentStatus?.supported || operation !== null}
-              onValueChange={(value) => {
-                if (!prepared || !value) return;
-                setOperation("model-unload");
-                void runtime
-                  .runPromise(
-                    updateEnvironmentSpeechModelUnloadTimeout(
-                      prepared,
-                      value as SpeechModelUnloadTimeout,
-                    ),
-                  )
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update model unload setting",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Model unload" className="max-w-80">
-                <SelectValue>
-                  {
-                    {
-                      never: "Never",
-                      immediately: "Immediately",
-                      min_2: "2 minutes",
-                      min_5: "5 minutes",
-                      min_10: "10 minutes",
-                      min_15: "15 minutes",
-                      hour_1: "1 hour",
-                    }[modelUnloadTimeout]
-                  }
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="never">Never</SelectItem>
-                <SelectItem value="immediately">Immediately</SelectItem>
-                <SelectItem value="min_2">2 minutes</SelectItem>
-                <SelectItem value="min_5">5 minutes</SelectItem>
-                <SelectItem value="min_10">10 minutes</SelectItem>
-                <SelectItem value="min_15">15 minutes</SelectItem>
-                <SelectItem value="hour_1">1 hour</SelectItem>
-              </SelectPopup>
-            </Select>
+            <Switch
+              aria-label="Clean up transcripts with a provider"
+              checked={cleanupEnabled}
+              onCheckedChange={chooseTranscriptCleanup}
+            />
           }
         />
-        <SettingsRow
-          {...searchableSetting("speech-acceleration")}
-          title="Hardware"
-          description="Auto uses a GPU when available."
-          control={
-            <Select
-              value={acceleration}
-              disabled={!currentStatus?.supported || operation !== null}
-              onValueChange={(value) => {
-                if (!prepared || !value) return;
-                setOperation("acceleration");
-                void runtime
-                  .runPromise(
-                    updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
-                  )
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update acceleration",
-                      description: error instanceof Error ? error.message : String(error),
+        {cleanupEnabled ? (
+          <SettingsRow
+            title="Cleanup instructions"
+            description="Use the built-in instructions or write your own."
+            control={
+              <Select
+                value={settings.speechPostProcessingPrompt.mode}
+                onValueChange={(value) => {
+                  if (value === "default" || value === "custom")
+                    void updateClientSettings({
+                      speechPostProcessingPrompt: {
+                        ...settings.speechPostProcessingPrompt,
+                        mode: value,
+                      },
                     });
-                  })
-                  .finally(() => setOperation(null));
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Transcription acceleration" className="max-w-80">
-                <SelectValue>
-                  {acceleration === "auto"
-                    ? "Auto"
-                    : acceleration === "cpu"
-                      ? "CPU"
-                      : (gpuDevices.find((device) => `gpu:${device.id}` === acceleration)?.name ??
-                        "Selected GPU (Unavailable)")}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="auto">Auto</SelectItem>
-                {acceleration.startsWith("gpu:") &&
-                !gpuDevices.some((device) => `gpu:${device.id}` === acceleration) ? (
-                  <SelectItem value={acceleration}>Selected GPU (Unavailable)</SelectItem>
-                ) : null}
-                {gpuDevices.map((device) => (
-                  <SelectItem key={device.id} value={`gpu:${device.id}`}>
-                    {device.name}
-                  </SelectItem>
-                ))}
-                <SelectItem value="cpu">CPU</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Cleanup instructions" className="max-w-64">
+                  <SelectValue>
+                    {settings.speechPostProcessingPrompt.mode === "custom" ? "Custom" : "Built-in"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="default">Built-in</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          >
+            <Textarea
+              aria-label="Custom cleanup instructions"
+              className="mt-2"
+              maxLength={10_000}
+              disabled={settings.speechPostProcessingPrompt.mode !== "custom"}
+              value={
+                settings.speechPostProcessingPrompt.mode === "custom"
+                  ? settings.speechPostProcessingPrompt.customInstructions
+                  : DEFAULT_SPEECH_POST_PROCESSING_PROMPT
+              }
+              onChange={(event) =>
+                void updateClientSettings({
+                  speechPostProcessingPrompt: {
+                    mode: "custom",
+                    customInstructions: event.target.value,
+                  },
+                })
+              }
+            />
+          </SettingsRow>
+        ) : null}
+        {cleanupEnabled && settingsScope !== null ? <CleanupModelRow /> : null}
+        {cleanupEnabled ? (
+          <SettingsRow
+            {...searchableSetting("speech-correction-word")}
+            title="Correction cue"
+            description="The word or phrase you say to flag a correction, like “sorry” or “scratch that”. Cleanup applies the correction only where one is meant, and hears the cue as a hint."
+            control={
+              <Input
+                key={settings.speechCorrectionWord}
+                defaultValue={settings.speechCorrectionWord}
+                maxLength={50}
+                placeholder="sorry"
+                aria-label="Correction cue"
+                className="w-40"
+                onBlur={(event) => {
+                  const next = event.target.value.trim();
+                  if (next !== settings.speechCorrectionWord)
+                    void updateClientSettings({ speechCorrectionWord: next });
+                }}
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
     </SettingsPageContainer>
   );

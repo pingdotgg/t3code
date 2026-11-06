@@ -1,8 +1,7 @@
-import type {
-  KeybindingShortcut,
-  KeybindingWhenNode,
-  ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+import type { KeybindingShortcut, KeybindingWhenNode } from "@t3tools/contracts";
+
+// Matching only: the desktop preview guest bundles this file without the rest of the
+// keybindings module, so it stays free of parsing, defaults, and contracts runtime code.
 
 export interface ShortcutEventLike {
   getModifierState?: (key: "AltGraph") => boolean;
@@ -23,7 +22,7 @@ export interface ShortcutModifierStateLike {
   altKey: boolean;
 }
 
-const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
+export const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Backquote: "`",
   Backslash: "\\",
   BracketLeft: "[",
@@ -47,13 +46,17 @@ const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Slash: "/",
 };
 
-function normalizeEventKey(key: string): string {
+export function isMacPlatform(platform: string): boolean {
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+export function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
   if (normalized === "esc") return "escape";
   return normalized;
 }
 
-function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
+export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
   const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
@@ -63,8 +66,6 @@ function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): s
 export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const layoutKey = normalizeEventKey(event.key);
   const keys = new Set([layoutKey]);
-  // Use physical positions for non-Latin layouts and macOS Option symbols.
-  // Latin layouts match only the typed letter so remaps cannot trigger two shortcuts.
   const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
   if (letterCode && !/^[a-z]$/.test(layoutKey)) {
     keys.add(letterCode.toLowerCase());
@@ -73,12 +74,12 @@ export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   return keys;
 }
 
-function matchesShortcutModifiers(
+export function matchesKeybindingShortcutModifiers(
   event: ShortcutModifierStateLike,
   shortcut: KeybindingShortcut,
   platform: string,
 ): boolean {
-  const useMetaForMod = /mac|iphone|ipad|ipod/i.test(platform);
+  const useMetaForMod = isMacPlatform(platform);
   const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
   const expectedCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
   return (
@@ -89,18 +90,18 @@ function matchesShortcutModifiers(
   );
 }
 
-function matchesShortcut(
+export function matchesKeybindingShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform: string,
 ): boolean {
   if (
-    !/mac|iphone|ipad|ipod/i.test(platform) &&
+    !isMacPlatform(platform) &&
     event.getModifierState?.("AltGraph") &&
     !/^[a-z0-9]$/i.test(event.key)
   )
     return false;
-  if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
+  if (!matchesKeybindingShortcutModifiers(event, shortcut, platform)) return false;
   return resolveEventKeys(event).has(shortcut.key);
 }
 
@@ -120,18 +121,4 @@ export function evaluateWhenNode(
     case "or":
       return evaluateWhenNode(node.left, context) || evaluateWhenNode(node.right, context);
   }
-}
-
-export function resolveKeybindingCommand(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  platform: string,
-  context: Readonly<Record<string, boolean | undefined>>,
-) {
-  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
-    const binding = keybindings[index];
-    if (!binding || (binding.whenAst && !evaluateWhenNode(binding.whenAst, context))) continue;
-    if (matchesShortcut(event, binding.shortcut, platform)) return binding.command;
-  }
-  return null;
 }
