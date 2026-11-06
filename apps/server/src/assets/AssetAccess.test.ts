@@ -302,8 +302,46 @@ describe("AssetAccess", () => {
         const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
         expect(response.headers.get("content-type")).toBe(contentType);
       }
-      expect(yield* resolveAsset(token, "../private.png")).toBeNull();
-      expect(yield* resolveAsset(token, ".hidden/secret.png")).toBeNull();
+      yield* fs.writeFileString(path.join(pageDir, ".secret.png"), "hidden");
+      for (const name of [
+        "../private.png",
+        ".secret.png",
+        ".hidden/secret.png",
+        "%20.secret.png",
+        "%20.hidden/secret.png",
+      ]) {
+        expect(yield* resolveAsset(token, name), name).toBeNull();
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a page in the home directory or a filesystem root to itself", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-root-" });
+      const users = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-users-" });
+      const home = path.join(users, "me");
+      yield* fs.makeDirectory(path.join(home, "Documents"), { recursive: true });
+      yield* fs.writeFileString(path.join(home, "Documents", "statement.pdf"), "private");
+      yield* fs.writeFileString(path.join(home, "photo.png"), "private");
+      for (const page of [path.join(home, "report.html"), path.join(users, "index.html")]) {
+        yield* fs.writeFileString(page, "<p>page</p>");
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: page },
+          workspaceRoot: root,
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toMatchObject({
+          kind: "file",
+          path: yield* fs.realPath(page),
+        });
+        for (const name of ["photo.png", "Documents/statement.pdf", "me/photo.png"]) {
+          expect(yield* resolveAsset(token, name), `${page} → ${name}`).toBeNull();
+        }
+      }
     }).pipe(Effect.provide(layerTest)),
   );
 

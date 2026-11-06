@@ -113,6 +113,8 @@ const pageFolderFileType = (path: Path.Path, relativePath: string) => {
   if (
     relativePath.length === 0 ||
     relativePath.includes("\0") ||
+    // Resolution trims the path, which would expose a hidden segment behind leading whitespace.
+    relativePath !== relativePath.trim() ||
     segments.some((segment) => segment === "." || segment === ".." || segment.startsWith("."))
   ) {
     return null;
@@ -355,6 +357,18 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
+// A page directly in a filesystem root or the home directory (or above it) gets no folder access.
+const isBroadPageDirectory = Effect.fn("AssetAccess.isBroadPageDirectory")(function* (
+  directory: string,
+) {
+  const path = yield* Path.Path;
+  if (path.dirname(directory) === directory) return true;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const home = path.resolve(yield* HostProcess.HomeDirectory);
+  const canonicalHome = yield* fileSystem.realPath(home).pipe(Effect.orElseSucceed(() => home));
+  return isWithinRoot(path, home, directory) || isWithinRoot(path, canonicalHome, directory);
+});
+
 const resolvePageFolderFile = Effect.fn("AssetAccess.resolvePageFolderFile")(function* (
   directory: { readonly path: string; readonly device: string; readonly inode: string },
   relativePath: string,
@@ -474,7 +488,9 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     }
     const pageDirectoryPath = path.dirname(canonicalFile);
     const pageDirectory =
-      !download && isHtmlPagePath(canonicalFile)
+      !download &&
+      isHtmlPagePath(canonicalFile) &&
+      !(yield* isBroadPageDirectory(pageDirectoryPath))
         ? yield* readDirectoryIdentity(pageDirectoryPath).pipe(
             Effect.mapError(
               (cause) =>
