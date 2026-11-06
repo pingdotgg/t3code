@@ -1,4 +1,5 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { OpenShellWorkerClass } from "./openshellGateway.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -666,6 +667,12 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    /** A fleet worker sandbox is provisioned and the thread runs there (spec section 6.3). */
+    type: Schema.Literal("sandbox"),
+    /** Persistent workers stay after the thread settles; ephemeral ones drain and release. */
+    workerClass: Schema.optional(OpenShellWorkerClass),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =

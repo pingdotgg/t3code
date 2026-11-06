@@ -85,6 +85,7 @@ import * as PeerEnvironmentRegistry from "./peer/PeerEnvironmentRegistry.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as OpenShellFleetStore from "./environment/OpenShellFleetStore.ts";
+import * as OpenShellFleetService from "./environment/OpenShellFleetService.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -820,6 +821,13 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provideMerge(PeerMcpClient.layer),
       Layer.provideMerge(PeerLinks.layer),
       Layer.provideMerge(PeerEnvironmentRegistry.layer),
+      Layer.provide(OpenShellFleetStore.layer),
+    ),
+  ),
+  // Fleet worker lifecycle behind the environment MCP tools (spec section 5).
+  Layer.provide(
+    OpenShellFleetService.layer.pipe(
+      Layer.provide(PeerEnvironmentRegistry.layer),
       Layer.provide(OpenShellFleetStore.layer),
     ),
   ),

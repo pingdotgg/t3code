@@ -1,15 +1,30 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
+import * as OpenShellFleetService from "../../../environment/OpenShellFleetService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
-import { readCaller } from "../../threadAccess.ts";
+import { loadCaller, readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+
+const fleetFailure = (error: OpenShellFleetService.OpenShellFleetError): OrchestratorMcpFailure =>
+  error._tag === "OpenShellFleetDisabled"
+    ? new OrchestratorMcpFailure({ code: "capability_denied", message: error.message })
+    : error._tag === "OpenShellFleetSpawnRefused"
+      ? new OrchestratorMcpFailure({
+          code:
+            error.reason === "runtime_mode_above_ceiling"
+              ? "runtime_mode_escalation_denied"
+              : "invalid_request",
+          message: error.message,
+        })
+      : new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -23,7 +38,31 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.delegateTask(scope, input);
+      if (input.isolation !== "openshell-auto") {
+        return yield* service.delegateTask(scope, input);
+      }
+      // Provision the worker here, then hand the task to it like any other
+      // linked environment. Its retirement is the fleet's own: the deadline
+      // reaps it drain-first, so nothing is deleted under a running child.
+      const caller = yield* loadCaller();
+      const fleet = yield* OpenShellFleetService.OpenShellFleetService;
+      const spawned = yield* fleet
+        .spawnWorker({
+          workerClass: "ephemeral",
+          runtimeModeCeiling: caller.limits.runtimeMode,
+          ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
+          ...(input.title === undefined ? {} : { label: input.title }),
+          ...(input.clientRequestId === undefined
+            ? {}
+            : { clientRequestId: input.clientRequestId }),
+        })
+        .pipe(Effect.mapError(fleetFailure));
+      return yield* service.delegateTask(scope, {
+        ...input,
+        // The child runs in that environment's checkout; the sandbox is the isolation.
+        isolation: "shared",
+        target: { ...input.target, environmentId: spawned.environmentId },
+      });
     }),
   ),
   task_status: McpToolAccess.actsAsCaller(({ taskId }) =>
@@ -212,6 +251,63 @@ const handlers = {
           ),
         );
       return { environmentId, removed };
+    }),
+  ),
+  // Spawning a worker mints infrastructure under this environment's gateway
+  // credential, so it is an environment setting: full access, never linked work.
+  t3_environment_spawn: McpToolAccess.writesEnvironment((input, check) =>
+    Effect.gen(function* () {
+      const fleet = yield* OpenShellFleetService.OpenShellFleetService;
+      const caller = yield* check;
+      return yield* fleet
+        .spawnWorker({
+          workerClass: input.workerClass,
+          runtimeModeCeiling: caller.limits.runtimeMode,
+          ...(input.template === undefined ? {} : { template: input.template }),
+          ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
+          ...(input.label === undefined ? {} : { label: input.label }),
+          ...(input.ttlMs === undefined ? {} : { ttlMs: Duration.toMillis(input.ttlMs) }),
+          ...(input.seedFrom === undefined ? {} : { seedFrom: input.seedFrom }),
+          ...(input.clientRequestId === undefined
+            ? {}
+            : { clientRequestId: input.clientRequestId }),
+        })
+        .pipe(Effect.mapError(fleetFailure));
+    }),
+  ),
+  // Removal drains worker data back here before any delete, so a refusal is
+  // the safe outcome; it stays a full-access environment operation.
+  t3_environment_remove: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      const fleet = yield* OpenShellFleetService.OpenShellFleetService;
+      const removed = yield* fleet
+        .removeWorker({
+          targetEnvironmentId: input.targetEnvironmentId,
+          ...(input.drainTimeoutMs === undefined
+            ? {}
+            : { drainTimeoutMs: Duration.toMillis(input.drainTimeoutMs) }),
+          ...(input.force === undefined ? {} : { force: input.force }),
+          ...(input.clientRequestId === undefined
+            ? {}
+            : { clientRequestId: input.clientRequestId }),
+        })
+        .pipe(Effect.mapError(fleetFailure));
+      return {
+        targetEnvironmentId: removed.environmentId,
+        outcome: removed.outcome,
+        ...(removed.drain === undefined ? {} : { drain: removed.drain }),
+        ...(removed.sandboxOutcome === undefined ? {} : { sandboxOutcome: removed.sandboxOutcome }),
+        ...(removed.reason === undefined ? {} : { reason: removed.reason }),
+      };
+    }),
+  ),
+  t3_environment_list: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const fleet = yield* OpenShellFleetService.OpenShellFleetService;
+      const workers = yield* fleet
+        .listWorkers(input.workerClass === undefined ? {} : { workerClass: input.workerClass })
+        .pipe(Effect.mapError(fleetFailure));
+      return { workers };
     }),
   ),
   t3_thread_interrupt: McpToolAccess.writesThreads(

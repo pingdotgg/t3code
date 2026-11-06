@@ -154,6 +154,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         }
         // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
         const strategy = input.workspaceStrategy;
+        // OPEN-QUESTION (spec section 6.3): a sandbox workspace belongs to a fleet
+        // worker, so v1 launches it as a delegation rather than here.
+        if (!replaying && strategy?.type === "sandbox")
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "workspaceStrategy 'sandbox' is not available on thread launch yet. Delegate the work with isolation:'openshell-auto' to run it in a fleet worker environment.",
+          });
         if (!replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
             Effect.flatMap((launches) =>

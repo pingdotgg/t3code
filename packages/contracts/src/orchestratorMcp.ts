@@ -178,9 +178,9 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(
-    Schema.Literals(["shared", "worktree"]).annotate({
+    Schema.Literals(["shared", "worktree", "openshell-auto"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
+        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out. 'openshell-auto': an ephemeral OpenShell worker is provisioned and the child runs there under its sandbox policy; it drains and releases when the task settles.",
     }),
   ),
   mode: Schema.optional(
@@ -917,6 +917,8 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
 export const OrchestratorMcpEnvironmentSpawnInput = Schema.Struct({
   /** Sandbox template name; default: settings.openshell.defaultSandboxTemplate. */
   template: Schema.optional(TrimmedNonEmptyString),
+  /** Worker policy; never broader than this caller (spec section 5.2). Default: approval-required. */
+  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   workerClass: OpenShellWorkerClass.pipe(Schema.withDecodingDefault(Effect.succeed("ephemeral"))),
   /** Stable label; expected for persistent workers, which are addressed by it. */
   label: Schema.optional(TrimmedNonEmptyString),
