@@ -440,8 +440,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             : undefined
         }
         sideOffset={props.isComposerOwned ? 8 : 4}
-        // Docked, the popup opens above the composer and slides over it when that space is short,
-        // so a short window gets its full height (Floating UI sizes to the viewport) instead of a sliver.
         {...(docked || props.isComposerOwned
           ? { side: "top" as const, collisionAvoidance: { side: "shift", align: "shift" } as const }
           : {})}

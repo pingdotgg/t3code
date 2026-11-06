@@ -6,14 +6,13 @@ import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
 import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
+import { MENU_ROW_TEXT_CLASS } from "./menu-row-text";
 import { Spinner } from "./spinner";
 import { RELAXED_PICKER_CLASS } from "./picker-styles";
 
-export const MENU_ITEM_ROW_CLASS =
-  "flex min-h-8 cursor-pointer select-none items-center gap-2.5 rounded-[8px] px-2.5 py-1 text-control text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-inset:ps-8 data-[variant=destructive]:text-destructive-foreground data-highlighted:not-data-[variant=destructive]:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&>svg:not([class*='size-'])]:size-[15px] [&>svg:not([class*='text-'])]:text-muted-foreground data-highlighted:[&>svg:not([class*='text-'])]:text-foreground data-selected:[&>svg:not([class*='text-'])]:text-foreground data-[variant=destructive]:[&>svg:not([class*='text-'])]:text-current [&>svg]:pointer-events-none [&>svg]:shrink-0";
+export const MENU_ITEM_ROW_CLASS = `flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-[8px] px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-inset:ps-8 data-[variant=destructive]:text-destructive-foreground data-highlighted:not-data-[variant=destructive]:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-7 [&>svg:not([class*='size-'])]:size-[15px] [&>svg:not([class*='text-'])]:text-muted-foreground data-highlighted:[&>svg:not([class*='text-'])]:text-foreground data-selected:[&>svg:not([class*='text-'])]:text-foreground data-[variant=destructive]:[&>svg:not([class*='text-'])]:text-current [&>svg]:pointer-events-none [&>svg]:shrink-0`;
 
-export const MENU_SUB_TRIGGER_ROW_CLASS =
-  "flex min-h-8 cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-1 text-control text-foreground outline-none data-disabled:cursor-not-allowed data-disabled:pointer-events-none data-highlighted:surface-selected-soft data-popup-open:surface-selected-soft data-inset:ps-8 data-highlighted:text-strong-foreground data-popup-open:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='size-'])]:size-[15px] [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg]:pointer-events-none [&>svg]:shrink-0";
+export const MENU_SUB_TRIGGER_ROW_CLASS = `flex min-h-8 cursor-pointer items-center gap-2 rounded-[8px] px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:cursor-not-allowed data-disabled:pointer-events-none data-highlighted:surface-selected-soft data-popup-open:surface-selected-soft data-inset:ps-8 data-highlighted:text-strong-foreground data-popup-open:text-strong-foreground data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='size-'])]:size-[15px] [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg]:pointer-events-none [&>svg]:shrink-0`;
 
 const Menu = MenuPrimitive.Root;
 
@@ -36,7 +35,8 @@ function MenuPopup({
   anchor,
   keepMounted = false,
   width = "default",
-  variant = "default",
+  // Every popup now uses the same padding; the prop stays until its last caller goes.
+  variant: _variant,
   spacing = "default",
   ...props
 }: MenuPrimitive.Popup.Props & {
@@ -49,7 +49,7 @@ function MenuPopup({
   keepMounted?: boolean;
   width?: "default" | "content" | "wide";
   variant?: "default" | "scope";
-  spacing?: "default" | "relaxed" | "compact";
+  spacing?: "default" | "relaxed";
 }) {
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
@@ -82,12 +82,7 @@ function MenuPopup({
           data-slot="menu-popup"
           {...props}
         >
-          <div
-            className={cn(
-              "max-h-(--available-height) flex w-full flex-col gap-px overflow-y-auto",
-              variant === "scope" || spacing === "compact" ? "p-1" : "p-1.5",
-            )}
-          >
+          <div className="max-h-(--available-height) flex w-full flex-col overflow-y-auto p-1">
             {children}
           </div>
         </MenuPrimitive.Popup>
@@ -160,6 +155,7 @@ function MenuItem({
     <MenuPrimitive.Item
       className={cn(
         MENU_ITEM_ROW_CLASS,
+        "[&>svg]:-mx-0.5",
         variant === "ghost" &&
           buttonVariants({
             variant: "ghost",
@@ -205,7 +201,7 @@ function MenuCheckboxItem({
     <MenuPrimitive.CheckboxItem
       checked={checked}
       className={cn(
-        "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2.5 rounded-[8px] py-1 ps-2.5 text-control text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        `grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2 rounded-[8px] py-1 ps-2 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0`,
         variant === "switch"
           ? "grid-cols-[1fr_auto] gap-4 pe-1.5"
           : "grid-cols-[1rem_minmax(0,1fr)] pe-4",
@@ -308,7 +304,7 @@ function MenuGroupLabel({
   return (
     <MenuPrimitive.GroupLabel
       className={cn(
-        "px-2 py-1.5 text-meta text-dim-foreground data-inset:ps-9 sm:data-inset:ps-8",
+        "px-2 py-1.5 text-meta text-muted-foreground data-inset:ps-9 sm:data-inset:ps-8",
         className,
       )}
       data-inset={inset}
@@ -321,7 +317,7 @@ function MenuGroupLabel({
 function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
   return (
     <MenuPrimitive.Separator
-      className={cn("mx-2.5 my-1 h-px shrink-0 bg-hairline", className)}
+      className={cn("mx-2 my-1 h-px shrink-0 bg-hairline", className)}
       data-slot="menu-separator"
       {...props}
     />
@@ -331,8 +327,20 @@ function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
 function MenuShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
-      className={cn("ms-auto shrink-0 ps-4 font-sans text-caption text-dim-foreground", className)}
+      className={cn("ms-auto shrink-0 font-sans text-meta text-dim-foreground", className)}
       data-slot="menu-shortcut"
+      {...props}
+    />
+  );
+}
+
+// Trailing value on a menu row, such as the time a snooze preset wakes at.
+// Reads as text at the row's size; MenuShortcut is only for key chords.
+function MenuItemDetail({ className, ...props }: React.ComponentProps<"span">) {
+  return (
+    <span
+      className={cn("ms-auto shrink-0 ps-4 text-secondary-label tabular-nums", className)}
+      data-slot="menu-item-detail"
       {...props}
     />
   );
@@ -357,6 +365,7 @@ function MenuSubTrigger({
       className={cn(
         // Exclude the last SVG so leading-icon margins preserve the chevron alignment.
         MENU_SUB_TRIGGER_ROW_CLASS,
+        "[&>svg:not(:last-child)]:-mx-0.5",
         density === "touch" && "min-h-10 sm:min-h-10",
         className,
       )}
@@ -422,6 +431,7 @@ export {
   MenuGroupLabel as DropdownMenuLabel,
   MenuSeparator,
   MenuSeparator as DropdownMenuSeparator,
+  MenuItemDetail,
   MenuShortcut,
   MenuShortcut as DropdownMenuShortcut,
   MenuSub,
