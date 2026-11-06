@@ -1201,6 +1201,8 @@ function deriveTurnFolds(input: {
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   liveSubagentEntryIds: ReadonlySet<string>;
   completeSupersededReplyEntryIds: ReadonlySet<string>;
+  /** Hide all keeps main: a reply with nothing to expand gets no duration row. */
+  durationRowForBareReply: boolean;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   const usageLimitedRunIds = usageLimitedTimelineRunIds(input.timelineEntries);
@@ -1383,7 +1385,10 @@ function deriveTurnFolds(input: {
       (entry) => hiddenEntryIds.has(entry.id) && !timelineEntryIsCompaction(entry),
     );
     // A reply still owns its duration bar when there was no work to expand.
-    if (!hidesNonCompactionWork && group.terminalEntry === null) {
+    if (
+      !hidesNonCompactionWork &&
+      (group.terminalEntry === null || !input.durationRowForBareReply)
+    ) {
       continue;
     }
 
@@ -1762,6 +1767,7 @@ function deriveTimelineTurnFolds(
     turnDiffSummaries: [],
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
     completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
+    durationRowForBareReply: input.toolCallVisibility !== "hideAll",
   });
 }
 
@@ -1860,6 +1866,7 @@ export function deriveMessagesTimelineRows(input: {
           turnDiffSummaries: input.turnDiffSummaries,
           liveSubagentEntryIds,
           completeSupersededReplyEntryIds: completeSupersededReplyIds,
+          durationRowForBareReply: input.toolCallVisibility !== "hideAll",
         });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const turnFoldExpanded = (fold: TurnFold) =>
