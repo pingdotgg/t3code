@@ -198,6 +198,7 @@ const withDeadline = async <T>(promise: Promise<T>, timeoutMs: number): Promise<
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
+        // @effect-diagnostics-next-line globalTimers:off - The driver is Promise-based, outside an Effect runtime.
         timer = setTimeout(() => reject(new DrainDeadlineError({ timeoutMs })), timeoutMs);
       }),
     ]);
