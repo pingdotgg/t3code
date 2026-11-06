@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "include": ["alchemy.run.ts", "src/**/*.ts", "web/src/**/*.tsx", "web/vite.config.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["bun", "@cloudflare/workers-types", "vite/client"],
+    "jsx": "react-jsx",
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext"
+  },
+  "references": [{ "path": "../../../packages/alchemy/tsconfig.json" }]
+}
