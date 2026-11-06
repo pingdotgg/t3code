@@ -257,6 +257,12 @@ export const make = Effect.gen(function* () {
           ) &&
           !isProviderNativeSubagentThread(projection.thread),
       );
+      // The agent that was waiting on these questions is gone; they stay answerable.
+      const awaitedQuestions = pendingRequests.filter(
+        (request) =>
+          request.responseCapability.type === "message" &&
+          request.responseCapability.agentWaiting === true,
+      );
       const recoveredRequestIds = new Set(questions.map((request) => request.id));
       const messageRequestNodeIds = new Set(
         pendingRequests
@@ -442,7 +448,7 @@ export const make = Effect.gen(function* () {
           },
         });
       }
-      for (const question of questions) {
+      for (const question of [...questions, ...awaitedQuestions]) {
         events.push({
           id: yield* allocateEventId(),
           type: "runtime-request.updated",
@@ -793,6 +799,8 @@ export const make = Effect.gen(function* () {
             acceptedAt: now,
             events,
             effects,
+            // A respond already past the shutdown gate can answer after this read.
+            guardPendingUserInputCancellations: true,
             cancelUnsettledEffects: {
               effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
               reason: detail,
