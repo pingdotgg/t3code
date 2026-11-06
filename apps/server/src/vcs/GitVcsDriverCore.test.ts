@@ -3028,6 +3028,241 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reviews files recursively inside submodules without changing their indexes", () =>
+      withGitFileProtocol(
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const inner = yield* makeTmpDir();
+          const nested = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* initRepoWithCommit(inner);
+          yield* initRepoWithCommit(nested);
+          yield* git(inner, ["submodule", "add", nested, "nested"]);
+          yield* git(inner, ["commit", "-am", "add nested module"]);
+          const modulePath = "modules/space repo";
+          yield* git(cwd, ["submodule", "add", inner, modulePath]);
+          yield* git(cwd, ["submodule", "add", inner, "modules/clean repo"]);
+          yield* git(cwd, ["commit", "-am", "add module"]);
+          yield* git(cwd, ["checkout", "-b", "feature/submodule-review"]);
+          const path = yield* Path.Path;
+          const moduleCwd = path.join(cwd, modulePath);
+          yield* git(moduleCwd, ["submodule", "update", "--init", "--recursive"]);
+          yield* git(moduleCwd, ["config", "user.name", "Test"]);
+          yield* git(moduleCwd, ["config", "user.email", "test@test.com"]);
+          yield* writeTextFile(moduleCwd, "README.md", "# committed in module\n");
+          yield* git(moduleCwd, ["commit", "-am", "change module file"]);
+          yield* writeTextFile(moduleCwd, "staged.txt", "staged\n");
+          yield* git(moduleCwd, ["add", "staged.txt"]);
+          yield* writeTextFile(moduleCwd, "untracked.txt", "untracked\n");
+          yield* writeTextFile(moduleCwd, "nested/README.md", "# nested dirty\n");
+          yield* git(cwd, ["config", "diff.ignoreSubmodules", "all"]);
+          yield* git(cwd, ["config", `submodule.${modulePath}.ignore`, "all"]);
+          const indexBefore = yield* git(moduleCwd, ["diff", "--cached"]);
+          const commands: { cwd: string | undefined; args: ReadonlyArray<string> }[] = [];
+          const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) => {
+                if (ChildProcess.isStandardCommand(command))
+                  commands.push({ cwd: command.options.cwd, args: command.args.map(String) });
+                return realSpawner.spawn(command);
+              }),
+            ),
+          );
+          for (const metadataOnly of [true, false]) {
+            const preview = yield* driver.getReviewDiffPreview({
+              cwd,
+              baseRef: initialBranch,
+              metadataOnly,
+            });
+            const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+            const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+            assert.equal(
+              status.branchChanges?.insertions,
+              changes.files!.reduce((n, file) => n + file.additions, 0),
+            );
+            assert.equal(
+              status.branchChanges?.deletions,
+              changes.files!.reduce((n, file) => n + file.deletions, 0),
+            );
+            for (const source of preview.sources) {
+              assert.deepStrictEqual(
+                source.files?.map((file) => file.path).toSorted(),
+                [
+                  `${modulePath}/README.md`,
+                  `${modulePath}/nested/README.md`,
+                  `${modulePath}/staged.txt`,
+                  `${modulePath}/untracked.txt`,
+                ].toSorted(),
+              );
+              for (const file of source.files ?? []) {
+                const scoped = yield* driver.getReviewDiffPreview({
+                  cwd,
+                  baseRef: initialBranch,
+                  file: { ...file, sourceKind: source.kind },
+                });
+                const patch = scoped.sources.find((candidate) => candidate.kind === source.kind)!;
+                assert.deepStrictEqual(patch.files, [file]);
+                assert.include(patch.diff, `b/${file.path}`);
+              }
+            }
+          }
+          assert.isFalse(
+            commands.some(
+              (command) => command.cwd?.includes("clean repo") && command.args.includes("diff"),
+            ),
+          );
+          const projectDirectories = [cwd, path.join(cwd, "modules")];
+          if (symlinksSupported) {
+            const alias = path.join(yield* makeTmpDir(), "alias");
+            yield* (yield* FileSystem.FileSystem).symlink(cwd, alias);
+            projectDirectories.push(alias);
+          }
+          for (const projectCwd of projectDirectories) {
+            assert.deepStrictEqual(
+              yield* driver.getReviewDiffFileContents(
+                makeReviewDiffFileContentsInput(projectCwd, {
+                  oldPath: `${modulePath}/README.md`,
+                  newPath: `${modulePath}/README.md`,
+                }),
+              ),
+              { oldContents: "# test\n", newContents: "# committed in module\n" },
+            );
+          }
+          assert.equal(yield* git(moduleCwd, ["diff", "--cached"]), indexBefore);
+          assert.equal(yield* git(cwd, ["diff", "--cached"]), "");
+          yield* git(cwd, ["add", modulePath]);
+          yield* git(cwd, ["commit", "-m", "advance module pin"]);
+          const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+          const committed = yield* driver.getReviewDiffPreview({ cwd, commitSha });
+          assert.deepStrictEqual(
+            committed.sources[0]?.files?.map((file) => file.path),
+            [`${modulePath}/README.md`],
+          );
+          assert.notInclude(committed.sources[0]!.diff, "nested dirty");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const manifest = path.join(cwd, ".gitmodules");
+          const originalManifest = yield* fileSystem.readFileString(manifest);
+          yield* fileSystem.remove(manifest);
+          const noManifest = yield* driver.getReviewDiffPreview({
+            cwd,
+            sourceKind: "working-tree",
+            metadataOnly: true,
+          });
+          assert.isTrue(
+            noManifest.sources[0]!.files!.some(
+              (file) => file.path === `${modulePath}/untracked.txt`,
+            ),
+          );
+          yield* fileSystem.writeFileString(manifest, originalManifest);
+          yield* fileSystem.rename(manifest, `${manifest}.saved`);
+          const renamedManifest = yield* driver.getReviewDiffPreview({
+            cwd,
+            sourceKind: "working-tree",
+            metadataOnly: true,
+          });
+          assert.isTrue(
+            renamedManifest.sources[0]!.files!.some(
+              (file) => file.path === `${modulePath}/untracked.txt`,
+            ),
+          );
+          yield* fileSystem.rename(`${manifest}.saved`, manifest);
+          yield* writeTextFile(inner, "README.md", "# not fetched locally\n");
+          yield* git(inner, ["commit", "-am", "advance upstream only"]);
+          const missingSha = yield* git(inner, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["update-index", "--cacheinfo", `160000,${missingSha},${modulePath}`]);
+          yield* git(cwd, ["commit", "-m", "record an unfetched module commit"]);
+          const missingCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
+          for (const metadataOnly of [true, false]) {
+            const fallback = yield* driver.getReviewDiffPreview({
+              cwd,
+              commitSha: missingCommit,
+              metadataOnly,
+            });
+            assert.deepStrictEqual(
+              fallback.sources[0]!.files!.map((file) => file.path),
+              [modulePath],
+            );
+            if (!metadataOnly) assert.include(fallback.sources[0]!.diff, "Subproject commit");
+          }
+        }),
+      ),
+    );
+
+    it.effect(
+      "reviews a small commit in a parent tree whose complete listing exceeds the metadata cap",
+      () =>
+        withGitFileProtocol(
+          Effect.gen(function* () {
+            const cwd = yield* makeTmpDir();
+            const child = yield* makeTmpDir();
+            yield* initRepoWithCommit(cwd);
+            yield* initRepoWithCommit(child);
+            yield* git(cwd, ["submodule", "add", child, "mod"]);
+            yield* git(cwd, ["commit", "-am", "add module"]);
+            const driver = yield* GitVcsDriver.GitVcsDriver;
+            const original = yield* git(cwd, ["rev-parse", "HEAD"]);
+            const blob = (yield* driver.execute({
+              operation: "test.blob",
+              cwd,
+              args: ["hash-object", "-w", "--stdin"],
+              stdin: "",
+            })).stdout.trim();
+            const env = { GIT_INDEX_FILE: (yield* Path.Path).join(yield* makeTmpDir(), "index") };
+            yield* git(cwd, ["read-tree", "HEAD"], env);
+            const directory = `d/${"x".repeat(180)}`;
+            const info = Array.from(
+              { length: 70_000 },
+              (_, index) => `100644 ${blob}\t${directory}/${String(index).padStart(6, "0")}.txt\n`,
+            ).join("");
+            yield* driver.execute({
+              operation: "test.largeIndex",
+              cwd,
+              args: ["update-index", "--index-info"],
+              env,
+              stdin: info,
+            });
+            const tree = yield* git(cwd, ["write-tree"], env);
+            const big = yield* git(cwd, ["commit-tree", tree, "-p", original, "-m", "large tree"]);
+            yield* git(
+              cwd,
+              ["update-index", "--add", "--cacheinfo", `100644,${blob},small.txt`],
+              env,
+            );
+            const nextTree = yield* git(cwd, ["write-tree"], env);
+            const small = yield* git(cwd, [
+              "commit-tree",
+              nextTree,
+              "-p",
+              big,
+              "-m",
+              "small change",
+            ]);
+            const preview = yield* driver.getReviewDiffPreview({
+              cwd,
+              commitSha: small,
+              metadataOnly: true,
+            });
+            assert.deepStrictEqual(
+              preview.sources[0]!.files!.map((file) => file.path),
+              ["small.txt"],
+            );
+            const contents = yield* driver.getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, {
+                sourceKind: "commit",
+                changeType: "new",
+                baseRef: original,
+                headRef: big,
+                oldPath: `${directory}/000000.txt`,
+                newPath: `${directory}/000000.txt`,
+              }),
+            );
+            assert.deepStrictEqual(contents, { oldContents: "", newContents: "" });
+          }),
+        ),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

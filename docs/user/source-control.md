@@ -20,6 +20,18 @@ commit links follow your **Open links in** setting; on web, when that opens a ne
 shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**
 setting in **Settings → Diffs**.
 
+## Review submodule changes
+
+Changes and Uncommitted include files inside initialized submodules, including nested submodules.
+Paths include the submodule directory, so files with the same name in different repositories stay
+distinct. Comparisons use the submodule commit recorded by the parent repository at the selected
+base. Commit reviews compare the recorded submodule commits without including local edits.
+
+Initialize submodules and fetch their recorded commits to review their file contents. When those
+are unavailable, the comparison shows the submodule commit pointer. Turn diffs, checkpoint restore,
+staging, and committing still operate on the thread's repository. Commit submodule changes inside each
+submodule before recording the updated pointer in the parent.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote
