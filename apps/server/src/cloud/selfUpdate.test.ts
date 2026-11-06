@@ -1,6 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { GracefulShutdownId, type ManagedPolicyDocument } from "@t3tools/contracts";
+import {
+  GracefulShutdownId,
+  ServerSelfUpdateError,
+  type ManagedPolicyDocument,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -9,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -24,29 +29,35 @@ import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
-const layerGracefulShutdownTest = Layer.succeed(
-  GracefulShutdown.GracefulShutdown,
-  GracefulShutdown.GracefulShutdown.of({
-    status: Effect.succeed({
-      phase: "idle",
-      activeRunCount: 0,
-      saveWorkPrompted: false,
-      saveWorkTurnCount: 0,
-    }),
-    beginAndAwait: () =>
-      Effect.succeed({
-        shutdownId: GracefulShutdownId.make("test-shutdown"),
-        phase: "quiesced",
-        scope: { type: "environment" },
-        timedOut: false,
+const TEST_DESKTOP_SHUTDOWN_ID = GracefulShutdownId.make("test-shutdown");
+
+const makeGracefulShutdownLayer = (completedIds: Ref.Ref<ReadonlyArray<GracefulShutdownId>>) =>
+  Layer.succeed(
+    GracefulShutdown.GracefulShutdown,
+    GracefulShutdown.GracefulShutdown.of({
+      status: Effect.succeed({
+        phase: "idle",
         activeRunCount: 0,
         saveWorkPrompted: false,
         saveWorkTurnCount: 0,
-        elapsedMs: 0,
       }),
-    complete: () => Effect.void,
-  }),
-);
+      beginAndAwait: () =>
+        Effect.succeed({
+          shutdownId: TEST_DESKTOP_SHUTDOWN_ID,
+          phase: "quiesced",
+          scope: { type: "environment" },
+          timedOut: false,
+          activeRunCount: 0,
+          saveWorkPrompted: false,
+          saveWorkTurnCount: 0,
+          elapsedMs: 0,
+        }),
+      complete: (shutdownId) =>
+        shutdownId === undefined
+          ? Effect.void
+          : Ref.update(completedIds, (ids) => [...ids, shutdownId]),
+    }),
+  );
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
@@ -159,6 +170,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
+  const completedShutdownIds = yield* Ref.make<ReadonlyArray<GracefulShutdownId>>([]);
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
@@ -167,6 +179,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       options.desktopAppUpdate ?? {
         available: false,
         run: () => Effect.die("unexpected desktop app update run"),
+        commit: () => Effect.die("unexpected desktop app update commit"),
       },
     ),
     Effect.provideService(
@@ -177,13 +190,13 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provide(
       Layer.mergeAll(
-        layerGracefulShutdownTest,
+        makeGracefulShutdownLayer(completedShutdownIds),
         ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
         ManagedPolicy.layerTest(options.policy),
       ),
     ),
   );
-  return { selfUpdate, order, urls, baseDir };
+  return { selfUpdate, order, urls, baseDir, completedShutdownIds };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -298,7 +311,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
   it.effect("delegates desktop-managed updates to the desktop app when available", () =>
     Effect.gen(function* () {
       const stages: string[] = [];
-      const { selfUpdate, order } = yield* makeHarness({
+      const { selfUpdate, order, completedShutdownIds } = yield* makeHarness({
         mode: "desktop",
         desktopAppUpdate: {
           available: true,
@@ -316,6 +329,36 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
       expect(stages).toEqual(["draining", "downloading", "installing"]);
       expect(order).toEqual([]);
+      // No install token means no handoff; release the update-owned drain.
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([TEST_DESKTOP_SHUTDOWN_ID]);
+    }),
+  );
+
+  it.effect("keeps the desktop drain until commit fails, then releases it", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, completedShutdownIds } = yield* makeHarness({
+        mode: "desktop",
+        desktopAppUpdate: {
+          available: true,
+          run: () =>
+            Effect.succeed({
+              targetVersion: "1.2.0",
+              method: "desktop-app" as const,
+              desktopUpdateToken: "desktop-token",
+            }),
+          commit: () =>
+            Effect.fail(
+              new ServerSelfUpdateError({ reason: "The desktop app failed to install." }),
+            ),
+        },
+      });
+      const prepared = yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      expect(prepared.desktopUpdateToken).toBe("desktop-token");
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([]);
+      expect(
+        (yield* selfUpdate.commitDesktopUpdate("desktop-token").pipe(Effect.flip)).reason,
+      ).toBe("The desktop app failed to install.");
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([TEST_DESKTOP_SHUTDOWN_ID]);
     }),
   );
 

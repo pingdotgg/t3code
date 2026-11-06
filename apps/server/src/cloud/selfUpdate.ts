@@ -142,6 +142,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     mirror?.feedUrl ??
     Option.getOrUndefined(yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option));
   const inFlight = yield* Ref.make(false);
+  // Desktop prepare keeps the drain until commit/restart; track ownership so no-handoff
+  // and failed-commit paths can release it without clearing an unrelated drain.
+  const ownedDesktopDrainId = yield* Ref.make<GracefulShutdownId | null>(null);
 
   yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
     Effect.forkScoped,
@@ -153,6 +156,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     cause === undefined
       ? new ServerSelfUpdateError({ reason })
       : new ServerSelfUpdateError({ reason, cause });
+
+  const releaseOwnedDesktopDrain = Effect.fn("ServerSelfUpdate.releaseOwnedDesktopDrain")(
+    function* () {
+      const shutdownId = yield* Ref.getAndSet(ownedDesktopDrainId, null);
+      if (shutdownId !== null) {
+        yield* gracefulShutdown.complete(shutdownId).pipe(Effect.ignore({ log: true }));
+      }
+    },
+  );
 
   const crossesTrackUnsafely = (input: ServerSelfUpdateInput) =>
     trackSwitchBlockReason({
@@ -177,6 +189,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
       if (desktopAppUpdate.available) {
         yield* reportProgress("draining");
+        // A prior prepare that never committed still owns the drain.
+        yield* releaseOwnedDesktopDrain();
         const drain = yield* gracefulShutdown
           .beginAndAwait({
             scope: { type: "environment" },
@@ -193,6 +207,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                 : Effect.void,
             ),
           );
+        yield* Ref.set(ownedDesktopDrainId, drain.shutdownId);
         return yield* desktopAppUpdate
           .run(
             reportProgress,
@@ -201,9 +216,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
               : { channel: input.channel, targetVersion: input.targetVersion },
           )
           .pipe(
-            Effect.onError(() =>
-              gracefulShutdown.complete(drain.shutdownId).pipe(Effect.ignore({ log: true })),
+            Effect.tap((result) =>
+              result.desktopUpdateToken === undefined ? releaseOwnedDesktopDrain() : Effect.void,
             ),
+            Effect.onError(() => releaseOwnedDesktopDrain()),
           );
       }
       return yield* failWith(
@@ -392,8 +408,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   return ServerSelfUpdate.of({
     update,
     commitDesktopUpdate: Effect.fn("ServerSelfUpdate.commitDesktopUpdate")(
-      function (requestId, onHandoffAccepted) {
-        return desktopAppUpdate.commit(requestId, onHandoffAccepted);
+      function* (requestId, onHandoffAccepted) {
+        return yield* desktopAppUpdate
+          .commit(requestId, onHandoffAccepted)
+          .pipe(Effect.onError(() => releaseOwnedDesktopDrain()));
       },
     ),
   });
