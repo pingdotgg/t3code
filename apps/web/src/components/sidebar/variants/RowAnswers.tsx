@@ -35,6 +35,7 @@ function AnswerBody(props: {
           <TooltipTrigger
             render={
               <p
+                data-answer-detail
                 className={cn(
                   "min-w-0 flex-1 truncate text-2xs text-muted-foreground",
                   props.mono && "font-mono",
@@ -61,7 +62,9 @@ function AnswerBody(props: {
           {props.note}
         </p>
       ) : null}
-      <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1">{props.children}</div>
+      <div className="flex max-w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-1.5">
+        {props.children}
+      </div>
       {props.error !== null ? (
         <p
           role="alert"

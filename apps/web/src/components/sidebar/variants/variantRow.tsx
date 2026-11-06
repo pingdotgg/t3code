@@ -235,7 +235,11 @@ export function resolveVariantRow(input: {
 
   const chip =
     input.workerCount === null ? null : input.workersOpen === null ? (
-      <span aria-hidden className="min-w-0 truncate font-medium text-muted-foreground">
+      <span
+        aria-hidden
+        data-worker-chip
+        className="min-w-0 truncate font-medium text-muted-foreground"
+      >
         {input.workerSummary}
       </span>
     ) : (

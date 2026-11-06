@@ -267,6 +267,30 @@
   &:has([data-row-answers]:not(:empty)) [data-chip-short] {
     display: inline;
   }
+
+  /* Filled from the right, so answers that do not fit wrap alone to a full line under the rest. */
+  &:has([data-row-answers]:not(:empty)) {
+    flex-flow: row-reverse wrap;
+    row-gap: 0.25rem;
+  }
+
+  &:has([data-row-answers]:not(:empty)) > [data-status-slot] {
+    order: -1;
+  }
+
+  &:has([data-row-answers]:not(:empty)) > [data-worker-fold],
+  &:has([data-row-answers]:not(:empty)) > [data-worker-chip] {
+    order: 1;
+  }
+
+  /* Settle's slot overhangs the line, and must not take the top of the button below it. */
+  & > [data-row-answers] {
+    position: relative;
+    z-index: 1;
+    order: 2;
+    flex: 1 1 auto;
+    max-width: 100%;
+  }
 }
 
 /* The tree line from a row's icon down its workers, with an elbow into the last one. */
@@ -298,9 +322,16 @@
   }
 }
 
+/* Only the buttons decide whether the answers fit, and a long detail gets a line of its own. */
+[data-answer-detail] {
+  flex-basis: 1rem;
+  contain: inline-size;
+}
+
 [data-row-answers] button {
   height: 1.125rem;
   min-height: 0;
+  min-width: 1.5rem;
   padding-inline: 0.4375rem;
   border-radius: 9999px;
   font-size: 0.6875rem;
@@ -313,11 +344,11 @@
   padding-inline: 0;
 }
 
-/* The pills are 18px tall, and this keeps their hit area at 24px. */
+/* The pills are 18px tall with a 1px border, and this keeps their hit area at 24px. */
 [data-row-answers] button::after {
   content: "";
   position: absolute;
-  inset: -3px 0;
+  inset: -4px 0;
 }
 
 /* Keeps a focused or revealed row clear of the sticky Waiting on you list. */
