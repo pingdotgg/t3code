@@ -1370,19 +1370,20 @@ describe("persisted environment queries", () => {
       Effect.scoped(
         Effect.gen(function* () {
           let saved = Option.none<string>();
+          const saves = yield* Queue.unbounded<string>();
           const persistence: QueryPersistence<string> = {
             load: () => Effect.sync(() => saved),
             save: (_environmentId, _key, value) =>
               Effect.sync(() => {
                 saved = Option.some(value);
-              }),
+              }).pipe(Effect.andThen(Queue.offer(saves, value))),
           };
           const first = yield* makeEnvironmentQueryHarness(Effect.succeed("first"), {
             persistence,
           });
           const firstRegistry = yield* mountEnvironmentQuery(first.atom);
           expect(yield* readEnvironmentQuery(firstRegistry, first.atom)).toBe("first");
-          expect(saved).toEqual(Option.some("first"));
+          expect(yield* Queue.take(saves)).toBe("first");
 
           const restarted = yield* makeEnvironmentQueryHarness(Effect.succeed("updated"), {
             persistence,
@@ -1393,9 +1394,34 @@ describe("persisted environment queries", () => {
           yield* SubscriptionRef.set(restarted.supervisorState, queryConnectionState());
           yield* Effect.yieldNow;
           expect(yield* readEnvironmentQuery(registry, restarted.atom)).toBe("updated");
-          expect(saved).toEqual(Option.some("updated"));
+          expect(yield* Queue.take(saves)).toBe("updated");
         }),
       ),
+  );
+
+  it.effect("answers readers while its save is pending, and ends the save with the query", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const saveEnded = Latch.makeUnsafe();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("fresh"), {
+          persistence: {
+            load: () => Effect.succeedNone,
+            // The registry's scheduler stops on dispose, so signal synchronously.
+            save: () =>
+              Effect.never.pipe(
+                Effect.onInterrupt(() => Effect.sync(() => saveEnded.openUnsafe())),
+              ),
+          },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const registry = yield* mountEnvironmentQuery(harness.atom);
+            expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("fresh");
+          }),
+        );
+        yield* saveEnded.await;
+      }),
+    ),
   );
 
   it.effect("hands each server answer to onAnswer before readers see it", () =>
