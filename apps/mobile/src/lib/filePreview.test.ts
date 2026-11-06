@@ -162,6 +162,8 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
   executeAtomQuery: (...args: unknown[]) => audio.query(...args),
 }));
+vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
+vi.mock("../connection/catalog", () => ({ environmentCatalog: {} }));
 vi.mock("../state/projects", () => ({
   projectEnvironment: {
     searchEntries: (input: unknown) => input,
