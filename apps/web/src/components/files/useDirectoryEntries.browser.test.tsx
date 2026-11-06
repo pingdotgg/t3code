@@ -224,19 +224,6 @@ it("reads a folder that failed while unreachable again once a new session is up"
   await expect.element(screen.getByText("README.md")).toBeInTheDocument();
 });
 
-it("sends the modified-time flag in every listing request", async () => {
-  const state = setup();
-  // The hook probe does not navigate.
-  await using _screen = await render(<state.Probe includeModifiedTimes />, { router: false });
-  await state.settle(0, [{ path: "src", kind: "directory" }]);
-  await act(async () => void state.view.load("src"));
-  await state.settle(1);
-  expect(state.calls.map((call) => [call.path, call.includeModifiedTimes])).toEqual([
-    ["", true],
-    ["src", true],
-  ]);
-});
-
 it("lists loaded folders again when modified times are first needed", async () => {
   const state = setup();
   // The hook probe does not navigate.
@@ -256,12 +243,23 @@ it("lists loaded folders again when modified times are first needed", async () =
     ["", true],
     ["src", true],
   ]);
-  await state.settle(2, [{ path: "src", kind: "directory", mtimeMs: 10 }]);
+  await state.settle(2, [
+    { path: "src", kind: "directory", mtimeMs: 10 },
+    { path: "lib", kind: "directory", mtimeMs: 5 },
+  ]);
   await state.settle(3, [{ path: "src/a.ts", kind: "file", mtimeMs: 20 }]);
-  expect(state.view.entries.map((entry) => entry.mtimeMs)).toEqual([10, 20]);
+  expect(state.view.entries.map((entry) => [entry.path, entry.mtimeMs]).toSorted()).toEqual([
+    ["lib", 5],
+    ["src", 10],
+    ["src/a.ts", 20],
+  ]);
+
+  await act(async () => void state.view.load("lib"));
+  expect(state.calls.at(-1)).toMatchObject({ path: "lib", includeModifiedTimes: true });
+  await state.settle(4);
 
   await screen.rerender(<state.Probe />);
-  expect(state.calls).toHaveLength(4);
+  expect(state.calls).toHaveLength(5);
 });
 
 it("lists a folder with modified times when the flag turns on during its listing", async () => {

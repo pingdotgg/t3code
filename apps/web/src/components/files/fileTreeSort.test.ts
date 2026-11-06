@@ -5,6 +5,7 @@ import {
   DEFAULT_FILE_TREE_SORT_ORDER,
   createFileTreeSortComparator,
   type FileTreeSortOrder,
+  hasKeptEntryMtimeChanged,
 } from "./fileTreeSort.ts";
 
 const sortPaths = (
@@ -135,5 +136,34 @@ describe("createFileTreeSortComparator", () => {
     ]);
     expect(lookups.length).toBeGreaterThan(0);
     expect(lookups.filter((path) => path.endsWith("/"))).toEqual([]);
+  });
+});
+
+describe("hasKeptEntryMtimeChanged", () => {
+  const timestamps = (entries: Readonly<Record<string, number | undefined>>) => ({
+    entryKinds: new Map(Object.keys(entries).map((path) => [path, "file"])),
+    mtimes: new Map(
+      Object.entries(entries).flatMap(([path, mtimeMs]) =>
+        mtimeMs === undefined ? [] : [[path, mtimeMs] as const],
+      ),
+    ),
+  });
+  const before = timestamps({ "a.ts": 1, "b.ts": 2 });
+
+  it("ignores added and removed paths", () => {
+    expect(hasKeptEntryMtimeChanged(before, timestamps({ "a.ts": 1, "b.ts": 2, "c.ts": 3 }))).toBe(
+      false,
+    );
+    expect(hasKeptEntryMtimeChanged(before, timestamps({ "a.ts": 1 }))).toBe(false);
+  });
+
+  it("detects a kept path whose time changes, appears or disappears", () => {
+    expect(hasKeptEntryMtimeChanged(before, timestamps({ "a.ts": 5, "b.ts": 2 }))).toBe(true);
+    expect(hasKeptEntryMtimeChanged(before, timestamps({ "a.ts": undefined, "b.ts": 2 }))).toBe(
+      true,
+    );
+    expect(
+      hasKeptEntryMtimeChanged(timestamps({ "a.ts": undefined }), timestamps({ "a.ts": 1 })),
+    ).toBe(true);
   });
 });

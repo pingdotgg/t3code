@@ -36,6 +36,8 @@ import {
   createFileTreeSortComparator,
   DEFAULT_FILE_TREE_SORT_ORDER,
   FileTreeSortOrder,
+  hasKeptEntryMtimeChanged,
+  type FileTreeTimestamps,
 } from "./fileTreeSort";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
@@ -60,14 +62,6 @@ function treePath(entry: ProjectEntry): string {
 }
 
 const FILE_BROWSER_SORT_STORAGE_KEY = "t3code:file-browser-sort";
-
-function hasMtimeChanged(previous: ReadonlyMap<string, number>, next: ReadonlyMap<string, number>) {
-  if (previous.size !== next.size) return true;
-  for (const [path, mtimeMs] of previous) {
-    if (next.get(path) !== mtimeMs) return true;
-  }
-  return false;
-}
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
@@ -245,8 +239,9 @@ export default function FileBrowserPanel({
   const appliedSortRef = useRef<{
     key: typeof sortKey;
     direction: typeof sortDirection;
-    mtimes: ReadonlyMap<string, number>;
+    timestamps: FileTreeTimestamps;
   } | null>(null);
+  const resettingTreeRef = useRef(false);
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
@@ -410,7 +405,7 @@ export default function FileBrowserPanel({
       if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
     }
     const loadExpanded = () => {
-      if (model.isSearchOpen()) return;
+      if (model.isSearchOpen() || resettingTreeRef.current) return;
       for (const path of directoryPaths) {
         const item = model.getItem(path);
         if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
@@ -477,8 +472,13 @@ export default function FileBrowserPanel({
       applied !== null &&
       (applied.key !== sortKey ||
         applied.direction !== sortDirection ||
-        (sortKey === "modified" && hasMtimeChanged(applied.mtimes, mtimes)));
-    appliedSortRef.current = { key: sortKey, direction: sortDirection, mtimes };
+        (sortKey === "modified" &&
+          hasKeptEntryMtimeChanged(applied.timestamps, { entryKinds, mtimes })));
+    appliedSortRef.current = {
+      key: sortKey,
+      direction: sortDirection,
+      timestamps: { entryKinds, mtimes },
+    };
     sortComparatorRef.current = createFileTreeSortComparator(
       { key: sortKey, direction: sortDirection },
       (path) => mtimes.get(path),
@@ -492,16 +492,41 @@ export default function FileBrowserPanel({
       return;
     }
     if (resort) {
-      const expandedDirectoryPaths = directoryPaths.filter((path) => {
+      const expandedDirectoryPaths: string[] = [];
+      const collapsedDirectoryPaths: string[] = [];
+      for (const path of directoryPaths) {
         const item = model.getItem(path);
-        return item !== null && "isExpanded" in item && item.isExpanded();
-      });
-      model.resetPaths(treePaths);
-      // A reset closes every folder, and `initialExpandedPaths` assumes default sibling order, so
-      // under a custom sort it misses folders. Reopening through item handles works in any order.
-      for (const path of expandedDirectoryPaths) {
-        const item = model.getItem(path);
-        if (item && "expand" in item) item.expand();
+        if (item === null || !("isExpanded" in item)) continue;
+        (item.isExpanded() ? expandedDirectoryPaths : collapsedDirectoryPaths).push(path);
+      }
+      const searchOpen = model.isSearchOpen();
+      const focusedPath = model.getFocusedPath();
+      // The reset briefly closes folders; keep `loadExpanded` from reading that as a user collapse.
+      resettingTreeRef.current = true;
+      try {
+        model.resetPaths(treePaths);
+        if (searchOpen) {
+          // A reset keeps the previous search matches, and setting the same query is a no-op.
+          // Reopening the search also restores the folders that were open before it.
+          model.closeSearch();
+          model.setSearch(query);
+        } else {
+          // A reset closes every folder, and `initialExpandedPaths` assumes default sibling order,
+          // so under a custom sort it misses folders. Reopening through item handles works in any
+          // order, but also opens ancestors, so close again the folders that were closed.
+          for (const path of expandedDirectoryPaths) {
+            const item = model.getItem(path);
+            if (item && "expand" in item) item.expand();
+          }
+          for (const path of collapsedDirectoryPaths) {
+            const item = model.getItem(path);
+            if (item && "collapse" in item) item.collapse();
+          }
+        }
+        // While a folder is closed the reset moves focus to it; return focus to the row it was on.
+        if (focusedPath !== null) model.focusPath(focusedPath);
+      } finally {
+        resettingTreeRef.current = false;
       }
       return;
     }

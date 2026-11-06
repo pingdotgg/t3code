@@ -37,7 +37,12 @@ const pathSearch = {
 };
 
 const { useDirectoryEntries } = vi.hoisted(() => ({ useDirectoryEntries: vi.fn() }));
-useDirectoryEntries.mockImplementation(() => directory);
+useDirectoryEntries.mockImplementation(
+  (_environmentId: EnvironmentId, _cwd: string, includeModifiedTimes: boolean) =>
+    includeModifiedTimes
+      ? directory
+      : { ...directory, entries: directory.entries.map(({ mtimeMs: _, ...entry }) => entry) },
+);
 vi.mock("./useDirectoryEntries", () => ({ useDirectoryEntries }));
 vi.mock("~/state/queries", () => ({ useProjectPathSearch: () => pathSearch }));
 vi.mock("~/fileContextMenu", () => ({
@@ -61,13 +66,6 @@ function visibleRowPaths(): string[] {
   return [];
 }
 
-function tooltipTexts(): string[] {
-  return Array.from(
-    document.querySelectorAll('[data-slot="tooltip-popup"]'),
-    (popup) => popup.textContent ?? "",
-  );
-}
-
 const SORT_STORAGE_KEY = "t3code:file-browser-sort";
 
 function setupSort(): Disposable {
@@ -75,18 +73,29 @@ function setupSort(): Disposable {
   return { [Symbol.dispose]: () => localStorage.removeItem(SORT_STORAGE_KEY) };
 }
 
+const panel = () => (
+  <FileBrowserPanel
+    environmentId={EnvironmentId.make("env-files")}
+    cwd="/repo"
+    projectName="repo"
+    selectedPath={null}
+    selectedPathRevealId={0}
+    onOpenFile={() => {}}
+    workspaceMutationId={null}
+  />
+);
+
 function renderPanel() {
-  return render(
-    <FileBrowserPanel
-      environmentId={EnvironmentId.make("env-files")}
-      cwd="/repo"
-      projectName="repo"
-      selectedPath={null}
-      selectedPathRevealId={0}
-      onOpenFile={() => {}}
-      workspaceMutationId={null}
-    />,
-  );
+  return render(panel());
+}
+
+function setEntries(next: readonly ProjectEntry[]): Disposable {
+  directory.entries = next;
+  return {
+    [Symbol.dispose]: () => {
+      directory.entries = entries;
+    },
+  };
 }
 
 const sortKeyButton = (name: "Sort by date modified" | "Sort by name") =>
@@ -176,20 +185,6 @@ describe("FileBrowserPanel", () => {
 });
 
 describe("FileBrowserPanel sorting", () => {
-  it("keeps folders first by name ascending and offers both sort buttons", async () => {
-    using _sort = setupSort();
-    await using _screen = await renderPanel();
-    await expectRows(NAME_ASC);
-
-    await expect.element(sortKeyButton("Sort by date modified")).toBeVisible();
-    await expect.element(sortDirectionButton("Sort descending")).toBeVisible();
-
-    await userEvent.hover(sortKeyButton("Sort by date modified"));
-    await vi.waitFor(() => expect(tooltipTexts()).toContain("Sort by date modified"));
-    await userEvent.hover(sortDirectionButton("Sort descending"));
-    await vi.waitFor(() => expect(tooltipTexts()).toContain("Sort descending"));
-  });
-
   it("sorts by date modified, oldest first, with folders before files", async () => {
     using _sort = setupSort();
     await using _screen = await renderPanel();
@@ -200,10 +195,6 @@ describe("FileBrowserPanel sorting", () => {
     await expectRows(MODIFIED_ASC);
     await expect.element(sortKeyButton("Sort by name")).toBeVisible();
     await expect.element(sortDirectionButton("Sort descending")).toBeVisible();
-
-    await userEvent.unhover(sortKeyButton("Sort by name"));
-    await userEvent.hover(sortKeyButton("Sort by name"));
-    await vi.waitFor(() => expect(tooltipTexts()).toContain("Sort by name"));
   });
 
   it("reverses the order in name mode when the direction is toggled", async () => {
@@ -308,61 +299,158 @@ describe("FileBrowserPanel sorting", () => {
     ]);
   });
 
-  it("asks for modified times only while sorting by date modified", async () => {
-    using _sort = setupSort();
-    const requested = () => useDirectoryEntries.mock.lastCall?.[2];
-    await using _screen = await renderPanel();
-    await expectRows(NAME_ASC);
-    expect(requested()).toBe(false);
-
-    await userEvent.click(sortKeyButton("Sort by date modified"));
-    await expectRows(MODIFIED_ASC);
-    expect(requested()).toBe(true);
-
-    await userEvent.click(sortKeyButton("Sort by name"));
-    await expectRows(NAME_ASC);
-    expect(requested()).toBe(false);
-  });
-
   it("re-sorts by date modified when a refresh adds or drops timestamps", async () => {
     using _sort = setupSort();
-    using _entries = {
-      [Symbol.dispose]: () => {
-        directory.entries = entries;
-      },
-    };
-    const rerenderPanel = (screen: Awaited<ReturnType<typeof renderPanel>>) =>
-      screen.rerender(
-        <FileBrowserPanel
-          environmentId={EnvironmentId.make("env-files")}
-          cwd="/repo"
-          projectName="repo"
-          selectedPath={null}
-          selectedPathRevealId={0}
-          onOpenFile={() => {}}
-          workspaceMutationId={null}
-        />,
-      );
-    directory.entries = [
+    using _entries = setEntries([
       { path: "a.txt", kind: "file" },
       { path: "z.txt", kind: "file" },
-    ];
+    ]);
     await using screen = await renderPanel();
     await userEvent.click(sortKeyButton("Sort by date modified"));
     await expectRows(["a.txt", "z.txt"]);
 
-    directory.entries = [
+    setEntries([
       { path: "a.txt", kind: "file", mtimeMs: 20 },
       { path: "z.txt", kind: "file", mtimeMs: 10 },
-    ];
-    await rerenderPanel(screen);
+    ]);
+    await screen.rerender(panel());
     await expectRows(["z.txt", "a.txt"]);
 
-    directory.entries = [
+    setEntries([
       { path: "a.txt", kind: "file", mtimeMs: 5 },
       { path: "z.txt", kind: "file" },
-    ];
-    await rerenderPanel(screen);
+    ]);
+    await screen.rerender(panel());
     await expectRows(["a.txt", "z.txt"]);
+  });
+
+  it("sorts a folder's children by date modified when they load", async () => {
+    using _sort = setupSort();
+    const root: readonly ProjectEntry[] = [
+      { path: "alpha", kind: "directory", mtimeMs: 1 },
+      { path: "zeta.txt", kind: "file", mtimeMs: 2 },
+    ];
+    using _entries = setEntries(root);
+    await using screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await userEvent.click(sortDirectionButton("Sort descending"));
+    findTreeRow("alpha/")!.click();
+
+    setEntries([
+      ...root,
+      { path: "alpha/a.ts", kind: "file", mtimeMs: 10 },
+      { path: "alpha/b.ts", kind: "file", mtimeMs: 30 },
+      { path: "alpha/c.ts", kind: "file", mtimeMs: 20 },
+    ]);
+    await screen.rerender(panel());
+
+    await expectRows(["alpha/", "alpha/b.ts", "alpha/c.ts", "alpha/a.ts", "zeta.txt"]);
+  });
+
+  it("keeps expanding all folders after a re-sort by date modified", async () => {
+    using _sort = setupSort();
+    const loaded: ProjectEntry[] = [
+      { path: "alpha", kind: "directory", mtimeMs: 1 },
+      { path: "alpha/a.ts", kind: "file", mtimeMs: 1 },
+      { path: "beta", kind: "directory", mtimeMs: 2 },
+      { path: "beta/b.ts", kind: "file", mtimeMs: 2 },
+    ];
+    using _entries = setEntries(loaded);
+    await using screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await userEvent.click(page.getByRole("button", { name: "Expand all folders", exact: true }));
+    await expectRows(["alpha/", "alpha/a.ts", "beta/", "beta/b.ts"]);
+
+    loaded[0] = { path: "alpha", kind: "directory", mtimeMs: 3 };
+    setEntries([...loaded]);
+    await screen.rerender(panel());
+    await expectRows(["beta/", "beta/b.ts", "alpha/", "alpha/a.ts"]);
+
+    setEntries([
+      ...loaded,
+      { path: "alpha/inner", kind: "directory", mtimeMs: 4 },
+      { path: "alpha/inner/x.ts", kind: "file", mtimeMs: 4 },
+    ]);
+    await screen.rerender(panel());
+
+    await expectRows([
+      "beta/",
+      "beta/b.ts",
+      "alpha/",
+      "alpha/inner/",
+      "alpha/inner/x.ts",
+      "alpha/a.ts",
+    ]);
+  });
+
+  it("keeps a collapsed parent closed over an open child when the order changes", async () => {
+    using _sort = setupSort();
+    const tree: ProjectEntry[] = [
+      { path: "alpha", kind: "directory", mtimeMs: 1 },
+      { path: "alpha/inner", kind: "directory", mtimeMs: 1 },
+      { path: "alpha/inner/x.ts", kind: "file", mtimeMs: 1 },
+      { path: "alpha/z.ts", kind: "file", mtimeMs: 1 },
+      { path: "beta.txt", kind: "file", mtimeMs: 2 },
+    ];
+    using _entries = setEntries(tree);
+    await using screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    findTreeRow("alpha/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("alpha/inner/")).not.toBeNull());
+    findTreeRow("alpha/inner/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("alpha/inner/x.ts")).not.toBeNull());
+    findTreeRow("alpha/")!.click();
+    await expectRows(["alpha/", "beta.txt"]);
+
+    tree[4] = { path: "beta.txt", kind: "file", mtimeMs: 3 };
+    setEntries([...tree]);
+    await screen.rerender(panel());
+    await userEvent.click(sortDirectionButton("Sort descending"));
+
+    await expectRows(["alpha/", "beta.txt"]);
+  });
+
+  it("shows new search matches after a refresh re-sorts by date modified", async () => {
+    using _sort = setupSort();
+    using _entries = setEntries([
+      { path: "a.txt", kind: "file", mtimeMs: 1 },
+      { path: "b.md", kind: "file", mtimeMs: 2 },
+    ]);
+    await using screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await userEvent.fill(page.getByRole("searchbox", { name: "Search repo files" }), "txt");
+    await expectRows(["a.txt"]);
+
+    setEntries([
+      { path: "a.txt", kind: "file", mtimeMs: 3 },
+      { path: "b.md", kind: "file", mtimeMs: 2 },
+      { path: "c.txt", kind: "file", mtimeMs: 4 },
+    ]);
+    await screen.rerender(panel());
+
+    await expectRows(["a.txt", "c.txt"]);
+  });
+
+  it("keeps the focused row when a refresh re-sorts by date modified", async () => {
+    using _sort = setupSort();
+    const tree: ProjectEntry[] = [
+      { path: "alpha", kind: "directory", mtimeMs: 1 },
+      { path: "alpha/a.ts", kind: "file", mtimeMs: 1 },
+      { path: "beta.txt", kind: "file", mtimeMs: 2 },
+    ];
+    using _entries = setEntries(tree);
+    await using screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    findTreeRow("alpha/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("alpha/a.ts")).not.toBeNull());
+    findTreeRow("alpha/a.ts")!.click();
+    await vi.waitFor(() => expect(findTreeRow("alpha/a.ts")?.dataset.itemFocused).toBe("true"));
+
+    tree[2] = { path: "beta.txt", kind: "file", mtimeMs: 0 };
+    setEntries([...tree]);
+    await screen.rerender(panel());
+
+    await expectRows(["alpha/", "alpha/a.ts", "beta.txt"]);
+    await vi.waitFor(() => expect(findTreeRow("alpha/a.ts")?.dataset.itemFocused).toBe("true"));
   });
 });

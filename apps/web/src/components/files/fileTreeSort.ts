@@ -105,3 +105,18 @@ export function createFileTreeSortComparator(
     return left.isDirectory ? -1 : 1;
   };
 }
+
+export interface FileTreeTimestamps {
+  readonly entryKinds: ReadonlyMap<string, unknown>;
+  readonly mtimes: ReadonlyMap<string, number>;
+}
+
+/** New paths can be inserted in place; only a kept path's changed time needs a full re-sort. */
+export function hasKeptEntryMtimeChanged(previous: FileTreeTimestamps, next: FileTreeTimestamps) {
+  for (const path of next.entryKinds.keys()) {
+    if (previous.entryKinds.has(path) && previous.mtimes.get(path) !== next.mtimes.get(path)) {
+      return true;
+    }
+  }
+  return false;
+}
