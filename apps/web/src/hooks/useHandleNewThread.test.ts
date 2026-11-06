@@ -404,26 +404,28 @@ describe("useNewThreadHandler", () => {
   });
 });
 
-it("reads cold native quotas before selecting a new draft's default model", async () => {
-  testState.reset(null);
-  const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
-  const fallback = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "sonnet" };
-  const providers: ServerProvider[] = [primary, fallback].map((selection) => ({
-    instanceId: selection.instanceId,
-    driver: ProviderDriverKind.make(selection === primary ? "codex" : "claudeAgent"),
-    enabled: true,
-    installed: true,
-    version: "1",
-    status: "ready",
-    auth: { status: "authenticated" },
-    checkedAt: "2026-01-01T00:00:00Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
-  }));
-  testState.setDefaultModels(primary, fallback, providers);
-  testState.refreshProviders.mockImplementation(async () =>
-    AsyncResult.success({
+it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
+  "new-draft quota preflight: %s",
+  async (mode) => {
+    vi.useFakeTimers();
+    testState.reset(null);
+    const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const fallback = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "sonnet" };
+    const providers: ServerProvider[] = [primary, fallback].map((selection) => ({
+      instanceId: selection.instanceId,
+      driver: ProviderDriverKind.make(selection === primary ? "codex" : "claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "1",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    }));
+    testState.setDefaultModels(primary, fallback, providers);
+    const fresh = AsyncResult.success({
       providers: providers.map((provider) => ({
         ...provider,
         usageLimits: {
@@ -438,15 +440,53 @@ it("reads cold native quotas before selecting a new draft's default model", asyn
           ],
         },
       })),
-    }),
-  );
-  const pending = useNewThreadHandler()({
-    environmentId: "environment-ssh",
-    projectId: "project-remote",
-  } as never);
-  testState.completeProjectFileRead(null);
-  const opened = await pending;
-  expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(opened?.draftId, fallback, {
-    replaceOptions: true,
-  });
-});
+    });
+    const first = Promise.withResolvers<typeof fresh>();
+    const blocked = Promise.withResolvers<typeof fresh>();
+    let calls = 0;
+    testState.refreshProviders.mockImplementation(async () => {
+      calls++;
+      if (mode === "primary-blocked") return blocked.promise;
+      if (mode === "fallback-blocked") return calls === 1 ? first.promise : blocked.promise;
+      return fresh;
+    });
+    let finished = false;
+    const pending = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never).then((opened) => {
+      finished = true;
+      return opened;
+    });
+    testState.completeProjectFileRead(null);
+    try {
+      if (mode === "fallback-blocked") {
+        await vi.advanceTimersByTimeAsync(3_000);
+        first.resolve(fresh);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(testState.refreshProviders).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1_999);
+      } else {
+        await vi.advanceTimersByTimeAsync(4_999);
+      }
+      expect(finished).toBe(mode === "fresh");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(finished).toBe(true);
+      const opened = await pending;
+      expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(
+        opened?.draftId,
+        mode === "primary-blocked" ? primary : fallback,
+        { replaceOptions: true },
+      );
+      expect(vi.getTimerCount()).toBe(0);
+      blocked.resolve(fresh);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(testState.refreshProviders).toHaveBeenCalledTimes(mode === "primary-blocked" ? 1 : 2);
+    } finally {
+      first.resolve(fresh);
+      blocked.resolve(fresh);
+      await pending;
+      vi.useRealTimers();
+    }
+  },
+);

@@ -8,6 +8,7 @@ import type {
   UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 import { exhaustedUsageWindow, resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { AsyncResult } from "effect/reactivity";
 import type { AtomRegistry } from "effect/reactivity";
@@ -56,6 +57,8 @@ export function usageSummaryInput(
   return modelFilter === undefined ? input : { ...input, modelFilter };
 }
 
+const DEFAULT_MODEL_USAGE_WAIT_MS = 5_000;
+
 export async function refreshNewThreadUsage({
   registry,
   server,
@@ -67,8 +70,8 @@ export async function refreshNewThreadUsage({
   readonly environmentId: EnvironmentId;
   readonly input: Parameters<typeof resolveNewThreadModelSelection>[0];
 }): Promise<readonly ServerProvider[]> {
-  if (input.explicitSelection || !input.defaultSelection || !input.fallbackSelection)
-    return input.providers;
+  const { defaultSelection, fallbackSelection } = input;
+  if (input.explicitSelection || !defaultSelection || !fallbackSelection) return input.providers;
   const refresh = async (instanceId: ProviderInstanceId) => {
     const result = await runAtomCommand(
       registry,
@@ -78,16 +81,32 @@ export async function refreshNewThreadUsage({
     );
     return AsyncResult.isSuccess(result) ? result.value.providers : undefined;
   };
-  let providers = (await refresh(input.defaultSelection.instanceId)) ?? input.providers;
-  if (
-    exhaustedUsageWindow(
-      providers.find((provider) => provider.instanceId === input.defaultSelection?.instanceId),
-      input.now,
-      input.defaultSelection.model,
-    )
-  ) {
-    providers = (await refresh(input.fallbackSelection.instanceId)) ?? providers;
-  }
+  let providers = input.providers;
+  let expired = false;
+  const read = async () => {
+    providers = (await refresh(defaultSelection.instanceId)) ?? providers;
+    if (expired) return;
+    if (
+      exhaustedUsageWindow(
+        providers.find((provider) => provider.instanceId === defaultSelection.instanceId),
+        input.now,
+        defaultSelection.model,
+      )
+    ) {
+      providers = (await refresh(fallbackSelection.instanceId)) ?? providers;
+    }
+  };
+  // The UI wait is bounded; an already shared read can still finish into the cache.
+  await Effect.runPromise(
+    Effect.promise(read).pipe(
+      Effect.timeoutOption(DEFAULT_MODEL_USAGE_WAIT_MS),
+      Effect.ensuring(
+        Effect.sync(() => {
+          expired = true;
+        }),
+      ),
+    ),
+  );
   return providers;
 }
 

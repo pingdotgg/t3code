@@ -118,6 +118,7 @@ Limits refresh every five minutes while a limits view is visible. Closing the vi
 window stops periodic usage requests; provider health checks continue. Refreshing can reuse a
 recent reading, and rate-limited accounts wait before retrying, including manual refreshes.
 Choosing a default or fallback model can also request a reading while Limits is closed.
+If that check takes more than five seconds, T3 continues with the information already available.
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
