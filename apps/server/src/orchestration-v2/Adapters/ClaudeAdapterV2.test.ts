@@ -8695,7 +8695,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
       const reportedModels = yield* Ref.make<ReadonlyArray<ClaudeSdk.ModelInfo>>([discoveredAlias]);
       const initialCatalog = modelCatalogWithAlias("opus", "claude-opus-4-6");
-      const modelCatalog = yield* Ref.make(initialCatalog);
+      const modelCatalog = yield* Ref.make<ClaudeModelCatalog>(initialCatalog);
       const harness = yield* makeWakeHarnessWithOptions({
         freshQueueOnReopen: true,
         reportedModels,
@@ -12185,7 +12185,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     (opening) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const modelCatalog = yield* Ref.make(
+          const modelCatalog = yield* Ref.make<ClaudeModelCatalog>(
             modelCatalogWithAlias("sonnet", "claude-sonnet-4-6"),
           );
           const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(modelCatalog) });
@@ -12212,7 +12212,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.offerAndWait(wakeNotification);
           assert.lengthOf(harness.continuationRequests, 0);
           if (opening === "init") {
-            yield* harness.offerAndWait(claudeSdkFrame({ ...wakeTurnInit, model: "claude-sonnet-4-6" }));
+            yield* harness.offerAndWait(
+              claudeSdkFrame({ ...wakeTurnInit, model: "claude-sonnet-4-6" }),
+            );
           } else {
             yield* harness.offerAndWait(
               usageStreamFrame(

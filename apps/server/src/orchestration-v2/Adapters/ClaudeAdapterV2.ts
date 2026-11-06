@@ -4322,6 +4322,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 }
 
 interface ActiveClaudeTurnContext {
+  readonly modelCatalog: ClaudeModelCatalog;
   readonly reportedModels: ReadonlyArray<ModelInfo>;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
@@ -5979,10 +5980,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // "<synthetic>" identifies CLI notices, not a model.
           if (reported.length > 0 && reported !== "<synthetic>") {
             const discovered = context.reportedModels;
-            const executed = resolveClaudeModelSlug(modelCatalog, reported, discovered);
+            const executed = resolveClaudeModelSlug(context.modelCatalog, reported, discovered);
             // An alias such as `opus` requests the model its canonical slug names.
             const requested = resolveClaudeModelSlug(
-              modelCatalog,
+              context.modelCatalog,
               context.input.modelSelection.model,
               discovered,
             );
@@ -10782,6 +10783,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          turnModelCatalog: ClaudeModelCatalog,
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
@@ -10796,7 +10798,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(
             turnInput.modelSelection,
-            modelCatalog,
+            turnModelCatalog,
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -10912,7 +10914,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
-            modelCatalog,
+            modelCatalog: turnModelCatalog,
             nativeThreadId,
             title: turnInput.appThread.title,
             resume: shouldResume,
@@ -11102,7 +11104,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
-            modelCatalog = yield* loadModelCatalog;
+            const turnModelCatalog = yield* loadModelCatalog;
+            modelCatalog = turnModelCatalog;
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
@@ -11161,7 +11164,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : yield* makeClaudeUserMessageWithAttachments({
                     text: applyClaudePromptEffortPrefix(
                       turnInput.message.text,
-                      compileClaudeModelSelection(turnInput.modelSelection, modelCatalog)
+                      compileClaudeModelSelection(turnInput.modelSelection, turnModelCatalog)
                         .promptEffort,
                     ),
                     attachments: turnInput.message.attachments,
@@ -11177,9 +11180,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const reportedModels = adapterOptions.reportedModels
               ? yield* Ref.get(adapterOptions.reportedModels)
               : [];
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const querySession = yield* openQuery(turnInput, nativeThreadId, turnModelCatalog);
             const context: ActiveClaudeTurnContext = {
               // Continuations consume the existing query's output, including its model identity.
+              modelCatalog: isClaudeProviderContinuationTurn(turnInput)
+                ? (querySession.lastTurn?.modelCatalog ?? turnModelCatalog)
+                : turnModelCatalog,
               reportedModels: isClaudeProviderContinuationTurn(turnInput)
                 ? (querySession.lastTurn?.reportedModels ?? reportedModels)
                 : reportedModels,
