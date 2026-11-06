@@ -154,7 +154,10 @@ export function ThreadDetailsPrRow({
     event.stopPropagation();
     void showPullRequestLinkContextMenu({
       url,
-      openLabel: openOnHostLabel(sourceControl),
+      // The URL names the host even when no project or detail does.
+      openLabel: openOnHostLabel(
+        sourceControlClients.parseChangeRequestUrl(url)?.definition ?? sourceControl,
+      ),
       position: { x: event.clientX, y: event.clientY },
     });
   };

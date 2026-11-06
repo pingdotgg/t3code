@@ -195,7 +195,7 @@ it("opens the pull request's link menu on right click instead of the card's", as
           environmentId={EnvironmentId.make("environment")}
           pr={null}
           number={1}
-          url="https://github.com/owner/repo/pull/1"
+          url="https://gitlab.com/owner/repo/-/merge_requests/1"
           status={null}
           project={null}
           label="Test PR"
@@ -215,8 +215,8 @@ it("opens the pull request's link menu on right click instead of the card's", as
   }
   expect(cardMenu).not.toHaveBeenCalled();
   const menu = {
-    url: "https://github.com/owner/repo/pull/1",
-    openLabel: "Open on GitHub",
+    url: "https://gitlab.com/owner/repo/-/merge_requests/1",
+    openLabel: "Open on GitLab",
     position: { x: 7, y: 0 },
   };
   expect(state.showLinkMenu.mock.calls).toEqual([[menu], [menu]]);
