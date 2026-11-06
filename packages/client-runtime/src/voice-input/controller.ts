@@ -236,7 +236,7 @@ export class VoiceInputController {
   private operationToken = 0;
   private sessionToken: VoiceInputSession | null = null;
   private transcription: PreparedVoiceTranscription | null = null;
-  private liveTranscription: Promise<{ text: string } | { error: unknown }> | null = null;
+  private liveTranscription: Promise<{ text: string | null } | { error: unknown }> | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private postProcessingAbortController: AbortController | null = null;
   private skipPostProcessingRequested = false;
@@ -504,17 +504,15 @@ export class VoiceInputController {
       const capturedDraft = this.capturedDraft;
       let transcript: string;
       try {
-        if (this.liveTranscription) {
-          const result = await this.liveTranscription;
-          if ("error" in result) throw result.error;
-          transcript = result.text;
-        } else {
-          transcript = await runTranscriptionOperation(() =>
+        const live = this.liveTranscription ? await this.liveTranscription : null;
+        if (live && "error" in live) throw live.error;
+        transcript =
+          live?.text ??
+          (await runTranscriptionOperation(() =>
             transcription.streaming
               ? transcription.streaming.finish({ signal })
               : transcription.transcribe(recordingUri!, { signal }),
-          );
-        }
+          ));
       } catch (error) {
         if (this.isCurrent(operationToken)) {
           if (

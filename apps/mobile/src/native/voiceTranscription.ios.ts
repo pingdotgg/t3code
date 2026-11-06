@@ -63,6 +63,41 @@ async function prepareVoiceTranscription(
     });
   }
 
+  let locale = locales[0]!;
+  const model = prepareLocales(locales, signal).then((supported) => {
+    locale = supported;
+  });
+  // Recorder setup can fail before either consumer observes the model.
+  void model.catch(() => {});
+
+  async function ready(signal: AbortSignal) {
+    throwIfVoiceTranscriptionAborted(signal);
+    const cancelled = Promise.withResolvers<void>();
+    const cancel = () => cancelled.resolve();
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      await Promise.race([model, cancelled.promise]);
+      throwIfVoiceTranscriptionAborted(signal);
+      return locale;
+    } finally {
+      signal.removeEventListener("abort", cancel);
+    }
+  }
+  return {
+    get locale() {
+      return locale;
+    },
+    start: async (_uri, { signal }) => {
+      await ready(signal);
+      return null;
+    },
+    transcribe: async (uri, options) =>
+      transcribeVoiceRecording(uri, await ready(options.signal), options),
+  };
+}
+
+async function prepareLocales(locales: readonly string[], signal: AbortSignal): Promise<string> {
+  throwIfVoiceTranscriptionAborted(signal);
   let unsupported: VoiceTranscriptionError | undefined;
   for (const locale of locales) {
     try {
@@ -75,17 +110,11 @@ async function prepareVoiceTranscription(
   throw unsupported!;
 }
 
-async function prepareLocale(
-  locale: string,
-  signal: AbortSignal,
-): Promise<PreparedVoiceTranscription> {
+async function prepareLocale(locale: string, signal: AbortSignal): Promise<string> {
   try {
     const supportedLocale = await AppleTranscription.prepare(locale);
     throwIfVoiceTranscriptionAborted(signal);
-    return {
-      locale: supportedLocale,
-      transcribe: (uri, options) => transcribeVoiceRecording(uri, supportedLocale, options),
-    };
+    return supportedLocale;
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
     if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
