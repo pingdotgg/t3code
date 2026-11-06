@@ -1833,6 +1833,58 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("an unadvertised model refusal names the advertised slugs to retry with", () =>
+    Effect.gen(function* () {
+      const codex = providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+      });
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          {
+            ...codex,
+            models: ["gpt-6.1-sol", "gpt-6.1-terra"].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: null,
+            })),
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const refusal = yield* service
+          .delegateTask(scope, {
+            task: "Summarize the diff.",
+            target: { providerInstanceId: codexInstanceId, model: "codemie/gpt-6.1-terra" },
+            mode: "async",
+            clientRequestId: "delegate-unadvertised-model",
+          })
+          .pipe(Effect.flip);
+        assert.equal(refusal.code, "model_unavailable");
+        assert.include(
+          refusal.message.replaceAll("codemie/gpt-6.1-terra", ""),
+          "gpt-6.1-terra",
+          "the refusal names the advertised slug to retry with",
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
