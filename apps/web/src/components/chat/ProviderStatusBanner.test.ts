@@ -3,6 +3,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import {
   getProviderStatusBannerKey,
   getProviderStatusMessage,
+  getProviderStatusTitle,
   shouldShowProviderStatusBanner,
 } from "./ProviderStatusBanner";
 
@@ -108,5 +109,18 @@ describe("compatibility banners", () => {
     expect(getProviderStatusMessage({ ...broken, auth: { status: "unauthenticated" } })).toBe(
       broken.message,
     );
+  });
+});
+
+describe("provider status title", () => {
+  it("prompts sign-in from authentication state when provider status is warning", () => {
+    expect(
+      getProviderStatusTitle({
+        ...provider,
+        displayName: "Codex",
+        status: "warning",
+        auth: { status: "unauthenticated" },
+      }),
+    ).toBe("Sign in to Codex");
   });
 });

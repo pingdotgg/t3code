@@ -93,6 +93,15 @@ export function getProviderStatusMessage(status: ServerProvider): string {
       : `T3 Code encountered a problem with ${providerName}.`;
 }
 
+export function getProviderStatusTitle(status: ServerProvider): string {
+  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  const incompatible = getIncompatibleVersion(status);
+  if (status.auth.status === "unauthenticated") return `Sign in to ${providerName}`;
+  return incompatible
+    ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+    : `${providerName} provider status`;
+}
+
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   environmentId,
   onDismiss,
@@ -127,14 +136,9 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
     return null;
   }
 
-  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
-  const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const incompatible = getIncompatibleVersion(status);
-  const title = isUnauthenticated
-    ? `Sign in to ${providerName}`
-    : incompatible
-      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
-      : `${providerName} provider status`;
+  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  const title = getProviderStatusTitle(status);
   const message = incompatible?.message ?? getProviderStatusMessage(status);
   const isWarning =
     incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
