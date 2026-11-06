@@ -565,6 +565,8 @@ export class Launcher {
     this.#enqueue(async () => {
       // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#stopping = true;
+      // An exit-78 transition queued before this one may have started the owner poll.
+      this.#clearTimer();
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await terminateChild(child, signal);
@@ -852,7 +854,11 @@ export class Launcher {
   }
 
   async #reclaimStateDir(): Promise<void> {
-    if (this.#timer === undefined || this.#child !== null || this.#stopRequested) return;
+    if (this.#stopRequested) {
+      this.#clearTimer();
+      return;
+    }
+    if (this.#timer === undefined || this.#child !== null) return;
     if (stateDirOwned(this.#baseDir)) return;
     this.#clearTimer();
     process.stderr.write("[service-launcher] The T3 home is free again. Starting the server.\n");

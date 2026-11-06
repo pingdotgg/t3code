@@ -200,7 +200,8 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         }
         const db = new NodeSqlite.DatabaseSync(lockPath);
         try {
-          db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+          // An idle service launcher probes this lock for a moment; wait out that probe.
+          db.exec("PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE;");
           const identity = NodeFS.statSync(lockPath, { bigint: true });
           return {
             db,
