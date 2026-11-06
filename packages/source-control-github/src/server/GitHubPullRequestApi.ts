@@ -33,7 +33,6 @@ import {
   type PullRequestListState,
   type PullRequestMergeMethod,
   type PullRequestOmittedFileStat,
-  type PullRequestReaction,
   type PullRequestReactionContent,
   type PullRequestReviewCommentDraft,
   type PullRequestReviewVerdict,
@@ -95,6 +94,7 @@ import {
   toReviewDismissalsPage,
   toReviewerCandidates,
   toReviewThreadCommentsPage,
+  toLaterReviewThreadPage,
   toReviewThreadPage,
   toStackMembership,
   toViewerPermissions,
@@ -2216,45 +2216,39 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const { owner, name } = parseRepositorySelector(input.repository);
         const target = { ...input, operation: "listReviewThreadComments" };
-        const threadPage = (
-          after: string | null,
-        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> =>
-          readRequestedReviewers(input, 50, (requestedReviewers) =>
-            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers }),
-          ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
-        const entries: GitHubReviewThreadEntry[] = [];
-        const avatarsByLogin = new Map<string, string>();
-        const botLogins = new Set<string>();
-        let reviewers: ReadonlyArray<PullRequestActor> = [];
-        let reactions: GitHubReviewThreadPage["reactions"] = [];
-        const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
-        const editedAtById = new Map<string, string>();
-        let commits: GitHubReviewThreadPage["commits"] = [];
-        let viewer: GitHubReviewThreadPage["viewer"] = { canUpdate: true, didAuthor: false };
-        const dismissalsByReviewId = new Map<string, string>();
-        let dismissalCursor: string | null = null;
-        let cursor: string | null = null;
-        let page = 0;
-        do {
-          const read: GitHubReviewThreadPage = yield* threadPage(cursor);
-          entries.push(...read.threads);
-          for (const login of read.botLogins) botLogins.add(login);
-          for (const [login, avatarUrl] of read.avatarsByLogin)
+        const first: GitHubReviewThreadPage = yield* readRequestedReviewers(
+          input,
+          50,
+          (requestedReviewers) =>
+            client.ReviewThreads({ owner, name, number: input.number, requestedReviewers }),
+        ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
+        const entries: GitHubReviewThreadEntry[] = [...first.threads];
+        const avatarsByLogin = new Map(first.avatarsByLogin);
+        const botLogins = new Set(first.botLogins);
+        const { reviewers, reactions, reactionsById, editedAtById, commits, viewer } = first;
+        const dismissalsByReviewId = new Map(first.dismissalsByReviewId);
+        const dismissalCursor = first.nextDismissalCursor;
+        let cursor = first.nextCursor;
+        let page = 1;
+        // Later pages carry the threads alone; the PR-wide fields above come from the first.
+        while (cursor !== null && page < REVIEW_THREAD_PAGES) {
+          const later: Pick<
+            GitHubReviewThreadPage,
+            "threads" | "nextCursor" | "avatarsByLogin" | "botLogins"
+          > = yield* client
+            .ReviewThreadPages({ owner, name, number: input.number, after: cursor })
+            .pipe(
+              graphql(target),
+              Effect.map(toLaterReviewThreadPage),
+              Effect.flatMap(found(target)),
+            );
+          entries.push(...later.threads);
+          for (const login of later.botLogins) botLogins.add(login);
+          for (const [login, avatarUrl] of later.avatarsByLogin)
             avatarsByLogin.set(login, avatarUrl);
-          if (page === 0) {
-            reviewers = read.reviewers;
-            reactions = read.reactions;
-            for (const [id, entry] of read.reactionsById) reactionsById.set(id, entry);
-            for (const [id, editedAt] of read.editedAtById) editedAtById.set(id, editedAt);
-            commits = read.commits;
-            viewer = read.viewer;
-            for (const [id, message] of read.dismissalsByReviewId)
-              dismissalsByReviewId.set(id, message);
-            dismissalCursor = read.nextDismissalCursor;
-          }
-          cursor = read.nextCursor;
+          cursor = later.nextCursor;
           page += 1;
-        } while (cursor !== null && page < REVIEW_THREAD_PAGES);
+        }
 
         if (dismissalCursor !== null) {
           let after: string | null = dismissalCursor;
