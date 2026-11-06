@@ -23,6 +23,7 @@ import type {
   ServerProvider,
   ServerProviderState,
   ModelCapabilities,
+  ModelSelection,
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
@@ -36,6 +37,7 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { getCodexCyberAccessProgramOptionValue } from "../codexModelOptions.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -348,15 +350,22 @@ export function applyConfiguredCodexCyberAccess(
   });
 }
 
-/** Applies when a selection names no program, such as older threads and agent-started turns. */
-export function codexDefaultCyberAccessProgram(
+/**
+ * A selection the model does not offer, such as one kept from another model,
+ * gets the model's default, as do older threads and agent-started turns.
+ */
+export function codexCyberAccessProgram(
   models: ReadonlyArray<ServerProviderModel>,
-  slug: string,
+  modelSelection: ModelSelection,
 ): string | undefined {
+  const selected = getCodexCyberAccessProgramOptionValue(modelSelection);
   const descriptor = models
-    .find((model) => model.slug === slug)
+    .find((model) => model.slug === modelSelection.model)
     ?.capabilities?.optionDescriptors?.find(({ id }) => id === "cyberAccessProgram");
-  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
+  if (descriptor?.type !== "select") return undefined;
+  return descriptor.options.some((option) => option.id === selected)
+    ? selected
+    : descriptor.currentValue;
 }
 
 function applyConfiguredCodexServiceTier(
@@ -692,10 +701,12 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     models,
     serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: config?.["daybreak"] === true,
+    // An unread config may have them disabled, and Codex rejects a program it does not allow.
     apiKeyCyberAccessProgramsDisabled:
       accountResponse.account?.type === "apiKey" &&
-      (config?.["features"] as { readonly api_key_cyber_access_programs?: unknown } | undefined)
-        ?.api_key_cyber_access_programs === false,
+      (config === undefined ||
+        (config["features"] as { readonly api_key_cyber_access_programs?: unknown } | undefined)
+          ?.api_key_cyber_access_programs === false),
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });

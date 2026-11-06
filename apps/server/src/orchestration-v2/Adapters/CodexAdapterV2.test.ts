@@ -225,27 +225,21 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("sends the chosen cyber access program, else the model's default", () =>
+  it.effect("sends only a cyber access program Codex accepts", () =>
     Effect.gen(function* () {
-      const build = (value?: string, defaultCyberAccessProgram?: string) =>
+      const build = (cyberAccessProgram?: string) =>
         CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId: "native-cyber",
           codexInput: [{ type: "text", text: "test" }],
           runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5.4",
-            ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
-          },
-          defaultCyberAccessProgram,
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          cyberAccessProgram,
         });
 
       // Custom models have no catalog entry, so Codex keeps its own treatment.
       assert.notProperty(yield* build(), "cyberAccessProgram");
-      assert.equal((yield* build(undefined, "standard")).cyberAccessProgram, "standard");
-      assert.equal((yield* build("automatic", "standard")).cyberAccessProgram, "standard");
-      assert.equal((yield* build("daybreakBlue", "standard")).cyberAccessProgram, "daybreakBlue");
-      assert.equal((yield* build("standard", "daybreakBlue")).cyberAccessProgram, "standard");
+      assert.notProperty(yield* build("automatic"), "cyberAccessProgram");
+      assert.equal((yield* build("daybreakBlue")).cyberAccessProgram, "daybreakBlue");
     }),
   );
 
@@ -2488,7 +2482,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),

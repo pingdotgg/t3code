@@ -20,7 +20,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
-  codexDefaultCyberAccessProgram,
+  codexCyberAccessProgram,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -245,9 +245,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   // already wraps openSession in withAccess, so resolve without re-entering it.
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
-    defaultCyberAccessProgram: (model) =>
+    resolveCyberAccessProgram: (modelSelection) =>
       snapshot.getSnapshot.pipe(
-        Effect.map((value) => codexDefaultCyberAccessProgram(value.models, model)),
+        Effect.map((value) => codexCyberAccessProgram(value.models, modelSelection)),
       ),
     resolveRuntime: runtime.resolve,
   }).pipe(
