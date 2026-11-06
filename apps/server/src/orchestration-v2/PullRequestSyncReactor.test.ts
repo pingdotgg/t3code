@@ -302,6 +302,24 @@ const sweepAgain = Effect.fn("sweepPullRequestSyncHarness")(function* (
   yield* reactor.drain;
 });
 
+const sweepFor = Effect.fn("sweepPullRequestSyncHarnessFor")(function* (
+  fixture: Harness,
+  reactor: PullRequestSyncReactor.PullRequestSyncReactor["Service"],
+  minutes: number,
+) {
+  for (let minute = 0; minute < minutes; minute++) yield* sweepAgain(fixture, reactor);
+});
+
+const failingGitLabLink = makeLink(13, null, {
+  host: "gitlab.com",
+  url: "https://gitlab.com/owner/repository/-/merge_requests/13",
+});
+
+const gitLabCliFailure = new PullRequestOperationError({
+  operation: "summary",
+  detail: "GitLab CLI command failed",
+});
+
 function runUpdated(
   threadId: ThreadId,
   status: OrchestrationV2Run["status"],
@@ -1513,6 +1531,77 @@ describe("PullRequestSyncReactor", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
             [8],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("backs off reading a never-synced link whose host read keeps failing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
+          summary: () => Effect.fail(gitLabCliFailure),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepFor(fixture, reactor, 10);
+          const readsInTenMinutes = (yield* Ref.get(fixture.summaryCalls)).length;
+          assert.isAtMost(
+            readsInTenMinutes,
+            5,
+            "a link whose read keeps failing is read on every one-minute sweep",
+          );
+          yield* sweepFor(fixture, reactor, 6);
+          assert.isAbove(
+            (yield* Ref.get(fixture.summaryCalls)).length,
+            readsInTenMinutes,
+            "a link whose read keeps failing is never retried",
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("backs off reading a newly linked pull request whose host read keeps failing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one")]),
+          summary: () => Effect.fail(gitLabCliFailure),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })], 2),
+          );
+          yield* Queue.offer(fixture.domainEvents, {
+            id: EventId.make("event:one:link-updated"),
+            type: "thread.pull-request-link-updated",
+            threadId: ThreadId.make("one"),
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: failingGitLabLink,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+
+          yield* sweepFor(fixture, reactor, 10);
+          const readsInTenMinutes = (yield* Ref.get(fixture.summaryCalls)).length;
+          assert.isAtMost(
+            readsInTenMinutes,
+            5,
+            "a requested link whose read keeps failing is read on every one-minute sweep",
+          );
+          yield* sweepFor(fixture, reactor, 6);
+          assert.isAbove(
+            (yield* Ref.get(fixture.summaryCalls)).length,
+            readsInTenMinutes,
+            "a requested link whose read keeps failing is never retried",
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
