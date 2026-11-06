@@ -2,7 +2,12 @@ import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ComposerImageAttachment } from "../../composerDraftStore";
-import { buildMessageContext, previewAnnotationContextId } from "../../lib/composerContextRecords";
+import type { ComposerFileAttachment } from "../../composerDraftStore";
+import {
+  buildMessageContext,
+  fileContextReference,
+  previewAnnotationContextId,
+} from "../../lib/composerContextRecords";
 import {
   reconcileAttachmentContextReferences,
   type RetainedAttachmentContextPayloads,
@@ -44,6 +49,7 @@ describe("reconcileAttachmentContextReferences", () => {
   it("restores an annotation and its screenshot attachment after undo", () => {
     const retained = retention();
     const removed = reconcileAttachmentContextReferences({
+      previouslyReferencedContextIds: new Set([previewAnnotationContextId(annotation.id)]),
       referencedContextIds: new Set(),
       files: [],
       images: [image],
@@ -53,6 +59,7 @@ describe("reconcileAttachmentContextReferences", () => {
     expect(removed.annotationIdsToRemove).toEqual(["annotation-1"]);
 
     const restored = reconcileAttachmentContextReferences({
+      previouslyReferencedContextIds: new Set(),
       referencedContextIds: new Set([previewAnnotationContextId(annotation.id)]),
       files: [],
       images: [],
@@ -87,5 +94,36 @@ describe("reconcileAttachmentContextReferences", () => {
         attachmentId: "uploaded-screenshot",
       }),
     ]);
+  });
+
+  it("keeps a card that never had a chip when the prompt changes", () => {
+    const file = {
+      type: "file",
+      id: "file-1",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 3,
+      file: null,
+    } satisfies ComposerFileAttachment;
+    const changes = reconcileAttachmentContextReferences({
+      previouslyReferencedContextIds: new Set(),
+      referencedContextIds: new Set(),
+      files: [file],
+      images: [image],
+      previewAnnotations: [annotation],
+      retained: retention(),
+    });
+    expect(changes.filesToRemove).toEqual([]);
+    expect(changes.annotationIdsToRemove).toEqual([]);
+
+    const deleted = reconcileAttachmentContextReferences({
+      previouslyReferencedContextIds: new Set([fileContextReference(file).contextId]),
+      referencedContextIds: new Set(),
+      files: [file],
+      images: [],
+      previewAnnotations: [],
+      retained: retention(),
+    });
+    expect(deleted.filesToRemove).toEqual(["file-1"]);
   });
 });

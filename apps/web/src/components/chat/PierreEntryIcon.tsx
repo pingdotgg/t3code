@@ -62,6 +62,13 @@ const ICON_COLORS: Record<string, readonly [light: string, dark: string]> = {
 // Every icon references the one shared sprite, so it is in the document before any renders.
 ensurePierreIconSprite();
 
+/** The accent a file's icon uses, so labels beside it can match. */
+export function pierreFileIconColor(pathValue: string, theme: "light" | "dark", mimeType?: string) {
+  const token = resolvePierreIconForEntry(pathValue, "file", mimeType)?.token ?? "default";
+  const colors = ICON_COLORS[token] ?? ICON_COLORS.default;
+  return colors?.[theme === "light" ? 0 : 1];
+}
+
 export const PierreEntryIcon = memo(function PierreEntryIcon(props: {
   pathValue: string;
   kind: "file" | "directory";

@@ -2498,7 +2498,7 @@ describe("composerDraftStore attachment references", () => {
     },
   );
 
-  it("appends chips for persisted files that predate references", () => {
+  it("keeps persisted files without a chip as cards above the prompt", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
         merge: (
@@ -2521,7 +2521,9 @@ describe("composerDraftStore attachment references", () => {
       },
       useComposerDraftStore.getInitialState(),
     );
-    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toBe(`old ${fileLink} `);
+    const draft = mergedState.draftsByThreadKey[threadKeyFor(threadId)];
+    expect(draft?.prompt).toBe("old");
+    expect(draft?.files.map((file) => file.id)).toEqual(["file-1"]);
   });
 
   it("migrates legacy image references without doubling their image marker", () => {

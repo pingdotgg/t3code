@@ -84,7 +84,10 @@ import {
 import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
 import {
   buildMessageContext,
+  fileContextReference,
   previewAnnotationContextReference,
+  reviewCommentContextReference,
+  terminalContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
@@ -600,13 +603,15 @@ export function useComposerSend(input: ComposerSendInput) {
         previewAnnotations: sendContextPreviewAnnotations,
         direct: directAnnotation,
       });
-    // A direct "send annotation" writes the draft and sends in the same tick; the reference
-    // must be in the text now, not after the next render.
-    const promptForSend = directAnnotation
-      ? ensureInlineContextReferences(promptRef.current, [
-          previewAnnotationContextReference(directAnnotation.annotation),
-        ])
-      : promptRef.current;
+    // Cards above the prompt have no chip in the text, and providers read context only through
+    // a reference, so each card's reference goes at the end. A direct "send annotation" writes
+    // the draft and sends in the same tick, so its reference must be added here too.
+    const promptForSend = ensureInlineContextReferences(promptRef.current, [
+      ...composerFiles.map(fileContextReference),
+      ...composerTerminalContexts.map(terminalContextReference),
+      ...composerReviewComments.map(reviewCommentContextReference),
+      ...composerPreviewAnnotations.map(previewAnnotationContextReference),
+    ]);
     const strandedThread = threadContextsOutsideEnvironment({
       text: promptForSend,
       records: composerThreadContexts,
