@@ -10954,7 +10954,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (existing.nativeThreadId === nativeThreadId ||
               existing.lastTurn?.input.threadId === turnInput.threadId) &&
             !existing.stopping &&
-            (yield* liveProcessRunsBackgroundWork(existing))
+            ((yield* liveProcessRunsBackgroundWork(existing)) ||
+              (awaitedCompletionsByNativeThread.get(existing.nativeThreadId)?.size ?? 0) > 0)
           ) {
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
