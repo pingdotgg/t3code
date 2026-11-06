@@ -1640,8 +1640,13 @@ it.effect(
         const callback = new URL(
           new URL(state.authorizationUrl!).searchParams.get("redirect_uri")!,
         );
-        const request = yield* Effect.tryPromise(() => fetch(callback)).pipe(Effect.result);
-        assert.strictEqual(request._tag, "Failure");
+        const rejected = yield* Effect.promise(() =>
+          fetch(callback).then(
+            () => false,
+            () => true,
+          ),
+        );
+        assert.isTrue(rejected);
         assert.isTrue(Option.isNone(yield* h.auth.read));
       }),
     ),
