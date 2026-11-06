@@ -489,10 +489,13 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  const changesTotals = resolveChangesTotals(gitStatusForActions) ?? {
-    insertions: 0,
-    deletions: 0,
-  };
+  const resolvedChangesTotals = resolveChangesTotals(gitStatusForActions);
+  const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
+  const changesBaseLabel = resolvedChangesTotals
+    ? resolvedChangesTotals.baseRef === null
+      ? "Uncommitted"
+      : `vs ${resolvedChangesTotals.baseRef}`
+    : null;
 
   // Changed-file paths resolve against the worktree root from this status snapshot.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
@@ -1073,9 +1076,21 @@ export default function GitActionsControl({
   );
 
   const changesSummary = (
-    <span className="ms-auto flex shrink-0 items-center gap-1 text-caption tabular-nums">
-      <span className="text-diff-addition">+{formatDiffCount(changesTotals?.insertions ?? 0)}</span>
-      <span className="text-diff-deletion">-{formatDiffCount(changesTotals?.deletions ?? 0)}</span>
+    <span className="ms-auto flex min-w-0 items-center gap-1 text-caption tabular-nums">
+      {changesBaseLabel ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="min-w-0 truncate text-muted-foreground" />}>
+            {changesBaseLabel}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{changesBaseLabel}</TooltipPopup>
+        </Tooltip>
+      ) : null}
+      <span className="shrink-0 text-diff-addition">
+        +{formatDiffCount(changesTotals?.insertions ?? 0)}
+      </span>
+      <span className="shrink-0 text-diff-deletion">
+        -{formatDiffCount(changesTotals?.deletions ?? 0)}
+      </span>
     </span>
   );
 
