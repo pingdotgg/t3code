@@ -374,11 +374,17 @@ function copyPainted(from: Element | ShadowRoot, to: Element | ShadowRoot, copy:
     ) {
       twin.getContext("2d")?.drawImage(element, 0, 0);
     }
-    if (element.shadowRoot && twin.shadowRoot) {
-      twin.shadowRoot.replaceChildren(
+    if (element.shadowRoot) {
+      let shadow;
+      try {
+        shadow = twin.shadowRoot ?? twin.attachShadow({ mode: "open" });
+      } catch {
+        return;
+      }
+      shadow.replaceChildren(
         ...[...element.shadowRoot.childNodes].map((node) => node.cloneNode(true)),
       );
-      copyPainted(element.shadowRoot, twin.shadowRoot, copy);
+      copyPainted(element.shadowRoot, shadow, copy);
     }
   });
 }
