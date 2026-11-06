@@ -17,6 +17,7 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
 }));
 // The previews mount Ghostty and Shiki, which this test does not exercise.
 vi.mock(import("./SettingsFontPreviews"), () => ({
+  ReplyFontPreview: () => <div />,
   CodeFontPreview: () => <div />,
   PromptFontPreview: () => <div />,
   TerminalFontPreview: () => <div />,
