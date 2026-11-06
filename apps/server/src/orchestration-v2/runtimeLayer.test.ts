@@ -2051,7 +2051,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       readonly unanswerable?: boolean;
       readonly queuedNotification?: boolean;
       /** "idle": the run and turn have ended; "otherTurn": the run runs but the question's turn ended. */
-      readonly turnState?: "idle" | "otherTurn";
+      readonly turnState?: "idle" | "otherTurn" | "waitingRun";
+      /** The provider refuses interrupts, so Stop cannot reach the question's turn. */
+      readonly noInterrupt?: boolean;
     } = {},
   ) {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2094,11 +2096,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       status: "running" as const,
       cwd: process.cwd(),
       model: modelSelection.model,
-      capabilities: CodexProviderCapabilitiesV2,
+      capabilities:
+        options.noInterrupt === true
+          ? {
+              ...CodexProviderCapabilitiesV2,
+              turns: { ...CodexProviderCapabilitiesV2.turns, supportsInterrupt: false },
+            }
+          : CodexProviderCapabilitiesV2,
       createdAt: now,
       updatedAt: now,
       lastError: null,
     };
+    const turnEnded = options.turnState === "idle" || options.turnState === "otherTurn";
     const providerTurn = {
       id: ProviderTurnId.make(`${name}-turn`),
       providerThreadId: providerThread.id,
@@ -2106,9 +2115,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       runAttemptId: run.activeAttemptId,
       nativeTurnRef: null,
       ordinal: 1,
-      status: options.turnState === undefined ? ("running" as const) : ("completed" as const),
+      status: turnEnded ? ("completed" as const) : ("running" as const),
       startedAt: now,
-      completedAt: options.turnState === undefined ? null : now,
+      completedAt: turnEnded ? now : null,
     };
     const requestId = RuntimeRequestId.make(`${name}-request`);
     const approvalId = RuntimeRequestId.make(`${name}-approval`);
@@ -2140,7 +2149,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           payload:
             options.turnState === "idle"
               ? { ...run, status: "completed", startedAt: now, completedAt: now }
-              : { ...run, status: "running", startedAt: now },
+              : {
+                  ...run,
+                  status: options.turnState === "waitingRun" ? "waiting" : "running",
+                  startedAt: now,
+                },
         },
         {
           id: EventId.make(`${name}-session-event`),
@@ -2349,6 +2362,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             turnState: "otherTurn" as const,
             blocker: /still running/,
           },
+          {
+            name: "runtime-settle-question-waiting-run",
+            turnState: "waitingRun" as const,
+            blocker: /still running/,
+          },
         ];
         for (const { name, blocker, ...options } of cases) {
           const { threadId, requestId } = yield* seedLiveQuestion(name, options);
@@ -2394,6 +2412,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       assert.include(effectTypes, "provider-turn.interrupt");
       assert.notInclude(effectTypes, "provider-turn.start");
       assert.notEqual(run.id, queued[0]!.id);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("delivers the cancel when Stop cannot interrupt the question's turn", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const { threadId, requestId } = yield* seedLiveQuestion("runtime-settle-no-interrupt", {
+        noInterrupt: true,
+      });
+      const settleCommandId = CommandId.make("runtime-settle-no-interrupt-settle");
+      yield* orchestrator.dispatch({ type: "thread.settle", commandId: settleCommandId, threadId });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settled.thread.settledOverride, "settled");
+      assert.equal(
+        settled.runtimeRequests.find((candidate) => candidate.id === requestId)?.decision,
+        "cancel",
+      );
+      const effectTypes = (yield* outbox.listByCommandId(settleCommandId)).map(
+        (effect) => effect.request.type,
+      );
+      assert.notInclude(effectTypes, "provider-turn.interrupt");
+      assert.include(effectTypes, "runtime-request.respond");
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 

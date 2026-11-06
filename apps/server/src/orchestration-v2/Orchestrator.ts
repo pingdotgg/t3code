@@ -504,6 +504,15 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
 ) {}
 
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
+/** The live run Stop interrupts first; Settle uses it to know which question Stop withdraws. */
+function liveStopTargetRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | undefined {
+  return runs.findLast(
+    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+  );
+}
+
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
 }
@@ -3727,9 +3736,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           request.kind === "user_input" && request.responseCapability.type === "not_resumable",
       );
       // The run Stop interrupts, and its turns that the interrupt reaches.
-      const stopTarget = projection.runs.findLast((run) =>
-        ["preparing", "starting", "running"].includes(run.status),
-      );
+      const stopTarget = liveStopTargetRun(projection.runs);
       const stoppedTurnIds = new Set(
         stopTarget === undefined
           ? []
@@ -3792,6 +3799,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           events,
           effects,
         );
+        // Stop only logs an interrupt it could not send, so a question whose turn
+        // got no interrupt still needs its cancel delivered.
+        const interruptedTurnIds = new Set(
+          (yield* Ref.get(effects)).flatMap((effect) =>
+            effect.request.type === "provider-turn.interrupt"
+              ? [effect.request.providerTurnId]
+              : [],
+          ),
+        );
+        const unreached = (yield* Ref.get(droppedDeliveries)).filter((effect) => {
+          if (effect.request.type !== "runtime-request.respond") return true;
+          const requestId = effect.request.requestId;
+          const request = pendingRequests.find((candidate) => candidate.id === requestId);
+          return request?.providerTurnId == null || !interruptedTurnIds.has(request.providerTurnId);
+        });
+        yield* Ref.update(effects, (existing) => [...existing, ...unreached]);
       }
       // Stop already cancels buffered notifications; skip the runs it cancelled.
       const stillQueuedRunIds = stopsForQuestion
@@ -12503,10 +12526,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
     const latestRun = projection.runs.findLast((run) => run.status !== "queued");
     const target =
-      projection.runs.findLast(
-        (run) =>
-          run.status === "preparing" || run.status === "starting" || run.status === "running",
-      ) ??
+      liveStopTargetRun(projection.runs) ??
       (derivePendingBackgroundWork({
         latestRun,
         providerThreads: projection.providerThreads,
