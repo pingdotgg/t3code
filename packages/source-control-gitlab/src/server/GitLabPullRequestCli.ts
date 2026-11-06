@@ -24,7 +24,6 @@ import type {
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
-  PullRequestReviewDecision,
   PullRequestReviewPosition,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
@@ -46,6 +45,8 @@ import {
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestChangesJson,
+  decodeGraphqlListSupportJson,
+  decodeMergeRequestGraphqlListJson,
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
@@ -55,7 +56,7 @@ import {
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
-  decodeReviewDecisionsJson,
+  decodeListStatesJson,
   decodeSourceBranchJson,
   decodeTriggerJobChecksJson,
   decodeViewerJson,
@@ -65,11 +66,14 @@ import {
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
-  REVIEW_DECISIONS_GRAPHQL_QUERY,
+  LIST_ITEM_GRAPHQL_FIELDS,
+  LIST_STATES_GRAPHQL_QUERY,
+  SERVER_VERSION_GRAPHQL_QUERY,
   SOURCE_BRANCH_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
+  type GitLabMergeRequestListState,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type {
@@ -283,6 +287,10 @@ export interface GitLabMergeRequestListBatch {
   readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
   readonly truncated: boolean;
   readonly cursorAdvance: number;
+  /** GitLab's GraphQL cursor past the last row, when the page was read through GraphQL. */
+  readonly resumeAfter?: string;
+  /** Present when the read already carried each row's approval and pipeline state. */
+  readonly listStates?: ReadonlyMap<number, GitLabMergeRequestListState>;
 }
 
 export interface GitLabMergeRequestDiffSlice {
@@ -310,7 +318,18 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
       readonly filters?: PullRequestListFilters | undefined;
+      /**
+       * Read a first page through GraphQL, which narrows more filters; see `supportsGraphqlList`.
+       * A cursor keeps the API that handed it out.
+       */
+      readonly graphql?: boolean;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
+
+    /** Whether this host's GraphQL list takes every filter the REST list does. */
+    readonly supportsGraphqlList: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+    }) => Effect.Effect<boolean, GitLabPullRequestCliError>;
 
     readonly getMergeRequestDetail: (input: {
       readonly cwd: string;
@@ -321,13 +340,14 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly downstreamChecks?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
-    readonly getReviewDecisions: (input: {
+    /** Approval and head pipeline state, read in one GraphQL request per 100 merge requests. */
+    readonly getListStates: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
       readonly repository: string;
       readonly numbers: ReadonlyArray<number>;
     }) => Effect.Effect<
-      ReadonlyMap<number, PullRequestReviewDecision | null>,
+      ReadonlyMap<number, GitLabMergeRequestListState>,
       GitLabPullRequestCliError
     >;
 
@@ -605,7 +625,19 @@ function involvementParams(input: {
  * GitLab's `labels` asks for every label it names, so only groups of one go to it; a group of
  * alternatives is left for the service to narrow. A comma would split a name in two, and `None`
  * and `Any` mean "unlabeled" and "labeled" to GitLab rather than labels of those names.
+ * Review filters go only where GitLab returns every row the service's exact filter keeps.
  */
+function listableLabels(filters: PullRequestListFilters) {
+  const listable = (names: ReadonlyArray<string>) =>
+    names.filter((name) => !name.includes(",") && !/^(?:none|any)$/iu.test(name.trim()));
+  return {
+    required: listable(
+      (filters.labels ?? []).flatMap((group) => (group.length === 1 ? group : [])),
+    ),
+    excluded: listable(filters.excludedLabels ?? []),
+  };
+}
+
 function filterParams(input: {
   readonly filters?: PullRequestListFilters | undefined;
   readonly involvement: PullRequestInvolvement;
@@ -613,12 +645,7 @@ function filterParams(input: {
 }): ReadonlyArray<readonly [string, string]> {
   const filters = input.filters;
   if (filters === undefined) return [];
-  const listable = (names: ReadonlyArray<string>) =>
-    names.filter((name) => !name.includes(",") && !/^(?:none|any)$/iu.test(name.trim()));
-  const required = listable(
-    (filters.labels ?? []).flatMap((group) => (group.length === 1 ? group : [])),
-  );
-  const excluded = listable(filters.excludedLabels ?? []);
+  const { required, excluded } = listableLabels(filters);
   return [
     ...(required.length === 0 ? [] : [["labels", required.join(",")] as const]),
     ...(excluded.length === 0 ? [] : [["not[labels]", excluded.join(",")] as const]),
@@ -633,8 +660,91 @@ function filterParams(input: {
     ...(filters.draft === undefined
       ? []
       : [["wip", filters.draft === "only" ? "yes" : "no"] as const]),
+    ...(filters.review === "approved"
+      ? [["approved_by_usernames[]", "Any"] as const]
+      : filters.review === "none"
+        ? [["approved_by_ids[]", "None"] as const]
+        : []),
   ];
 }
+
+/**
+ * The GraphQL list takes the REST filters and narrows two review filters exactly: `approvedBy`
+ * Any for approved, and reviewer states for changes requested. Only arguments in use are
+ * declared, since GraphQL rejects a declared variable the query never reads.
+ */
+function graphqlListQuery(input: {
+  readonly repository: string;
+  readonly state: PullRequestListState;
+  readonly involvement: PullRequestInvolvement;
+  readonly viewer: string;
+  readonly query?: string | undefined;
+  readonly filters?: PullRequestListFilters | undefined;
+  readonly first: number;
+  readonly after: string | undefined;
+}): { readonly query: string; readonly variables: Record<string, unknown> } {
+  const filters = input.filters ?? {};
+  const { required, excluded } = listableLabels(filters);
+  const search = input.query?.trim() ?? "";
+  const author =
+    input.involvement === "authored"
+      ? input.viewer
+      : filters.author === undefined
+        ? undefined
+        : resolvePullRequestAuthorFilter(filters.author, input.viewer);
+  const args: ReadonlyArray<readonly [name: string, type: string, value: unknown]> = [
+    ["state", "MergeRequestState", stateParam(input.state)],
+    ...(author === undefined ? [] : [["authorUsername", "String", author] as const]),
+    ...(input.involvement === "reviewing"
+      ? [["reviewerUsername", "String", input.viewer] as const]
+      : []),
+    ...(search.length === 0 ? [] : [["search", "String", search] as const]),
+    ...(required.length === 0 ? [] : [["labels", "[String!]", required] as const]),
+    ...(filters.draft === undefined
+      ? []
+      : [["draft", "Boolean", filters.draft === "only"] as const]),
+    ...(filters.review === "approved" ? [["approvedBy", "[String!]", ["Any"]] as const] : []),
+    // Beside `reviewerUsername`, GitLab matches review states on that reviewer alone.
+    ...(filters.review === "changes-requested" && input.involvement !== "reviewing"
+      ? [["reviewStates", "[MergeRequestReviewState!]", ["REQUESTED_CHANGES"]] as const]
+      : []),
+  ];
+  const declarations = [
+    "$fullPath: ID!",
+    "$first: Int!",
+    "$after: String",
+    ...args.map(([name, type]) => `$${name}: ${type}`),
+    ...(excluded.length === 0 ? [] : ["$notLabels: [String!]"]),
+  ];
+  const usages = [
+    "sort: UPDATED_DESC",
+    "first: $first",
+    "after: $after",
+    ...args.map(([name]) => `${name}: $${name}`),
+    ...(excluded.length === 0 ? [] : ["not: { labels: $notLabels }"]),
+  ];
+  return {
+    query: `query(${declarations.join(", ")}) {
+  metadata { enterprise }
+  project(fullPath: $fullPath) {
+    mergeRequests(${usages.join(", ")}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { ${LIST_ITEM_GRAPHQL_FIELDS} }
+    }
+  }
+}`,
+    variables: {
+      fullPath: input.repository.trim(),
+      first: input.first,
+      after: input.after ?? null,
+      ...Object.fromEntries(args.map(([name, , value]) => [name, value])),
+      ...(excluded.length === 0 ? {} : { notLabels: excluded }),
+    },
+  };
+}
+
+/** The list cursor carries GitLab's own position only when it fits the cursor's alphabet. */
+const RESUME_AFTER_PATTERN = /^[\w.:~+-]{1,128}$/u;
 
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
@@ -1300,6 +1410,66 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const graphqlListPage = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly state: PullRequestListState;
+    readonly involvement: PullRequestInvolvement;
+    readonly viewer: string;
+    readonly limit: number;
+    readonly query?: string | undefined;
+    readonly filters?: PullRequestListFilters | undefined;
+    readonly after: string | undefined;
+    readonly collected: ReadonlyArray<GitLabMergeRequestListItem>;
+    readonly states: ReadonlyMap<number, GitLabMergeRequestListState>;
+    readonly cursorAdvance: number;
+    /** Bounds the walk when whole pages fail to decode. */
+    readonly reads: number;
+  }): Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError> =>
+    graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: "listMergeRequests",
+      ...graphqlListQuery({
+        ...input,
+        first: Math.max(1, Math.min(input.limit - input.collected.length, MAX_PAGE_SIZE)),
+      }),
+      decode: decodeMergeRequestGraphqlListJson,
+    }).pipe(
+      Effect.flatMap((page) => {
+        const collected = [...input.collected, ...page.items];
+        const states = new Map([...input.states, ...page.states]);
+        const cursorAdvance = input.cursorAdvance + page.rawCount;
+        const resumeAfter =
+          page.endCursor !== null && RESUME_AFTER_PATTERN.test(page.endCursor)
+            ? page.endCursor
+            : undefined;
+        if (
+          page.hasNextPage &&
+          resumeAfter !== undefined &&
+          collected.length < input.limit &&
+          input.reads > 1
+        ) {
+          return graphqlListPage({
+            ...input,
+            after: resumeAfter,
+            collected,
+            states,
+            cursorAdvance,
+            reads: input.reads - 1,
+          });
+        }
+        return Effect.succeed({
+          items: collected,
+          truncated: page.hasNextPage,
+          cursorAdvance,
+          ...(resumeAfter === undefined ? {} : { resumeAfter }),
+          listStates: states,
+        });
+      }),
+    );
+
   const labelPermission = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1544,22 +1714,19 @@ export const make = Effect.gen(function* () {
           }),
         );
 
-  const reviewDecisionsOf = (input: {
+  const listStatesOf = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
     readonly repository: string;
     readonly numbers: ReadonlyArray<number>;
-  }): Effect.Effect<
-    ReadonlyMap<number, PullRequestReviewDecision | null>,
-    GitLabPullRequestCliError
-  > =>
+  }): Effect.Effect<ReadonlyMap<number, GitLabMergeRequestListState>, GitLabPullRequestCliError> =>
     graphqlRead({
       cwd: input.cwd,
       host: input.host,
-      operation: "getReviewDecisions",
-      query: REVIEW_DECISIONS_GRAPHQL_QUERY,
+      operation: "getListStates",
+      query: LIST_STATES_GRAPHQL_QUERY,
       variables: { fullPath: input.repository, iids: input.numbers.map(String) },
-      decode: decodeReviewDecisionsJson,
+      decode: decodeListStatesJson,
     });
 
   const viewerUsername = (input: { readonly cwd: string; readonly host?: string | undefined }) =>
@@ -1588,8 +1755,50 @@ export const make = Effect.gen(function* () {
     listMergeRequests: Effect.fn("GitLabPullRequestCli.listMergeRequests")(function (input) {
       const perPage = Math.min(input.limit + 1, MAX_PAGE_SIZE);
       const page = Math.floor((input.cursor?.delivered ?? 0) / perPage) + 1;
-      return listPage({ ...input, page, collected: [], cursorAdvance: 0 });
+      const rest = Effect.suspend(() =>
+        listPage({ ...input, page, collected: [], cursorAdvance: 0 }),
+      );
+      // A cursor's offset means something only to the API that handed it out.
+      const viaGraphql =
+        input.cursor === undefined
+          ? input.graphql === true
+          : input.cursor.resumeAfter !== undefined;
+      if (!viaGraphql) return rest;
+      const graphql = graphqlListPage({
+        ...input,
+        after: input.cursor?.resumeAfter,
+        collected: [],
+        states: new Map(),
+        cursorAdvance: 0,
+        reads: Math.ceil(input.limit / MAX_PAGE_SIZE) + 1,
+      });
+      // GraphQL counts only filtered rows, so its `delivered` is no REST offset once resumed.
+      if (input.cursor !== undefined) return graphql;
+      return graphql.pipe(
+        Effect.catchIf(
+          (cause) =>
+            cause._tag !== "GitLabCliUnavailableError" &&
+            cause._tag !== "GitLabCliAuthenticationError" &&
+            cause._tag !== "GitLabCliRateLimitError",
+          (cause) =>
+            Effect.logWarning("GitLab GraphQL merge request list failed; reading REST instead", {
+              repository: input.repository,
+              reason: cause._tag,
+            }).pipe(Effect.andThen(rest)),
+        ),
+      );
     }),
+
+    supportsGraphqlList: Effect.fn("GitLabPullRequestCli.supportsGraphqlList")((input) =>
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "supportsGraphqlList",
+        query: SERVER_VERSION_GRAPHQL_QUERY,
+        variables: {},
+        decode: decodeGraphqlListSupportJson,
+      }),
+    ),
 
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
@@ -1628,12 +1837,12 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    getReviewDecisions: Effect.fn("GitLabPullRequestCli.getReviewDecisions")(function (input) {
+    getListStates: Effect.fn("GitLabPullRequestCli.getListStates")(function (input) {
       const batches: Array<ReadonlyArray<number>> = [];
       for (let at = 0; at < input.numbers.length; at += MAX_PAGE_SIZE) {
         batches.push(input.numbers.slice(at, at + MAX_PAGE_SIZE));
       }
-      return Effect.forEach(batches, (numbers) => reviewDecisionsOf({ ...input, numbers }), {
+      return Effect.forEach(batches, (numbers) => listStatesOf({ ...input, numbers }), {
         concurrency: 2,
       }).pipe(Effect.map((pages) => new Map(pages.flatMap((page) => [...page]))));
     }),
