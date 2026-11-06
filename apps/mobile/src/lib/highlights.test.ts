@@ -5,10 +5,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { resolveHighlightLanguage } from "./highlightLanguage";
 import { highlightCode, tokenizeCode } from "./highlights";
 
-vi.mock("expo", async () => {
+vi.mock("react-native-nitro-modules", async () => {
   const { createWasmHighlightsModule } = await import("./highlights.testing");
   const highlights = createWasmHighlightsModule();
-  return { requireOptionalNativeModule: () => highlights };
+  return { NitroModules: { hasHybridObject: () => true, createHybridObject: () => highlights } };
 });
 
 describe("highlightCode", () => {

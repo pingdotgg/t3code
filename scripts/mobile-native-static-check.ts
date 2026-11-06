@@ -99,6 +99,7 @@ const excludedDirectories = new Set([
   ".git",
   "build",
   "DerivedData",
+  "nitrogen",
   "node_modules",
   "Pods",
   "Vendor",

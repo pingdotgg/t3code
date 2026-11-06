@@ -1,17 +1,23 @@
 cmake_minimum_required(VERSION 3.22.1)
 
-project(t3highlights LANGUAGES C)
+project(t3highlights LANGUAGES C CXX)
 
-set(T3_HIGHLIGHTS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(T3_HIGHLIGHTS_ROOT "${CMAKE_SOURCE_DIR}/..")
 
 add_library(
   t3highlights SHARED
-  t3_highlights_jni.c
+  src/main/cpp/cpp-adapter.cpp
+  "${T3_HIGHLIGHTS_ROOT}/cpp/HybridT3Highlights.cpp"
+  "${T3_HIGHLIGHTS_ROOT}/cpp/Utf16ToUtf8.cpp"
   "${T3_HIGHLIGHTS_ROOT}/cpp/t3_highlights.c"
   "${T3_HIGHLIGHTS_ROOT}/Vendor/highlights/highlights.c"
   "${T3_HIGHLIGHTS_ROOT}/Vendor/wasm2c/wasm-rt-impl.c"
   "${T3_HIGHLIGHTS_ROOT}/Vendor/wasm2c/wasm-rt-mem-impl.c"
 )
+
+include(${CMAKE_SOURCE_DIR}/../nitrogen/generated/android/t3highlights+autolinking.cmake)
 
 target_include_directories(
   t3highlights
