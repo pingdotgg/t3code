@@ -8,6 +8,7 @@ import { useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "re
 
 import {
   countLayoutTabs,
+  findLayoutChatForThread,
   findLayoutPane,
   findLayoutTab,
   selectFocusedChatTab,
@@ -262,9 +263,13 @@ export function moveLayoutDrag(
       : resolveLayoutDropTarget(point, measured.panes, measured.strip);
   if (raw?.kind === "into") {
     const paneId = raw.paneId;
+    const movingTabId =
+      source.kind === "tab"
+        ? source.tabId
+        : findLayoutChatForThread(layout, source.threadRef)?.tab.id;
     const tabs = measured.panes
       .find((pane) => pane.paneId === paneId)
-      ?.tabs?.filter((tab) => source.kind !== "tab" || tab.id !== source.tabId);
+      ?.tabs?.filter((tab) => tab.id !== movingTabId);
     if (tabs) {
       const before = tabs.findIndex((tab) => point.x < (tab.rect.left + tab.rect.right) / 2);
       raw = { ...raw, index: before === -1 ? tabs.length : before };
