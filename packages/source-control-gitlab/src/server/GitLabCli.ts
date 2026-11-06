@@ -485,7 +485,10 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => [] as string[]),
           )
         : [remoteUrl];
-    const candidates = new Set([...remoteUrls.flatMap((url) => gitLabRemoteHost(url) ?? []), host]);
+    const remoteHosts = remoteUrls.flatMap((url) => gitLabRemoteHost(url) ?? []);
+    const fallbackHost =
+      remoteHosts.find((candidate) => candidate.toLowerCase() === host.toLowerCase()) ?? host;
+    const candidates = new Set([...remoteHosts, fallbackHost]);
     for (const cliHost of candidates) {
       const result = yield* run(
         {
@@ -503,7 +506,7 @@ export const make = Effect.gen(function* () {
         return { cliHost, webHost };
       }
     }
-    return { cliHost: host, webHost: host.toLowerCase() };
+    return { cliHost: fallbackHost, webHost: host.toLowerCase() };
   });
   const hosts = yield* Cache.makeWith(resolveHostUncached, {
     capacity: 128,
