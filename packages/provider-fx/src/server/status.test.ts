@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -86,7 +87,11 @@ const check = (
     const spawner = ChildProcessSpawner.make((command) => {
       const standard = ChildProcess.isStandardCommand(command) ? command : undefined;
       const args = standard?.args.join(" ") ?? "";
-      const backend = standard?.options.env?.FX_PROVIDER;
+      const backendValue = standard?.options.env?.FX_PROVIDER;
+      const backend =
+        typeof backendValue === "string" || backendValue === undefined
+          ? backendValue
+          : Redacted.value(backendValue);
       invoked.push({ args, backend, cwd: standard?.options.cwd });
       const stdout = args === "--version" ? "fx 0.0.15\n" : outputs[`${backend ?? ""} ${args}`];
       return Effect.gen(function* () {
