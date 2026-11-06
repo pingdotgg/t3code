@@ -395,6 +395,14 @@ export function QuickUsagePopover({
             </div>
           ) : null}
 
+          {usage.selectedEnvironments.map(({ environmentId, label, error }) =>
+            error === null ? null : (
+              <p key={environmentId} role="alert" className="text-xs text-destructive">
+                {label}: {error}
+              </p>
+            ),
+          )}
+
           <div className="flex justify-end">
             <Button
               type="button"

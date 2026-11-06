@@ -222,13 +222,28 @@ describe("QuickUsagePopover", () => {
     const usage = {
       shown: { window: { timeZone: "UTC" }, merged },
       merged,
-      selectedEnvironments: [],
+      selectedEnvironments: [
+        {
+          environmentId: EnvironmentId.make("env-1"),
+          label: "Desk",
+          error: "This environment could not report usage.",
+        },
+      ],
     };
     const onOpenFull = vi.fn();
     await using screen = await render(view(presentations, onOpenFull, usage));
 
     await userEvent.click(screen.getByRole("button", { name: "Usage" }));
     await expect.element(page.getByText("No usage limits reported yet.")).toBeVisible();
+    await expect.element(page.getByText("Spent today", { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("Desk: This environment could not report usage.");
+    const refreshButton = page.getByRole("button", { name: "Refresh usage" });
+    await userEvent.click(refreshButton);
+    await expect.element(refreshButton).not.toBeDisabled();
+    expect(refreshUsageMock.action).toHaveBeenCalledOnce();
+    await expect.element(page.getByRole("alert")).toBeVisible();
     await expect.element(page.getByText("Spent today", { exact: true })).toBeVisible();
     const viewMore = page.getByRole("button", { name: "View more" });
     await expect.element(viewMore).toBeVisible();
