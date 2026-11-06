@@ -203,6 +203,7 @@ export function PullRequestComposer({
         {verdicts.length > 0 ? (
           <div hidden={mode !== "review"}>
             <PullRequestReviewForm
+              active={open && mode === "review"}
               environmentId={environmentId}
               reference={reference}
               term={term}
@@ -223,6 +224,7 @@ export function PullRequestComposer({
         {canComment ? (
           <div hidden={mode !== "comment"}>
             <PullRequestCommentForm
+              active={open && mode === "comment"}
               environmentId={environmentId}
               reference={reference}
               detail={detail}
