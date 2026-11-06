@@ -55,8 +55,6 @@ Do this on a Linux machine that runs T3 Code as a background service, so the use
 
 Run the script again to bring over chats started in T3 Code since. It only adds: a chat OminaX already has is never replaced, so new messages in it don't come across, and chats, side chats, settings and paired devices in OminaX are kept.
 
-Copied chats are read-only in their main conversation: use **Continue in OminaX** to fork from the latest reply before sending or reverting anything. Side chats remain available, and mobile shows the same server refusal without adding a separate control.
-
 Make `t3 pair` and `t3 thread` easy to run with the right home by wrapping them, for example in `~/.local/bin/t3-learn`:
 
 ```sh
