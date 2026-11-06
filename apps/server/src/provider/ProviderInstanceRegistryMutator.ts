@@ -12,11 +12,12 @@ export interface ProviderInstanceRegistryMutatorShape {
   /** Re-reads the secrets of every instance, or one, and rebuilds those whose secrets changed. */
   readonly reloadSecrets: (instanceId?: ProviderInstanceId) => Effect.Effect<void>;
   /**
-   * Rebuilds the instances that read `reference`, from the value its resolver already holds, and
-   * returns them. Nothing else is read.
+   * Rebuilds the instances that read `reference` with `value`, keeping the other secrets a live
+   * instance holds, and returns them. A parked instance reads its other secrets from the resolver.
    */
   readonly applySecret: (
     reference: SecretReference,
+    value: string,
   ) => Effect.Effect<ReadonlyArray<ProviderInstanceId>>;
 }
 

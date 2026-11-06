@@ -29,7 +29,7 @@ const make = Effect.gen(function* () {
         detail: `Could not read this secret from "${yield* resolver.label(reference.provider)}". Check the provider's settings and that its store is unlocked.`,
       } as const;
     }
-    yield* providerRegistry.applySecretAndRefresh(reference);
+    yield* providerRegistry.applySecretAndRefresh(reference, value);
     return { _tag: "Resolved" } as const;
   });
 
