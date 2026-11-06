@@ -39,6 +39,12 @@ is ever retried on another environment. Models marked **Live preview** show
 text while you speak. Other models can process long recordings in chunks at pauses
 while you record; models with built-in long-form support transcribe when you stop.
 
+On Linux, GPU transcription uses Vulkan. Install the Vulkan loader and your GPU
+vendor's Vulkan driver on the environment that transcribes, even when you
+dictate from another device, then restart that environment so **Hardware**
+under **Advanced** lists the GPU. Without a working driver, **Auto**
+transcribes on the CPU.
+
 ## Dictate
 
 Press the microphone in the composer, or `mod+shift+d` (`mod` is Command on
