@@ -2,11 +2,16 @@ import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import {
+  COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
+  COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME,
+} from "./ComposerPrimaryActions";
+import { cn } from "~/lib/utils";
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
-import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { Text } from "../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type SpeechPresentation = {
@@ -96,12 +101,12 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
     <>
       <VoiceWaveform level={props.level} />
       <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
-      <span className="shrink-0 text-secondary-label text-xs tabular-nums">
+      <Text variant="meta" tone="muted" numeric>
         {formatElapsed(elapsedSeconds)}
         {props.recordingLimitSeconds !== undefined
           ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
           : ""}
-      </span>
+      </Text>
     </>
   );
 }
@@ -128,13 +133,8 @@ function ComposerSpeechStatus(props: {
       {isRecording ? (
         <RecordingStatus level={props.level} recordingLimitSeconds={props.recordingLimitSeconds} />
       ) : (
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-right text-sm text-secondary-label",
-            isError && "text-destructive",
-          )}
-        >
-          {presentation.status}
+        <span className="min-w-0 flex-1 truncate text-right">
+          <Text tone={isError ? "destructive" : "muted"}>{presentation.status}</Text>
         </span>
       )}
     </div>
@@ -174,43 +174,70 @@ function ComposerSpeechCancelButton(props: {
   );
 }
 
+// In the send pill the mic is one of its 32px slots; elsewhere it is a quiet icon button.
 export function ComposerSpeechButton(props: {
+  inPill?: boolean;
   state: VoiceInputState;
   progress: { downloaded: number; total: number } | null;
   shortcutLabel?: string | null;
   disabled?: boolean;
+  /** Set when voice input cannot start here yet: the mic shows dimmed and the tooltip says why. */
+  unavailableReason?: string | null | undefined;
   onStart(): void;
   onCancel(): void;
 }) {
+  const inPill = props.inPill ?? false;
   const presentation = resolveSpeechPresentation(props.state, props.progress);
+  const unavailable = props.unavailableReason ?? null;
   const label = "Start voice input";
 
   if (presentation.showsConfirm || props.state.phase === "error") return null;
+
+  const glyph = <MicIcon className={cn("text-composer-icon", inPill && "size-3.5")} />;
+  const unavailableProps = unavailable
+    ? ({ "aria-disabled": true, "aria-label": unavailable } as const)
+    : { "aria-label": label };
+  const onClick = () => {
+    if (props.disabled || unavailable) return;
+    props.onStart();
+  };
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label={label}
-            disabled={props.disabled}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => {
-              if (props.disabled) return;
-              props.onStart();
-            }}
-            className="relative shrink-0"
-          >
-            <MicIcon />
-          </Button>
+          inPill ? (
+            <button
+              type="button"
+              {...unavailableProps}
+              disabled={props.disabled}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={onClick}
+              className={
+                unavailable
+                  ? COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME
+                  : COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME
+              }
+            />
+          ) : (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              {...unavailableProps}
+              disabled={props.disabled}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={onClick}
+              className="relative shrink-0"
+            />
+          )
         }
-      />
+      >
+        {glyph}
+      </TooltipTrigger>
       <TooltipPopup side="top">
-        {label}
-        {props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+        {unavailable ?? label}
+        {!unavailable && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
       </TooltipPopup>
     </Tooltip>
   );
