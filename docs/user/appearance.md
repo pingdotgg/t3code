@@ -33,7 +33,7 @@ applies to the web and desktop clients.
 
 Turn on **Render math** in **Settings → Appearance** to typeset LaTeX in messages and Markdown
 previews on web, desktop, and mobile. It reads `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`, outside of code;
-pull request text follows its host and reads only dollar math.
+pull request descriptions and comments follow their host and read only dollar math.
 Fenced `math` blocks also render. Formulas work in tables, including absolute-value bars.
 Dollar amounts such as `$5 and $10` stay text; write `\$` to keep any other dollar sign literal.
 Wide formulas scroll horizontally while the surrounding text wraps. Copying a formula or
