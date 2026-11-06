@@ -19,6 +19,8 @@ export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
   readonly username?: string;
+  /** SSH listen port from the connection profile; not the forwarded HTTP port. */
+  readonly port?: number;
 }
 
 export type RemoteOpenState =
@@ -50,7 +52,11 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
+  readonly sshTarget: {
+    readonly alias: string;
+    readonly username: string | null;
+    readonly port?: number | null;
+  } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
@@ -78,12 +84,14 @@ export function resolveRemoteOpenState(input: {
     const username =
       input.sshTarget.username?.trim() ||
       (userSeparator === -1 ? null : alias.slice(0, userSeparator));
+    const port = input.sshTarget.port ?? null;
     return {
       mode: "remote-links",
       host: {
         kind: "ssh-alias",
         host,
         ...(username === null ? {} : { username }),
+        ...(port === null ? {} : { port }),
       },
     };
   }
@@ -100,7 +108,8 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   return (
     previous.host.kind === next.host.kind &&
     previous.host.host === next.host.host &&
-    previous.host.username === next.host.username
+    previous.host.username === next.host.username &&
+    previous.host.port === next.host.port
   );
 }
 
@@ -194,6 +203,7 @@ export async function openRemoteTerminal(input: {
     return await bridge.openRemoteTerminal({
       host: input.host.host,
       ...(input.host.username === undefined ? {} : { username: input.host.username }),
+      ...(input.host.port === undefined ? {} : { port: input.host.port }),
       absolutePath: input.absolutePath,
       ...(input.isFile === undefined ? {} : { isFile: input.isFile }),
     });

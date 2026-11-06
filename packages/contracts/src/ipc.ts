@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -1032,6 +1032,8 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 export const DesktopOpenRemoteTerminalInputSchema = Schema.Struct({
   host: SshTerminalDestinationSegment,
   username: Schema.optionalKey(SshTerminalDestinationSegment),
+  /** Profile SSH port when set; omit so OpenSSH uses config / default 22. */
+  port: Schema.optionalKey(PortSchema),
   absolutePath: TrimmedNonEmptyString,
   isFile: Schema.optionalKey(Schema.Boolean),
 });
