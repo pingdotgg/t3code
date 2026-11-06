@@ -1562,7 +1562,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [piQuestion(nativeRequestId, method, title, event)],
+                questions: [
+                  (method === "select" && turn !== null
+                    ? piAskUserSingleSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
+                    : undefined) ?? piQuestion(nativeRequestId, method, title, event),
+                ],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -3587,6 +3591,98 @@ function piQuestion(
     question: detail ?? title,
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
+  };
+}
+
+/** Line terminators the extension strips before it builds a dialog. */
+function rpivField(input: unknown, key: string): string | undefined {
+  return recordString(input, key)?.replace(/\r\n/g, "\n").replace(/\r/g, "");
+}
+
+// oxlint-disable-next-line t3code/no-em-dash-copy -- Matches the extension's option line format.
+const RPIV_OPTION_RULE = " \u2014 ";
+const RPIV_PREVIEW_CHARS = 600;
+
+function rpivOptionLine(option: unknown, index: number): string | undefined {
+  const label = rpivField(option, "label");
+  const description = rpivField(option, "description");
+  if (label === undefined || description === undefined) return undefined;
+  return `${index + 1}. ${label}${RPIV_OPTION_RULE}${description}`;
+}
+
+/** Previews folded into the select title. RPC has no side-by-side pane. */
+function rpivPreviewBlock(options: readonly unknown[]): string {
+  const blocks: Array<string> = [];
+  for (let index = 0; index < options.length; index += 1) {
+    const preview = rpivField(options[index], "preview");
+    const label = rpivField(options[index], "label");
+    if (preview === undefined || preview.length === 0 || label === undefined) continue;
+    blocks.push(`--- ${index + 1}. ${label} preview ---\n${preview.slice(0, RPIV_PREVIEW_CHARS)}`);
+  }
+  return blocks.length > 0 ? `\n\n${blocks.join("\n\n")}` : "";
+}
+
+/**
+ * @juicesharp/rpiv-ask-user-question asks each single-select question through ui.select, which
+ * only carries strings. Rebuild the card from the tool call when this dialog is that question.
+ * The option value stays the extension's own line, because that is the string select returns.
+ */
+function piAskUserSingleSelectQuestion(
+  questionId: string,
+  title: string,
+  event: PiRpcRecord,
+  toolArgs: ReadonlyMap<string, unknown>,
+): OrchestrationV2UserInputQuestion | undefined {
+  if (!Array.isArray(event["options"])) return undefined;
+  const lines = event["options"].filter((option): option is string => typeof option === "string");
+  for (const args of toolArgs.values()) {
+    const questions = recordField(args, "questions");
+    if (!Array.isArray(questions)) continue;
+    for (const question of questions) {
+      const built = rpivSingleSelectQuestion(questionId, title, lines, question);
+      if (built !== undefined) return built;
+    }
+  }
+  return undefined;
+}
+
+function rpivSingleSelectQuestion(
+  questionId: string,
+  title: string,
+  lines: readonly string[],
+  question: unknown,
+): OrchestrationV2UserInputQuestion | undefined {
+  if (recordField(question, "multiSelect") === true) return undefined;
+  const text = rpivField(question, "question");
+  if (text === undefined || text.trim().length === 0) return undefined;
+  const header = rpivField(question, "header") ?? "";
+  const options = recordField(question, "options");
+  if (!Array.isArray(options) || options.length === 0) return undefined;
+  const formatted: Array<string> = [];
+  for (let index = 0; index < options.length; index += 1) {
+    const line = rpivOptionLine(options[index], index);
+    if (line === undefined) return undefined;
+    formatted.push(line);
+  }
+  const prefix = `${header.length > 0 ? `[${header}] ` : ""}${text}`;
+  const preview = rpivPreviewBlock(options);
+  // The title is exactly the header, question, and any folded previews. One trailing row is the
+  // extension's "Type something." sentinel, which the composer already covers.
+  if (title !== `${prefix}${preview}`) return undefined;
+  if (lines.length < formatted.length || lines.length > formatted.length + 1) return undefined;
+  if (!formatted.every((line, index) => lines[index] === line)) return undefined;
+  return {
+    id: questionId,
+    header: header.trim() || "Question",
+    question: `${text.trim()}${preview}`.trim(),
+    options: formatted.map((value, index) => {
+      const label = rpivField(options[index], "label")?.trim() || `Option ${index + 1}`;
+      return {
+        label,
+        description: rpivField(options[index], "description")?.trim() || label,
+        value,
+      };
+    }),
   };
 }
 

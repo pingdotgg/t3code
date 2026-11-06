@@ -3766,6 +3766,143 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("shows an ask_user_question single-select as labeled choices", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const preview = `${"x".repeat(600)}Y`;
+      const questions = [
+        {
+          header: "Area",
+          question: "Which area should we work on?",
+          options: [
+            { label: "Docker/Compose", description: "Review or edit Compose projects" },
+            { label: "Home Assistant", description: "Automations, dashboards or YAML" },
+          ],
+        },
+        {
+          header: "Build\r next",
+          question: "Which mock?",
+          options: [
+            { label: "Cards", description: "Grid", preview },
+            { label: "List", description: "Rows", preview: "" },
+          ],
+        },
+      ];
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_ask",
+        toolName: "ask_user_question",
+        args: { questions },
+      });
+      const dockerLine = "1. Docker/Compose \u2014 Review or edit Compose projects";
+      const homeLine = "2. Home Assistant \u2014 Automations, dashboards or YAML";
+      const ask = Effect.fnUntraced(function* (
+        id: string,
+        title: string,
+        options: ReadonlyArray<string>,
+      ) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "select",
+          title,
+          options,
+        });
+        const event = yield* takeEvent(
+          (candidate) =>
+            candidate.type === "turn_item.updated" &&
+            candidate.turnItem.type === "user_input_request" &&
+            candidate.turnItem.nativeItemRef?.nativeId === id,
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+          return assert.fail("expected a user input request");
+        }
+        return event.turnItem;
+      });
+
+      const first = yield* ask("ui-single", "[Area] Which area should we work on?", [
+        dockerLine,
+        homeLine,
+        "3. Type something.",
+      ]);
+      const asked = decodeUserInputQuestions(first.questions)[0];
+      assert.equal(asked?.header, "Area");
+      assert.equal(asked?.question, "Which area should we work on?");
+      assert.deepEqual(
+        asked?.options.map((option) => [option.label, option.description, option.value]),
+        [
+          ["Docker/Compose", "Review or edit Compose projects", dockerLine],
+          ["Home Assistant", "Automations, dashboards or YAML", homeLine],
+        ],
+      );
+      yield* runtime.respondToRuntimeRequest({
+        requestId: first.requestId,
+        answers: { "ui-single": dockerLine },
+      });
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["value"], dockerLine);
+
+      const custom = yield* ask("ui-single-custom", "[Area] Which area should we work on?", [
+        dockerLine,
+        homeLine,
+        "3. Type something.",
+      ]);
+      yield* runtime.respondToRuntimeRequest({
+        requestId: custom.requestId,
+        answers: { "ui-single-custom": "ship it" },
+      });
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["value"], "ship it");
+
+      const foldedPreview = `\n\n--- 1. Cards preview ---\n${"x".repeat(600)}`;
+      const mocked = decodeUserInputQuestions(
+        (yield* ask("ui-preview", `[Build next] Which mock?${foldedPreview}`, [
+          "1. Cards \u2014 Grid",
+          "2. List \u2014 Rows",
+        ])).questions,
+      )[0];
+      assert.equal(mocked?.header, "Build next");
+      assert.equal(mocked?.question, `Which mock?${foldedPreview}`);
+      assert.deepEqual(
+        mocked?.options.map((option) => option.label),
+        ["Cards", "List"],
+      );
+
+      const unrelated = decodeUserInputQuestions(
+        (yield* ask("ui-other", "Pick a tag", ["stable", "beta"])).questions,
+      )[0];
+      assert.equal(unrelated?.header, "Question");
+      assert.equal(unrelated?.question, "Pick a tag");
+      assert.deepEqual(
+        unrelated?.options.map((option) => [option.label, option.value]),
+        [
+          ["stable", "stable"],
+          ["beta", "beta"],
+        ],
+      );
+
+      const mismatched = decodeUserInputQuestions(
+        (yield* ask("ui-mismatch", "[Area] Which area should we work on?", [
+          "Docker/Compose",
+          "Home Assistant",
+        ])).questions,
+      )[0];
+      assert.equal(mismatched?.header, "Question");
+      assert.equal(mismatched?.question, "[Area] Which area should we work on?");
+      assert.deepEqual(
+        mismatched?.options.map((option) => option.label),
+        ["Docker/Compose", "Home Assistant"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("emits a valid empty select option and returns its original value", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
