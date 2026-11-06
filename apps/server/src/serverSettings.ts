@@ -55,7 +55,6 @@ import {
   deriveLegacyProjectOverrides,
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
-  resolveSpeechPostProcessingModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
@@ -68,6 +67,7 @@ import {
 import {
   mapSettingsSecrets,
   mapSettingsSecretValues,
+  withoutRemovedSecretProviderReferences,
   SECRET_REDACTED,
   type SettingsSecret,
 } from "./settingsSecrets.ts";
@@ -521,24 +521,14 @@ function resolveTextGenerationProvider(
   isDriverAllowed: DriverAllowed = anyDriver,
 ): ServerSettings {
   const selection = settings.textGenerationModelSelection;
-  const resolved =
-    isModelSelectionProviderEnabled(settings, selection) &&
+  return isModelSelectionProviderEnabled(settings, selection) &&
     selectionSupportsTextGeneration(settings, selection) &&
     isDriverAllowed(
       settings.providerInstances[selection.instanceId]?.driver ??
         ProviderDriverKind.make(selection.instanceId),
     )
-      ? settings
-      : fallbackTextGenerationProvider(settings, isDriverAllowed);
-  const speechPostProcessingModelSelection = resolveSpeechPostProcessingModelSelection(
-    resolved,
-    undefined,
-    isDriverAllowed,
-  );
-  return speechPostProcessingModelSelection === null ||
-    speechPostProcessingModelSelection === resolved.speechPostProcessingModelSelection
-    ? resolved
-    : { ...resolved, speechPostProcessingModelSelection };
+    ? settings
+    : fallbackTextGenerationProvider(settings, isDriverAllowed);
 }
 
 function fallbackTextGenerationProvider(
@@ -566,7 +556,6 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "reviewGuideModelSelection",
   "textGenerationModelSelection",
   "fallbackModelSelection",
-  "speechPostProcessingModelSelection",
   "pullRequestMergeMethod",
   // Empty by default, these hold one whole value, which a managed policy can default.
   ...Object.entries(DEFAULT_SERVER_SETTINGS).flatMap(([key, value]) =>
@@ -1200,7 +1189,9 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const updated = yield* update(current);
+        // An older client echoes a reference as the redacted marker; restore it before vetting so
+        // a removed provider's reference is cleared below rather than restored by persistence.
+        const updated = withEchoedSecretReferences(current, yield* update(current));
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1229,7 +1220,11 @@ const make = Effect.gen(function* () {
             managedBy: managedPolicy?.organization,
           });
         }
-        const persisted = yield* persistSettingsSecrets(current, vettedProviders.settings);
+        // After vetting, which can keep stored variables a policy hides from clients.
+        const persisted = yield* persistSettingsSecrets(
+          current,
+          withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
+        );
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {

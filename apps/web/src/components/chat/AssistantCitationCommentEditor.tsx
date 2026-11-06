@@ -1,10 +1,10 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { use, useEffect, useRef, useState, type RefObject } from "react";
+
+import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { textDirection } from "~/textDirection";
-import { useEffect, useRef, useState, use, type RefObject } from "react";
 
 import { ComposerContextActionsContext } from "../composerContextActions";
-import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
-
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 
@@ -26,19 +26,21 @@ export function AssistantCitationCommentEditor({
   onCancel: () => void;
   onViewSource?: () => void;
   onDraftChange?: (comment: string) => void;
-  onVoiceSetupOpenChange: (open: boolean) => void;
+  onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? localInputRef;
-  const { environmentId } = use(ComposerContextActionsContext);
+  const { environmentId, projectId } = use(ComposerContextActionsContext);
   const updateComment = (text: string) => {
     setComment(text);
     onDraftChange?.(text);
   };
   const speech = useTextFieldSpeech({
     environmentId: environmentId ?? citation.environmentId,
+    projectId,
     ownerKey: JSON.stringify([
+      "citation",
       environmentId,
       citation.threadId,
       citation.messageId,
@@ -49,22 +51,22 @@ export function AssistantCitationCommentEditor({
     textareaRef,
     onTextChange: updateComment,
   });
-  const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the citation popover open while its external voice setup dialog owns focus.
+  const setupOpen = speech.setup.open;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the citation popover open while the voice setup dialog owns focus
   useEffect(() => {
-    onVoiceSetupOpenChange(speech.setup.open);
-    return () => onVoiceSetupOpenChange(false);
-  }, [onVoiceSetupOpenChange, speech.setup.open]);
+    onVoiceSetupOpenChange?.(setupOpen);
+    return () => onVoiceSetupOpenChange?.(false);
+  }, [onVoiceSetupOpenChange, setupOpen]);
+  const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const submit = () => {
-    if (!commentTooLong && !speech.blocksSubmission) onSubmit(comment);
+    speech.submitAfterDictation((text) => {
+      if (text.length <= ASSISTANT_CITATION_MAX_COMMENT_LENGTH) onSubmit(text);
+    });
   };
   const submitAndSend = () => {
-    if (commentTooLong || speech.blocksSubmission) return;
-    if (onSubmitAndSend) {
-      onSubmitAndSend(comment);
-    } else {
-      onSubmit(comment);
-    }
+    speech.submitAfterDictation((text) => {
+      if (text.length <= ASSISTANT_CITATION_MAX_COMMENT_LENGTH) (onSubmitAndSend ?? onSubmit)(text);
+    });
   };
 
   return (
@@ -76,7 +78,8 @@ export function AssistantCitationCommentEditor({
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Escape") {
           event.preventDefault();
-          onCancel();
+          if (speech.state.phase !== "idle") speech.cancel();
+          else onCancel();
         }
       }}
     >
@@ -98,9 +101,7 @@ export function AssistantCitationCommentEditor({
           dir={textDirection(comment)}
           className="field-sizing-content block max-h-40 min-h-10 w-full resize-none bg-transparent text-base/normal outline-none text-foreground placeholder:text-placeholder sm:text-sm/normal"
           value={comment}
-          onChange={(event) => {
-            updateComment(event.currentTarget.value);
-          }}
+          onChange={(event) => updateComment(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (
               event.key === "Enter" &&
@@ -138,7 +139,7 @@ export function AssistantCitationCommentEditor({
         ) : null}
         <Button
           size="xs"
-          disabled={commentTooLong || speech.blocksSubmission}
+          disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
           aria-keyshortcuts="Enter"
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
