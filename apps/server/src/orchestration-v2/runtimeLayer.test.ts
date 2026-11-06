@@ -2043,6 +2043,161 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("settles mid-question by dismissing the question and stopping the turn", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("runtime-settle-live-question");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-settle-live-question-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-settle-live-question-project"),
+        title: "Live question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-settle-live-question-first"),
+        threadId,
+        messageId: MessageId.make("runtime-settle-live-question-first"),
+        text: "Ask me something.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const initial = yield* orchestrator.getThreadProjection(threadId);
+      const run = initial.runs[0]!;
+      const providerThread = initial.providerThreads[0]!;
+      const now = yield* DateTime.now;
+      const providerSession = {
+        id: providerThread.providerSessionId!,
+        driver,
+        providerInstanceId: modelSelection.instanceId,
+        status: "running" as const,
+        cwd: process.cwd(),
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      };
+      const providerTurn = {
+        id: ProviderTurnId.make("runtime-settle-live-question-turn"),
+        providerThreadId: providerThread.id,
+        nodeId: run.rootNodeId!,
+        runAttemptId: run.activeAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running" as const,
+        startedAt: now,
+        completedAt: null,
+      };
+      const requestId = RuntimeRequestId.make("runtime-settle-live-question-request");
+      const nodeId = NodeId.make("runtime-settle-live-question-node");
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-settle-live-question-seed"),
+        events: [
+          {
+            id: EventId.make("runtime-settle-live-question-run-event"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "running", startedAt: now },
+          },
+          {
+            id: EventId.make("runtime-settle-live-question-session-event"),
+            type: "provider-session.attached",
+            threadId,
+            occurredAt: now,
+            payload: providerSession,
+          },
+          {
+            id: EventId.make("runtime-settle-live-question-turn-event"),
+            type: "provider-turn.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: providerTurn,
+          },
+          {
+            id: EventId.make("runtime-settle-live-question-node-event"),
+            type: "node.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId: run.id,
+              parentNodeId: run.rootNodeId,
+              rootNodeId: run.rootNodeId!,
+              kind: "user_input_request",
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: providerThread.id,
+              providerTurnId: providerTurn.id,
+              nativeItemRef: null,
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("runtime-settle-live-question-request-event"),
+            type: "runtime-request.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: providerTurn.id,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "live", providerSessionId: providerSession.id },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+        ],
+      });
+      const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
+        Effect.succeedSome({
+          providerSession,
+        } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-settle-live-question-settle"),
+        threadId,
+      });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settled.thread.settledOverride, "settled");
+      const request = settled.runtimeRequests.find((candidate) => candidate.id === requestId);
+      assert.equal(request?.status, "resolved");
+      assert.equal(request?.decision, "cancel");
+      assert.isTrue(
+        settled.turnItems.some(
+          (item) => item.type === "run_interrupt_request" && item.runId === run.id,
+        ),
+      );
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
   it.effect("refuses busy merge-back targets without blocking the queue", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
