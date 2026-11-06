@@ -1374,12 +1374,15 @@ describe("PreviewManager", () => {
         expect(replacementListenerSpies.on).not.toHaveBeenCalled();
         yield* manager.closeTab("tab_close_register_race");
         const recordingExit = yield* Effect.exit(manager.startRecording("tab_close_register_race"));
+        const tabWindowExit = yield* Effect.exit(
+          manager.openTabWindow("tab_close_register_race", "persist:test"),
+        );
         yield* Deferred.succeed(continueCloseCleanup, undefined);
         yield* Fiber.join(closeFiber);
         const recreated = yield* Fiber.join(recreateFiber);
         const registrationExit = yield* Fiber.await(registrationFiber);
 
-        for (const exit of [registrationExit, recordingExit] as ReadonlyArray<
+        for (const exit of [registrationExit, recordingExit, tabWindowExit] as ReadonlyArray<
           Exit.Exit<unknown, PreviewManager.PreviewManagerError>
         >) {
           expect(Exit.isFailure(exit)).toBe(true);

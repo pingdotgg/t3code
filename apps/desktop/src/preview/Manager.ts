@@ -2828,6 +2828,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     partition: string,
   ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
     const existing = tabWindows.get(tabId);
     if (existing && !existing.isDestroyed()) {
       yield* attempt({ operation: "tabWindow.focus", tabId }, () => existing.focus());
