@@ -1,10 +1,7 @@
+import { useEnvironmentQuery } from "~/state/query";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  GitListRewriteableCommitsResult,
-  GitRewriteableCommit,
-} from "@t3tools/contracts";
-import { useCallback, useEffect, useState } from "react";
+import type { EnvironmentId, GitRewriteableCommit } from "@t3tools/contracts";
+import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 
 import { Button } from "~/components/ui/button";
@@ -50,48 +47,31 @@ export function RewriteCommitMessagesDialog({
   const canRewrite = useAtomValue(
     gitEnvironment.rewriteCommitMessages.permissionAtom(environmentId),
   );
-  const listCommits = useAtomCommand(gitEnvironment.listRewriteableCommits, {
-    reportFailure: false,
-  });
   const rewriteMessages = useAtomCommand(gitEnvironment.rewriteCommitMessages, {
     reportFailure: false,
   });
-  const [result, setResult] = useState<GitListRewriteableCommitsResult | null>(null);
   const [selectedShas, setSelectedShas] = useState<ReadonlySet<string>>(new Set());
-  const [isLoading, setIsLoading] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    if (environmentId === null || cwd === null) {
-      return;
-    }
-    setIsLoading(true);
-    setFailure(null);
-    setResult(null);
-    setSelectedShas(new Set());
-    void listCommits({ environmentId, input: { cwd } }).then((commandResult) => {
-      setIsLoading(false);
-      if (commandResult._tag === "Failure") {
-        setFailure(errorMessage(squashAtomCommandFailure(commandResult)));
-        return;
-      }
-      setResult(commandResult.value);
-    });
-  }, [cwd, environmentId, listCommits]);
-
-  useEffect(() => {
-    if (open) {
-      load();
-    }
-  }, [load, open]);
+  const {
+    data: result,
+    isPending: isLoading,
+    error: loadError,
+    refresh: load,
+  } = useEnvironmentQuery(
+    open && environmentId !== null && cwd !== null
+      ? gitEnvironment.rewriteableCommits({ environmentId, input: { cwd } })
+      : null,
+  );
+  const displayedFailure = failure ?? loadError;
 
   const commits = result?.commits ?? [];
   const selectedCount = selectedShas.size;
   const allSelected = commits.length > 0 && selectedCount === commits.length;
   const someSelected = selectedCount > 0 && !allSelected;
   const selectionTooLarge = selectedCount > MAX_SELECTED_COMMITS;
-  const submit = useCallback(() => {
+  const submit = () => {
     if (
       environmentId === null ||
       cwd === null ||
@@ -126,7 +106,7 @@ export function RewriteCommitMessagesDialog({
       });
       onOpenChange(false);
     });
-  }, [commits, cwd, environmentId, onOpenChange, result, rewriteMessages, selectedShas]);
+  };
 
   return (
     <Dialog
@@ -152,10 +132,18 @@ export function RewriteCommitMessagesDialog({
               <div className="flex h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
                 Loading local commits...
               </div>
-            ) : failure && result === null ? (
+            ) : displayedFailure && result === null ? (
               <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                <p>{failure}</p>
-                <Button variant="outline" size="sm" onClick={load}>
+                <p>{displayedFailure}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedShas(new Set());
+                    setFailure(null);
+                    load();
+                  }}
+                >
                   Retry
                 </Button>
               </div>

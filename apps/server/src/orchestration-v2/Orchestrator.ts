@@ -3371,7 +3371,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         (projectChanged ||
           (command.type === "thread.metadata.update" && command.expectedIdle === true)) &&
-        records.runs.some((run) => isBlockingRun(run) || run.status === "queued")
+        records.runs.some((run) => isActiveRun(run) || run.status === "queued")
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

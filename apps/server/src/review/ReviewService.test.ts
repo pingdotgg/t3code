@@ -6,7 +6,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Option from "effect/Option";
-import * as PlatformError from "effect/PlatformError";
 import { ProjectId, ThreadId, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";

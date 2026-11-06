@@ -96,7 +96,7 @@ export function formatLogicalChangeUnitsForModel(units: ReadonlyArray<LogicalCha
   return units
     .map(
       (unit) =>
-        `### ${unit.id} — ${unit.filePath}${unit.kind === "whole-file" ? " (whole file)" : ""}\n${unit.body}`,
+        `### ${unit.id} : ${unit.filePath}${unit.kind === "whole-file" ? " (whole file)" : ""}\n${unit.body}`,
     )
     .join("\n");
 }

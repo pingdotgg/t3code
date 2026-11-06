@@ -153,7 +153,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </svg>
       </TooltipTrigger>
       <TooltipPopup>
-        {isInterruptPending ? "Stop requested — waiting for the provider" : "Interrupt"}
+        {isInterruptPending ? "Stop requested : waiting for the provider" : "Interrupt"}
       </TooltipPopup>
     </Tooltip>
   );

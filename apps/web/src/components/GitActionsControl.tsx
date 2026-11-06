@@ -34,7 +34,6 @@ import {
   FileDiffIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
-  InfoIcon,
   LockIcon,
   GlobeIcon,
   TriangleAlertIcon,
@@ -54,7 +53,6 @@ import {
   type GitActionProgressPresentation,
   type GitActionIconName,
   type GitActionMenuItem,
-  type GitQuickAction,
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
@@ -82,7 +80,6 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
-import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -108,11 +105,8 @@ import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import {
-  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -306,31 +300,6 @@ function GitActionItemIcon({
   if (icon === "commit") return <GitCommitIcon />;
   if (icon === "push") return <CloudUploadIcon />;
   return <SourceControlIcon />;
-}
-
-function GitQuickActionIcon({
-  quickAction,
-  SourceControlIcon,
-  className = "size-3.5",
-}: {
-  quickAction: GitQuickAction;
-  className?: string;
-  SourceControlIcon: ReturnType<typeof getSourceControlPresentation>["Icon"];
-}) {
-  if (quickAction.kind === "create_branch") return <GitBranchPlusIcon className={className} />;
-  if (quickAction.kind === "open_publish") return <CloudUploadIcon className={className} />;
-  if (quickAction.kind === "run_pull") return <CloudDownloadIcon className={className} />;
-  if (quickAction.kind === "open_push_dialog") return <CloudUploadIcon className={className} />;
-  if (quickAction.kind === "run_action") {
-    if (quickAction.action === "commit") return <GitCommitIcon className={className} />;
-    if (quickAction.action === "push" || quickAction.action === "commit_push") {
-      return <CloudUploadIcon className={className} />;
-    }
-    return <SourceControlIcon className={className} />;
-  }
-  if (quickAction.label === "Commit") return <GitCommitIcon className={className} />;
-  if (quickAction.label === "Push") return <CloudUploadIcon className={className} />;
-  return <InfoIcon className={className} />;
 }
 
 function GitActionElapsedTime({
@@ -1115,6 +1084,7 @@ export default function GitActionsControl({
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh the mounted thread’s external Git status subscription when its checkout changes.
   useEffect(() => {
     // Threads can share a cached checkout whose status changed outside the app.
     if (threadRefreshKey !== null) {
@@ -1269,11 +1239,6 @@ export default function GitActionsControl({
     isDefaultRef,
     hasPrimaryRemote,
   );
-  const quickActionDisabledReason = !canWriteSourceControl
-    ? "This connection cannot change source control."
-    : quickAction.disabled
-      ? (quickAction.hint ?? "This action is currently unavailable.")
-      : null;
   const gitActionProgress = resolveGitActionProgressPresentation(vcsActionState);
   // A fresh draft or a thread with no turns hides commit, push, and diff rows until there is work.
   const quietEmptyDraft =
@@ -1990,12 +1955,15 @@ export default function GitActionsControl({
           onClose={() => setRegenerateSelection(null)}
         />
       ) : null}
-      <RewriteCommitMessagesDialog
-        open={isRewriteCommitMessagesDialogOpen}
-        environmentId={activeEnvironmentId}
-        cwd={gitCwd}
-        onOpenChange={setIsRewriteCommitMessagesDialogOpen}
-      />
+      {isRewriteCommitMessagesDialogOpen ? (
+        <RewriteCommitMessagesDialog
+          key={successScopeKey}
+          open={isRewriteCommitMessagesDialogOpen}
+          environmentId={activeEnvironmentId}
+          cwd={gitCwd}
+          onOpenChange={setIsRewriteCommitMessagesDialogOpen}
+        />
+      ) : null}
       {isCommitWorkflowDialogOpen && activeThreadRef && activeServerThread && gitCwd && (
         <CommitWorkflowDialog
           key={successScopeKey + threadRefreshKey}
@@ -2039,7 +2007,7 @@ export default function GitActionsControl({
               branch.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-3">
+          <DialogPanel>
             <div className="rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>

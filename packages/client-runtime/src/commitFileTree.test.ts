@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildCommitFileTree, flattenCommitFileTree, toggleCommitFiles } from "./commitFileTree";
+import { buildCommitFileTree, flattenCommitFileTree, toggleCommitFiles } from "./commitFileTree.ts";
 
 const file = (path: string) => ({ path, insertions: 2, deletions: 1 });
 

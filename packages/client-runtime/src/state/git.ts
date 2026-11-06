@@ -50,6 +50,12 @@ export function createGitEnvironmentAtoms<R, E>(
       onSettled: ({ environmentId, input }, registry) =>
         invalidateCachedVcsRefs(registry, { environmentId, cwd: input.cwd }),
     }),
+    rewriteableCommits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:git:rewriteable-commits",
+      tag: WS_METHODS.gitListRewriteableCommits,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     listRewriteableCommits: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:git:list-rewriteable-commits",
       tag: WS_METHODS.gitListRewriteableCommits,

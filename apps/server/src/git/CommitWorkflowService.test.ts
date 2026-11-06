@@ -122,6 +122,8 @@ function harness(
                     autoPull: false,
                     faviconPath: null,
                     projectIcon: null,
+                    pinnedAt: null,
+                    archivedAt: null,
                     scripts: [],
                     createdAt: "2026-11-03T12:00:00Z",
                     updatedAt: "2026-11-03T12:00:00Z",

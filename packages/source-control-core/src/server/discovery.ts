@@ -79,6 +79,8 @@ type SourceControlCliRemoteRefinementSpec = SourceControlCliDiscoverySpec & {
   readonly refineUnknownRemote: NonNullable<SourceControlCliDiscoverySpec["refineUnknownRemote"]>;
 };
 
+const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
+
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 /** An API host that stalls must not hold the whole discovery answer behind it. */
 const API_PROBE_TIMEOUT = "3 seconds";
@@ -450,12 +452,15 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
       else if (result.success !== null) return { provider: result.success, settled };
     }
     for (const [index, result] of results.entries()) {
-      if (Result.isFailure(result) && Schema.is(VcsProcessTimeoutError)(result.failure)) {
-        yield* Effect.logWarning("Source control provider detection timed out; provider remains unresolved", {
-          provider: input.specs[index]!.kind,
-          cwd: input.cwd,
-          timeoutMs: result.failure.timeoutMs,
-        });
+      if (Result.isFailure(result) && isVcsProcessTimeoutError(result.failure)) {
+        yield* Effect.logWarning(
+          "Source control provider detection timed out; provider remains unresolved",
+          {
+            provider: input.specs[index]!.kind,
+            cwd: input.cwd,
+            timeoutMs: result.failure.timeoutMs,
+          },
+        );
       }
     }
     return { provider: null, settled };

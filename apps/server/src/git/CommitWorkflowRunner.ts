@@ -43,7 +43,7 @@ export class CommitWorkflowRunner extends Context.Service<
   }
 >()("t3/git/CommitWorkflowRunner") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const adapters = yield* ProviderAdapters.ProviderAdapterRegistryV2;
   const run = Effect.fn("CommitWorkflowRunner.run")(function* (input: CommitWorkflowRunInput) {

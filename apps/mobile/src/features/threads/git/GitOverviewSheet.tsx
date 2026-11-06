@@ -296,7 +296,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <ListRow
           icon="arrow.branch"
           label="Split into logical commits"
-          sublabel="Build a dependency-ordered history using your Source Control settings"
+          description="Build a dependency-ordered history using your Source Control settings"
           disabled={!canWriteSourceControl || !gitActions.canChangeThreadBranch || busy || !isRepo}
           onPress={() =>
             navigation.navigate("GitCommit", {

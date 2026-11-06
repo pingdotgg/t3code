@@ -23,7 +23,7 @@ export function formatGenerationSpeed(
 ): string {
   const rate = generationTokensPerSecond(speed);
   return rate === null
-    ? "—"
+    ? ":"
     : `~${rate.toLocaleString(undefined, { maximumFractionDigits: 1 })} tok/s`;
 }
 

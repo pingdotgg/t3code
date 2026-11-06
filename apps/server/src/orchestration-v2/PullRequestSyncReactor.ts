@@ -478,16 +478,14 @@ export const make = Effect.gen(function* () {
       }
     }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
-    const resolveEntries = Effect.fn("PullRequestSyncReactor.resolveEntries")(function* (
-      entries: ReadonlyArray<LinkEntry>,
-    ) {
+    const resolveEntries = Effect.fnUntraced(function* (entries: ReadonlyArray<LinkEntry>) {
       // Resolve before routing: the old host may no longer have a provider or checkout.
       return yield* Effect.forEach(entries, (entry) =>
         Effect.gen(function* () {
           const url = yield* Cache.get(redirects, entry.link.url);
           const target = sourceControlDefinitions.parseChangeRequestUrl(url)?.link ?? null;
           if (url === entry.link.url || target === null) return entry;
-          const uuid = yield* random.randomUUIDv4();
+          const uuid = yield* random.uuidV4();
           yield* engine
             .dispatch({
               type: "thread.pull-request.link",
@@ -504,7 +502,7 @@ export const make = Effect.gen(function* () {
           return { ...entry, link: { ...entry.link, ...target, url } };
         }),
       );
-    });
+    }, Effect.withSpan("PullRequestSyncReactor.resolveEntries"));
 
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;

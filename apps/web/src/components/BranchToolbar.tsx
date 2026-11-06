@@ -14,8 +14,6 @@ import {
   useImperativeHandle,
   useRef,
   useState,
-  useMemo,
-  useCallback,
 } from "react";
 import { flushSync } from "react-dom";
 
@@ -189,10 +187,8 @@ const RunContextSelector = memo(function RunContextSelector({
   onWorkspacePickerOpenChange,
 }: RunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
-  const activeEnvironment = useMemo(
-    () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
-    [availableEnvironments, environmentId],
-  );
+  const activeEnvironment =
+    availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
   const WorkspaceIcon = activeWorktreePath
     ? FolderGitIcon
     : effectiveEnvMode === "worktree"
@@ -638,31 +634,17 @@ export const BranchToolbar = memo(function BranchToolbar({
       ? vcsEnvironment.listWorktrees({ environmentId, input: { cwd: activeProject.workspaceRoot } })
       : null,
   );
-  const workspaceItems = useMemo(
-    () =>
-      resolveWorkspacePickerItems({
-        activeWorktreePath,
-        projectCwd: activeProject?.workspaceRoot ?? null,
-        effectiveEnvMode,
-        worktrees: worktreesPending || worktreesError ? [] : (worktreesData?.worktrees ?? []),
-      }),
-    [
-      activeWorktreePath,
-      activeProject?.workspaceRoot,
-      effectiveEnvMode,
-      worktreesData,
-      worktreesPending,
-      worktreesError,
-    ],
-  );
-  const onWorkspacePickerOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open || !canSelectWorkspace) return;
-      setWorkspacePickerRequested(true);
-      if (workspacePickerRequested) refreshWorktrees();
-    },
-    [canSelectWorkspace, workspacePickerRequested, refreshWorktrees],
-  );
+  const workspaceItems = resolveWorkspacePickerItems({
+    activeWorktreePath,
+    projectCwd: activeProject?.workspaceRoot ?? null,
+    effectiveEnvMode,
+    worktrees: worktreesPending || worktreesError ? [] : (worktreesData?.worktrees ?? []),
+  });
+  const onWorkspacePickerOpenChange = (open: boolean) => {
+    if (!open || !canSelectWorkspace) return;
+    setWorkspacePickerRequested(true);
+    if (workspacePickerRequested) refreshWorktrees();
+  };
   const worktreesStatus = worktreesPending
     ? "Loading worktrees..."
     : worktreesError
@@ -670,76 +652,40 @@ export const BranchToolbar = memo(function BranchToolbar({
       : worktreesData === null
         ? "Loading worktrees..."
         : null;
-  const onSelectWorktree = useCallback(
-    (path: string) => {
-      const worktree = worktreesData?.worktrees.find((worktree) => worktree.path === path);
-      if (
-        !canSelectWorkspace ||
-        worktreesPending ||
-        worktreesError ||
-        !worktree ||
-        !activeProjectRef
-      )
-        return;
-      setDraftThreadContext(draftId ?? threadRef, {
-        branch: worktree.refName,
-        worktreePath: worktree.path === activeProject?.workspaceRoot ? null : worktree.path,
-        envMode: worktree.path === activeProject?.workspaceRoot ? "local" : "worktree",
-        environmentSelection: "manual",
-        projectRef: activeProjectRef,
-      });
-      onComposerFocusRequest?.();
-    },
-    [
-      activeProjectRef,
-      activeProject?.workspaceRoot,
-      canSelectWorkspace,
-      draftId,
-      onComposerFocusRequest,
-      setDraftThreadContext,
-      threadRef,
-      worktreesData,
-      worktreesPending,
-      worktreesError,
-    ],
-  );
-  const onWorkspaceModeChange = useCallback(
-    (mode: EnvMode) => {
-      if (canSelectWorkspace && activeWorktreePath) {
-        setDraftThreadContext(draftId ?? threadRef, { branch: null, worktreePath: null });
-      }
-      onEnvModeChange(mode);
-    },
-    [
-      activeWorktreePath,
-      canSelectWorkspace,
-      draftId,
-      onEnvModeChange,
-      setDraftThreadContext,
-      threadRef,
-    ],
-  );
+  const onSelectWorktree = (path: string) => {
+    const worktree = worktreesData?.worktrees.find((worktree) => worktree.path === path);
+    if (!canSelectWorkspace || worktreesPending || worktreesError || !worktree || !activeProjectRef)
+      return;
+    setDraftThreadContext(draftId ?? threadRef, {
+      branch: worktree.refName,
+      worktreePath: worktree.path === activeProject?.workspaceRoot ? null : worktree.path,
+      envMode: worktree.path === activeProject?.workspaceRoot ? "local" : "worktree",
+      environmentSelection: "manual",
+      projectRef: activeProjectRef,
+    });
+    onComposerFocusRequest?.();
+  };
+  const onWorkspaceModeChange = (mode: EnvMode) => {
+    if (canSelectWorkspace && activeWorktreePath) {
+      setDraftThreadContext(draftId ?? threadRef, { branch: null, worktreePath: null });
+    }
+    onEnvModeChange(mode);
+  };
   const existingWorktreeProps = {
     workspaceItems,
     worktreesStatus,
     onSelectWorktree: canSelectWorkspace ? onSelectWorktree : undefined,
     onWorkspacePickerOpenChange,
   };
-  const projectRefsForWorktreeLookup = useMemo(
-    () => (canSelectWorkspace && activeProjectRef ? [activeProjectRef] : []),
-    [canSelectWorkspace, activeProjectRef],
-  );
+  const projectRefsForWorktreeLookup =
+    canSelectWorkspace && activeProjectRef ? [activeProjectRef] : [];
   const projectThreads = useThreadShellsForProjectRefs(projectRefsForWorktreeLookup);
-  const previousWorktreeSeed = useMemo(
-    () =>
-      canSelectWorkspace
-        ? resolvePreviousWorktreeSeed({
-            threads: projectThreads,
-            currentWorktreePath: activeWorktreePath,
-          })
-        : null,
-    [activeWorktreePath, canSelectWorkspace, projectThreads],
-  );
+  const previousWorktreeSeed = canSelectWorkspace
+    ? resolvePreviousWorktreeSeed({
+        threads: projectThreads,
+        currentWorktreePath: activeWorktreePath,
+      })
+    : null;
   const onUsePreviousWorktree = () => {
     if (!previousWorktreeSeed || !activeProjectRef) return;
     // Same shape the branch selector writes when picking a branch that

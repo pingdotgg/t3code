@@ -1871,7 +1871,7 @@ it.effect.each([false, true])("repairs stored MR links before routing (merged: %
       snapshot: makeSnapshot([
         makeThread("redirect", {
           pullRequests: [
-            makeLink(11122, merged ? { state: "merged" } : null, {
+            makeLink(11122, merged ? { state: "merged", mergedAt: NOW } : null, {
               host: "git.sewobe.local",
               repository: "jobagent/manager",
               url: oldUrl,

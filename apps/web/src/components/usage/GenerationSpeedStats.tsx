@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { type UsageProviderKind, type UsageSummary } from "@t3tools/contracts";
 import {
   GENERATION_SPEED_DESCRIPTION,
@@ -19,10 +18,7 @@ export function GenerationSpeedStats({
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly timeZone: string;
 }) {
-  const speed = useMemo(
-    () => mergeGenerationSpeedHistory(environments, hiddenProviders),
-    [environments, hiddenProviders],
-  );
+  const speed = mergeGenerationSpeedHistory(environments, hiddenProviders);
   if (speed.tracking.length === 0) return null;
   return (
     <section className="mt-8 space-y-4" aria-label="Generation speed">

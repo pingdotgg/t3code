@@ -1,3 +1,4 @@
+import { createVcsActionManager } from "./vcsAction.ts";
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -376,7 +377,10 @@ describe("cached VCS refs", () => {
         expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
 
         const prepareResult = yield* Effect.promise(() =>
-          createGitEnvironmentAtoms(runtime).preparePullRequestThread.run(registry, {
+          createGitEnvironmentAtoms(
+            runtime,
+            createVcsActionManager(runtime).track,
+          ).preparePullRequestThread.run(registry, {
             environmentId: TARGET.environmentId,
             input: { cwd: "/repo", reference: "42", mode: "local" },
           }),

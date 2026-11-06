@@ -1,5 +1,5 @@
 import { useAuth, useClerk } from "@clerk/react";
-import { useCallback, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
 import { ConnectAuthProvider } from "../../cloud/connectAuth";
 import { resolveRelayClerkTokenOptions } from "../../cloud/publicConfig";
@@ -12,10 +12,7 @@ export function ClerkConnectAuthProvider({ children }: { readonly children: Reac
   const clerk = useClerk();
   const account = useClerkT3ConnectAccountPage();
   const { getToken: getClerkToken } = auth;
-  const getToken = useCallback(
-    () => getClerkToken(resolveRelayClerkTokenOptions()),
-    [getClerkToken],
-  );
+  const getToken = () => getClerkToken(resolveRelayClerkTokenOptions());
   return (
     <ConnectAuthProvider
       value={{

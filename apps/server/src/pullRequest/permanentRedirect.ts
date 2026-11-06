@@ -13,7 +13,8 @@ export const resolvePermanentPullRequestRedirect = Effect.fn("resolvePermanentPu
       const response = yield* client.head(current);
       const location = response.headers.location;
       if ((response.status !== 301 && response.status !== 308) || location === undefined) break;
-      const next = yield* Effect.try(() => new URL(location, current));
+      const next = URL.parse(location, current);
+      if (next === null) break;
       if (
         next.username ||
         next.password ||
@@ -29,5 +30,5 @@ export const resolvePermanentPullRequestRedirect = Effect.fn("resolvePermanentPu
   Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual", credentials: "omit" }),
   Effect.provide(FetchHttpClient.layer),
   Effect.timeout("5 seconds"),
-  (effect, url) => effect.pipe(Effect.catch(() => Effect.succeed(url))),
+  (effect, url) => effect.pipe(Effect.orElseSucceed(() => url)),
 );

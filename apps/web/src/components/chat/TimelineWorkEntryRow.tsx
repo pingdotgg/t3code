@@ -186,8 +186,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
   const groupView = use(WorkGroupViewCtx);
-  const [expanded, setExpanded] = useState(
-    () => ctx.workGroupViewState.expandedEntries.has(workEntry.id),
+  const [expanded, setExpanded] = useState(() =>
+    ctx.workGroupViewState.expandedEntries.has(workEntry.id),
   );
   const toggleExpanded = () => {
     const next = !expanded;
@@ -361,7 +361,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     showWarningIndicator
       ? "text-warning"
       : workEntry.toolLifecycleStatus === "inProgress"
-        ? "text-sky-500 dark:text-sky-300/80"
+        ? "text-info"
         : showDestructiveRowStyle
           ? "text-destructive"
           : showFailedIndicator

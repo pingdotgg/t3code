@@ -3,7 +3,7 @@ import { Clerk } from "@clerk/clerk-js";
 import { useAuth, useClerk } from "@clerk/react";
 import { InternalClerkProvider } from "@clerk/react/internal";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
-import { useCallback, useMemo, useState, type ReactNode, type ComponentProps } from "react";
+import { useState, type ReactNode, type ComponentProps } from "react";
 import { AuthRelayWriteScope } from "@t3tools/contracts";
 
 import { ConnectAuthProvider } from "../../cloud/connectAuth";
@@ -70,10 +70,7 @@ function NativeAuthGate({
   const environmentId = usePrimaryEnvironmentId();
   const authorized = useEnvironmentScope(environmentId, AuthRelayWriteScope);
   // Pairing must finish before the SDK contacts the authenticated proxy.
-  const client = useMemo(
-    () => (environmentId && authorized ? nativeClient(publishableKey, environmentId) : null),
-    [authorized, environmentId, publishableKey],
-  );
+  const client = environmentId && authorized ? nativeClient(publishableKey, environmentId) : null;
   if (!client) return <>{children}</>;
   return (
     <InternalClerkProvider
@@ -97,10 +94,7 @@ function NativeAccount({ children }: { readonly children: ReactNode }) {
     getToken: getClerkToken,
   } = useAuth({ treatPendingAsSignedOut: false });
   const clerk = useClerk();
-  const getToken = useCallback(
-    () => getClerkToken(resolveRelayClerkTokenOptions()),
-    [getClerkToken],
-  );
+  const getToken = () => getClerkToken(resolveRelayClerkTokenOptions());
   const [signInOpen, setSignInOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountPage, setAccountPage] = useState<

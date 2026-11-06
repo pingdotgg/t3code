@@ -1,6 +1,6 @@
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import * as Schema from "effect/Schema";
 import { ChevronDownIcon, ChevronRightIcon, FolderIcon } from "lucide-react";
 import {
@@ -40,20 +40,13 @@ export function CommitFileSelection({
     Schema.Boolean,
   );
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const tree = useMemo(
-    () => (groupByDirectory ? buildCommitFileTree(files) : []),
-    [files, groupByDirectory],
-  );
-  const rows = useMemo(
-    () =>
-      groupByDirectory
-        ? flattenCommitFileTree(tree, collapsed)
-        : files.map((file) => ({
-            node: { kind: "file", name: file.path, path: file.path, file } satisfies CommitFileNode,
-            depth: 0,
-          })),
-    [groupByDirectory, tree, collapsed, files],
-  );
+  const tree = groupByDirectory ? buildCommitFileTree(files) : [];
+  const rows = groupByDirectory
+    ? flattenCommitFileTree(tree, collapsed)
+    : files.map((file) => ({
+        node: { kind: "file", name: file.path, path: file.path, file } satisfies CommitFileNode,
+        depth: 0,
+      }));
   const selectedFiles = files.filter((file) => !excludedFiles.has(file.path));
   const allSelected = selectedFiles.length === files.length;
   const noneSelected = selectedFiles.length === 0;
