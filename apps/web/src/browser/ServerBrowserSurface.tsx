@@ -20,6 +20,7 @@ import type {
   PreviewViewportSetting,
 } from "@t3tools/contracts";
 import {
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -57,6 +58,9 @@ const PROBE_REUSE_MS = 10_000;
 const INPUT_SENTINEL = "\u200b";
 const BACKSPACE = { key: "Backspace", code: "Backspace", keyCode: 8 } as const;
 const DELETE = { key: "Delete", code: "Delete", keyCode: 46 } as const;
+const COPY = { key: "c", code: "KeyC", keyCode: 67 } as const;
+const CUT = { key: "x", code: "KeyX", keyCode: 88 } as const;
+const CTRL = 2;
 const MAX_UNAUTHORIZED_REFUSALS = 3;
 const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
@@ -649,9 +653,20 @@ export function ServerBrowserSurface(props: {
     textarea.setSelectionRange(INPUT_SENTINEL.length, INPUT_SENTINEL.length);
   };
 
-  const sendKeyPress = (key: typeof BACKSPACE | typeof DELETE) => {
-    send({ type: "key", action: "down", ...key, modifiers: 0 });
-    send({ type: "key", action: "up", ...key, modifiers: 0 });
+  const sendKeyPress = (
+    key: typeof BACKSPACE | typeof DELETE | typeof COPY | typeof CUT,
+    modifiers = 0,
+  ) => {
+    send({ type: "key", action: "down", ...key, modifiers });
+    send({ type: "key", action: "up", ...key, modifiers });
+  };
+
+  // Edit menu Copy and Cut fire no key, so send the shortcut the server copies on.
+  const handleClipboard = (key: typeof COPY | typeof CUT, event: ClipboardEvent) => {
+    // Keep the sentinel off the clipboard.
+    event.preventDefault();
+    if (controlRef.current?.controller !== "you") return;
+    sendKeyPress(key, CTRL);
   };
 
   const handleKey = (action: "down" | "up", event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -696,6 +711,15 @@ export function ServerBrowserSurface(props: {
       action === "down" &&
       !shortcut &&
       (text !== undefined || event.key === "Backspace" || event.key === "Delete");
+    // The key copies or cuts in the page, so stop the browser's own copy or cut repeating it.
+    if (
+      event.ctrlKey !== event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      ["c", "x"].includes(event.key.toLowerCase())
+    ) {
+      event.preventDefault();
+    }
     if (shortcut) return;
     event.preventDefault();
     event.stopPropagation();
@@ -790,9 +814,8 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
             resetInput(event.currentTarget);
           }}
-          // Keep the sentinel off the clipboard.
-          onCopy={(event) => event.preventDefault()}
-          onCut={(event) => event.preventDefault()}
+          onCopy={(event) => handleClipboard(COPY, event)}
+          onCut={(event) => handleClipboard(CUT, event)}
           onPaste={(event) => {
             event.preventDefault();
             const text = event.clipboardData.getData("text/plain");
