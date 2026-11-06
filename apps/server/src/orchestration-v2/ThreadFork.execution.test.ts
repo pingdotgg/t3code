@@ -5,6 +5,7 @@ import {
   CheckpointScopeId,
   CommandId,
   EventId,
+  GuestShareId,
   MessageId,
   NodeId,
   ProjectId,
@@ -1146,6 +1147,17 @@ it.effect(
           ],
         });
       }
+      // A guest share on the busy side chat ends with the parent's archive, as on any archived thread.
+      const shareId = GuestShareId.make("side-chat-archive-share");
+      yield* orchestrator.dispatch({
+        type: "thread.guest-share.open",
+        commandId: CommandId.make("side-chat-archive-share-busy"),
+        threadId: busy,
+        shareId,
+        host: "env.t3.test",
+        expiresAt: DateTime.formatIso(DateTime.add(now, { hours: 24 })),
+      });
+      assert.equal((yield* orchestrator.getThreadProjection(busy)).thread.guestShare?.id, shareId);
       const archive = (commandId: string, threadId: ThreadId) =>
         orchestrator.dispatch({
           type: "thread.archive",
@@ -1170,6 +1182,7 @@ it.effect(
       assert.isNotNull(archivedBusy.thread.archivedAt);
       assert.equal(archivedBusy.runs.find((run) => run.id === queuedRunId)?.status, "cancelled");
       assert.isEmpty(archivedBusy.providerSessions);
+      assert.isNull(archivedBusy.thread.guestShare ?? null);
       assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
       // The side chat's session is detached the way the parent's is.
       const stopEffects = (commandId: string) =>
@@ -1205,6 +1218,8 @@ it.effect(
       });
       assert.isNull(yield* archivedAt(parentId));
       assert.isNull(yield* archivedAt(busy));
+      // Unarchive does not reopen a share, for a side chat as for any thread.
+      assert.isNull((yield* orchestrator.getThreadProjection(busy)).thread.guestShare ?? null);
       assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
     }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
