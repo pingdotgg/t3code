@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -18,11 +19,19 @@ import * as ConnectionResolver from "./resolver.ts";
 import {
   connectionRoutes,
   routeEntry,
+  type RouteGrant,
+  routeGrantFromSession,
   routeHttpBaseUrl,
   sendsTokenInClear,
   usableRoutes,
 } from "./routes.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
+import {
+  executeEnvironmentHttpRequest,
+  makeEnvironmentHttpApiGroupClient,
+  makeEnvironmentHttpApiUrlBuilder,
+} from "../rpc/http.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -45,6 +54,7 @@ export type RouteCheck = "answered" | "silent" | "unchecked";
 export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
+const GRANT_CHECK_TIMEOUT_MS = 6_000;
 // Preferred direct routes share one head start, so a relay connection does not
 // wait the full probe timeout for a LAN the device has already left. A route
 // that misses it connects over relay, then upgrades with a second reconnect.
@@ -63,6 +73,15 @@ export class ConnectionDriver extends Context.Service<
     ) => Effect.Effect<RoutePreflight>;
     /** Asks the host behind a live session to answer a fresh request on the session's own origin. */
     readonly checkHost: (prepared: PreparedConnection) => Effect.Effect<RouteCheck>;
+    /** What the host says a prepared connection's credential grants; none when it cannot tell. */
+    readonly sessionGrant: (
+      prepared: PreparedConnection,
+    ) => Effect.Effect<Option.Option<RouteGrant>>;
+    /** Prepares a bearer or T3 Connect route without opening a socket and asks for its grant. */
+    readonly routeGrant: (
+      entry: ConnectionCatalogEntry,
+      route: ConnectionRoute,
+    ) => Effect.Effect<Option.Option<RouteGrant>>;
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
@@ -144,6 +163,7 @@ export const make = Effect.gen(function* () {
   const sessions = yield* RpcSession.RpcSessionFactory;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
   const httpClient = yield* HttpClient.HttpClient;
+  const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
 
   // The descriptor is public, so this sends no credential to whatever
   // answers at a saved LAN address on a different network.
@@ -233,7 +253,60 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("ConnectionDriver.preflight"),
     );
 
-  return ConnectionDriver.of({ connect, preflight, checkHost });
+  const sessionGrant = Effect.fn("ConnectionDriver.sessionGrant")(
+    function* (prepared: PreparedConnection) {
+      yield* Effect.annotateCurrentSpan("connection.target.kind", prepared.target._tag);
+      const authorization = prepared.httpAuthorization;
+      if (authorization === null) return Option.none<RouteGrant>();
+      const url = makeEnvironmentHttpApiUrlBuilder(prepared.httpBaseUrl).auth.session();
+      const headers =
+        authorization._tag === "Bearer"
+          ? { authorization: `Bearer ${authorization.token}` }
+          : Option.isNone(signer)
+            ? undefined
+            : {
+                authorization: `DPoP ${authorization.accessToken}`,
+                dpop: yield* signer.value.createProof({
+                  method: "GET",
+                  url,
+                  accessToken: authorization.accessToken,
+                }),
+              };
+      if (headers === undefined) return Option.none<RouteGrant>();
+      const client = yield* makeEnvironmentHttpApiGroupClient(prepared.httpBaseUrl, "auth");
+      const session = yield* executeEnvironmentHttpRequest(
+        url,
+        GRANT_CHECK_TIMEOUT_MS,
+        client.session({ headers }),
+      );
+      return routeGrantFromSession(session);
+    },
+    Effect.orElseSucceed(() => Option.none<RouteGrant>()),
+    Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
+    Effect.provideService(HttpClient.HttpClient, httpClient),
+  );
+
+  // Like preflight, a saved address must answer as this environment before it
+  // receives the route's credential.
+  const routeGrant = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
+    (route.target._tag !== "BearerConnectionTarget" && route.target._tag !== "RelayConnectionTarget"
+      ? Effect.succeed<RouteCheck>("silent")
+      : sendsTokenInClear(connectionRoutes(entry), route)
+        ? Effect.succeed<RouteCheck>("silent")
+        : checkRoute(entry, route)
+    ).pipe(
+      Effect.flatMap((check) =>
+        check === "silent"
+          ? Effect.succeedNone
+          : resolver.prepare(routeEntry(entry, route)).pipe(
+              Effect.flatMap(sessionGrant),
+              Effect.orElseSucceed(() => Option.none<RouteGrant>()),
+            ),
+      ),
+      Effect.withSpan("ConnectionDriver.routeGrant"),
+    );
+
+  return ConnectionDriver.of({ connect, preflight, checkHost, sessionGrant, routeGrant });
 });
 
 export const layer = Layer.effect(ConnectionDriver, make);

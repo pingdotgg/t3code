@@ -1,4 +1,5 @@
 import {
+  authScopeResponse,
   AuthStandardClientScopes,
   EnvironmentId,
   type ServerConfig,
@@ -42,7 +43,14 @@ import * as RpcSession from "../rpc/session.ts";
 import { presentConnectionState } from "./presentation.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
+import {
+  connectionRouteId,
+  entryWithRoutes,
+  isLearned,
+  mergeLearnedRoutes,
+  type RouteGrant,
+  routeGrantFromSession,
+} from "./routes.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -109,6 +117,29 @@ const LAN_ENTRY: ConnectionCatalogEntry = {
   enabled: true,
 };
 
+// What a 0.0.45 pairing still grants, as a current host reports it.
+const LEGACY_GRANT = Option.getOrThrow(
+  routeGrantFromSession({
+    authenticated: true,
+    ...authScopeResponse([
+      "orchestration:read",
+      "orchestration:operate",
+      "terminal:operate",
+      "review:write",
+      "relay:read",
+    ]),
+  }),
+);
+const STANDARD_GRANT = Option.getOrThrow(
+  routeGrantFromSession({ authenticated: true, ...authScopeResponse(AuthStandardClientScopes) }),
+);
+const FILES_ONLY_GRANT = Option.getOrThrow(
+  routeGrantFromSession({
+    authenticated: true,
+    ...authScopeResponse(["orchestration:read", "filesystem:read"]),
+  }),
+);
+
 const PROBE_CAPABLE_CONFIG = {
   environment: { capabilities: { connectionProbe: true } },
 } as ServerConfig;
@@ -155,6 +186,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly checkRoute?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RouteCheck>;
   readonly checkHost?: (prepared: PreparedConnection) => Effect.Effect<ConnectionDriver.RouteCheck>;
   readonly preflight?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RoutePreflight>;
+  readonly grant?: (target: ConnectionTarget) => Effect.Effect<Option.Option<RouteGrant>>;
   readonly inboundFrames?: Effect.Effect<number>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
@@ -266,6 +298,8 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         checkHost: (prepared) =>
           options?.checkHost?.(prepared) ??
           Effect.succeed<ConnectionDriver.RouteCheck>("unchecked"),
+        sessionGrant: (prepared) => options?.grant?.(prepared.target) ?? Effect.succeedNone,
+        routeGrant: (_entry, route) => options?.grant?.(route.target) ?? Effect.succeedNone,
       }),
     ),
   );
@@ -1915,6 +1949,125 @@ describe("EnvironmentSupervisor routes", () => {
       );
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
         "RelayConnectionTarget",
+      );
+    }),
+  );
+
+  it.effect.each(["at startup", "while connected"] as const)(
+    "moves a legacy LAN connection to a T3 Connect route added %s that grants more",
+    (added) =>
+      Effect.gen(function* () {
+        const lanPrepares = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          checkRoute: (route) =>
+            Effect.succeed(
+              route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
+            ),
+          prepare: (_attempt, target) =>
+            (target._tag === "BearerConnectionTarget"
+              ? Ref.update(lanPrepares, (count) => count + 1)
+              : Effect.void
+            ).pipe(Effect.as(preparedFor(target))),
+          grant: (target) =>
+            Effect.succeedSome(
+              target._tag === "RelayConnectionTarget" ? STANDARD_GRANT : LEGACY_GRANT,
+            ),
+          configEvents: Stream.make({
+            version: 1 as const,
+            type: "snapshot" as const,
+            config: { directEndpoints: [] } as unknown as ServerConfig,
+          }),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(
+          added === "at startup" ? LAN_THEN_RELAY_ENTRY : LAN_ENTRY,
+          {
+            initiallyDesired: true,
+            ...(added === "while connected"
+              ? { learnRoutes: () => Effect.succeedSome(LAN_THEN_RELAY_ENTRY) }
+              : {}),
+          },
+        ).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2,
+        );
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "RelayConnectionTarget",
+        );
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+
+        // The LAN route still answers, but no later check moves back to it.
+        yield* harness.wake("network-changed");
+        for (let minute = 0; minute < 3; minute += 1) {
+          yield* TestClock.adjust("60 seconds");
+        }
+        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(2);
+
+        // A replacement connection goes straight to the route that grants more.
+        yield* Ref.set(lanPrepares, 0);
+        yield* harness.closeLatestSession();
+        yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        yield* TestClock.adjust("250 millis");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 3,
+        );
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "RelayConnectionTarget",
+        );
+        expect(yield* Ref.get(lanPrepares)).toBe(0);
+      }),
+  );
+
+  it.effect.each([
+    { relay: "an equal", lanGrant: LEGACY_GRANT, relayGrant: LEGACY_GRANT },
+    { relay: "an incomparable", lanGrant: LEGACY_GRANT, relayGrant: FILES_ONLY_GRANT },
+    { relay: "an unavailable", lanGrant: LEGACY_GRANT, relayGrant: undefined },
+    { relay: "a broader but unconfirmed", lanGrant: undefined, relayGrant: STANDARD_GRANT },
+  ])("keeps a working LAN connection when T3 Connect has $relay grant", (grants) =>
+    Effect.gen(function* () {
+      const asked = yield* Ref.make<ReadonlyArray<ConnectionTarget["_tag"]>>([]);
+      const settled = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        grant: (target) =>
+          Ref.update(asked, (tags) => [...tags, target._tag]).pipe(
+            Effect.andThen(
+              // The grant that decides: T3 Connect's, or the LAN's when it is unknown.
+              target._tag === "RelayConnectionTarget" || grants.lanGrant === undefined
+                ? Deferred.succeed(settled, undefined)
+                : Effect.void,
+            ),
+            Effect.as(
+              Option.fromUndefinedOr(
+                target._tag === "RelayConnectionTarget" ? grants.relayGrant : grants.lanGrant,
+              ),
+            ),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(settled);
+      for (let minute = 0; minute < 3; minute += 1) {
+        yield* TestClock.adjust("60 seconds");
+      }
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+      const relayChecks = (yield* Ref.get(asked)).filter((tag) => tag === "RelayConnectionTarget");
+      // A known grant is not asked for again and an unavailable one only after a
+      // backoff. With the active grant unknown, T3 Connect is never asked.
+      expect(relayChecks.length).toBe(
+        grants.lanGrant === undefined ? 0 : grants.relayGrant === undefined ? 2 : 1,
       );
     }),
   );
