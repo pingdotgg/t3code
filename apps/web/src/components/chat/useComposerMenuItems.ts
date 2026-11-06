@@ -6,6 +6,7 @@ import {
 import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
+  rankComposerMentionItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
@@ -211,48 +212,50 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return [
-        // Machines lead: there are few, and the user names one on purpose.
-        // An answer to an agent's question carries thread links, not machines.
-        ...(questionAttachmentTarget === null && offersMachines
-          ? matchComposerEnvironmentItems(
-              {
-                environments: mentionableEnvironments,
-                linkedEnvironments,
-                environmentId,
-                query: composerTrigger.query,
-              },
-              messages,
-            )
-          : []),
-        ...matchComposerThreadItems(
-          {
-            shells: environmentThreadShells,
-            environmentId,
-            linkedEnvironments,
-            excludeThreadId: activeThreadId,
+      return rankComposerMentionItems<ComposerCommandItem>(
+        [
+          ...matchComposerThreadItems(
+            {
+              shells: environmentThreadShells,
+              environmentId,
+              linkedEnvironments,
+              excludeThreadId: activeThreadId,
+              query: composerTrigger.query,
+              now,
+            },
+            messages,
+          ),
+          // An answer to an agent's question carries thread links, not machines.
+          ...(questionAttachmentTarget === null && offersMachines
+            ? matchComposerEnvironmentItems(
+                {
+                  environments: mentionableEnvironments,
+                  linkedEnvironments,
+                  environmentId,
+                  query: composerTrigger.query,
+                },
+                messages,
+              )
+            : []),
+          ...matchComposerModelItems({
+            instanceEntries: modelMentions.instanceEntries,
+            modelOptionsByInstance: modelMentions.modelOptionsByInstance,
             query: composerTrigger.query,
-            now,
-          },
-          messages,
-        ),
-        ...matchComposerModelItems({
-          instanceEntries: modelMentions.instanceEntries,
-          modelOptionsByInstance: modelMentions.modelOptionsByInstance,
-          query: composerTrigger.query,
-        }),
-        ...workspaceEntries.entries.map((entry) => ({
-          id: `path:${entry.kind}:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          pathKind: entry.kind,
-          searchTarget: workspaceEntries.searchedTarget,
-          label: basenameOfPath(entry.path).normalize("NFC"),
-          description: entry.path
-            .slice(0, Math.max(0, entry.path.lastIndexOf("/")))
-            .normalize("NFC"),
-        })),
-      ];
+          }),
+          ...workspaceEntries.entries.map((entry) => ({
+            id: `path:${entry.kind}:${entry.path}`,
+            type: "path" as const,
+            path: entry.path,
+            pathKind: entry.kind,
+            searchTarget: workspaceEntries.searchedTarget,
+            label: basenameOfPath(entry.path).normalize("NFC"),
+            description: entry.path
+              .slice(0, Math.max(0, entry.path.lastIndexOf("/")))
+              .normalize("NFC"),
+          })),
+        ],
+        composerTrigger.query,
+      );
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
