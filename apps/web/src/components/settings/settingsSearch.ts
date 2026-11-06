@@ -1069,7 +1069,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-github-account",
     title: "GitHub account",
     to: "/settings/source-control",
-    scope: "project-defaults",
+    scope: "project",
     searchTerms: ["github gh multiple accounts personal work host login project override"],
   },
   {

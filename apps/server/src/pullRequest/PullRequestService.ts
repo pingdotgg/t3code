@@ -1089,7 +1089,14 @@ export const make = Effect.gen(function* () {
                           resolveProjectSettings(settings, selected.value.id).settings
                             .githubHostAccounts,
                       ),
-                      Effect.orElseSucceed(() => ({})),
+                      Effect.mapError(
+                        (cause) =>
+                          new PullRequestOperationError({
+                            operation: "resolveRepository",
+                            detail: "The selected project could not be read.",
+                            cause,
+                          }),
+                      ),
                     );
                     return {
                       cursorKey: listCursorKey(host, repository),
@@ -1369,9 +1376,11 @@ export const make = Effect.gen(function* () {
     const viewers: Record<string, string> = {};
     for (const result of viewerResults) {
       if (result.viewer === null) continue;
-      viewers[result.host] ??= result.viewer;
       // Project keys only when a project pins a login; inherited pins share the host entry.
-      if (result.accountKey.length === 0) continue;
+      if (result.accountKey.length === 0) {
+        viewers[result.host] = result.viewer;
+        continue;
+      }
       for (const project of projects) {
         if (project.host !== result.host || viewerAccountKey(project) !== result.accountKey) {
           continue;
@@ -1380,7 +1389,11 @@ export const make = Effect.gen(function* () {
       }
     }
     const viewerFor = (project: SupportedProject) =>
-      viewers[`${project.host} ${project.project.id}`] ?? viewers[project.host];
+      viewers[
+        viewerAccountKey(project).length === 0
+          ? project.host
+          : `${project.host} ${project.project.id}`
+      ];
 
     const providerByHost = new Map<string, PullRequestProviderSummary>();
     for (const result of viewerResults) {
@@ -1742,9 +1755,9 @@ export const make = Effect.gen(function* () {
         detail: "The signed-in account could not be verified before starting the operation.",
       });
     const project = yield* requireProject(input).pipe(Effect.mapError(rejected));
-    const api = registry.get(project.api.kind);
+    const api = project.api;
     if (
-      api?.withVerifiedCredential === undefined ||
+      api.withVerifiedCredential === undefined ||
       input.host?.toLowerCase() !== project.host.toLowerCase()
     ) {
       return yield* rejected();
@@ -1763,8 +1776,8 @@ export const make = Effect.gen(function* () {
 
   const routing = Effect.fn("PullRequestService.routing")(function* (input: PullRequestRef) {
     const project = yield* requireProject(input);
-    const api = registry.get(project.api.kind);
-    if (api?.getRoutingIdentity === undefined) {
+    const api = project.api;
+    if (api.getRoutingIdentity === undefined) {
       return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
     }
     const identity = yield* api
@@ -2817,8 +2830,9 @@ export const make = Effect.gen(function* () {
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {
-      const held = byHost.get(entry.project.host);
-      if (held === undefined) byHost.set(entry.project.host, [entry]);
+      const key = `${entry.project.host}\n${viewerAccountKey(entry.project)}`;
+      const held = byHost.get(key);
+      if (held === undefined) byHost.set(key, [entry]);
       else held.push(entry);
     }
     const stats = yield* Effect.forEach(
