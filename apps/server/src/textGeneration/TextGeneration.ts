@@ -37,9 +37,6 @@ export type {
   TranscriptionPostProcessingResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-/**
- * Provider-backed generation for small, structured text tasks.
- */
 export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
   "t3/textGeneration/TextGeneration",
 ) {}
@@ -49,8 +46,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateTranscriptionPostProcessing"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "generateTranscriptionPostProcessing";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -153,6 +150,16 @@ export const make = Effect.gen(function* () {
         service.generateReviewGuide({ ...input, modelSelection }),
       );
     }),
+    generateTranscriptionPostProcessing: Effect.fn(
+      "TextGeneration.generateTranscriptionPostProcessing",
+    )(function (input) {
+      return generate(
+        "generateTranscriptionPostProcessing",
+        input.modelSelection,
+        (service, modelSelection) =>
+          service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
+      );
+    }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
       return generate(
         "generateThreadTitle",
@@ -173,16 +180,6 @@ export const make = Effect.gen(function* () {
               modelSelection,
             });
           }),
-      );
-    }),
-    generateTranscriptionPostProcessing: Effect.fn(
-      "TextGeneration.generateTranscriptionPostProcessing",
-    )(function (input) {
-      return generate(
-        "generateTranscriptionPostProcessing",
-        input.modelSelection,
-        (service, modelSelection) =>
-          service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
       );
     }),
   });
