@@ -111,22 +111,26 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
-it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-repo-" });
-    yield* git(checkout, ["init", "--quiet"]);
-    const baseDir = path.join(checkout, ".t3");
-    yield* fileSystem.makeDirectory(baseDir);
-    yield* Effect.gen(function* () {
-      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
-      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
-      assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
-      const failure = yield* Effect.flip(scratch.ensureScratchProject);
-      assert.equal(failure._tag, "ScratchUnavailableError");
-    }).pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+it.effect(
+  "offers no Scratch, and gives lessons their own Git, when the data dir sits inside a Git checkout",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-repo-" });
+      yield* git(checkout, ["init", "--quiet"]);
+      const baseDir = path.join(checkout, ".t3");
+      yield* fileSystem.makeDirectory(baseDir);
+      yield* Effect.gen(function* () {
+        const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+        assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+        assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
+        const failure = yield* Effect.flip(scratch.ensureScratchProject);
+        assert.equal(failure._tag, "ScratchUnavailableError");
+        const lesson = yield* scratch.createNamedProject({ name: "Ohm", root: "lessons" });
+        assert.isTrue(yield* fileSystem.exists(path.join(lesson.workspaceRoot, ".git")));
+      }).pipe(Effect.provide(layer(baseDir)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("offers a Scratch folder when Git is not installed", () =>
@@ -430,6 +434,9 @@ it.effect("creates lesson projects under lessons with the requested id", () =>
         assert.isTrue(Option.exists(project, (owner) => owner.workspaceRoot.startsWith(folder)));
         // The losing concurrent call must not leave its folder behind.
         assert.equal((yield* fileSystem.readDirectory(path.join(baseDir, "lessons"))).length, 1);
+        const workspaceRoot = Option.getOrThrow(project).workspaceRoot;
+        assert.isTrue(yield* fileSystem.exists(path.join(workspaceRoot, "README.md")));
+        assert.isFalse(yield* fileSystem.exists(path.join(workspaceRoot, ".git")));
       }),
     ),
   ),
