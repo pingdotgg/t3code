@@ -9,165 +9,173 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { createContext, useContext, type ReactNode } from "react";
-import { create } from "zustand";
 import { connectionAtomRuntime } from "./connection/runtime";
-import { useThreadRefs, useThreadShells } from "./state/entities";
-import { useEnvironments } from "./state/environments";
-import { useDebouncedValue } from "./state/queries";
+import { appAtomRegistry } from "./rpc/atomRegistry";
+import { environmentPresentations } from "./state/presentation";
+import { environmentThreadShells } from "./state/threads";
 
-interface HighlightState {
-  hovered: ScopedThreadRef | null;
-  pinned: ScopedThreadRef | null;
-  enter: (target: ScopedThreadRef) => void;
-  leave: (target: ScopedThreadRef) => void;
-  togglePinned: (target: ScopedThreadRef) => void;
+export type ThreadReferenceHighlightRole = "target" | "related" | null;
+
+export interface ActiveThreadReferences {
+  readonly hovered: ScopedThreadRef | null;
+  readonly pinned: ReadonlyArray<ScopedThreadRef>;
 }
+
+export interface ThreadReferenceMatches {
+  readonly mentions: ReadonlySet<string>;
+  readonly waits: ReadonlySet<string>;
+  readonly unavailable: number;
+  readonly pending: boolean;
+}
+
+export interface ThreadReferenceHighlight {
+  readonly targetKeys: ReadonlySet<string>;
+  readonly relatedKeys: ReadonlySet<string>;
+  readonly matchesByTarget: ReadonlyMap<string, ThreadReferenceMatches>;
+}
+
 const key = (ref: ScopedThreadRef) => scopedThreadKey(ref);
-export const useThreadReferenceHighlight = create<HighlightState>((set) => ({
+const sameRef = (left: ScopedThreadRef, right: ScopedThreadRef) => key(left) === key(right);
+
+export const activeThreadReferencesAtom = Atom.make<ActiveThreadReferences>({
   hovered: null,
-  pinned: null,
-  enter: (target) => set({ hovered: target }),
-  leave: (target) =>
-    set((state) =>
-      state.hovered && key(state.hovered) === key(target) ? { hovered: null } : state,
+  pinned: [],
+}).pipe(Atom.keepAlive, Atom.withLabel("thread-reference-highlight:active"));
+
+const update = (next: (state: ActiveThreadReferences) => ActiveThreadReferences) =>
+  appAtomRegistry.update(activeThreadReferencesAtom, next);
+const isPinned = (state: ActiveThreadReferences, target: ScopedThreadRef) =>
+  state.pinned.some((ref) => sameRef(ref, target));
+const unpin = (target: ScopedThreadRef) =>
+  update((state) => ({ ...state, pinned: state.pinned.filter((ref) => !sameRef(ref, target)) }));
+const pin = (target: ScopedThreadRef) =>
+  update((state) =>
+    isPinned(state, target) ? state : { ...state, pinned: [...state.pinned, target] },
+  );
+
+export const threadReferenceHighlight = {
+  enter: (target: ScopedThreadRef) => update((state) => ({ ...state, hovered: target })),
+  leave: (target: ScopedThreadRef) =>
+    update((state) =>
+      state.hovered && sameRef(state.hovered, target) ? { ...state, hovered: null } : state,
     ),
-  togglePinned: (target) =>
-    set((state) => ({
-      pinned: state.pinned && key(state.pinned) === key(target) ? null : target,
-    })),
-}));
+  pin,
+  unpin,
+  togglePinned: (target: ScopedThreadRef) =>
+    isPinned(appAtomRegistry.get(activeThreadReferencesAtom), target) ? unpin(target) : pin(target),
+  clear: () => update(() => ({ hovered: null, pinned: [] })),
+};
+
+const hoveredAtom = Atom.make((get) => get(activeThreadReferencesAtom).hovered);
+const settledHoverAtom = hoveredAtom.pipe(Atom.debounce("200 millis"));
+
+/** Pinned targets plus a hover that has rested 200ms. Leaving a target ends its hover at once. */
+export const activeTargetsAtom = Atom.make((get): ReadonlyArray<ScopedThreadRef> => {
+  const settled = get(settledHoverAtom);
+  const { hovered, pinned } = get(activeThreadReferencesAtom);
+  return hovered && settled && sameRef(hovered, settled) && !pinned.some((r) => sameRef(r, hovered))
+    ? [...pinned, hovered]
+    : pinned;
+});
+
+// Quiet shells skip streaming ticks, which land several times a second during a run. A mention
+// in a message still streaming shows up the next time that run changes state.
+const referenceActivityAtom = environmentThreadShells.quietThreadShellsAtom.pipe(
+  Atom.debounce("500 millis"),
+);
 
 const references = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
   label: "thread-references",
-  staleTimeMs: 0,
+  staleTimeMs: 10_000,
   idleTtlMs: 10_000,
+  refreshTrigger: () => referenceActivityAtom,
   execute: Effect.fn("ThreadReferences.read")(function* (input: {
     sourceEnvironmentId: EnvironmentId;
     target: ScopedThreadRef;
-    knownThreads: ReadonlyArray<ScopedThreadRef>;
-    version: string;
   }) {
-    const { version: _version, ...requestInput } = input;
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadReferences, requestInput);
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadReferences, {
+      ...input,
+      knownThreads: appAtomRegistry.get(environmentThreadShells.threadRefsAtom),
+    });
   }),
 });
-const results = Atom.family((encoded: string) => {
-  const { target, knownThreads, version, environments } = JSON.parse(encoded) as {
-    target: ScopedThreadRef;
-    knownThreads: ReadonlyArray<ScopedThreadRef>;
-    version: string;
-    environments: ReadonlyArray<EnvironmentId>;
-  };
-  return Atom.make((get) => {
-    const mentions: string[] = [];
-    const waits: string[] = [];
+
+export function classifyThreadReferences(
+  targets: ReadonlyArray<ScopedThreadRef>,
+  matchesFor: (target: ScopedThreadRef) => ThreadReferenceMatches,
+): ThreadReferenceHighlight {
+  const targetKeys = new Set(targets.map(key));
+  const relatedKeys = new Set<string>();
+  const matchesByTarget = new Map<string, ThreadReferenceMatches>();
+  for (const target of targets) {
+    const matches = matchesFor(target);
+    matchesByTarget.set(key(target), matches);
+    for (const threadKey of [...matches.mentions, ...matches.waits]) {
+      if (!targetKeys.has(threadKey)) relatedKeys.add(threadKey);
+    }
+  }
+  return { targetKeys, relatedKeys, matchesByTarget };
+}
+
+export const referenceHighlightRole = (
+  highlight: ThreadReferenceHighlight,
+  threadKey: string,
+): ThreadReferenceHighlightRole =>
+  highlight.targetKeys.has(threadKey)
+    ? "target"
+    : highlight.relatedKeys.has(threadKey)
+      ? "related"
+      : null;
+
+const NO_HIGHLIGHT: ThreadReferenceHighlight = {
+  targetKeys: new Set(),
+  relatedKeys: new Set(),
+  matchesByTarget: new Map(),
+};
+
+const highlightAtom = Atom.make((get): ThreadReferenceHighlight => {
+  const targets = get(activeTargetsAtom);
+  if (targets.length === 0) return NO_HIGHLIGHT;
+  const environmentIds = [...get(environmentPresentations.presentationsAtom).keys()];
+  const shells = get(environmentThreadShells.quietThreadShellsAtom);
+  return classifyThreadReferences(targets, (target) => {
+    const mentions = new Set<string>();
+    const waits = new Set<string>();
     let unavailable = 0;
     let pending = false;
-    for (const environmentId of environments) {
+    for (const environmentId of environmentIds) {
       const result = get(
-        references({
-          environmentId,
-          input: { sourceEnvironmentId: environmentId, target, knownThreads, version },
-        }),
+        references({ environmentId, input: { sourceEnvironmentId: environmentId, target } }),
       );
       const data = AsyncResult.getOrElse(result, () => null);
-      if (data) {
-        mentions.push(...data.mentions.map((threadId) => key({ environmentId, threadId })));
-        waits.push(...data.waits.map((threadId) => key({ environmentId, threadId })));
-      }
+      for (const threadId of data?.mentions ?? []) mentions.add(key({ environmentId, threadId }));
+      for (const threadId of data?.waits ?? []) waits.add(key({ environmentId, threadId }));
       if (AsyncResult.isFailure(result)) unavailable++;
       if (result.waiting) pending = true;
     }
-    return { mentions, waits, unavailable, pending };
-  });
-});
-const empty = Atom.make({
-  mentions: [] as string[],
-  waits: [] as string[],
-  unavailable: 0,
-  pending: false,
-});
-
-interface HighlightInfo {
-  keys: ReadonlySet<string>;
-  target: string | null;
-  mentions: number;
-  waits: number;
-  unavailable: number;
-  pending: boolean;
-}
-const HighlightContext = createContext<HighlightInfo>({
-  keys: new Set(),
-  target: null,
-  mentions: 0,
-  waits: 0,
-  unavailable: 0,
-  pending: false,
-});
-export const useReferenceHighlighted = (threadKey: string) =>
-  useContext(HighlightContext).keys.has(threadKey);
-export const useReferenceInfo = (threadKey: string) => {
-  const info = useContext(HighlightContext);
-  return info.target === threadKey ? info : null;
-};
-
-export function ThreadReferenceHighlightProvider({ children }: { children: ReactNode }) {
-  const hovered = useThreadReferenceHighlight((state) => state.hovered);
-  const pinned = useThreadReferenceHighlight((state) => state.pinned);
-  const target = hovered ?? pinned;
-  const settledTarget = useDebouncedValue(target, 200);
-  const current =
-    target !== null && settledTarget !== null && key(target) === key(settledTarget) ? target : null;
-  const knownThreads = useThreadRefs(current !== null);
-  const { environments } = useEnvironments();
-  const shells = useThreadShells(current !== null);
-  const version = JSON.stringify(
-    shells.map((thread) => [
-      thread.environmentId,
-      thread.id,
-      thread.blockedOnThreadWait,
-      thread.pendingBackgroundTasks,
-      thread.updatedAt,
-    ]),
-  );
-  const settledVersion = useDebouncedValue(version, 500);
-  const encoded =
-    current === null
-      ? null
-      : JSON.stringify({
-          target: current,
-          knownThreads,
-          version: settledVersion,
-          environments: environments.map((env) => env.environmentId),
-        });
-  const matches = useAtomValue(encoded === null ? empty : results(encoded));
-  const mentionKeys = new Set(current ? matches.mentions : []);
-  const waitKeys = new Set(current ? matches.waits : []);
-  if (current && target)
     for (const thread of shells) {
-      if (thread.environmentId !== target.environmentId) continue;
       if (
+        thread.environmentId === target.environmentId &&
         thread.pendingBackgroundTasks?.some(
           (task) => task.kind === "subagent" && task.childThreadId === target.threadId,
         )
-      )
-        waitKeys.add(key({ environmentId: thread.environmentId, threadId: thread.id }));
+      ) {
+        waits.add(key({ environmentId: thread.environmentId, threadId: thread.id }));
+      }
     }
-  const keys = new Set([...mentionKeys, ...waitKeys]);
-  if (target) keys.add(key(target));
-  return (
-    <HighlightContext.Provider
-      value={{
-        keys,
-        target: target ? key(target) : null,
-        mentions: mentionKeys.size,
-        waits: waitKeys.size,
-        unavailable: matches.unavailable,
-        pending: current === null || matches.pending,
-      }}
-    >
-      {children}
-    </HighlightContext.Provider>
-  );
-}
+    return { mentions, waits, unavailable, pending };
+  });
+}).pipe(Atom.withLabel("thread-reference-highlight:matches"));
+
+// One atom per thread, so a highlight change re-renders only the rows and chips whose role changed.
+const roleAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) => referenceHighlightRole(get(highlightAtom), threadKey)),
+);
+const matchesAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) => get(highlightAtom).matchesByTarget.get(threadKey) ?? null),
+);
+const pinnedAtom = Atom.make((get) => get(activeThreadReferencesAtom).pinned);
+
+export const usePinnedThreadReferences = () => useAtomValue(pinnedAtom);
+export const useReferenceHighlightRole = (threadKey: string) => useAtomValue(roleAtom(threadKey));
+export const useReferenceMatches = (threadKey: string) => useAtomValue(matchesAtom(threadKey));
