@@ -2724,46 +2724,48 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("recovers an owned server after more than five failed reconciliation requests", () =>
-    Effect.gen(function* () {
-      const allowRecovery = yield* Deferred.make<void>();
-      const attempts = yield* Queue.unbounded<void>();
-      let attempt = 0;
-      const { runtime, thread } = yield* resumed(
-        [
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          { type: "runtime_exit", status: "success" },
-          out("event.subscribe"),
-          ...Array.from({ length: 6 }, () => [
-            out("session.active"),
-            reply("session.active", { status: 503, body: { message: "Recovering" } }),
-          ]).flat(),
-          ...reconnected({ [SESSION]: { type: "running" } }).slice(2),
-          ...openRequests([]),
-          event("session.execution.succeeded", { sessionID: SESSION }),
-        ],
-        {
-          beforeResponse: (path) =>
-            path === "/api/session/active"
-              ? Effect.gen(function* () {
-                  attempt += 1;
-                  yield* Queue.offer(attempts, undefined);
-                  if (attempt === 7) yield* Deferred.await(allowRecovery);
-                })
-              : Effect.void,
-        },
-      );
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread));
-      for (let retry = 0; retry < 6; retry += 1) {
+  it.effect.each([503, 429])(
+    "recovers an owned server after more than five HTTP %s reconciliation replies",
+    (status) =>
+      Effect.gen(function* () {
+        const allowRecovery = yield* Deferred.make<void>();
+        const attempts = yield* Queue.unbounded<void>();
+        let attempt = 0;
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            { type: "runtime_exit", status: "success" },
+            out("event.subscribe"),
+            ...Array.from({ length: 6 }, () => [
+              out("session.active"),
+              reply("session.active", { status, body: { message: "Recovering" } }),
+            ]).flat(),
+            ...reconnected({ [SESSION]: { type: "running" } }).slice(2),
+            ...openRequests([]),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          {
+            beforeResponse: (path) =>
+              path === "/api/session/active"
+                ? Effect.gen(function* () {
+                    attempt += 1;
+                    yield* Queue.offer(attempts, undefined);
+                    if (attempt === 7) yield* Deferred.await(allowRecovery);
+                  })
+                : Effect.void,
+          },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        for (let retry = 0; retry < 6; retry += 1) {
+          yield* Queue.take(attempts);
+          yield* TestClock.adjust("30 seconds");
+        }
         yield* Queue.take(attempts);
-        yield* TestClock.adjust("30 seconds");
-      }
-      yield* Queue.take(attempts);
-      yield* Deferred.succeed(allowRecovery, undefined);
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+        yield* Deferred.succeed(allowRecovery, undefined);
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }).pipe(Effect.scoped),
   );
 
   it.effect(

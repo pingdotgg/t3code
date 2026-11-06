@@ -544,6 +544,7 @@ const OWNED_RECONNECT_SCHEDULE = Schedule.exponential(RECONNECT_DELAY).pipe(
     Effect.succeed(Duration.min(duration, Duration.seconds(30))),
   ),
 );
+const TRANSIENT_HTTP_STATUSES: ReadonlySet<number> = new Set([408, 425, 429]);
 // A live owned server is retried until it answers; these failures repeat however long it waits.
 const isPermanentRecoveryError = (error: unknown) => {
   if (Schema.isSchemaError(error)) return true;
@@ -557,9 +558,16 @@ const isPermanentRecoveryError = (error: unknown) => {
   const http = OpenCode2Server.httpFailureOf(error);
   if (http !== undefined) {
     const status = http.response?.status;
-    return status !== undefined && status >= 400 && status < 500;
+    return (
+      status !== undefined && status >= 400 && status < 500 && !TRANSIENT_HTTP_STATUSES.has(status)
+    );
   }
-  return P.isTagged(error, "ClientError");
+  // ClientError also wraps an SSE retry request, which clears.
+  return (
+    P.isTagged(error, "ClientError") &&
+    P.hasProperty(error, "cause") &&
+    Schema.isSchemaError(error.cause)
+  );
 };
 const OWNED_RECOVERY_RETRY = {
   schedule: OWNED_RECONNECT_SCHEDULE,
