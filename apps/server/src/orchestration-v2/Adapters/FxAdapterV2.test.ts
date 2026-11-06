@@ -295,7 +295,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       ),
       childProcessSpawner,
       fileSystem,
-      sessionMeta: FX_HOOKS_SESSION_META,
+      sessionMeta: () => FX_HOOKS_SESSION_META,
     }),
   });
   const threadId = ThreadId.make(`thread-fx-${input.scenario}`);
