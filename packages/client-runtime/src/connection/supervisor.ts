@@ -628,7 +628,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             return true;
           }
           // One started before a network change can hang until its setup timeout.
-          if (next.reason === "network-changed") {
+          if (next.reason === "network-changed" && !(yield* SubscriptionRef.get(routeOpen))) {
             return true;
           }
           if (next.reason === "credentials-changed" && usesRelay) {

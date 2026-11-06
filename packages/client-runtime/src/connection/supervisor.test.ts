@@ -605,6 +605,34 @@ describe("EnvironmentSupervisor", () => {
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps an opened synchronization through a network-path wakeup", () =>
+    Effect.gen(function* () {
+      const synchronizing = yield* Deferred.make<void>();
+      const finishSnapshot = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        ready: () =>
+          Deferred.succeed(synchronizing, undefined).pipe(
+            Effect.andThen(Deferred.await(finishSnapshot)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(synchronizing);
+      yield* harness.wake("network-changed");
+      yield* TestClock.adjust("0 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      yield* Deferred.succeed(finishSnapshot, undefined);
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   const unansweredFirstProbe = (attempt: number) => (attempt === 1 ? Effect.never : Effect.void);
 
   it.effect.each([
