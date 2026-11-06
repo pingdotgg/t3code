@@ -411,8 +411,138 @@ describe("MuseAdapterV2", () => {
             },
           },
         });
+        assert.strictEqual(fake.closeCount(), 0);
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("resumes on a fresh host when Muse replays queued work instead of starting MCP", () =>
+    Effect.gen(function* () {
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer thread-scoped-test-token",
+        browserToolsAvailable: true,
+      });
+      const fake = yield* makeFakeMuse("first");
+      const recovery = yield* makeFakeMuse("second");
+      for (const muse of [fake, recovery])
+        muse.host.initializeResult.grantedCapabilities.push("sessionMcp");
+      const ack = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/resume", ack.promise);
+      const replayed = yield* Deferred.make<void>();
+      const opening = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        "saved-session",
+        recovery,
+        undefined,
+        undefined,
+        {
+          nativeEventLogger: {
+            filePath: "/tmp/provider-native.ndjson",
+            write: (event) =>
+              typeof event === "object" &&
+              event !== null &&
+              "method" in event &&
+              event.method === "turn/started"
+                ? Deferred.succeed(replayed, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            close: () => Effect.void,
+          },
+        },
+      ).pipe(Effect.forkScoped);
+      const first = yield* fake.takeCall("session/resume");
+      // Muse announces the replayed turn before it acknowledges the resume.
+      yield* fake.emit("turn/started", { turnId: "replayed-turn" });
+      yield* Deferred.await(replayed);
+      ack.resolve({
+        session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: "replayed-turn" },
+        history: { items: [] },
+      });
+      const harness = yield* Fiber.join(opening);
+      assert.strictEqual(fake.closeCount(), 1);
+      const again = yield* recovery.takeCall("session/resume");
+      assert.strictEqual(again.params.sessionId, "saved-session");
+      assert.deepStrictEqual(again.params.config, first.params.config);
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      const { nativeId } = yield* startConversation(harness, recovery);
+      assert.match(nativeId, /^second-/);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect.each(["no scope unit", "a scope unit"] as const)(
+    "relaunches past a replaying host whose close never settles, with %s",
+    (scopeUnit) =>
+      Effect.gen(function* () {
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: THREAD_ID,
+          providerSessionId: "test-session",
+          providerInstanceId: INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43210/mcp",
+          authorizationHeader: "Bearer thread-scoped-test-token",
+          browserToolsAvailable: true,
+        });
+        const fake = yield* makeFakeMuse("first");
+        const recovery = yield* makeFakeMuse("second");
+        for (const muse of [fake, recovery])
+          muse.host.initializeResult.grantedCapabilities.push("sessionMcp");
+        // A replayed background command inherits Muse's pipes and outlives it.
+        fake.holdClose(new Promise<void>(() => {}));
+        fake.queueResponse("session/resume", {
+          session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: "replayed-turn" },
+          history: { items: [] },
+        });
+        const stopped: Array<{ unit: string; resumes: number }> = [];
+        yield* Effect.gen(function* () {
+          const opening = yield* makeHarness(fake, INSTANCE_ID, "saved-session", recovery).pipe(
+            Effect.forkScoped,
+          );
+          yield* Effect.promise(() => fake.closing);
+          yield* TestClock.adjust("13 seconds");
+          const harness = yield* Fiber.join(opening);
+          assert.deepStrictEqual(
+            stopped,
+            scopeUnit === "a scope unit" ? [{ unit: "t3code-muse-replay.scope", resumes: 0 }] : [],
+          );
+          assert.strictEqual(
+            (yield* recovery.takeCall("session/resume")).params.sessionId,
+            "saved-session",
+          );
+
+          const { nativeId, providerTurn } = yield* startConversation(harness, recovery);
+          const stopping = yield* harness.runtime
+            .interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: providerTurn.id,
+            })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          assert.strictEqual((yield* recovery.takeCall("turn/interrupt")).params.turnId, nativeId);
+          yield* recovery.emit("turn/completed", { turnId: nativeId, terminal: "cancelled" });
+          yield* Fiber.join(stopping);
+          assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "interrupted");
+          assert.strictEqual(fake.closeCount(), 1);
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            ...(scopeUnit === "a scope unit"
+              ? {
+                  wrap: ({ command, args }) =>
+                    Effect.succeed({ command, args, unit: "t3code-muse-replay.scope" }),
+                  stop: (unit) =>
+                    Effect.sync(() => {
+                      stopped.push({ unit, resumes: recovery.calls.length });
+                    }),
+                }
+              : {}),
+          }),
+        );
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("selects the runtime mode's permission profile on native start and resume", () =>
