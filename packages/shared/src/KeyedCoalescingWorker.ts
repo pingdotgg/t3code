@@ -70,9 +70,10 @@ export const makeKeyedCoalescingWorker = Effect.fn(
     Effect.flatMap((item) =>
       item === null
         ? Effect.void
-        : options
-            .process(item.key, item.value)
-            .pipe(Effect.ignoreCause, Effect.ensuring(completeKey(item.key))),
+        : Effect.suspend(() => options.process(item.key, item.value)).pipe(
+            Effect.ignoreCause,
+            Effect.ensuring(completeKey(item.key)),
+          ),
     ),
     Effect.forever,
     Effect.forkScoped,
