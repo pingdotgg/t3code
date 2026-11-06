@@ -507,8 +507,9 @@ export function useComposerCommandMenu({
         ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
         : [];
       return [
-        ...threadItems,
+        // Machines lead: there are few, and the user names one on purpose.
         ...environmentItems,
+        ...threadItems,
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.split("/");
           return {
