@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useState } from "react";
+import { flushSync } from "react-dom";
 import { useAtomValue } from "@effect/atom-react";
 import { refreshNewThreadUsage } from "@t3tools/client-runtime/state/usage";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
@@ -38,21 +39,20 @@ export function useNewThreadUsage(
     key: string;
     providers: readonly ServerProvider[];
   } | null>(null);
-  const refresh = useEffectEvent(
-    () =>
-      input &&
-      refreshNewThreadUsage({
-        registry: appAtomRegistry,
-        server: serverEnvironment,
-        environmentId,
-        input,
-      }),
-  );
+  const refresh = () =>
+    input &&
+    refreshNewThreadUsage({
+      registry: appAtomRegistry,
+      server: serverEnvironment,
+      environmentId,
+      input: { ...input, now: Date.now() },
+    });
+  const refreshOnMount = useEffectEvent(refresh);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- default selection requests quota once per draft/account, without a polling timer
   useEffect(() => {
     if (!enabled || !input) return;
     let active = true;
-    void Promise.resolve(refresh()).then((providers) => {
+    void Promise.resolve(refreshOnMount()).then((providers) => {
       if (active && providers) setCompleted({ key, providers });
     });
     return () => {
@@ -61,6 +61,17 @@ export function useNewThreadUsage(
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- quota demand follows selection/account identity; config updates only replace its cached reading
   }, [enabled, key]);
   return {
+    prepareSend: async () => {
+      if (!enabled) return;
+      setCompleted(null);
+      const providers = await refresh();
+      if (providers)
+        flushSync(() =>
+          setCompleted((current) =>
+            current && current.key !== key ? current : { key, providers },
+          ),
+        );
+    },
     providers: (input?.providers ?? []).map((provider) => {
       const reading =
         completed?.key === key &&

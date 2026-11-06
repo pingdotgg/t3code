@@ -6,7 +6,8 @@ import {
 } from "@t3tools/contracts";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { expect, it, vi } from "vite-plus/test";
-import { act, render } from "../../test/render";
+import { userEvent } from "vite-plus/test/browser";
+import { act, fakeTimers, render } from "../../test/render";
 import { useNewThreadUsage } from "./useNewThreadUsage";
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
@@ -57,9 +58,14 @@ function Probe({ providers }: { readonly providers: readonly ServerProvider[] })
   const usage = useNewThreadUsage(EnvironmentId.make("draft-quota-race"), input, "draft-one");
   const resolved = resolveNewThreadModelSelection({ ...input, providers: usage.providers });
   return (
-    <output>
-      {usage.pending ? "waiting" : "ready"}:{resolved.selection?.instanceId}
-    </output>
+    <>
+      <button type="button" onClick={usage.prepareSend}>
+        Send
+      </button>
+      <output>
+        {usage.pending ? "waiting" : "ready"}:{resolved.selection?.instanceId}
+      </output>
+    </>
   );
 }
 
@@ -105,4 +111,25 @@ it("reconciles fallback quota results across subscription updates before allowin
     />,
   );
   await expect.element(screen.getByText("waiting:claudeAgent")).toBeVisible();
+});
+
+it("revalidates an open draft at submission without background polling", async () => {
+  const { refresh } = setup();
+  const initial = [
+    provider(primary, false, "2026-06-10T00:00:00.000Z"),
+    provider(fallback, false, "2026-06-10T00:00:00.000Z"),
+  ];
+  refresh.mockResolvedValue(initial);
+  using _timers = fakeTimers({ now: 0 });
+  // This probe only observes draft selection, without navigation.
+  await using screen = await render(<Probe providers={initial} />, { router: false });
+  await expect.element(screen.getByText("ready:codex")).toBeVisible();
+  await act(() => vi.advanceTimersByTime(360_000));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  refresh.mockResolvedValue([
+    provider(primary, true, "2026-06-10T00:06:00.000Z"),
+    provider(fallback, false, "2026-06-10T00:06:00.000Z"),
+  ]);
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  await expect.element(screen.getByText("ready:claudeAgent")).toBeVisible();
 });

@@ -253,6 +253,21 @@ describe("limits refresh cooldown", () => {
         ),
       ).toBe(300_000 + skew);
     }
+    now.mockReturnValue(310_000);
+    const overdue = usageRefreshDeadline(
+      [
+        { checkedAt: "2026-01-01T00:00:00Z", windows: [], refreshAfter: 300_000 },
+        { checkedAt: "2026-01-01T00:00:00Z", windows: [], refreshAfter: 610_000 },
+      ],
+      310_000,
+    );
+    expect(overdue).toBe(300_000);
+    await refreshUsageLimits(remote, async () => overdue, true, false, {
+      key: "overdue",
+      resources: ["expired", "new"],
+      refreshDeadline: (deadline) => deadline,
+    });
+    expect(usageLimitsRefreshDelay(remote, "expired")).toBe(0);
     now.mockReturnValue(4 * 60_000);
     await refreshUsageLimits(remote, async () => 300_000, true, false, {
       key: "",

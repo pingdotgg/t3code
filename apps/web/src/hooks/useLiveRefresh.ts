@@ -148,7 +148,7 @@ export function useLiveRefresh(
             pendingRefreshesByView.delete(requestKey);
             const completedAt = Date.now();
             const observedAt =
-              deadline !== undefined && deadline > completedAt
+              deadline !== undefined
                 ? Math.min(completedAt, deadline - refreshFloorMs)
                 : completedAt;
             for (const key of refreshedKeys) lastRefreshedAtByView.set(key, observedAt);

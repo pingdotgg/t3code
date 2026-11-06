@@ -118,8 +118,7 @@ export function usageRefreshDeadline(
   // @effect-diagnostics-next-line globalDate:off
   const now = Date.now();
   const deadlines = Array.from(limits, (reading) => reading?.refreshAfter).filter(
-    (deadline): deadline is number =>
-      deadline !== undefined && Number.isFinite(deadline) && deadline > (serverTime ?? now),
+    (deadline): deadline is number => deadline !== undefined && Number.isFinite(deadline),
   );
   return deadlines.length ? now + Math.min(...deadlines) - (serverTime ?? now) : undefined;
 }
@@ -217,7 +216,7 @@ export async function refreshUsageLimits<A>(
       // @effect-diagnostics-next-line globalDate:off
       const finishedAt = Date.now();
       const refreshAfter =
-        deadline !== undefined && deadline > finishedAt
+        deadline !== undefined
           ? Math.min(deadline, finishedAt + 5 * 60_000)
           : finishedAt + 5 * 60_000;
       for (const selection of refreshedSelections)

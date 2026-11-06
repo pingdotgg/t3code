@@ -139,6 +139,30 @@ describe("useLiveRefresh", () => {
     },
   );
 
+  it("rechecks an overdue server deadline immediately after a wider read", async () => {
+    let complete!: () => void;
+    const refresh = vi.fn().mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        complete = resolve;
+      }),
+    );
+    // This probe only observes the scheduler.
+    await using _screen = await render(
+      <Probe
+        refresh={refresh}
+        viewKey="overdue-server"
+        refreshOnShow
+        refreshWhileIdle
+        refreshDeadline={() => (refresh.mock.calls.length === 1 ? 300_000 : 610_000)}
+      />,
+      { router: false },
+    );
+    using _timers = fakeTimers({ now: 310_000 });
+    await act(() => complete());
+    await act(() => vi.advanceTimersByTime(0));
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
   it("rechecks the shared deadline between simultaneous usage consumers", async () => {
     const reads: Array<{ promise: Promise<void>; resolve: () => void }> = [];
     const refresh = vi.fn(() => {

@@ -2941,6 +2941,7 @@ export default function ChatView(props: ChatViewProps) {
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
+    prepareDraftSend: multipleModelSelections === null ? draftUsage.prepareSend : undefined,
     isGitRepo,
     phase,
     runtimeMode,
