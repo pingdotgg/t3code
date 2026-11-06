@@ -2279,7 +2279,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         dispatchMode: { type: "queue_after_active" },
       });
     }
-    return { threadId, run, requestId, nodeId, itemId };
+    return { threadId, run, requestId, nodeId, itemId, providerTurnId: providerTurn.id };
   });
 
   it.effect("settles mid-question by withdrawing the question and stopping the turn", () =>
@@ -2287,7 +2287,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const { threadId, run, requestId, nodeId, itemId } = yield* seedLiveQuestion(
+      const { threadId, run, requestId, nodeId, itemId, providerTurnId } = yield* seedLiveQuestion(
         "runtime-settle-live-question",
       );
       const settleCommandId = CommandId.make("runtime-settle-live-question-settle");
@@ -2314,6 +2314,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       );
       assert.include(effectTypes, "provider-turn.interrupt");
       assert.notInclude(effectTypes, "runtime-request.respond");
+      // The interrupt must reach the turn holding the question.
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(settleCommandId)).flatMap((effect) =>
+          effect.request.type === "provider-turn.interrupt" ? [effect.request.providerTurnId] : [],
+        ),
+        [providerTurnId],
+      );
 
       // The stopped run ending afterwards leaves the thread settled.
       const now = yield* DateTime.now;
