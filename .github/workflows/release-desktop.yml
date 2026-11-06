@@ -435,6 +435,7 @@ jobs:
             --arch "${{ inputs.arch }}" \
             --version "${{ inputs.version }}" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --notary-submission-file "$RUNNER_TEMP/t3-cli-notary-submission" \
             --output-dir release-cli
 
       - name: Smoke-test CLI archive
@@ -442,8 +443,9 @@ jobs:
         shell: bash
         run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}"
 
+      # macOS uploads its archive after "Await CLI notarization" instead.
       - name: Upload CLI archive
-        if: inputs.cli_archive
+        if: inputs.cli_archive && inputs.platform != 'mac'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
@@ -617,6 +619,35 @@ jobs:
           fi
 
           vp run dist:desktop:artifact "${args[@]}"
+
+      # The CLI was submitted without waiting so Apple reviews it while the
+      # desktop builds. Notarization does not change the archive bytes, but
+      # nothing uploads them, so nothing publishes them, until Apple accepts.
+      - name: Await CLI notarization
+        if: inputs.cli_archive && inputs.platform == 'mac'
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${APPLE_API_KEY:-}" ]]; then
+            key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "$APPLE_API_KEY" > "$key_path"
+            trap 'rm -f "$key_path"' EXIT
+            export APPLE_API_KEY="$key_path"
+          fi
+          node scripts/build-cli-archive.ts await-notarization \
+            --submission-file "$RUNNER_TEMP/t3-cli-notary-submission"
+
+      - name: Upload notarized CLI archive
+        if: inputs.cli_archive && inputs.platform == 'mac'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cli-${{ inputs.platform }}-${{ inputs.arch }}
+          path: release-cli/*
+          if-no-files-found: error
 
       # Warm installs only touch the store index, so new content means a fetch.
       - name: Check staged install cache for new content
