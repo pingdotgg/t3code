@@ -24,7 +24,7 @@ Preconditions: features 1–2 created a parent and child.
 - **Fit.** `preview_click` `role=button[name='Fit map to panel']`. The tree stays visible.
 - **Command palette** (unverified, not yet driven live). `preview_press` `{key:"k", modifiers:["Control"]}` (`Meta` on macOS), `preview_type` `Toggle side-chat map`, then `preview_click` `role=option[name=/Toggle side-chat map/]`. The same tree appears.
 - **Open node.** `preview_click` `role=treeitem[name=/^<label>/]`. The panel returns to chat with that child as the current breadcrumb; call `preview_snapshot` for proof.
-- **Sections (unverified, not yet driven live).** Use a lesson reply containing `## Lesson 1: …`; with Replay, use a replay script whose reply has that heading. Open two side chats from that reply and confirm the map shows a `Lesson 1: …` section treeitem, with its side chats below it; click the section (or press Enter/Space) to collapse it and confirm `aria-expanded="false"` and the hidden count.
+- **Sections (unverified, not yet driven live).** Use a lesson reply containing `## Lesson 1: …`; with Replay, use a replay script whose reply has that heading. Open two side chats from that reply and confirm the map shows a `Lesson 1: …` section treeitem, with its side chats below it; click the section (or press Enter/Space) to collapse it and confirm `aria-expanded="false"` and the hidden count. A line that is only a bold title (`**L3: …**`) also starts a section; text after the bold (`**Q2: …** feedback`) does not. Driven live on 2026-11-05 (APP-58) against a QA copy of a real lesson: after clearing `sideChat.section` and restarting, the map showed an `L3: …` section holding its 23 side chats.
 
 ## Gotchas
 

@@ -65,12 +65,20 @@ it.each([
     expected: "S1T: design a board",
   },
   {
+    name: "a line that is all one bold code title counts",
+    messages: [
+      lessonMessage("a1", "assistant", '## L1: route\n**L3: "lay out this board"**\nbody'),
+    ],
+    anchor: { messageId: MessageId.make("message:a1"), start: 100 },
+    expected: 'L3: "lay out this board"',
+  },
+  {
     name: "other headings do not count",
     messages: [
       lessonMessage(
         "a1",
         "assistant",
-        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1\n**L3: bold is not a heading**",
+        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1\n**Q2: right facts.** Then why\n**S3T: find the bug** (10 runs)\n**v2: draft notes**",
       ),
     ],
     anchor: { messageId: MessageId.make("message:a1"), start: 200 },

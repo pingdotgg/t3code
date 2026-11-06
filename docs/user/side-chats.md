@@ -4,7 +4,7 @@ When a lesson raises a question, highlight the part you want to understand and c
 
 Reopen the usage tour from **Settings → About**, **Help → Welcome Guide**, or the command palette.
 
-Side chats asked under a reply headed "Lesson 2" or a short section code such as "U2:" are grouped under that section in the side-chat map; sections can be collapsed.
+Side chats asked under a reply headed "Lesson 2" or a short section code such as "U2:" (as a heading, or a line that is only a bold title) are grouped under that section in the side-chat map; sections can be collapsed.
 
 You can also highlight text inside an HTML embed, or use its corner button to ask about the whole embed.
 
