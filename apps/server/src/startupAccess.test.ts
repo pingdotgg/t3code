@@ -55,6 +55,21 @@ it("prefers a LAN address over a tailnet one for a private-network pairing URL",
   ).toBe("http://192.168.1.42:3773");
 });
 
+it("skips NixOS container and systemd-nspawn veths for a private-network pairing URL", () => {
+  expect(
+    resolveHeadlessConnectionString("0.0.0.0", 3773, {
+      interfaces: { "ve-jellyfin": [ipv4("192.168.53.193")], eth0: [ipv4("192.168.0.18")] },
+      privateNetworkOnly: true,
+    }),
+  ).toBe("http://192.168.0.18:3773");
+  expect(
+    resolveHeadlessConnectionString("0.0.0.0", 3773, {
+      interfaces: { "vb-jellyfin": [ipv4("192.168.100.1")] },
+      privateNetworkOnly: true,
+    }),
+  ).toBe("http://localhost:3773");
+});
+
 describe("acceptsPrivateNetworkConnection", () => {
   const accepts = (localAddress: string | undefined, remoteAddress: string | undefined) =>
     acceptsPrivateNetworkConnection({ localAddress, remoteAddress });

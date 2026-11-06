@@ -40,13 +40,13 @@ export const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
 /**
- * Container and VM networks (Docker, libvirt, VMware, VirtualBox, Hyper-V, and
- * macOS's `bridge100`+) have private addresses only this machine reaches. A
- * host bridge such as `br0` or Proxmox's `vmbr0` carries the LAN address, so
- * it stays listed.
+ * Container and VM networks (Docker, libvirt, VMware, VirtualBox, Hyper-V,
+ * systemd-nspawn's `ve-*`/`vz-*`, NixOS containers' `vb-*`, macOS's
+ * `bridge100`+) have private addresses only this machine reaches. Host
+ * bridges such as `br0` or `vmbr0` carry the LAN address, so they stay listed.
  */
 export const VIRTUAL_INTERFACE =
-  /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge[1-9]\d\d)/;
+  /^(docker|br-|veth|virbr|ve-|vb-|vz-|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge[1-9]\d\d)/;
 
 /**
  * Loopback or private-range IPv4 (LAN, tailnet, CGNAT), not link-local, in
