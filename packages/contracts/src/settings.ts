@@ -1362,21 +1362,29 @@ const AgentSessionImportScanBudgetMiB = Schema.Int.check(
   Schema.isBetween(AGENT_SESSION_IMPORT_BOUNDS.scanBudgetMiB),
 );
 
+// A stored limit outside its range falls back alone, so a hand edit cannot reset every setting.
+// Patches keep the strict schemas.
+const storedImportLimit = <Value extends Schema.Top>(value: Value, fallback: Value["Encoded"]) => {
+  const decodeValue = Schema.decodeUnknownOption(value as never);
+  const lenient = Schema.Unknown.pipe(
+    Schema.decodeTo(
+      value,
+      SchemaTransformation.transform<Value["Encoded"], unknown>({
+        decode: (raw) => (Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : fallback),
+        encode: (raw) => raw,
+      }),
+    ),
+  );
+  return lenient.pipe(Schema.withDecodingDefault<typeof lenient>(Effect.succeed(fallback)));
+};
+
 /** Null `windowDays` imports all history; null `messagesPerThread` keeps every message. */
 export const AgentSessionImportSettings = Schema.Struct({
-  windowDays: AgentSessionImportWindowDays.pipe(Schema.withDecodingDefault(Effect.succeed(30))),
-  conversationsPerRun: AgentSessionImportConversationsPerRun.pipe(
-    Schema.withDecodingDefault(Effect.succeed(100)),
-  ),
-  recordsPerConversation: AgentSessionImportRecordsPerConversation.pipe(
-    Schema.withDecodingDefault(Effect.succeed(100_000)),
-  ),
-  messagesPerThread: AgentSessionImportMessagesPerThread.pipe(
-    Schema.withDecodingDefault(Effect.succeed(200)),
-  ),
-  scanBudgetMiB: AgentSessionImportScanBudgetMiB.pipe(
-    Schema.withDecodingDefault(Effect.succeed(64)),
-  ),
+  windowDays: storedImportLimit(AgentSessionImportWindowDays, 30),
+  conversationsPerRun: storedImportLimit(AgentSessionImportConversationsPerRun, 100),
+  recordsPerConversation: storedImportLimit(AgentSessionImportRecordsPerConversation, 100_000),
+  messagesPerThread: storedImportLimit(AgentSessionImportMessagesPerThread, 200),
+  scanBudgetMiB: storedImportLimit(AgentSessionImportScanBudgetMiB, 64),
 });
 export type AgentSessionImportSettings = typeof AgentSessionImportSettings.Type;
 
