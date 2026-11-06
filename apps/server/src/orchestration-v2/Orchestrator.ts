@@ -212,6 +212,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -549,6 +550,8 @@ function wakeWorkStartedAt(
 }
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+
+const COPIED_THREAD_GUARD_MESSAGE = `This chat was copied from T3 Code. Use Continue in ${T3_LEARN_PRODUCT_NAME} to keep going.`;
 
 /** Unfinished runs (including queued) or open requests block moving a thread to another project. */
 export function threadHasUnfinishedWork(records: {
@@ -1704,6 +1707,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
+        projection.thread.t3CodeCopiedAt !== undefined ||
         // A finished side chat's queue waits for the learner's own message to reopen it.
         projection.thread.sideChat?.done != null ||
         projection.runs.some(isActiveRun)
@@ -5774,6 +5778,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    if (projection.thread.t3CodeCopiedAt !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: COPIED_THREAD_GUARD_MESSAGE,
+      });
+    }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -14031,6 +14042,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+
+    if (
+      command.type === "message.dispatch" ||
+      command.type === "queued-message.promote-to-steer" ||
+      command.type === "queued-run.start" ||
+      command.type === "queue.resume" ||
+      command.type === "runtime-request.respond" ||
+      command.type === "prepared-run.release" ||
+      command.type === "prepared-run.retry" ||
+      command.type === "checkpoint.rollback"
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (thread.t3CodeCopiedAt !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: COPIED_THREAD_GUARD_MESSAGE,
+        });
+      }
+    }
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
