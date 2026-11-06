@@ -83,7 +83,11 @@ function mount({
 } = {}) {
   return render(
     <RegistryContext.Provider value={AtomRegistry.make()}>
-      {newLesson ? <button aria-label="New lesson">New lesson</button> : null}
+      {newLesson ? (
+        <button aria-label="New lesson" data-testid="new-lesson">
+          New lesson
+        </button>
+      ) : null}
       <WelcomeGuideHost hostedStatic={hostedStatic} />
     </RegistryContext.Provider>,
   );
@@ -184,17 +188,17 @@ it("moves through the steps and records the visit when the learner finishes", as
 it("anchors a target step and removes its highlight when moving on", async () => {
   using _storage = setup();
   await using _screen = await mount({ newLesson: true });
+  // The modal guide hides the rest of the page from role queries.
+  const newLesson = page.getByTestId("new-lesson");
 
   await userEvent.click(button("Next"));
-  const newLesson = _screen.container.querySelector('[aria-label="New lesson"]');
-  expect(newLesson).not.toBeNull();
-  expect(newLesson).toHaveAttribute("data-tour-target", "true");
+  await expect.element(newLesson).toHaveAttribute("data-tour-target", "true");
   await expect.element(heading("Start a new lesson")).toBeVisible();
   await expect.element(guide()).not.toBeInTheDocument();
 
   await userEvent.click(button("Next"));
   await expect.element(heading("Highlight what you don't get")).toBeVisible();
-  expect(newLesson).not.toHaveAttribute("data-tour-target");
+  await expect.element(newLesson).not.toHaveAttribute("data-tour-target");
   await expect.element(guide()).toBeVisible();
 });
 

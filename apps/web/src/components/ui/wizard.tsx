@@ -70,6 +70,7 @@ export function WizardSteps({
   onStepChange,
   isStepDisabled,
   label = "Setup progress",
+  currentLabelOnly = false,
 }: {
   readonly steps: readonly string[];
   readonly currentStep: number;
@@ -78,16 +79,24 @@ export function WizardSteps({
   readonly isStepDisabled?: (step: number) => boolean;
   readonly onStepChange?: (step: number) => void;
   readonly label?: string;
+  /** Long step lists name only the current step, so the numbers keep their room. */
+  readonly currentLabelOnly?: boolean;
 }) {
   const Step = onStepChange ? "button" : "div";
   return (
     <ol
-      className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-background p-1 ring-1 ring-black/5 dark:bg-white/4 dark:ring-white/5"
+      className={cn(
+        "grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-background p-1 ring-1 ring-black/5 dark:bg-white/4 dark:ring-white/5",
+        currentLabelOnly && "flex",
+      )}
       role="list"
       aria-label={label}
     >
       {steps.map((step, index) => (
-        <li key={step} className="min-w-0">
+        <li
+          key={step}
+          className={cn("min-w-0", currentLabelOnly && index === currentStep && "flex-1")}
+        >
           <Step
             {...(onStepChange
               ? { type: "button" as const, disabled: isStepDisabled?.(index) }
@@ -120,6 +129,7 @@ export function WizardSteps({
               className={cn(
                 "min-w-0 truncate text-sm font-medium max-sm:hidden",
                 index === currentStep ? "text-foreground" : "text-muted-foreground",
+                currentLabelOnly && index !== currentStep && "hidden",
               )}
             >
               {step}

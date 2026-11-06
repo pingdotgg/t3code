@@ -102,6 +102,18 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
       const element = document.querySelector<HTMLElement>(targetSelector);
       if (!element) return;
       element.scrollIntoView({ block: "center" });
+      // Covered (Settings over the sidebar) or off screen (collapsed sidebar): stay centred.
+      // The tour's own dialog and full-screen modal layers (backdrops) don't count as covering it.
+      const rect = element.getBoundingClientRect();
+      const top = document
+        .elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+        .find((hit) => {
+          if (hit.closest("[data-tour-card]")) return false;
+          const box = hit.getBoundingClientRect();
+          const fullScreen = box.width >= window.innerWidth && box.height >= window.innerHeight;
+          return !fullScreen || hit.contains(element);
+        });
+      if (!top || !element.contains(top)) return;
       element.setAttribute("data-tour-target", "true");
       setTargetElement(element);
     };
@@ -125,7 +137,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
 
   const targetCard = resolvedTarget ? (
     <Popover open onOpenChange={(open) => !open && close()}>
-      <PopoverPopup anchor={resolvedTarget} side="right" width="md">
+      <PopoverPopup anchor={resolvedTarget} side="right" width="md" initialFocus={nextRef}>
         <div className="space-y-3 p-4">
           <p className="text-xs font-medium text-muted-foreground">
             {step + 1} of {steps.length}
@@ -151,7 +163,9 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
               >
                 Back
               </Button>
-              <Button onClick={last ? close : advance}>{last ? "Start learning" : "Next"}</Button>
+              <Button ref={nextRef} onClick={last ? close : advance}>
+                {last ? "Start learning" : "Next"}
+              </Button>
             </div>
           </div>
         </div>
@@ -164,7 +178,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
       {targetCard}
       {showDialog ? (
         <Dialog open onOpenChange={(open) => !open && close()}>
-          <WizardPopup size="wide" initialFocus={nextRef}>
+          <WizardPopup size="wide" initialFocus={nextRef} data-tour-card>
             <WizardHeader
               title="Welcome guide"
               identity={<span className="text-2xl font-medium tracking-tight">OminaX</span>}
@@ -174,6 +188,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
                 steps={steps.map((item) => item.label)}
                 currentStep={step}
                 onStepChange={setStep}
+                currentLabelOnly
               />
             </WizardHeader>
             <WizardPanel>
@@ -316,7 +331,7 @@ function guideSteps(askShortcut: string | null, mapShortcut: string | null) {
       label: "Sync",
       target: { selector: "#chat-sync", route: "/settings/threads" },
       title: "Sync from T3 Code",
-      body: "Bring chats over from T3 Code with Sync from T3 Code.",
+      body: "Have chats in T3 Code on this computer? Sync from T3 Code, in Settings → Threads, brings them over.",
     },
     {
       label: "Updates",
