@@ -2054,6 +2054,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       readonly turnState?: "idle" | "otherTurn" | "waitingRun";
       /** The provider refuses interrupts, so Stop cannot reach the question's turn. */
       readonly noInterrupt?: boolean;
+      /** Also leave a live question pending on an earlier turn of the run that has ended. */
+      readonly earlierTurnQuestion?: boolean;
     } = {},
   ) {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2114,7 +2116,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       nodeId: run.rootNodeId!,
       runAttemptId: run.activeAttemptId,
       nativeTurnRef: null,
-      ordinal: 1,
+      ordinal: options.earlierTurnQuestion === true ? 2 : 1,
       status: turnEnded ? ("completed" as const) : ("running" as const),
       startedAt: now,
       completedAt: turnEnded ? now : null,
@@ -2228,6 +2230,36 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             questions: [{ id: "choice", header: "Choice", question: "Continue?", options: [] }],
           },
         },
+        ...(options.earlierTurnQuestion === true
+          ? [
+              {
+                id: EventId.make(`${name}-earlier-turn-event`),
+                type: "provider-turn.updated" as const,
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: {
+                  ...providerTurn,
+                  id: ProviderTurnId.make(`${name}-earlier-turn`),
+                  ordinal: 1,
+                  status: "completed" as const,
+                  completedAt: now,
+                },
+              },
+              {
+                id: EventId.make(`${name}-earlier-request-event`),
+                type: "runtime-request.updated" as const,
+                threadId,
+                nodeId,
+                occurredAt: now,
+                payload: {
+                  ...request,
+                  id: RuntimeRequestId.make(`${name}-earlier-request`),
+                  providerTurnId: ProviderTurnId.make(`${name}-earlier-turn`),
+                },
+              },
+            ]
+          : []),
         ...(options.approval === true
           ? [
               {
@@ -2422,26 +2454,56 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
-  it.effect("delivers the cancel when Stop cannot interrupt the question's turn", () =>
+  it.effect("refuses to settle when Stop cannot interrupt the question's turn", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const { threadId, requestId } = yield* seedLiveQuestion("runtime-settle-no-interrupt", {
+      const { threadId, run, requestId } = yield* seedLiveQuestion("runtime-settle-no-interrupt", {
         noInterrupt: true,
       });
       const settleCommandId = CommandId.make("runtime-settle-no-interrupt-settle");
+      const error = yield* orchestrator
+        .dispatch({ type: "thread.settle", commandId: settleCommandId, threadId })
+        .pipe(Effect.flip);
+      // The turn keeps running, so a blank answer must not reach it under a settled thread.
+      assert.match(String(error.cause), /still running/);
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.notEqual(projection.thread.settledOverride, "settled");
+      assert.equal(projection.runs.find((candidate) => candidate.id === run.id)?.status, "running");
+      assert.equal(
+        projection.runtimeRequests.find((candidate) => candidate.id === requestId)?.status,
+        "pending",
+      );
+      assert.deepEqual(yield* outbox.listByCommandId(settleCommandId), []);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("withholds only the cancel Stop delivers when questions sit on several turns", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const name = "runtime-settle-two-turn-questions";
+      const { threadId, providerTurnId } = yield* seedLiveQuestion(name, {
+        earlierTurnQuestion: true,
+      });
+      const settleCommandId = CommandId.make(`${name}-settle`);
       yield* orchestrator.dispatch({ type: "thread.settle", commandId: settleCommandId, threadId });
       const settled = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(settled.thread.settledOverride, "settled");
-      assert.equal(
-        settled.runtimeRequests.find((candidate) => candidate.id === requestId)?.decision,
-        "cancel",
+      assert.isFalse(settled.runtimeRequests.some((request) => request.status === "pending"));
+      const queued = yield* outbox.listByCommandId(settleCommandId);
+      assert.deepEqual(
+        queued.flatMap((effect) =>
+          effect.request.type === "runtime-request.respond" ? [effect.request.requestId] : [],
+        ),
+        [RuntimeRequestId.make(`${name}-earlier-request`)],
       );
-      const effectTypes = (yield* outbox.listByCommandId(settleCommandId)).map(
-        (effect) => effect.request.type,
+      assert.deepEqual(
+        queued.flatMap((effect) =>
+          effect.request.type === "provider-turn.interrupt" ? [effect.request.providerTurnId] : [],
+        ),
+        [providerTurnId],
       );
-      assert.notInclude(effectTypes, "provider-turn.interrupt");
-      assert.include(effectTypes, "runtime-request.respond");
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 

@@ -503,16 +503,14 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
 
-/** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 /** The live run Stop interrupts first; Settle uses it to know which question Stop withdraws. */
 function liveStopTargetRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2Run | undefined {
-  return runs.findLast(
-    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
-  );
+  return runs.findLast(isLiveRun);
 }
 
+/** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
 }
@@ -3808,12 +3806,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : [],
           ),
         );
+        // Only cancel deliveries are ever dropped above; the filter keeps any other
+        // effect so nothing the respond queued is lost.
         const unreached = (yield* Ref.get(droppedDeliveries)).filter((effect) => {
           if (effect.request.type !== "runtime-request.respond") return true;
           const requestId = effect.request.requestId;
           const request = pendingRequests.find((candidate) => candidate.id === requestId);
           return request?.providerTurnId == null || !interruptedTurnIds.has(request.providerTurnId);
         });
+        if (unreached.length > 0) {
+          // A turn Stop could not interrupt keeps running; settling would leave the
+          // agent working on a blank answer under a settled thread. The command
+          // fails as a whole, so nothing above is written.
+          const afterStop = yield* getProjectionWithPendingEvents(command.threadId, events);
+          if (afterStop.runs.some((run) => run.id === stopTarget?.id && isLiveRun(run))) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: `Thread ${command.threadId} is still running. Stop it before settling.`,
+            });
+          }
+        }
         yield* Ref.update(effects, (existing) => [...existing, ...unreached]);
       }
       // Stop already cancels buffered notifications; skip the runs it cancelled.
