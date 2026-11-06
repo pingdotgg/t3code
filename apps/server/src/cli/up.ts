@@ -79,12 +79,14 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
         revoked: connectRevoked,
       })
     : null;
+  // Another home's service doesn't read this home's service.env.
+  const servesThisHome = service.installed && service.otherBaseDir === undefined;
   return {
     service,
     connect,
     connectRevoked,
-    lan: Option.getOrElse(lan, () => service.installed),
-    lanFromOldDefault: Option.isNone(lan) && service.installed,
+    lan: Option.getOrElse(lan, () => servesThisHome),
+    lanFromOldDefault: Option.isNone(lan) && servesThisHome,
     host: entries.T3CODE_HOST,
   } satisfies Setup;
 });
@@ -415,7 +417,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         }
         if (outcome === "skipped") {
           yield* Console.log(
-            "The installed service runs another T3 home, so it was not restarted. Pass its --base-dir.",
+            "The installed service was not restarted. Run `t3 service status` to see why.",
           );
         }
         started = outcome === "restarted";
@@ -537,7 +539,9 @@ export const statusCommand = Command.make("status", {
       yield* Console.log(
         flags.json
           ? setupJson(setup)
-          : `This machine\n${formatSetup(setup)}\n\nChange access: \`t3 up\`.`,
+          : setup.service.otherBaseDir !== undefined
+            ? `This machine\n${formatSetup(setup)}`
+            : `This machine\n${formatSetup(setup)}\n\nChange access: \`t3 up\`.`,
       );
     }),
   ),
