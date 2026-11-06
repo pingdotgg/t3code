@@ -3652,6 +3652,12 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   reuseExistingThread: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
+  /**
+   * Linked environment to launch this thread in; absent launches here.
+   * Cross-environment delegation targeting: launch and delegate_task accept
+   * the same target shape, so a child thread can run in a linked environment.
+   */
+  environmentId: Schema.optional(EnvironmentId),
   title: TrimmedNonEmptyString,
   generateTitle: Schema.optional(Schema.Boolean),
   modelSelection: ModelSelection,

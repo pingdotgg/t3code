@@ -21,6 +21,13 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  OpenShellDrainProgress,
+  OpenShellEnvironmentSandbox,
+  OpenShellFleetState,
+  OpenShellFleetWorkerStatus,
+  OpenShellWorkerClass,
+} from "./openshellGateway.ts";
+import {
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
@@ -901,3 +908,71 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
     message: Schema.String,
   },
 ) {}
+
+// Worker environments on an OpenShell gateway (spec sections 5, 6 and 12).
+// These tools run on the managing instance only, so remove takes a plain
+// `targetEnvironmentId`: an `environmentId` of the linked-target shape would
+// auto-route the call to the worker itself.
+
+export const OrchestratorMcpEnvironmentSpawnInput = Schema.Struct({
+  /** Sandbox template name; default: settings.openshell.defaultSandboxTemplate. */
+  template: Schema.optional(TrimmedNonEmptyString),
+  workerClass: OpenShellWorkerClass.pipe(Schema.withDecodingDefault(Effect.succeed("ephemeral"))),
+  /** Stable label; expected for persistent workers, which are addressed by it. */
+  label: Schema.optional(TrimmedNonEmptyString),
+  /** Ephemeral hard lifetime cap, overriding the gateway worker defaults. */
+  ttlMs: Schema.optional(Schema.DurationFromMillis),
+  /** Seed the checkout or deps from this ref or seed store (spec section 10). */
+  seedFrom: Schema.optional(TrimmedNonEmptyString),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpEnvironmentSpawnInput = typeof OrchestratorMcpEnvironmentSpawnInput.Type;
+
+export const OrchestratorMcpEnvironmentSpawnResult = Schema.Struct({
+  environmentId: EnvironmentId,
+  sandbox: OpenShellEnvironmentSandbox,
+  workerClass: OpenShellWorkerClass,
+  /** Spawn waits until the worker is paired; any other state fails the call. */
+  state: OpenShellFleetState,
+  /** Ephemeral: epoch-ms retirement deadline managed by this instance. */
+  expiresAt: Schema.NullOr(Schema.Number),
+  /** Non-fatal notes, e.g. "shared cache disabled: no RWX class". */
+  warnings: Schema.Array(Schema.String),
+});
+export type OrchestratorMcpEnvironmentSpawnResult =
+  typeof OrchestratorMcpEnvironmentSpawnResult.Type;
+
+export const OrchestratorMcpEnvironmentRemoveInput = Schema.Struct({
+  targetEnvironmentId: EnvironmentId,
+  drainTimeoutMs: Schema.optional(Schema.DurationFromMillis),
+  /** Skip drain only with an explicit user ack; thread snapshots still export. */
+  force: Schema.optional(Schema.Boolean),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpEnvironmentRemoveInput =
+  typeof OrchestratorMcpEnvironmentRemoveInput.Type;
+
+export const OrchestratorMcpEnvironmentRemoveResult = Schema.Struct({
+  targetEnvironmentId: EnvironmentId,
+  /**
+   * `completed`: drained and deleted. `drain_pending`: drain still running,
+   * poll the list. `refused`: drain incomplete or failed, so the sandbox is
+   * kept and `reason` says why (nothing lost outranks cleanup).
+   */
+  outcome: Schema.Literals(["completed", "drain_pending", "refused"]),
+  drain: Schema.optional(OpenShellDrainProgress),
+  sandboxOutcome: Schema.optional(Schema.Literals(["completed", "accepted", "already_absent"])),
+  reason: Schema.optional(Schema.String),
+});
+export type OrchestratorMcpEnvironmentRemoveResult =
+  typeof OrchestratorMcpEnvironmentRemoveResult.Type;
+
+export const OrchestratorMcpEnvironmentListInput = Schema.Struct({
+  workerClass: Schema.optional(OpenShellWorkerClass),
+});
+export type OrchestratorMcpEnvironmentListInput = typeof OrchestratorMcpEnvironmentListInput.Type;
+
+export const OrchestratorMcpEnvironmentListResult = Schema.Struct({
+  workers: Schema.Array(OpenShellFleetWorkerStatus),
+});
+export type OrchestratorMcpEnvironmentListResult = typeof OrchestratorMcpEnvironmentListResult.Type;
