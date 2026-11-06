@@ -1051,7 +1051,8 @@ const make = Effect.gen(function* () {
       const following = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
       if (following.length > 0) {
         const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
-          messageIds: following.map((candidate) => candidate.userMessageId),
+          messageRunIds: following.map((candidate) => candidate.id),
+          messageRoles: ["user"],
         });
         const automaticMessageIds = new Set(
           messages
@@ -1062,7 +1063,10 @@ const make = Effect.gen(function* () {
             )
             .map((message) => message.id),
         );
-        if (following.some((candidate) => !automaticMessageIds.has(candidate.userMessageId))) {
+        if (
+          messages.some((message) => !automaticMessageIds.has(message.id)) ||
+          following.some((candidate) => !automaticMessageIds.has(candidate.userMessageId))
+        ) {
           return true;
         }
         if (

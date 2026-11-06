@@ -567,6 +567,7 @@ it.effect.each([
   { status: "completed" as const, followUp: "failed-notification", settles: false },
   { status: "completed" as const, followUp: "held-notification", settles: true },
   { status: "completed" as const, followUp: "user", settles: false },
+  { status: "completed" as const, followUp: "steered-notification", settles: false },
 ])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
@@ -596,7 +597,7 @@ it.effect.each([
               Stream.drain,
               Stream.concat(Stream.fromQueue(events)),
             ),
-          getThreadRecords: () =>
+          getThreadRecords: (_threadId, _fields, filter) =>
             Effect.sync(
               () =>
                 ({
@@ -609,7 +610,13 @@ it.effect.each([
                       ...(followUp.endsWith("notification") ? { notification: {} } : {}),
                       ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
                     },
-                  ],
+                    ...(followUp === "steered-notification"
+                      ? [{ id: MessageId.make("user-steer"), role: "user" }]
+                      : []),
+                  ].filter(
+                    (message) =>
+                      filter?.messageIds === undefined || filter.messageIds.includes(message.id),
+                  ),
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
           dispatch: (command) =>
