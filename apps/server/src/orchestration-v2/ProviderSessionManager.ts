@@ -655,8 +655,8 @@ export const layerWithOptions = (
         for (const threadId of input.entry.attachedThreadIds) {
           const projection = yield* projectionStore.getThreadRecords(
             threadId,
-            ["runtimeRequests", "nodes", "turnItems"],
-            { turnItemTypes: ["approval_request", "user_input_request"] },
+            ["runtimeRequests"],
+            { runtimeRequestStatuses: ["pending"] },
           );
           const releasedRequests = projection.runtimeRequests.filter(
             (request) =>
@@ -668,6 +668,16 @@ export const layerWithOptions = (
               !(input.reason === "server_shutdown" && request.kind === "user_input"),
           );
 
+          if (releasedRequests.length === 0) continue;
+          const records = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["nodes", "turnItems"],
+            {
+              nodeIds: releasedRequests.map((request) => request.nodeId),
+              turnItemRequestIds: releasedRequests.map((request) => request.id),
+              turnItemTypes: ["approval_request", "user_input_request"],
+            },
+          );
           for (const request of releasedRequests) {
             events.push({
               id: yield* idAllocator.allocate.event({
@@ -690,7 +700,7 @@ export const layerWithOptions = (
               },
             });
 
-            const requestNode = projection.nodes.find((node) => node.id === request.nodeId);
+            const requestNode = records.nodes.find((node) => node.id === request.nodeId);
             if (requestNode !== undefined) {
               events.push({
                 id: yield* idAllocator.allocate.event({
@@ -711,7 +721,7 @@ export const layerWithOptions = (
               });
             }
 
-            const turnItem = projection.turnItems.find(
+            const turnItem = records.turnItems.find(
               (item) =>
                 (item.type === "approval_request" || item.type === "user_input_request") &&
                 item.requestId === request.id,
@@ -2120,7 +2130,7 @@ export const layerWithOptions = (
             ),
           { concurrency: "unbounded", discard: true },
         );
-      });
+      }).pipe(Effect.withSpan("ProviderSessionManager.shutdown"));
       yield* Effect.addFinalizer(() =>
         shutdown.pipe(
           Effect.ensuring(closeScopeWithin(sessionScopes, { reason: "server_shutdown" })),
