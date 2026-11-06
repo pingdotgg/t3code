@@ -241,6 +241,18 @@ describe("AntigravityAdapterV2 session open", () => {
       },
     },
     {
+      name: "unrelated authentication rate limit",
+      cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
+        {
+          code: -32000,
+          message: "Authentication failed (HTTP 429)",
+        },
+        { method: "authenticate" },
+      ),
+      requiresSignIn: true,
+      failure: undefined,
+    },
+    {
       name: "licensing service failure",
       cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
         {
