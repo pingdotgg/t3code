@@ -5,6 +5,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Schema from "effect/Schema";
 
 /**
@@ -526,10 +527,59 @@ function isRetainedDependency(
   );
 }
 
+// usageLimitBlockedRun needs the limited run's root error and the notification that started each
+// later run, and a long chain of wakes pushes both out of the window. Starts are kept as stubs
+// without their unbounded detail, and dropped past a quarter of the budget (clients then show
+// the plain latest run).
+function limitRecoveryItems(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
+  maxEncodedBytes: number,
+): ReadonlyMap<string, OrchestrationV2TurnItem> {
+  const items = new Map<string, OrchestrationV2TurnItem>();
+  const blocked = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
+  if (blocked === null) return items;
+  const laterRoots = new Set<string>();
+  for (const run of projection.runs) {
+    if (run.ordinal > blocked.ordinal && run.rootNodeId !== null) {
+      laterRoots.add(String(run.rootNodeId));
+    }
+  }
+  if (laterRoots.size === 0) return items;
+  const firstInputs = new Map<string, OrchestrationV2TurnItem>();
+  for (const item of projection.turnItems) {
+    if (item.type === "error" && item.runId === blocked.id && item.nodeId === blocked.rootNodeId) {
+      items.set(String(item.id), item);
+    } else if (
+      (item.type === "user_message" || item.type === "notification") &&
+      item.nodeId !== null &&
+      laterRoots.has(String(item.nodeId))
+    ) {
+      const first = firstInputs.get(String(item.nodeId));
+      if (first === undefined || item.ordinal < first.ordinal) {
+        firstInputs.set(String(item.nodeId), item);
+      }
+    }
+  }
+  let startBytes = 0;
+  const starts: Array<OrchestrationV2TurnItem> = [];
+  for (const item of firstInputs.values()) {
+    if (item.type !== "notification") continue;
+    const { detail: _detail, ...rest } = item;
+    const stub = { ...rest, title: null, summary: item.summary.slice(0, 120).trimEnd() };
+    startBytes += bytesOfJson(stub);
+    starts.push(stub);
+  }
+  if (startBytes <= maxEncodedBytes / 4) {
+    for (const stub of starts) items.set(String(stub.id), stub);
+  }
+  return items;
+}
+
 /** Retain small requests outside the visible window; later result pages still need them for attempt/run reducers. */
 function retainedInterruptRequestTurnItems(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  limitItems: ReadonlyMap<string, OrchestrationV2TurnItem>,
 ): OrchestrationV2TurnItem[] {
   const visibleLocalIds = new Set<string>();
   for (const row of visible) {
@@ -548,6 +598,9 @@ function retainedInterruptRequestTurnItems(
       continue;
     }
     retained.push(item);
+  }
+  for (const [id, item] of limitItems) {
+    if (!visibleLocalIds.has(id)) retained.push(item);
   }
   return retained;
 }
@@ -659,6 +712,7 @@ export function buildBoundedThreadProjection(input: {
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
+  const limitItems = limitRecoveryItems(controlProjection, policy.maxEncodedBytes);
   const dependencyReserve = (() => {
     let reserve = 0;
     const pendingRequestIds = pendingRequestIdsOf(controlProjection);
@@ -667,6 +721,7 @@ export function buildBoundedThreadProjection(input: {
         reserve += bytesOfJson(item);
       }
     }
+    for (const item of limitItems.values()) reserve += bytesOfJson(item);
     return reserve;
   })();
   const controlBytes = bytesOfJson({
@@ -693,6 +748,7 @@ export function buildBoundedThreadProjection(input: {
   const dependencyTurnItems = retainedInterruptRequestTurnItems(
     controlProjection,
     visibleTurnItems,
+    limitItems,
   );
   const turnItemById = new Map<string, OrchestrationV2TurnItem>();
   for (const item of windowTurnItems) {

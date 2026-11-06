@@ -8147,9 +8147,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "independent-patches",
     "expired-snooze",
     "wake",
+    "wake-hidden",
     "stop",
     "stop-before-arm",
     "stop-before-arm-mismatched-recovery",
+    "stop-before-arm-wake-hidden",
   ] as const)("guards a scheduled usage-limit continuation against %s", (scenario) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -8253,6 +8255,61 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           },
         ],
       });
+      const hiddenByWake = scenario === "wake-hidden" || scenario === "stop-before-arm-wake-hidden";
+      if (hiddenByWake) {
+        // A subagent that died on the same limit starts a notification wake that completes
+        // before the reset. The failed run stays the latest, so it is armed and resumes.
+        const wakeRunId = RunId.make(`recovery:wake-run:${scenario}`);
+        const wakeNodeId = NodeId.make(`recovery:wake-node:${scenario}`);
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`recovery:wake-run-created:${scenario}`),
+              type: "run.created",
+              threadId,
+              runId: wakeRunId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...run,
+                id: wakeRunId,
+                ordinal: run.ordinal + 1,
+                rootNodeId: wakeNodeId,
+                userMessageId: MessageId.make(`recovery:wake-message:${scenario}`),
+                status: "completed",
+                startedAt: now,
+                completedAt: now,
+              },
+            },
+            {
+              id: EventId.make(`recovery:wake-notification:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`recovery:wake-notification:${scenario}`),
+                type: "notification",
+                threadId,
+                runId: wakeRunId,
+                nodeId: wakeNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: null,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                source: { kind: "delegated_task", taskIds: [] },
+                outcome: "failed",
+                summary: "Subagent failed",
+              },
+            },
+          ],
+        });
+      }
       if (scenario === "queued-resume") {
         const queuedRun = projection.runs[1]!;
         yield* events.write({
@@ -8306,7 +8363,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         limitRecovery: arm.limitRecovery,
       };
       const stopBeforeArm =
-        scenario === "stop-before-arm" || scenario === "stop-before-arm-mismatched-recovery";
+        scenario === "stop-before-arm" ||
+        scenario === "stop-before-arm-mismatched-recovery" ||
+        scenario === "stop-before-arm-wake-hidden";
       if (stopBeforeArm) {
         if (scenario === "stop-before-arm-mismatched-recovery") {
           const current = yield* orchestrator.getThreadProjection(threadId);
@@ -8485,7 +8544,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       assert.lengthOf(
         (yield* orchestrator.getThreadProjection(threadId)).runs,
-        scenario === "queued-resume" ? 2 : 1,
+        scenario === "queued-resume" || hiddenByWake ? 2 : 1,
       );
       yield* TestClock.adjust("1 minute");
       const resume = limitRecoveryCommand(
@@ -8625,6 +8684,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.runs,
         before.runs.length +
           (scenario === "resume" ||
+          scenario === "wake-hidden" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8636,6 +8696,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.messages,
         before.messages.length +
           (scenario === "resume" ||
+          scenario === "wake-hidden" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||

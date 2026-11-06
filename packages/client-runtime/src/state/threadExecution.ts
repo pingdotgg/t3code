@@ -3,6 +3,7 @@ import {
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
+  usageLimitBlockedRun,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
@@ -290,7 +291,9 @@ export function deriveResumableRunId(
   projection: Pick<ThreadStructure, "runs" | "turnItems">,
   runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
 ): RunId | null {
-  const run = latestExecutedRun(projection.runs);
+  const run =
+    usageLimitBlockedRun(projection.runs, projection.turnItems, null) ??
+    latestExecutedRun(projection.runs);
   if (run?.status === "interrupted") return run.id;
   return run?.status === "failed" &&
     runtime?.lastErrorClass === "usage_limit" &&
